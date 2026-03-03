@@ -1,0 +1,35 @@
+# inventory.example — Docker Swarm cluster inventory template.
+# Copy to inventory (or inventory/<env>/hosts) and replace placeholder values.
+#
+# Group layout:
+#   swarm_manager_primary  — the single bootstrap node (swarm init)
+#   swarm_managers         — all manager nodes (includes primary)
+#   swarm_workers          — dedicated worker nodes (optional)
+#
+# The 'swarm_manager_primary' group must contain exactly ONE host.
+
+[swarm_manager_primary]
+swarm-manager-01  ansible_host=${MANAGER_01_IP}  ansible_user=${ANSIBLE_USER}
+
+[swarm_managers]
+swarm-manager-01  ansible_host=${MANAGER_01_IP}  ansible_user=${ANSIBLE_USER}
+swarm-manager-02  ansible_host=${MANAGER_02_IP}  ansible_user=${ANSIBLE_USER}
+swarm-manager-03  ansible_host=${MANAGER_03_IP}  ansible_user=${ANSIBLE_USER}
+
+[swarm_workers]
+swarm-worker-01  ansible_host=${WORKER_01_IP}  ansible_user=${ANSIBLE_USER}
+swarm-worker-02  ansible_host=${WORKER_02_IP}  ansible_user=${ANSIBLE_USER}
+# swarm-worker-03  ansible_host=${WORKER_03_IP}  ansible_user=${ANSIBLE_USER}
+# Add more workers as needed.
+
+[swarm_managers:vars]
+ansible_become=true
+ansible_become_method=sudo
+
+[swarm_workers:vars]
+ansible_become=true
+ansible_become_method=sudo
+
+# Optional: point all groups to a shared vars file
+[all:vars]
+ansible_python_interpreter=/usr/bin/python3

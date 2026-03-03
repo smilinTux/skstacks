@@ -1,0 +1,60 @@
+# SKStacks v2 — skfence app descriptor
+#
+# This file contains NO secrets — only structure.
+# Real values come from the secret backend at deploy time.
+
+name: skfence
+description: "Traefik v3 reverse proxy with ACME TLS, rate limiting, and socket proxy."
+scope: skfence
+version: "3.3"
+platforms: [docker-swarm, kubernetes, rke2]
+
+# Secret keys this service needs (values resolved from secret backend)
+secrets:
+  - key: cloudflare_dns_token
+    description: "Cloudflare DNS API token for ACME DNS-01 challenge"
+    rotation_days: 90
+    required: true
+  - key: cloudflare_email
+    description: "Cloudflare account email"
+    required: true
+  - key: dashboard_user
+    description: "Traefik dashboard basic-auth username"
+    required: false
+    default: admin
+  - key: dashboard_password_hash
+    description: "Traefik dashboard bcrypt password hash (htpasswd format)"
+    required: false
+    sensitive: true
+
+# Non-sensitive config (overridden by overlay values)
+config:
+  LOG_LEVEL: INFO
+  CERT_RESOLVER: main
+  TLS_OPTIONS: default@file
+  RATE_LIMIT_AVERAGE: "100"
+  RATE_LIMIT_BURST: "50"
+  ACCESS_LOG: "true"
+  ACCESS_LOG_FORMAT: json
+
+# Docker Swarm overlay networks required by this service
+networks:
+  - cloud-edge
+  - cloud-public
+  - cloud-socket-proxy
+
+# Health check
+healthcheck:
+  url: "https://traefik.{cluster_name}.{domain}/ping"
+  interval: 30s
+  timeout: 5s
+  retries: 3
+
+# Dependencies (deployed before this service)
+depends_on: []
+
+# Services that depend on this (block removal until they are removed)
+required_by:
+  - sksec
+  - sksso
+  - skmon

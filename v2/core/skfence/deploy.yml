@@ -1,0 +1,76 @@
+---
+# skfence deploy playbook — resolves secrets and deploys Traefik
+# Works with all three secret backends (vault-file, hashicorp-vault, capauth)
+
+- name: Deploy skfence (Traefik v3 reverse proxy)
+  hosts: "{{ target_manager_group | default('swarm_managers') }}"
+  become: true
+  gather_facts: true
+  vars:
+    service: skfence
+    deploy_dir: "/opt/skstacks/{{ env }}/{{ service }}"
+
+  pre_tasks:
+    - name: Load overlay values
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../overlays/{{ env }}/values.yaml"
+      ignore_errors: false
+
+    - name: Resolve secrets from backend
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../../../secrets/{{ secret_backend }}/ansible/vault_read.yml"
+      vars:
+        resolve_scope: "{{ service }}"
+        resolve_env: "{{ env }}"
+      register: _resolved_secrets
+
+    - name: Ensure deploy directory exists
+      ansible.builtin.file:
+        path: "{{ deploy_dir }}"
+        state: directory
+        mode: "0700"
+        owner: root
+        group: root
+
+  tasks:
+    - name: Render docker-compose from template
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/docker-compose.yml.j2"
+        dest: "{{ deploy_dir }}/docker-compose.yml"
+        mode: "0600"
+        owner: root
+        group: root
+      vars:
+        secrets: "{{ _resolved_secrets }}"
+      # NOTE: rendered file contains secrets — do not store in version control
+      no_log: true
+
+    - name: Deploy stack to Docker Swarm
+      community.docker.docker_stack:
+        state: present
+        name: "skfence-{{ env }}"
+        compose:
+          - "{{ deploy_dir }}/docker-compose.yml"
+      register: _deploy_result
+
+    - name: Shred rendered compose (cleanup secrets from disk)
+      ansible.builtin.command:
+        cmd: "shred -u {{ deploy_dir }}/docker-compose.yml"
+      changed_when: true
+
+    - name: Wait for Traefik ping to respond
+      ansible.builtin.uri:
+        url: "https://traefik.{{ cluster_name }}.{{ domain }}/ping"
+        status_code: 200
+        validate_certs: true
+      register: _health
+      until: _health.status == 200
+      retries: 20
+      delay: 10
+      delegate_to: localhost
+      become: false
+
+  post_tasks:
+    - name: Report deploy result
+      ansible.builtin.debug:
+        msg: "skfence deployed successfully. Traefik {{ config.LOG_LEVEL }} at https://traefik.{{ cluster_name }}.{{ domain }}"

@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Extend the shared kubernetes/ base (namespaces, MetalLB pool, ClusterIssuer).
+# The k3d manifests/namespaces.yaml is identical to kubernetes/base/namespaces.yaml
+# but referenced here explicitly so this overlay is self-contained.
+resources:
+  - ../../../kubernetes/base
+
+commonLabels:
+  skstacks.io/env: local
+  skstacks.io/platform: k3d
+
+patches:
+  # Use the Docker bridge IP range that k3d assigns to its internal network.
+  # k3d default bridge is 172.18.0.0/16; .255.200-.250 is safely outside container IPs.
+  - path: patches/metallb-config.yaml
+  # Redirect letsencrypt-prod to the staging ACME endpoint — avoids rate limits
+  # on local dev clusters that are not internet-reachable.
+  - path: patches/cluster-issuer.yaml

@@ -1,0 +1,92 @@
+---
+# rke2-server role — main tasks
+
+- name: Create RKE2 config directory
+  ansible.builtin.file:
+    path: /etc/rancher/rke2
+    state: directory
+    mode: "0700"
+    owner: root
+    group: root
+
+- name: Determine if this is the first server (cluster init) or a joiner
+  ansible.builtin.set_fact:
+    rke2_is_init_server: "{{ inventory_hostname == groups['rke2_servers'] | first }}"
+
+- name: Get cluster token from init server (for joiners)
+  ansible.builtin.slurp:
+    src: /var/lib/rancher/rke2/server/node-token
+  register: _rke2_token_raw
+  delegate_to: "{{ groups['rke2_servers'] | first }}"
+  when: not rke2_is_init_server
+
+- name: Write RKE2 server config
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: /etc/rancher/rke2/config.yaml
+    mode: "0600"
+    owner: root
+    group: root
+  notify: Restart rke2-server
+
+- name: Write system manifests (auto-deployed by RKE2)
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/var/lib/rancher/rke2/server/manifests/{{ item | basename }}"
+    mode: "0600"
+    owner: root
+    group: root
+  loop: "{{ query('fileglob', playbook_dir + '/../../manifests/*.yaml') }}"
+  when: rke2_is_init_server
+
+- name: Download RKE2 installer
+  ansible.builtin.get_url:
+    url: https://get.rke2.io
+    dest: /tmp/rke2-install.sh
+    mode: "0750"
+  environment:
+    INSTALL_RKE2_TYPE: server
+    INSTALL_RKE2_VERSION: "{{ rke2_version }}"
+    INSTALL_RKE2_CHANNEL: "{{ rke2_channel }}"
+
+- name: Run RKE2 installer
+  ansible.builtin.shell:
+    cmd: /tmp/rke2-install.sh
+    creates: /usr/local/bin/rke2
+  environment:
+    INSTALL_RKE2_TYPE: server
+    INSTALL_RKE2_VERSION: "{{ rke2_version }}"
+
+- name: Enable and start rke2-server
+  ansible.builtin.systemd:
+    name: rke2-server
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Symlink kubectl and crictl to PATH
+  ansible.builtin.file:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    state: link
+    force: true
+  loop:
+    - { src: /var/lib/rancher/rke2/bin/kubectl, dest: /usr/local/bin/kubectl }
+    - { src: /var/lib/rancher/rke2/bin/crictl, dest: /usr/local/bin/crictl }
+    - { src: /var/lib/rancher/rke2/bin/ctr, dest: /usr/local/bin/ctr }
+
+- name: Set KUBECONFIG for root
+  ansible.builtin.lineinfile:
+    path: /root/.bashrc
+    line: 'export KUBECONFIG=/etc/rancher/rke2/rke2.yaml'
+    state: present
+
+- name: Wait for node to join (up to 5 minutes)
+  ansible.builtin.shell: >
+    /usr/local/bin/kubectl get node {{ inventory_hostname }}
+    --kubeconfig /etc/rancher/rke2/rke2.yaml 2>/dev/null
+  register: _node_check
+  until: _node_check.rc == 0
+  retries: 30
+  delay: 10
+  changed_when: false

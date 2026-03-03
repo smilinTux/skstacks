@@ -1,0 +1,47 @@
+---
+# swarm-init: Initialize Docker Swarm on the first manager node.
+# Run this role on exactly ONE manager node (the bootstrap leader).
+# After initialization, retrieve the join tokens and pass them to swarm-join.
+
+- name: Check if node is already part of a swarm
+  ansible.builtin.command: docker info --format '{{ "{{.Swarm.LocalNodeState}}" }}'
+  register: swarm_state
+  changed_when: false
+
+- name: Initialize Docker Swarm
+  ansible.builtin.command: >
+    docker swarm init
+    --advertise-addr {{ swarm_manager_ip }}
+    --listen-addr {{ swarm_manager_ip }}:2377
+  when: swarm_state.stdout != 'active'
+  register: swarm_init_result
+
+- name: Print init result
+  ansible.builtin.debug:
+    var: swarm_init_result.stdout_lines
+  when: swarm_init_result is changed
+
+# Fetch join tokens and store as host facts so swarm-join can read them.
+- name: Get manager join token
+  ansible.builtin.command: docker swarm join-token -q manager
+  register: manager_join_token
+  changed_when: false
+
+- name: Get worker join token
+  ansible.builtin.command: docker swarm join-token -q worker
+  register: worker_join_token
+  changed_when: false
+
+- name: Store join tokens as facts (accessible to other plays via hostvars)
+  ansible.builtin.set_fact:
+    swarm_manager_token: "{{ manager_join_token.stdout }}"
+    swarm_worker_token: "{{ worker_join_token.stdout }}"
+
+- name: Display swarm info
+  ansible.builtin.command: docker node ls
+  register: node_ls
+  changed_when: false
+
+- name: Print node list
+  ansible.builtin.debug:
+    var: node_ls.stdout_lines

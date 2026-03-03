@@ -1,0 +1,54 @@
+---
+# SKStacks v2 — ArgoCD App of Apps
+#
+# Deploy this single manifest to bootstrap the entire stack via GitOps.
+# ArgoCD will then manage all service Applications from the repo.
+#
+# Bootstrap:
+#   # Install ArgoCD (if not already)
+#   kubectl create namespace argocd
+#   kubectl apply -n argocd \
+#     -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+#
+#   # Apply this manifest
+#   kubectl apply -f cicd/argocd/app-of-apps.yaml
+#
+# After apply, ArgoCD auto-discovers and deploys all apps in cicd/argocd/apps/
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: skstacks-apps
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: skstacks
+    skstacks.io/managed: "true"
+  # Auto-prune apps removed from the repo
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: skstacks
+
+  source:
+    repoURL: https://CHANGEME_GIT_HOST/CHANGEME_ORG/skstacks.git
+    targetRevision: main
+    path: v2/cicd/argocd/apps
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+
+  syncPolicy:
+    automated:
+      prune: true           # Remove apps deleted from repo
+      selfHeal: true        # Re-sync on drift
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

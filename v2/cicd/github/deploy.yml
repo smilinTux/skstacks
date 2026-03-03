@@ -1,0 +1,154 @@
+---
+# SKStacks v2 — GitHub Actions: Deploy Pipeline
+#
+# Equivalent to the Forgejo deploy workflow, adapted for GitHub Actions.
+# Uses GitHub Environments for prod approval gates.
+#
+# Required GitHub secrets (set at repo or org level):
+#   ANSIBLE_SSH_PRIVATE_KEY
+#   VAULT_PASS_PROD / VAULT_PASS_STAGING / VAULT_PASS_DEV
+#   VAULT_ADDR                                  (hashicorp-vault, OIDC — no static token)
+#   KUBECONFIG_PROD, KUBECONFIG_STAGING         (K8s/RKE2)
+#   ARGOCD_SERVER, ARGOCD_TOKEN                 (ArgoCD sync)
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "v2/core/**"
+      - "v2/overlays/**"
+  workflow_dispatch:
+    inputs:
+      service:
+        description: Service name
+        required: true
+      env:
+        description: Target environment
+        required: true
+        type: choice
+        options: [dev, staging, prod]
+        default: staging
+      platform:
+        description: Platform
+        required: true
+        type: choice
+        options: [docker-swarm, rke2, kubernetes]
+        default: rke2
+      secret_backend:
+        description: Secret backend
+        required: true
+        type: choice
+        options: [vault-file, hashicorp-vault, capauth]
+        default: vault-file
+
+permissions:
+  contents: read
+  id-token: write     # for OIDC auth to Vault (no static VAULT_TOKEN needed)
+
+jobs:
+  # ── Workflow validation ────────────────────────────────────────────────────
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yamllint
+        run: pip install --quiet yamllint
+
+      - name: Lint workflow YAML
+        run: |
+          yamllint -d '{extends: relaxed, rules: {line-length: {max: 120}}}' \
+            skstacks/v2/cicd/github/deploy.yml
+
+      - name: Check for forbidden static-secret env vars
+        # Fail if AWS_SECRET_ACCESS_KEY or VAULT_TOKEN appear as env var keys.
+        # OIDC workflows must never embed these; vault-action injects VAULT_TOKEN
+        # automatically from the JWT exchange and it must not be a declared secret.
+        run: |
+          FORBIDDEN_PATTERN='^\s*(AWS_SECRET_ACCESS_KEY|VAULT_TOKEN)\s*:'
+          if grep -En "${FORBIDDEN_PATTERN}" skstacks/v2/cicd/github/deploy.yml; then
+            echo "FAIL: static secret env var found — use OIDC, not hard-coded tokens"
+            exit 1
+          fi
+          echo "PASS: no AWS_SECRET_ACCESS_KEY or VAULT_TOKEN env vars declared"
+
+  # ── Auto-detect changed services ──────────────────────────────────────────
+  changed:
+    needs: validate
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.detect.outputs.services }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Detect changed services
+        id: detect
+        run: |
+          CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'v2/core/*' \
+            | sed 's|v2/core/||' | cut -d/ -f1 | sort -u | jq -R . | jq -sc .)
+          echo "services=${CHANGED}" >> $GITHUB_OUTPUT
+
+  # ── Deploy each changed service ───────────────────────────────────────────
+  deploy:
+    needs: changed
+    if: needs.changed.outputs.services != '[]'
+    strategy:
+      matrix:
+        service: ${{ fromJson(needs.changed.outputs.services) }}
+      max-parallel: 2          # Deploy max 2 services at once
+      fail-fast: false         # Let other services continue if one fails
+
+    name: ${{ matrix.service }} → ${{ inputs.env || 'staging' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env || 'staging' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install ansible-core hvac pyyaml
+
+      # Vault OIDC auth (no static VAULT_TOKEN — GitHub OIDC JWT)
+      - name: Authenticate to Vault (OIDC)
+        if: inputs.secret_backend == 'hashicorp-vault'
+        uses: hashicorp/vault-action@v3
+        with:
+          url: ${{ secrets.VAULT_ADDR }}
+          method: jwt
+          role: skstacks-github-actions
+          secrets: |
+            kv/data/skstacks/${{ inputs.env }}/ci/deploy_ssh_key | DEPLOY_SSH_KEY ;
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.ANSIBLE_SSH_PRIVATE_KEY || env.DEPLOY_SSH_KEY }}" \
+            > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Deploy
+        env:
+          SKSTACKS_SECRET_BACKEND: ${{ inputs.secret_backend || 'vault-file' }}
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          # VAULT_TOKEN is injected automatically by vault-action (OIDC JWT) — no static token
+          ANSIBLE_HOST_KEY_CHECKING: "False"
+        run: |
+          ansible-playbook \
+            -i v2/platform/${{ inputs.platform || 'rke2' }}/ansible/inventory.yml \
+            -e env=${{ inputs.env || 'staging' }} \
+            -e service=${{ matrix.service }} \
+            v2/core/${{ matrix.service }}/deploy.yml
+
+      - name: Post deploy health check
+        run: |
+          python3 v2/scripts/healthcheck.py \
+            --service ${{ matrix.service }} \
+            --env ${{ inputs.env || 'staging' }}

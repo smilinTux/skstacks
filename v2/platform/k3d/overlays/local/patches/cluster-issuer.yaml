@@ -1,0 +1,18 @@
+---
+# local k3d: redirect letsencrypt-prod issuer to the staging ACME server.
+# Local clusters are typically not internet-reachable, so HTTP-01 challenges
+# would fail anyway. Using the staging URL prevents wasted rate-limit quota.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: dev-certs@CHANGEME_DOMAIN
+    privateKeySecretRef:
+      name: letsencrypt-staging-account-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: nginx

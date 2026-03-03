@@ -1,0 +1,44 @@
+---
+# swarm-join: Join additional manager or worker nodes to an existing swarm.
+# Expects the following variables (set by swarm-init or passed explicitly):
+#   swarm_manager_ip        — advertise address of the bootstrap manager
+#   swarm_manager_token     — join token for manager nodes
+#   swarm_worker_token      — join token for worker nodes
+#   swarm_node_role         — 'manager' or 'worker' (default: worker)
+
+- name: Check if node is already part of a swarm
+  ansible.builtin.command: docker info --format '{{ "{{.Swarm.LocalNodeState}}" }}'
+  register: swarm_state
+  changed_when: false
+
+- name: Resolve join token based on role
+  ansible.builtin.set_fact:
+    _join_token: >-
+      {{
+        swarm_manager_token
+        if (swarm_node_role | default('worker')) == 'manager'
+        else swarm_worker_token
+      }}
+
+- name: Join swarm as {{ swarm_node_role | default('worker') }}
+  ansible.builtin.command: >
+    docker swarm join
+    --token {{ _join_token }}
+    {{ swarm_manager_ip }}:2377
+  when: swarm_state.stdout != 'active'
+  register: swarm_join_result
+
+- name: Print join result
+  ansible.builtin.debug:
+    var: swarm_join_result.stdout_lines
+  when: swarm_join_result is changed
+
+- name: Verify node is active
+  ansible.builtin.command: docker info --format '{{ "{{.Swarm.LocalNodeState}}" }}'
+  register: post_join_state
+  changed_when: false
+  failed_when: post_join_state.stdout != 'active'
+
+- name: Report node state
+  ansible.builtin.debug:
+    msg: "Node {{ inventory_hostname }} swarm state: {{ post_join_state.stdout }}"

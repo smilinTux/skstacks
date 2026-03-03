@@ -1,0 +1,56 @@
+# k3d SimpleConfig — local development cluster
+# https://k3d.io/v5.6.0/usage/configfile/
+#
+# 1 server, 2 agents — mirrors a minimal real cluster topology.
+# Ports 80/443 are mapped to the load balancer container so ingress-nginx
+# works identically to a bare-metal cluster.
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+
+metadata:
+  name: skstacks  # overridden by --name flag in scripts/create.sh
+
+servers: 1
+agents: 2
+
+ports:
+  # Map host 80/443 → LB container 80/443 so ingress-nginx Just Works™
+  - port: "80:80"
+    nodeFilters:
+      - loadbalancer
+  - port: "443:443"
+    nodeFilters:
+      - loadbalancer
+
+options:
+  k3s:
+    extraArgs:
+      # Disable bundled Traefik — SKStacks deploys ingress-nginx via manifests/
+      - arg: --disable=traefik
+        nodeFilters:
+          - server:*
+      # Disable Klipper ServiceLB — we use MetalLB
+      - arg: --disable=servicelb
+        nodeFilters:
+          - server:*
+    nodeLabels:
+      - label: skstacks.io/env=local
+        nodeFilters:
+          - server:*
+          - agent:*
+      - label: skstacks.io/managed=true
+        nodeFilters:
+          - server:*
+          - agent:*
+      - label: skstacks.io/platform=k3d
+        nodeFilters:
+          - server:*
+          - agent:*
+
+registries:
+  # Uncomment to wire a local registry mirror (e.g. distribution or registry2)
+  # config: |
+  #   mirrors:
+  #     "docker.io":
+  #       endpoint:
+  #         - http://registry.localhost:5000

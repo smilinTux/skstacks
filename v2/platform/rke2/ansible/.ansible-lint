@@ -1,0 +1,25 @@
+---
+# ansible-lint configuration for skstacks/v2/platform/rke2/ansible
+# strict: true promotes all warnings to errors, so the CI fails on WARN+
+strict: true
+
+# Production profile: the most comprehensive rule set.
+# Covers all lower profiles (min, basic, moderate, safety, shared).
+profile: production
+
+# Excluded paths — never lint generated/third-party content.
+exclude_paths:
+  - molecule/
+
+# warn_list is intentionally empty: every finding is an error (strict mode
+# already enforces this, but being explicit avoids confusion if strict is
+# toggled off locally during development).
+warn_list: []
+
+# Rules skipped with justification:
+# skip_list:
+#   - yaml[truthy]        # uncomment if YAML booleans style becomes noisy
+#   - no-changed-when     # uncomment if tasks with no change detection pile up
+
+# Offline mode: use already-installed collections rather than reaching out.
+offline: false

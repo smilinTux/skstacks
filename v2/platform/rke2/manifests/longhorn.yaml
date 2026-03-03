@@ -1,0 +1,85 @@
+# Longhorn — distributed block storage for bare-metal K8s/RKE2
+# Auto-deployed by RKE2 from /var/lib/rancher/rke2/server/manifests/
+#
+# Prerequisites on each node (verified by scripts/longhorn-preflight.sh):
+#   apt install open-iscsi && systemctl enable --now iscsid     # Debian/Ubuntu
+#   dnf install iscsi-initiator-utils && systemctl enable --now iscsid  # RHEL/Rocky
+#
+# Minimum disk per worker node: 200 GB free on /var/lib/longhorn
+# (replica factor 3 → 1 GB usable = 3 GB raw across 3 nodes)
+#
+# Longhorn UI: https://longhorn.CHANGEME_CLUSTER_DOMAIN  (basic-auth protected)
+# Default StorageClass: longhorn (replaces local-path)
+#
+# Post-deploy: create the basic-auth secret before first access:
+#   htpasswd -c /tmp/auth admin && kubectl -n longhorn-system \
+#     create secret generic longhorn-basic-auth --from-file=auth=/tmp/auth
+
+---
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: longhorn
+  namespace: kube-system
+spec:
+  repo: https://charts.longhorn.io
+  chart: longhorn
+  version: "1.6.2"
+  targetNamespace: longhorn-system
+  createNamespace: true
+  valuesContent: |-
+    defaultSettings:
+      defaultReplicaCount: 3
+      defaultDataPath: /var/lib/longhorn
+      storageMinimalAvailablePercentage: 10
+      storageOverProvisioningPercentage: 200
+      upgradeChecker: false
+      autoSalvage: true
+      nodeDownPodDeletionPolicy: delete-both-statefulset-and-deployment-pod
+      backupTarget: ""           # Set to s3://your-bucket or nfs://server/path
+      backupTargetCredentialSecret: ""
+      taintToleration: ""
+      systemManagedComponentsNodeSelector: ""
+
+    persistence:
+      defaultClass: true
+      defaultClassReplicaCount: 3
+      reclaimPolicy: Retain      # Keep volumes on PVC delete
+      defaultFsType: ext4
+
+    longhornManager:
+      tolerations: []
+      nodeSelector: {}
+      priorityClass: system-node-critical
+
+    longhornDriver:
+      tolerations: []
+      nodeSelector: {}
+      priorityClass: system-node-critical
+
+    longhornUI:
+      replicas: 2
+      tolerations: []
+      nodeSelector: {}
+      priorityClass: ""
+
+    # Longhorn UI Ingress — served by ingress-nginx, TLS via cert-manager
+    ingress:
+      enabled: true
+      ingressClassName: nginx
+      host: longhorn.CHANGEME_CLUSTER_DOMAIN   # replace with cluster_domain from inventory
+      tls: true
+      tlsSecret: longhorn-tls
+      annotations:
+        cert-manager.io/cluster-issuer: letsencrypt-prod
+        nginx.ingress.kubernetes.io/auth-type: basic
+        nginx.ingress.kubernetes.io/auth-secret: longhorn-basic-auth
+        nginx.ingress.kubernetes.io/auth-realm: "Longhorn — authentication required"
+        nginx.ingress.kubernetes.io/proxy-body-size: "10000m"
+        nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+
+    metrics:
+      serviceMonitor:
+        enabled: true
+        additionalLabels: {}
+        interval: 30s

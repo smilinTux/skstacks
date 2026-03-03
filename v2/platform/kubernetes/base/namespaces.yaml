@@ -1,0 +1,25 @@
+---
+# Application-layer namespaces managed by Kustomize.
+# Helm-managed namespaces (cert-manager, metallb-system, longhorn-system,
+# external-secrets) are created by their respective HelmChart manifests.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: skfence
+  labels:
+    skstacks.io/tier: core
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: skseed
+  labels:
+    skstacks.io/tier: ai
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sksec
+  labels:
+    skstacks.io/tier: security

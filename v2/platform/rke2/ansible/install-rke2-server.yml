@@ -1,0 +1,59 @@
+---
+# RKE2 Server Node Installation
+# ================================
+# Installs RKE2 server (control-plane + etcd) on target nodes.
+#
+# First node only:
+#   ansible-playbook -i inventory.yml install-rke2-server.yml --limit rke2_servers[0]
+#
+# Join remaining servers (wait for first to be Ready):
+#   ansible-playbook -i inventory.yml install-rke2-server.yml --limit rke2_servers[1:]
+
+- name: Install RKE2 server nodes
+  hosts: rke2_servers
+  become: true
+  serial: 1              # One node at a time to preserve etcd quorum during upgrades
+  gather_facts: true
+
+  pre_tasks:
+    - name: Verify OS family
+      ansible.builtin.fail:
+        msg: "Unsupported OS: {{ ansible_distribution }}. Use RHEL/Rocky/Alma/Ubuntu/Debian."
+      when: ansible_os_family not in ["RedHat", "Debian"]
+
+    - name: Check minimum kernel version
+      ansible.builtin.fail:
+        msg: "Kernel {{ ansible_kernel }} is too old. Minimum: 5.4"
+      when: ansible_kernel is version('5.4', '<')
+
+  roles:
+    - role: rke2-common
+    - role: rke2-server
+
+  tasks:
+    - name: Wait for kube-apiserver to be healthy
+      ansible.builtin.uri:
+        url: "https://{{ rke2_vip_ip }}:6443/healthz"
+        validate_certs: false
+        status_code: 200
+      register: api_health
+      until: api_health.status == 200
+      retries: 30
+      delay: 10
+      when: inventory_hostname == groups['rke2_servers'] | first
+
+    - name: Fetch kubeconfig to local workstation
+      ansible.builtin.fetch:
+        src: /etc/rancher/rke2/rke2.yaml
+        dest: "~/.kube/{{ cluster_name }}.yaml"
+        flat: true
+      when: inventory_hostname == groups['rke2_servers'] | first
+
+    - name: Patch kubeconfig server address to VIP
+      ansible.builtin.replace:
+        path: "~/.kube/{{ cluster_name }}.yaml"
+        regexp: 'server: https://127.0.0.1:6443'
+        replace: "server: https://{{ rke2_vip_ip }}:6443"
+      delegate_to: localhost
+      become: false
+      when: inventory_hostname == groups['rke2_servers'] | first

@@ -1,0 +1,88 @@
+# External Secrets Operator — ArgoCD Application (Helm source)
+# coord task: 55d31c18
+#
+# Deploys ESO via ArgoCD on any Kubernetes cluster.
+# RKE2 clusters: use platform/rke2/manifests/external-secrets.yaml instead
+# (Rancher HelmChart CRD is handled by the RKE2 controller automatically).
+#
+# Apply:
+#   kubectl apply -f platform/kubernetes/external-secrets/helmchart.yaml
+#
+# Manual Helm install (no ArgoCD):
+#   helm repo add external-secrets https://charts.external-secrets.io
+#   helm upgrade --install external-secrets external-secrets/external-secrets \
+#     --version 0.9.16 \
+#     --namespace external-secrets --create-namespace \
+#     --set installCRDs=true \
+#     --set replicaCount=2 \
+#     --set webhook.replicaCount=2 \
+#     --set certController.replicaCount=2 \
+#     --set serviceMonitor.enabled=true
+#
+# After install, apply cluster-secret-store.yaml then the ExternalSecret examples.
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: external-secrets
+  namespace: argocd
+  annotations:
+    # Deploy ESO before ClusterSecretStore and ExternalSecret resources
+    argocd.argoproj.io/sync-wave: "-10"
+spec:
+  project: skstacks
+  source:
+    repoURL: https://charts.external-secrets.io
+    chart: external-secrets
+    targetRevision: "0.9.16"
+    helm:
+      values: |
+        installCRDs: true
+        replicaCount: 2
+
+        resources:
+          requests:
+            memory: 64Mi
+            cpu: 10m
+          limits:
+            memory: 256Mi
+            cpu: 100m
+
+        webhook:
+          replicaCount: 2
+
+        certController:
+          replicaCount: 2
+
+        serviceMonitor:
+          enabled: true
+
+        # Pod anti-affinity — spread across nodes for HA
+        affinity:
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                podAffinityTerm:
+                  labelSelector:
+                    matchLabels:
+                      app.kubernetes.io/name: external-secrets
+                  topologyKey: kubernetes.io/hostname
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: external-secrets
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 2m

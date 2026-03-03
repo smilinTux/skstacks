@@ -1,0 +1,12 @@
+[Unit]
+Description=Expose SKComm API via Tailscale Serve
+After=skcomm-api.service tailscaled.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/tailscale serve --bg --https=443 http://127.0.0.1:9384
+ExecStop=/usr/bin/tailscale serve off
+
+[Install]
+WantedBy=default.target

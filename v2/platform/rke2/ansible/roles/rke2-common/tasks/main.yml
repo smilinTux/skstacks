@@ -1,0 +1,150 @@
+---
+# rke2-common role — prerequisites applied to ALL nodes (server + agent)
+# Covers: OS hardening, firewall, kernel params, swap, DNS, prereq packages.
+
+# ── Kernel parameters ────────────────────────────────────────────────────────
+
+- name: Apply CIS/K8s required sysctl params
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    state: present
+    reload: true
+  loop:
+    - { key: net.ipv4.ip_forward, value: "1" }
+    - { key: net.bridge.bridge-nf-call-iptables, value: "1" }
+    - { key: net.bridge.bridge-nf-call-ip6tables, value: "1" }
+    - { key: kernel.panic, value: "10" }
+    - { key: kernel.panic_on_oops, value: "1" }
+    - { key: vm.overcommit_memory, value: "1" }
+    - { key: vm.panic_on_oom, value: "0" }
+    - { key: fs.inotify.max_user_instances, value: "8192" }
+    - { key: fs.inotify.max_user_watches, value: "524288" }
+
+- name: Load required kernel modules
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - br_netfilter
+    - overlay
+
+- name: Persist kernel modules
+  ansible.builtin.copy:
+    content: |
+      br_netfilter
+      overlay
+    dest: /etc/modules-load.d/rke2.conf
+    mode: "0644"
+
+# ── Swap ─────────────────────────────────────────────────────────────────────
+
+- name: Disable swap
+  ansible.builtin.command: swapoff -a
+  changed_when: false
+
+- name: Remove swap from /etc/fstab
+  ansible.builtin.replace:
+    path: /etc/fstab
+    regexp: '^([^#].*\s+swap\s+.*)$'
+    replace: '#\1'
+
+# ── Packages ─────────────────────────────────────────────────────────────────
+
+- name: Install prerequisite packages (Debian/Ubuntu)
+  ansible.builtin.apt:
+    name:
+      - curl
+      - wget
+      - tar
+      - gzip
+      - open-iscsi    # required by Longhorn
+      - nfs-common    # for NFS-backed PVs
+      - iptables
+      - ipvsadm
+      - conntrack
+      - socat
+      - jq
+    state: present
+    update_cache: true
+  when: ansible_os_family == "Debian"
+
+- name: Install prerequisite packages (RHEL/Rocky/Alma)
+  ansible.builtin.dnf:
+    name:
+      - curl
+      - wget
+      - tar
+      - gzip
+      - iscsi-initiator-utils
+      - nfs-utils
+      - iptables
+      - ipvsadm
+      - conntrack-tools
+      - socat
+      - jq
+    state: present
+  when: ansible_os_family == "RedHat"
+
+# ── Firewall ──────────────────────────────────────────────────────────────────
+
+- name: Open RKE2 required ports (firewalld — RHEL)
+  ansible.posix.firewalld:
+    port: "{{ item }}"
+    state: enabled
+    permanent: true
+    immediate: true
+  loop:
+    - "6443/tcp"   # kube-apiserver
+    - "9345/tcp"   # RKE2 supervisor API (join)
+    - "2379/tcp"   # etcd client
+    - "2380/tcp"   # etcd peer
+    - "10250/tcp"  # kubelet
+    - "10255/tcp"  # kubelet read-only (optional)
+    - "8472/udp"   # Canal VXLAN
+    - "51820/udp"  # WireGuard (if Calico WG)
+    - "4789/udp"   # VXLAN fallback
+    - "9796/tcp"   # node-exporter (Prometheus)
+    - "7946/tcp"   # MetalLB memberlist
+    - "7946/udp"   # MetalLLB memberlist
+  when: ansible_os_family == "RedHat"
+  ignore_errors: "{{ ansible_check_mode }}"
+
+# ── SELinux / AppArmor ────────────────────────────────────────────────────────
+
+- name: Set SELinux to permissive (RKE2 manages its own policies)
+  ansible.posix.selinux:
+    policy: targeted
+    state: permissive
+  when: ansible_os_family == "RedHat"
+  ignore_errors: true
+
+# ── Hostname ──────────────────────────────────────────────────────────────────
+
+- name: Set hostname
+  ansible.builtin.hostname:
+    name: "{{ inventory_hostname }}"
+
+- name: Ensure hostname is in /etc/hosts
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    line: "{{ ansible_default_ipv4.address }} {{ inventory_hostname }}"
+    regexp: "{{ inventory_hostname }}"
+    state: present
+
+# ── SSH hardening ─────────────────────────────────────────────────────────────
+
+- name: Harden SSH configuration
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    state: present
+  loop:
+    - { regexp: '^PermitRootLogin', line: 'PermitRootLogin no' }
+    - { regexp: '^PasswordAuthentication', line: 'PasswordAuthentication no' }
+    - { regexp: '^X11Forwarding', line: 'X11Forwarding no' }
+    - { regexp: '^MaxAuthTries', line: 'MaxAuthTries 3' }
+    - { regexp: '^ClientAliveInterval', line: 'ClientAliveInterval 300' }
+    - { regexp: '^ClientAliveCountMax', line: 'ClientAliveCountMax 2' }
+  notify: Restart sshd

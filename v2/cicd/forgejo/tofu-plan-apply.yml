@@ -1,0 +1,224 @@
+---
+# SKStacks v2 — Forgejo Actions: OpenTofu Plan / Apply
+#
+# Triggered on PR (plan only) and push to main (plan + apply).
+# Uses drift detection to avoid unnecessary applies.
+#
+# Required repository secrets:
+#   MINIO_ACCESS_KEY         — S3/MinIO state backend credentials
+#   MINIO_SECRET_KEY
+#   HCLOUD_TOKEN             — Hetzner Cloud API token    (if using hetzner-cluster)
+#   PROXMOX_API_TOKEN        — Proxmox API token          (if using proxmox-cluster)
+#   CLOUDFLARE_API_TOKEN     — Cloudflare DNS API token
+#   CLOUDFLARE_ZONE_ID       — Cloudflare zone ID
+#   SSH_PUBLIC_KEY           — SSH public key for node injection
+#   VAULT_ADDR               — HashiCorp Vault URL        (hashicorp-vault backend only)
+#   VAULT_ROLE_ID            — Vault AppRole role_id
+#   VAULT_SECRET_ID          — Vault AppRole secret_id
+
+name: OpenTofu Plan & Apply
+
+on:
+  pull_request:
+    paths:
+      - "v2/tofu/**"
+    branches: [main]
+  push:
+    paths:
+      - "v2/tofu/**"
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      example:
+        description: "Example to target"
+        required: true
+        type: choice
+        options:
+          - hetzner-rke2
+          - proxmox-swarm
+      env:
+        description: "Environment"
+        required: true
+        type: choice
+        options: [prod, staging, dev]
+        default: staging
+      action:
+        description: "Action to perform"
+        required: true
+        type: choice
+        options: [plan, apply, destroy]
+        default: plan
+      secret_backend:
+        description: "Secret backend"
+        required: true
+        type: choice
+        options: [vault-file, hashicorp-vault, capauth]
+        default: vault-file
+
+concurrency:
+  group: tofu-${{ inputs.example || 'auto' }}-${{ inputs.env || 'staging' }}
+  cancel-in-progress: false    # Never cancel in-flight infrastructure changes
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TOFU_VERSION: "1.8.0"
+
+jobs:
+  detect-changes:
+    name: Detect changed examples
+    runs-on: ubuntu-latest
+    outputs:
+      examples: ${{ steps.detect.outputs.examples }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Detect changed tofu examples
+        id: detect
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "examples=[\"${{ inputs.example }}\"]" >> $GITHUB_OUTPUT
+          else
+            CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'v2/tofu/examples/*' \
+              | sed 's|v2/tofu/examples/||' | cut -d/ -f1 | sort -u \
+              | jq -R . | jq -sc .)
+            echo "examples=${CHANGED}" >> $GITHUB_OUTPUT
+          fi
+
+  tofu:
+    name: tofu ${{ matrix.example }} (${{ inputs.action || (github.event_name == 'pull_request' && 'plan') || 'apply' }})
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.examples != '[]'
+    environment: ${{ inputs.env || 'staging' }}
+    strategy:
+      matrix:
+        example: ${{ fromJson(needs.detect-changes.outputs.examples) }}
+      max-parallel: 1         # Never apply two examples simultaneously
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OpenTofu
+        run: |
+          curl -fsSL https://get.opentofu.org/install-opentofu.sh -o install.sh
+          chmod +x install.sh
+          ./install.sh --install-method standalone --opentofu-version ${{ env.TOFU_VERSION }}
+          rm install.sh
+          tofu version
+
+      - name: Install tflint
+        run: |
+          curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+
+      # ── Secret backend: vault-file ─────────────────────────────────────────
+      - name: Export vault-file secrets
+        if: (inputs.secret_backend || 'vault-file') == 'vault-file'
+        env:
+          VAULT_PASS: ${{ secrets.VAULT_PASS_PROD }}
+        run: |
+          mkdir -p ~/.vault_pass_env
+          echo "$VAULT_PASS" > ~/.vault_pass_env/.${{ inputs.env || 'staging' }}_vault_pass
+          chmod 600 ~/.vault_pass_env/.*
+          # Export cloud credentials as TF_VAR_*
+          echo "TF_VAR_hcloud_token=${{ secrets.HCLOUD_TOKEN }}" >> $GITHUB_ENV
+          echo "TF_VAR_cloudflare_api_token=${{ secrets.CLOUDFLARE_API_TOKEN }}" >> $GITHUB_ENV
+          echo "TF_VAR_cloudflare_zone_id=${{ secrets.CLOUDFLARE_ZONE_ID }}" >> $GITHUB_ENV
+          echo "TF_VAR_ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" >> $GITHUB_ENV
+          echo "TF_VAR_proxmox_api_token=${{ secrets.PROXMOX_API_TOKEN }}" >> $GITHUB_ENV
+
+      # ── Secret backend: hashicorp-vault ────────────────────────────────────
+      - name: Auth to HashiCorp Vault and export creds
+        if: inputs.secret_backend == 'hashicorp-vault'
+        uses: hashicorp/vault-action@v3
+        with:
+          url: ${{ secrets.VAULT_ADDR }}
+          method: approle
+          roleId: ${{ secrets.VAULT_ROLE_ID }}
+          secretId: ${{ secrets.VAULT_SECRET_ID }}
+          secrets: |
+            kv/data/skstacks/${{ inputs.env }}/tofu/hetzner api_token | TF_VAR_hcloud_token ;
+            kv/data/skstacks/${{ inputs.env }}/tofu/cloudflare api_token | TF_VAR_cloudflare_api_token ;
+            kv/data/skstacks/${{ inputs.env }}/tofu/cloudflare zone_id | TF_VAR_cloudflare_zone_id ;
+            kv/data/skstacks/${{ inputs.env }}/tofu/state access_key | MINIO_ACCESS_KEY ;
+            kv/data/skstacks/${{ inputs.env }}/tofu/state secret_key | MINIO_SECRET_KEY ;
+
+      # ── Configure state backend ────────────────────────────────────────────
+      - name: Configure state backend env vars
+        run: |
+          echo "AWS_ACCESS_KEY_ID=${{ secrets.MINIO_ACCESS_KEY || env.MINIO_ACCESS_KEY }}" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=${{ secrets.MINIO_SECRET_KEY || env.MINIO_SECRET_KEY }}" >> $GITHUB_ENV
+
+      # ── Lint ───────────────────────────────────────────────────────────────
+      - name: Lint
+        working-directory: v2/tofu/examples/${{ matrix.example }}
+        run: |
+          tflint --init
+          tflint --format=compact
+
+      # ── Init ───────────────────────────────────────────────────────────────
+      - name: tofu init
+        working-directory: v2/tofu/examples/${{ matrix.example }}
+        run: |
+          tofu init \
+            -backend-config="bucket=skstacks-tofu-state" \
+            -backend-config="key=${{ inputs.env || 'staging' }}/${{ matrix.example }}/terraform.tfstate" \
+            -backend-config="endpoint=${{ secrets.MINIO_ENDPOINT }}" \
+            -backend-config="force_path_style=true" \
+            -backend-config="skip_credentials_validation=true" \
+            -backend-config="skip_metadata_api_check=true" \
+            -backend-config="skip_region_validation=true" \
+            -backend-config="region=us-east-1"
+
+      # ── Plan ───────────────────────────────────────────────────────────────
+      - name: tofu plan
+        id: plan
+        working-directory: v2/tofu/examples/${{ matrix.example }}
+        run: |
+          tofu plan \
+            -var-file="${{ inputs.env || 'staging' }}.tfvars" \
+            -out=tfplan \
+            -detailed-exitcode 2>&1 | tee plan.txt
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
+        continue-on-error: true   # exitcode 2 = changes pending (not an error)
+
+      - name: Post plan to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('v2/tofu/examples/${{ matrix.example }}/plan.txt', 'utf8');
+            const truncated = plan.length > 60000 ? plan.slice(0, 60000) + '\n...(truncated)' : plan;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `### OpenTofu Plan — \`${{ matrix.example }}\` (\`${{ inputs.env || 'staging' }}\`)\n\`\`\`hcl\n${truncated}\n\`\`\``
+            });
+
+      # ── Apply (only on push to main or explicit workflow_dispatch apply) ───
+      - name: tofu apply
+        if: |
+          (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+          (github.event_name == 'workflow_dispatch' && inputs.action == 'apply')
+        working-directory: v2/tofu/examples/${{ matrix.example }}
+        run: tofu apply -auto-approve tfplan
+
+      # ── Destroy (only on explicit dispatch) ───────────────────────────────
+      - name: tofu destroy
+        if: github.event_name == 'workflow_dispatch' && inputs.action == 'destroy'
+        working-directory: v2/tofu/examples/${{ matrix.example }}
+        run: |
+          echo "⚠️  DESTROY requested. Waiting 10s — cancel this job to abort."
+          sleep 10
+          tofu destroy -auto-approve \
+            -var-file="${{ inputs.env || 'staging' }}.tfvars"
+
+      - name: Upload plan artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tofu-plan-${{ matrix.example }}-${{ inputs.env || 'staging' }}
+          path: v2/tofu/examples/${{ matrix.example }}/plan.txt
+          retention-days: 30

@@ -1,0 +1,31 @@
+# SKStacks v2 — Staging overlay values
+
+env: staging
+cluster_name: CHANGEME_CLUSTER_NAME
+domain: staging.CHANGEME_DOMAIN
+
+vip_ip: "CHANGEME_STAGING_VIP_IP"
+vip_interface: "CHANGEME_IFACE"
+metallb_pool: "CHANGEME_STAGING_LB_POOL"
+
+swarm_networks:
+  cloud_edge:    "172.16.93.0/24"
+  cloud_public:  "172.16.201.0/24"
+  socket_proxy:  "172.16.26.0/24"
+
+cert_resolver: letsencrypt-staging         # staging cert — not trusted by browsers
+acme_email: CHANGEME_EMAIL
+
+skfence:
+  replicas: 1                              # single replica in staging
+  resources:
+    limits:   { cpu: "500m", memory: "256Mi" }
+    requests: { cpu: "50m",  memory: "32Mi" }
+
+sksso:
+  replicas: 1
+
+backup_target: s3://CHANGEME_STAGING_BUCKET/CHANGEME_PREFIX
+backup_schedule: "0 4 * * *"
+
+secret_backend: vault-file

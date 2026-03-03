@@ -1,0 +1,43 @@
+# cert-manager — TLS certificate automation
+# Auto-deployed by RKE2 from /var/lib/rancher/rke2/server/manifests/
+#
+# Step 1: This file deploys the cert-manager controller (CRDs via installCRDs: true).
+# Step 2: cert-manager-issuers.yaml (in this dir) deploys ClusterIssuer for:
+#           - letsencrypt-staging  (testing, untrusted certs, no rate limits)
+#           - letsencrypt-prod     (trusted certs, strict rate limits)
+#         The helm-controller retries Step 2 until cert-manager CRDs are available.
+#
+# Tuning: see helm/cert-manager-values.yaml for all configurable defaults.
+# Vault PKI issuer: configure in secrets/hashicorp_vault/ integration.
+
+---
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: cert-manager
+  namespace: kube-system
+spec:
+  repo: https://charts.jetstack.io
+  chart: cert-manager
+  version: "v1.14.5"
+  targetNamespace: cert-manager
+  createNamespace: true
+  valuesContent: |-
+    installCRDs: true
+    replicaCount: 2
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+    prometheus:
+      enabled: true
+      servicemonitor:
+        enabled: true
+    # Webhook HA
+    webhook:
+      replicaCount: 2
+    cainjector:
+      replicaCount: 2

@@ -1,0 +1,71 @@
+---
+# ArgoCD AppProject — skstacks
+#
+# Defines RBAC boundaries for all SKStacks applications.
+# Core services (skfence, sksec, etc.) deploy cluster-scoped resources.
+# App services deploy only to their own namespaces.
+
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: skstacks
+  namespace: argocd
+  labels:
+    skstacks.io/managed: "true"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: SKStacks sovereign infrastructure stack
+
+  # Only this git repo is a valid source
+  sourceRepos:
+    - "https://CHANGEME_GIT_HOST/CHANGEME_ORG/skstacks.git"
+    - "https://charts.jetstack.io"              # cert-manager Helm
+    - "https://helm.releases.hashicorp.com"     # Vault Helm
+    - "https://metallb.github.io/metallb"       # MetalLB
+    - "https://charts.longhorn.io"              # Longhorn
+
+  destinations:
+    # Core services may deploy to any namespace
+    - namespace: "*"
+      server: https://kubernetes.default.svc
+
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: ""
+      kind: PersistentVolume
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+    - group: networking.k8s.io
+      kind: IngressClass
+    - group: storage.k8s.io
+      kind: StorageClass
+    - group: external-secrets.io
+      kind: ClusterSecretStore
+    - group: cert-manager.io
+      kind: ClusterIssuer
+
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+
+  # Roles for human operators
+  roles:
+    - name: admin
+      description: Full access to all SKStacks applications
+      policies:
+        - "p, proj:skstacks:admin, applications, *, skstacks/*, allow"
+      groups:
+        - skstacks-admins
+
+    - name: readonly
+      description: Read-only access (monitoring, auditing)
+      policies:
+        - "p, proj:skstacks:readonly, applications, get, skstacks/*, allow"
+      groups:
+        - skstacks-viewers

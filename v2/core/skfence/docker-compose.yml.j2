@@ -1,0 +1,116 @@
+{#
+  skfence — Traefik v3 reverse proxy
+  Rendered by Ansible using resolved secrets from {{ secret_backend }}
+  NEVER store the rendered output — it contains secrets in environment variables.
+#}
+---
+services:
+  traefik:
+    image: traefik:v3.3
+    command:
+      - "--log.level={{ config.LOG_LEVEL | default('INFO') }}"
+      - "--api.dashboard=true"
+      - "--api.insecure=false"
+      - "--providers.docker.swarmMode=true"
+      - "--providers.docker.exposedByDefault=false"
+      - "--providers.docker.endpoint=tcp://socket-proxy:2375"
+      - "--providers.file.directory=/etc/traefik/dynamic"
+      - "--providers.file.watch=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.websecure.http.tls.certresolver={{ config.CERT_RESOLVER | default('main') }}"
+      - "--certificatesresolvers.main.acme.email={{ secrets.cloudflare_email }}"
+      - "--certificatesresolvers.main.acme.storage=/certs/acme.json"
+      - "--certificatesresolvers.main.acme.dnschallenge.provider=cloudflare"
+      - "--certificatesresolvers.main.acme.dnschallenge.resolvers=1.1.1.1:53,1.0.0.1:53"
+      - "--metrics.prometheus=true"
+      - "--metrics.prometheus.addEntryPointsLabels=true"
+      - "--metrics.prometheus.addServicesLabels=true"
+      - "--accesslog={{ config.ACCESS_LOG | default('true') }}"
+      - "--accesslog.format={{ config.ACCESS_LOG_FORMAT | default('json') }}"
+      - "--ping=true"
+    environment:
+      CLOUDFLARE_EMAIL: "{{ secrets.cloudflare_email }}"
+      CLOUDFLARE_DNS_API_TOKEN: "{{ secrets.cloudflare_dns_token }}"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - traefik_certs:/certs
+      - /etc/traefik/dynamic:/etc/traefik/dynamic:ro
+    networks:
+      - cloud-edge-{{ env }}
+      - cloud-public-{{ env }}
+      - cloud-socket-proxy-{{ env }}
+    deploy:
+      mode: replicated
+      replicas: {{ replicas | default(2) }}
+      update_config:
+        parallelism: 1
+        delay: 15s
+        order: start-first
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      labels:
+        # Traefik dashboard
+        - "traefik.enable=true"
+        - "traefik.http.routers.traefik-dashboard.rule=Host(`traefik.{{ cluster_name }}.{{ domain }}`)"
+        - "traefik.http.routers.traefik-dashboard.service=api@internal"
+        - "traefik.http.routers.traefik-dashboard.tls.certresolver={{ config.CERT_RESOLVER }}"
+        - "traefik.http.routers.traefik-dashboard.middlewares=dashboard-auth"
+        - "traefik.http.middlewares.dashboard-auth.basicauth.users={{ secrets.dashboard_user }}:{{ secrets.dashboard_password_hash }}"
+        - "traefik.http.middlewares.ratelimit.ratelimit.average={{ config.RATE_LIMIT_AVERAGE }}"
+        - "traefik.http.middlewares.ratelimit.ratelimit.burst={{ config.RATE_LIMIT_BURST }}"
+      resources:
+        limits:
+          memory: "{{ resources.limits.memory | default('256M') }}"
+          cpus: "{{ resources.limits.cpu | default('0.5') }}"
+        reservations:
+          memory: "{{ resources.requests.memory | default('64M') }}"
+          cpus: "{{ resources.requests.cpu | default('0.1') }}"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  socket-proxy:
+    image: lscr.io/linuxserver/socket-proxy:latest
+    environment:
+      CONTAINERS: 1
+      SERVICES: 1
+      TASKS: 1
+      NETWORKS: 1
+      LOG_LEVEL: warning
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - cloud-socket-proxy-{{ env }}
+    deploy:
+      mode: global          # One per node
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+
+volumes:
+  traefik_certs:
+    driver: local
+
+networks:
+  cloud-edge-{{ env }}:
+    external: true
+  cloud-public-{{ env }}:
+    external: true
+  cloud-socket-proxy-{{ env }}:
+    external: true

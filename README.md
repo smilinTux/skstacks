@@ -1,11 +1,30 @@
 # SKStacks — Sovereign Infrastructure Configs
 
 Infrastructure-as-code configurations for the SKWorld sovereign stack.
-Each subdirectory is a self-contained service deployment.
 
 ---
 
-## Services
+## Versions
+
+| Version | Status | Description |
+|---------|--------|-------------|
+| **[v2/](./v2/)** | 🟢 Active development | Multi-platform (Swarm + K8s + **RKE2**), pluggable secret backends |
+| *(v1 is private)* | Frozen | Docker Swarm only, ansible-vault secrets |
+
+See **[v2/README.md](./v2/README.md)** for the full v2 architecture and quick start.
+
+---
+
+## v2 Highlights
+
+- **3 secret backends**: vault-file (Ansible) · HashiCorp Vault · CapAuth/PGP sovereign
+- **3 platforms**: Docker Swarm · Kubernetes · **RKE2** (Rancher, CIS-hardened)
+- **4 CI/CD targets**: Forgejo Actions · GitHub Actions · GitLab CI · **ArgoCD GitOps**
+- Sanitized public templates — no real secrets, all `CHANGEME_*` placeholders
+
+---
+
+## Standalone Services
 
 | Directory | Service | Purpose |
 |-----------|---------|---------|

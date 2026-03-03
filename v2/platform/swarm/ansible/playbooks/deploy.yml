@@ -1,0 +1,156 @@
+---
+# deploy.yml — Full Docker Swarm cluster bootstrap and stack deployment.
+#
+# Usage:
+#   ansible-playbook -i inventory.example playbooks/deploy.yml \
+#     --extra-vars "env=prod" \
+#     --ask-vault-pass
+#
+# Plays:
+#   1. preflight   — verify prerequisites on all nodes
+#   2. firewall    — open swarm + traefik ports via UFW
+#   3. swarm-init  — initialize swarm on the primary manager
+#   4. swarm-join  — join additional managers and workers
+#   5. swarm-ha    — deploy keepalived VRRP VIP on managers
+#   6. traefik     — deploy Traefik v3 stack on swarm
+
+# ─── 1. Preflight ────────────────────────────────────────────────────────────
+- name: Preflight — verify Docker is installed on all nodes
+  hosts: swarm_managers:swarm_workers
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Check Docker is present
+      ansible.builtin.command: docker --version
+      register: docker_ver
+      changed_when: false
+      failed_when: docker_ver.rc != 0
+
+    - name: Ensure Docker service is running
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+# ─── 2. Firewall ─────────────────────────────────────────────────────────────
+- name: Configure UFW firewall on all nodes
+  hosts: swarm_managers:swarm_workers
+  become: true
+  roles:
+    - role: swarm-firewall
+
+# ─── 3. Init — bootstrap leader ──────────────────────────────────────────────
+- name: Initialize swarm on the primary manager
+  hosts: swarm_manager_primary
+  become: true
+  roles:
+    - role: swarm-init
+
+# ─── 4. Join — additional managers ───────────────────────────────────────────
+- name: Join additional manager nodes
+  hosts: swarm_managers:!swarm_manager_primary
+  become: true
+  vars:
+    swarm_node_role: manager
+    # Tokens are fetched from the primary manager via hostvars.
+    swarm_manager_token: >-
+      {{ hostvars[groups['swarm_manager_primary'][0]]['swarm_manager_token'] }}
+    swarm_worker_token: >-
+      {{ hostvars[groups['swarm_manager_primary'][0]]['swarm_worker_token'] }}
+  roles:
+    - role: swarm-join
+
+# ─── 5. Join — workers ───────────────────────────────────────────────────────
+- name: Join worker nodes
+  hosts: swarm_workers
+  become: true
+  vars:
+    swarm_node_role: worker
+    swarm_manager_token: >-
+      {{ hostvars[groups['swarm_manager_primary'][0]]['swarm_manager_token'] }}
+    swarm_worker_token: >-
+      {{ hostvars[groups['swarm_manager_primary'][0]]['swarm_worker_token'] }}
+  roles:
+    - role: swarm-join
+
+# ─── 6. HA — keepalived VIP ──────────────────────────────────────────────────
+- name: Deploy keepalived VRRP VIP on manager nodes
+  hosts: swarm_managers
+  become: true
+  roles:
+    - role: swarm-ha
+
+# ─── 7. Traefik stack ────────────────────────────────────────────────────────
+- name: Deploy Traefik v3 stack
+  hosts: swarm_manager_primary
+  become: true
+  vars:
+    stack_name: traefik
+    compose_src: "{{ playbook_dir }}/../stacks/traefik/docker-compose.yml"
+    traefik_yml_src: "{{ playbook_dir }}/../stacks/traefik/traefik.yml"
+    config_dir: /var/data/config/traefik
+    acme_dir: /var/data/runtime/traefik/acme
+    logs_dir: /var/data/logs/traefik
+  tasks:
+    - name: Create config directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0750'
+      loop:
+        - "{{ config_dir }}"
+        - "{{ acme_dir }}"
+        - "{{ logs_dir }}"
+
+    - name: Copy traefik.yml static config
+      ansible.builtin.copy:
+        src: "{{ traefik_yml_src }}"
+        dest: "{{ config_dir }}/traefik.yml"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Ensure acme.json exists with correct permissions
+      ansible.builtin.file:
+        path: "{{ acme_dir }}/acme.json"
+        state: touch
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Create overlay networks
+      ansible.builtin.command: >
+        docker network create --driver overlay --attachable
+        --subnet {{ item.subnet }} {{ item.name }}
+      loop: "{{ swarm_overlay_networks }}"
+      register: net_create
+      failed_when: >
+        net_create.rc != 0 and
+        'already exists' not in net_create.stderr
+      changed_when: net_create.rc == 0
+
+    - name: Deploy Traefik stack
+      ansible.builtin.command: >
+        docker stack deploy
+        --compose-file {{ compose_src }}
+        --prune
+        --with-registry-auth
+        {{ stack_name }}
+      environment:
+        DOMAIN: "{{ domain }}"
+        ACME_EMAIL: "{{ acme_email }}"
+        TRAEFIK_CONFIG_DIR: "{{ config_dir }}"
+        TRAEFIK_ACME_DIR: "{{ acme_dir }}"
+        TRAEFIK_LOGS_DIR: "{{ logs_dir }}"
+
+    - name: Wait for Traefik to become healthy
+      ansible.builtin.command: >
+        docker service ls --filter name={{ stack_name }}_traefik
+        --format "{{ '{{.Replicas}}' }}"
+      register: svc_replicas
+      until: svc_replicas.stdout is search('[1-9]/[1-9]')
+      retries: 12
+      delay: 10
+      changed_when: false

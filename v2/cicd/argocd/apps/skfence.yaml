@@ -1,0 +1,48 @@
+---
+# ArgoCD Application — skfence (Traefik reverse proxy)
+# Managed by the app-of-apps pattern
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: skfence-prod
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: skfence
+    skstacks.io/env: prod
+    skstacks.io/tier: core
+spec:
+  project: skstacks
+
+  source:
+    repoURL: https://CHANGEME_GIT_HOST/CHANGEME_ORG/skstacks.git
+    targetRevision: main
+    path: v2/core/skfence
+    kustomize:
+      images:
+        - traefik:v3.0
+      namePrefix: ""
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: skfence
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 1m
+
+  # Health checks — ArgoCD considers the app healthy when these pass
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas   # Allow HPA to manage replica count

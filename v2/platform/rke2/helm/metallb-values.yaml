@@ -1,0 +1,103 @@
+# MetalLB L2 configuration defaults
+# Used by: Ansible rke2-server role to render manifests/metallb-config.yaml
+# Override per-environment in overlays/{env}/metallb-values.yaml
+#
+# Ansible usage:
+#   ansible-playbook deploy-manifests.yml -e @helm/metallb-values.yaml
+#
+# To override for a specific env:
+#   ansible-playbook deploy-manifests.yml \
+#     -e @helm/metallb-values.yaml \
+#     -e @overlays/prod/metallb-values.yaml
+
+metallb:
+  # ──────────────────────────────────────────────
+  # Address Pool
+  # ──────────────────────────────────────────────
+  addressPool:
+    name: default-pool
+
+    # REQUIRED: Reserve a block of your LAN IPs for LoadBalancer Services.
+    # These IPs must NOT be in your DHCP range and must be routable on the LAN.
+    # Formats:
+    #   range:  "192.168.1.200-192.168.1.250"
+    #   CIDR:   "192.168.1.0/27"            (32 addresses)
+    #   multi:  list multiple entries for discontiguous ranges
+    cidr:
+      - "192.168.1.200-192.168.1.250"     # CHANGEME: 51 IPs — adjust to your LAN
+
+    autoAssign: true        # auto-assign from pool when Service requests LoadBalancer
+    avoidBuggyIPs: false    # true = skip .0 and .255 (some NICs/routers mishandle them)
+
+  # ──────────────────────────────────────────────
+  # L2 Advertisement
+  # ──────────────────────────────────────────────
+  l2Advertisement:
+    name: default-l2
+
+    # Which pools this advertisement covers.
+    # Remove entry (or set to []) to advertise ALL pools.
+    ipAddressPools:
+      - default-pool
+
+    # Optional: restrict L2 speakers to specific nodes.
+    # Set to [] to allow all nodes (default).
+    # Example — workers only:
+    #   nodeSelectors:
+    #     - matchLabels:
+    #         node-role.kubernetes.io/worker: "true"
+    nodeSelectors: []
+
+    # Optional: restrict to specific network interfaces per node.
+    # Useful on multi-homed nodes to avoid ARP on management interfaces.
+    # Set to [] to use all interfaces (default).
+    # Example:
+    #   interfaces:
+    #     - eth0
+    #     - ens3
+    interfaces: []
+
+  # ──────────────────────────────────────────────
+  # Speaker (Helm chart values — applies to metallb.yaml HelmChart)
+  # ──────────────────────────────────────────────
+  speaker:
+    frr:
+      enabled: false          # L2/ARP mode — disable FRR (BGP) daemon
+
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 100Mi
+
+    # Tolerate control-plane taint so speakers run on all nodes
+    tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        effect: NoSchedule
+        operator: Exists
+
+    # Optional: restrict speaker DaemonSet to specific nodes
+    # nodeSelector:
+    #   node-role.kubernetes.io/worker: "true"
+
+  # ──────────────────────────────────────────────
+  # Controller (Helm chart values)
+  # ──────────────────────────────────────────────
+  controller:
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+
+  # ──────────────────────────────────────────────
+  # Prometheus metrics
+  # ──────────────────────────────────────────────
+  prometheus:
+    scrapeAnnotations: true
+    serviceMonitor:
+      enabled: true           # requires kube-prometheus-stack CRDs

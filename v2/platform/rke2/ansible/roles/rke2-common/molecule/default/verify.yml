@@ -1,0 +1,99 @@
+---
+# verify.yml — assert that rke2-common produced the expected system state.
+
+- name: Verify rke2-common
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+    # ── Swap ─────────────────────────────────────────────────────────────────
+
+    - name: Check active swap
+      ansible.builtin.command: swapon --show
+      register: swap_active
+      changed_when: false
+
+    - name: Assert swap is disabled
+      ansible.builtin.assert:
+        that: swap_active.stdout == ""
+        fail_msg: "Swap is still active — 'swapoff -a' did not take effect."
+        success_msg: "Swap is disabled."
+
+    # ── Kernel modules ────────────────────────────────────────────────────────
+
+    - name: Read loaded kernel modules
+      ansible.builtin.command: lsmod
+      register: lsmod_out
+      changed_when: false
+
+    - name: Assert br_netfilter is loaded
+      ansible.builtin.assert:
+        that: "'br_netfilter' in lsmod_out.stdout"
+        fail_msg: "br_netfilter kernel module is not loaded."
+        success_msg: "br_netfilter is loaded."
+
+    - name: Assert overlay is loaded
+      ansible.builtin.assert:
+        that: "'overlay' in lsmod_out.stdout"
+        fail_msg: "overlay kernel module is not loaded."
+        success_msg: "overlay is loaded."
+
+    - name: Stat /etc/modules-load.d/rke2.conf
+      ansible.builtin.stat:
+        path: /etc/modules-load.d/rke2.conf
+      register: rke2_modules_conf
+
+    - name: Assert rke2 modules config exists
+      ansible.builtin.assert:
+        that: rke2_modules_conf.stat.exists
+        fail_msg: "/etc/modules-load.d/rke2.conf was not created."
+        success_msg: "/etc/modules-load.d/rke2.conf exists."
+
+    # ── Sysctl ────────────────────────────────────────────────────────────────
+
+    - name: Read net.ipv4.ip_forward
+      ansible.builtin.command: sysctl -n net.ipv4.ip_forward
+      register: ip_forward
+      changed_when: false
+
+    - name: Assert ip_forward is enabled
+      ansible.builtin.assert:
+        that: ip_forward.stdout | trim == "1"
+        fail_msg: "net.ipv4.ip_forward is not 1."
+        success_msg: "net.ipv4.ip_forward=1."
+
+    - name: Read net.bridge.bridge-nf-call-iptables
+      ansible.builtin.command: sysctl -n net.bridge.bridge-nf-call-iptables
+      register: iptables_bridge
+      changed_when: false
+
+    - name: Assert bridge-nf-call-iptables is enabled
+      ansible.builtin.assert:
+        that: iptables_bridge.stdout | trim == "1"
+        fail_msg: "net.bridge.bridge-nf-call-iptables is not 1."
+        success_msg: "net.bridge.bridge-nf-call-iptables=1."
+
+    # ── SSH hardening ─────────────────────────────────────────────────────────
+
+    - name: Read sshd_config PermitRootLogin line
+      ansible.builtin.command: grep -E '^PermitRootLogin' /etc/ssh/sshd_config
+      register: permit_root
+      changed_when: false
+
+    - name: Assert PermitRootLogin is no
+      ansible.builtin.assert:
+        that: "'no' in permit_root.stdout"
+        fail_msg: "PermitRootLogin is not set to 'no'."
+        success_msg: "PermitRootLogin no — SSH hardened."
+
+    - name: Read sshd_config PasswordAuthentication line
+      ansible.builtin.command: grep -E '^PasswordAuthentication' /etc/ssh/sshd_config
+      register: passwd_auth
+      changed_when: false
+
+    - name: Assert PasswordAuthentication is no
+      ansible.builtin.assert:
+        that: "'no' in passwd_auth.stdout"
+        fail_msg: "PasswordAuthentication is not set to 'no'."
+        success_msg: "PasswordAuthentication no — SSH hardened."

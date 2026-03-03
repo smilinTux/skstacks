@@ -1,0 +1,9 @@
+---
+# Ansible collection requirements for the skstacks RKE2 Ansible layer.
+# Install with:
+#   ansible-galaxy collection install -r requirements.yml
+collections:
+  - name: ansible.posix
+    version: ">=1.5.4"
+  - name: community.general
+    version: ">=8.0.0"
