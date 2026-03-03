@@ -181,24 +181,22 @@ the local `skcapstone` MCP server to decrypt PGP-encrypted secret blobs.
 
 ```mermaid
 flowchart TD
+    VIP["VIP :6443\nKeepalived or kube-vip"]
+
     subgraph CP["Control Plane - odd count 3+"]
         S1["server-1\nkube-apiserver\nscheduler\netcd :2379"]
         S2["server-2\nkube-apiserver\nscheduler\netcd :2379"]
         S3["server-3\nkube-apiserver\nscheduler\netcd :2379"]
-        S1 <-->|Raft| S2
-        S2 <-->|Raft| S3
-        S3 <-->|Raft| S1
+        S1 -->|Raft| S2
+        S2 -->|Raft| S3
+        S3 -->|Raft| S1
     end
-
-    VIP["VIP :6443\nKeepalived or kube-vip"] --> CP
 
     subgraph WN["Worker Nodes"]
         W1["worker-1\ncontainerd"]
         W2["worker-2\ncontainerd"]
         W3["worker-3\ncontainerd"]
     end
-
-    CP --> WN
 
     subgraph AM["Auto-deployed Manifests"]
         metallb["metallb - bare-metal LoadBalancer"]
@@ -208,15 +206,20 @@ flowchart TD
         longhorn["longhorn - distributed block storage"]
     end
 
-    WN --> AM
-
     subgraph GO["GitOps Layer"]
         AR["ArgoCD\napp-of-apps.yaml"]
         APPS["Service Applications\nskfence, sksec, sksso, skbackup"]
         AR --> APPS
     end
 
-    AM --> GO
+    VIP --> S1
+    S1 --> W1
+    S2 --> W2
+    S3 --> W3
+    W1 --> metallb
+    W2 --> certmgr
+    W3 --> nginx
+    metallb --> AR
 ```
 
 ### Why RKE2 over vanilla K8s?
@@ -245,14 +248,13 @@ flowchart TD
         BUILD --> TEST
     end
 
-    PUSH --> CI
-
     subgraph DEPLOY["Deploy Stage - environment-gated"]
         DEV["dev\nauto-deploy on push"]
         STG["staging\nauto-deploy on push to main"]
         PROD["prod\nmanual gate + ArgoCD sync"]
     end
 
+    PUSH --> BUILD
     TEST --> DEV
     TEST --> STG
     STG -->|approval| PROD
@@ -266,7 +268,6 @@ flowchart TD
 flowchart TD
     INT["Internet"]
     SF["SKFence - Traefik v3 or ingress-nginx\nTLS termination, ACME, rate-limit"]
-    INT -->|443 / 80| SF
 
     subgraph PUB["traefik-public overlay network"]
         SSO["SKSSO\nAuthentik SSO\nLDAP/SAML/OIDC"]
@@ -274,14 +275,17 @@ flowchart TD
         APPS["App Services\ncustom"]
     end
 
-    SF --> PUB
-
     subgraph EDGE["traefik-internal overlay network - service mesh"]
         SKSEC["SKSEC\nCrowdSec IDS\nTraefik bouncer"]
         SOCK["Socket Proxy\nDocker API read-only"]
     end
 
-    PUB --> EDGE
+    INT -->|443 / 80| SF
+    SF --> SSO
+    SF --> MON
+    SF --> APPS
+    APPS --> SKSEC
+    SSO --> SOCK
 ```
 
 All inter-service traffic stays on private overlay networks.
