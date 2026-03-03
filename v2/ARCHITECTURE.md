@@ -18,19 +18,19 @@
 
 ```mermaid
 flowchart TD
-    OP["🖥️ Operator / CI Pipeline\nansible-playbook · kubectl apply · argocd sync"]
+    OP["Operator / CI Pipeline\nansible-playbook, kubectl apply, argocd sync"]
 
     subgraph SRL["Secret Resolution Layer"]
         IF["SKSecretBackend\ninterface.py"]
-        VF["VaultFileBackend\nAES-256 · ansible-vault\ngit-native encrypted files"]
-        HV["HashiCorpVaultBackend\nHA Raft · dynamic secrets\nAPI-driven · audit log"]
-        CA["CapAuthBackend\nPGP blobs · skcapstone MCP\noffline-capable · sovereign"]
+        VF["VaultFileBackend\nAES-256, ansible-vault\ngit-native encrypted files"]
+        HV["HashiCorpVaultBackend\nHA Raft, dynamic secrets\nAPI-driven, audit log"]
+        CA["CapAuthBackend\nPGP blobs, skcapstone MCP\noffline-capable, sovereign"]
         IF --> VF
         IF --> HV
         IF --> CA
     end
 
-    subgraph STL["Service Template Layer  (resolved secrets injected in-memory)"]
+    subgraph STL["Service Template Layer"]
         T1["core/skfence/docker-compose.yml.j2"]
         T2["core/sksec/docker-compose.yml.j2"]
         T3["core/sksso/docker-compose.yml.j2"]
@@ -39,8 +39,8 @@ flowchart TD
     end
 
     subgraph PL["Platform Layer"]
-        SW["Docker Swarm\ndocker stack deploy\n(rendered compose)"]
-        K8["Kubernetes / RKE2\nkubectl apply -k\nKustomize + ESO"]
+        SW["Docker Swarm\ndocker stack deploy"]
+        K8["Kubernetes / RKE2\nkubectl apply -k, Kustomize + ESO"]
         AG["ArgoCD GitOps\nargocd sync"]
     end
 
@@ -133,18 +133,18 @@ overlays/
 
 ```mermaid
 flowchart LR
-    APP["app.yaml\n(secrets refs only,\nno raw values)"]
-    VYP["overlays/prod/values.yaml\nDOMAIN · CLUSTER · CIDR"]
+    APP["app.yaml\nsecrets refs only, no raw values"]
+    VYP["overlays/prod/values.yaml\nDOMAIN, CLUSTER, CIDR"]
     VYS["overlays/staging/values.yaml"]
     VYD["overlays/dev/values.yaml"]
-    SB["Secret Backend\n(vault-file / Vault / CapAuth)"]
-    REND["Rendered Manifest\n(ephemeral, never stored)"]
+    SB["Secret Backend\nvault-file, Vault, or CapAuth"]
+    REND["Rendered Manifest\nephemeral, never stored"]
 
     APP --> REND
     VYP --> REND
     VYS --> REND
     VYD --> REND
-    SB -->|"resolved secrets\n(in-memory only)"| REND
+    SB -->|resolved secrets in-memory| REND
 ```
 
 ---
@@ -181,16 +181,16 @@ the local `skcapstone` MCP server to decrypt PGP-encrypted secret blobs.
 
 ```mermaid
 flowchart TD
-    subgraph CP["Control Plane  (odd count ≥ 3)"]
+    subgraph CP["Control Plane - odd count 3+"]
         S1["server-1\nkube-apiserver\nscheduler\netcd :2379"]
         S2["server-2\nkube-apiserver\nscheduler\netcd :2379"]
         S3["server-3\nkube-apiserver\nscheduler\netcd :2379"]
-        S1 <-->|Raft consensus| S2
-        S2 <-->|Raft consensus| S3
-        S3 <-->|Raft consensus| S1
+        S1 <-->|Raft| S2
+        S2 <-->|Raft| S3
+        S3 <-->|Raft| S1
     end
 
-    VIP["VIP :6443\nKeepalived / kube-vip"] --> CP
+    VIP["VIP :6443\nKeepalived or kube-vip"] --> CP
 
     subgraph WN["Worker Nodes"]
         W1["worker-1\ncontainerd"]
@@ -200,19 +200,19 @@ flowchart TD
 
     CP --> WN
 
-    subgraph AM["Auto-deployed Manifests\n/var/lib/rancher/rke2/server/manifests/"]
-        metallb["metallb — bare-metal LoadBalancer"]
-        certmgr["cert-manager — TLS (ACME + Vault PKI)"]
-        nginx["ingress-nginx — HTTP/S ingress"]
-        eso["external-secrets — secret backend bridge"]
-        longhorn["longhorn — distributed block storage"]
+    subgraph AM["Auto-deployed Manifests"]
+        metallb["metallb - bare-metal LoadBalancer"]
+        certmgr["cert-manager - TLS ACME + Vault PKI"]
+        nginx["ingress-nginx - HTTP/S ingress"]
+        eso["external-secrets - secret backend bridge"]
+        longhorn["longhorn - distributed block storage"]
     end
 
     WN --> AM
 
     subgraph GO["GitOps Layer"]
         AR["ArgoCD\napp-of-apps.yaml"]
-        APPS["Service Applications\nskfence · sksec · sksso · skbackup"]
+        APPS["Service Applications\nskfence, sksec, sksso, skbackup"]
         AR --> APPS
     end
 
@@ -237,17 +237,17 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    PUSH["Code Push\n(PR or main)"]
+    PUSH["Code Push\nPR or main branch"]
 
-    subgraph CI["CI Trigger  (Forgejo / GitHub / GitLab)"]
-        BUILD["Build Stage\n• Build container image\n• Sign with Cosign\n• Push to SKReg / GHCR"]
-        TEST["Test Stage\n• ansible-lint playbooks\n• kube-score / kubelinter\n• Trivy / grype security scan"]
+    subgraph CI["CI Trigger - Forgejo / GitHub / GitLab"]
+        BUILD["Build Stage\n- Build container image\n- Sign with Cosign\n- Push to SKReg / GHCR"]
+        TEST["Test Stage\n- ansible-lint playbooks\n- kube-score / kubelinter\n- Trivy / grype security scan"]
         BUILD --> TEST
     end
 
     PUSH --> CI
 
-    subgraph DEPLOY["Deploy Stage  (environment-gated)"]
+    subgraph DEPLOY["Deploy Stage - environment-gated"]
         DEV["dev\nauto-deploy on push"]
         STG["staging\nauto-deploy on push to main"]
         PROD["prod\nmanual gate + ArgoCD sync"]
@@ -264,20 +264,20 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    INT["🌐 Internet"]
-    SF["SKFence · Traefik v3\nor ingress-nginx\nTLS termination · ACME · rate-limit"]
-    INT -->|"443 / 80"| SF
+    INT["Internet"]
+    SF["SKFence - Traefik v3 or ingress-nginx\nTLS termination, ACME, rate-limit"]
+    INT -->|443 / 80| SF
 
     subgraph PUB["traefik-public overlay network"]
-        SSO["SKSSO\nAuthentik SSO\n(LDAP/SAML/OIDC)"]
+        SSO["SKSSO\nAuthentik SSO\nLDAP/SAML/OIDC"]
         MON["SKMON\nGrafana / Prometheus"]
-        APPS["App Services\n(custom)"]
+        APPS["App Services\ncustom"]
     end
 
     SF --> PUB
 
-    subgraph EDGE["traefik-internal / cloud-edge overlay network  (service mesh)"]
-        SKSEC["SKSEC\nCrowdSec IDS\n+ Traefik bouncer"]
+    subgraph EDGE["traefik-internal overlay network - service mesh"]
+        SKSEC["SKSEC\nCrowdSec IDS\nTraefik bouncer"]
         SOCK["Socket Proxy\nDocker API read-only"]
     end
 
@@ -302,7 +302,7 @@ Public exposure is only via SKFence/ingress-nginx.
 ```mermaid
 flowchart LR
     V1["SKStacks v1\nAnsible-vault only\nDocker Swarm"]
-    EXP["vault_export.yml\n→ secrets.json (encrypted)"]
+    EXP["vault_export.yml\nto secrets.json encrypted"]
     MIG["secrets/migrate.py\n--from vault-file\n--to hashicorp-vault"]
     V2["SKStacks v2\nPluggable backends\nSwarm + K8s + RKE2 + k3d"]
 
