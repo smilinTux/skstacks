@@ -6,6 +6,57 @@ agent mesh.
 
 ---
 
+```mermaid
+flowchart TD
+    START(["Deploy SKStacks v2"])
+
+    Q1{"Do you have\nexisting VMs/nodes?"}
+    TOFU["Phase 1: tofu apply\nProvision VMs\n(Hetzner / Proxmox)"]
+    HAVE["Use existing inventory\nfill in IPs manually"]
+
+    Q2{"Target environment?"}
+    LOCAL["k3d\nlocal dev / CI\n< 30 seconds"]
+    EDGE["k3d prod-edge\nsingle-node edge / IoT"]
+    SWARM["Docker Swarm\nDocker-native HA\n(3 managers + workers)"]
+    RKE2P["RKE2\nCIS-hardened K8s\n(3 servers + workers)"]
+    K8S["Kubernetes\nManaged / kubeadm\n(EKS, GKE, AKS, etc.)"]
+
+    Q3{"Secret backend?"}
+    VFB["vault-file\nansible-vault\nno extra infra"]
+    HVB["hashicorp-vault\nHA Raft cluster\nenterprise-ready"]
+    CAB["capauth\nskcapstone MCP\nsovereign PGP"]
+
+    DEPLOY["Deploy core services\nskfence · sksec · sksso · skbackup"]
+    DONE(["Stack running ✓"])
+
+    START --> Q1
+    Q1 -->|"No"| TOFU
+    Q1 -->|"Yes"| HAVE
+    TOFU --> Q2
+    HAVE --> Q2
+
+    Q2 -->|"Local / CI"| LOCAL
+    Q2 -->|"Edge / IoT"| EDGE
+    Q2 -->|"Docker-native"| SWARM
+    Q2 -->|"K8s sovereign"| RKE2P
+    Q2 -->|"Managed K8s"| K8S
+
+    LOCAL --> Q3
+    EDGE --> Q3
+    SWARM --> Q3
+    RKE2P --> Q3
+    K8S --> Q3
+
+    Q3 -->|"Simple"| VFB
+    Q3 -->|"Enterprise"| HVB
+    Q3 -->|"Sovereign"| CAB
+
+    VFB --> DEPLOY
+    HVB --> DEPLOY
+    CAB --> DEPLOY
+    DEPLOY --> DONE
+```
+
 ## Platform comparison
 
 | Platform | Best for | Nodes | Complexity | TLS | Secrets |

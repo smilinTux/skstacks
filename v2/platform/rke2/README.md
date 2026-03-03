@@ -20,34 +20,45 @@ embedded etcd, and Rancher integration out of the box.
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  RKE2 Cluster                                                   │
-│                                                                 │
-│  Server nodes (control-plane + etcd)                            │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐                      │
-│  │ server-1 │  │ server-2 │  │ server-3 │  ← Raft quorum       │
-│  │ :6443    │  │ :6443    │  │ :6443    │                      │
-│  └──────────┘  └──────────┘  └──────────┘                      │
-│       ↑                                                         │
-│  VIP  │  (Keepalived or kube-vip on :6443)                     │
-│       ↓                                                         │
-│  Agent nodes (workers)                                          │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐                      │
-│  │ worker-1 │  │ worker-2 │  │ worker-3 │                      │
-│  └──────────┘  └──────────┘  └──────────┘                      │
-│                                                                 │
-│  Auto-deployed system manifests                                 │
-│  /var/lib/rancher/rke2/server/manifests/                        │
-│  ├── metallb.yaml          ← LoadBalancer for bare metal        │
-│  ├── cert-manager.yaml     ← TLS (ACME + Vault PKI)            │
-│  ├── ingress-nginx.yaml    ← HTTP/S ingress                     │
-│  ├── longhorn.yaml         ← Distributed block storage          │
-│  └── external-secrets.yaml ← Secret backend bridge             │
-│                                                                 │
-│  GitOps (ArgoCD)                                                │
-│  cicd/argocd/app-of-apps.yaml → manages all service apps       │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph CP["Control Plane  (3 server nodes — Raft quorum)"]
+        S1["server-1\nkube-apiserver :6443\nscheduler\netcd :2379-2380"]
+        S2["server-2\nkube-apiserver :6443\nscheduler\netcd :2379-2380"]
+        S3["server-3\nkube-apiserver :6443\nscheduler\netcd :2379-2380"]
+        S1 <-->|"embedded Raft"| S2
+        S2 <-->|"embedded Raft"| S3
+        S3 <-->|"embedded Raft"| S1
+    end
+
+    VIP["VIP :6443\nKeepalived or kube-vip\n(HA API endpoint)"]
+    VIP --> CP
+
+    subgraph WN["Agent Nodes (workers)"]
+        W1["worker-1\ncontainerd\nkubelet :10250"]
+        W2["worker-2\ncontainerd\nkubelet :10250"]
+        W3["worker-3\ncontainerd\nkubelet :10250"]
+    end
+
+    CP -->|"9345/tcp join\n6443/tcp API"| WN
+
+    subgraph SYS["Auto-deployed System Manifests\n/var/lib/rancher/rke2/server/manifests/"]
+        MLB["metallb\nbare-metal LoadBalancer"]
+        CM["cert-manager\nTLS (ACME + Vault PKI)"]
+        ING["ingress-nginx\nHTTP/S ingress"]
+        LH["longhorn\ndistributed block storage\n(replicas=3)"]
+        ESO["external-secrets\nsecret backend bridge"]
+    end
+
+    WN --> SYS
+
+    subgraph GITOPS["GitOps Layer"]
+        AR["ArgoCD"]
+        AOA["app-of-apps.yaml\n→ skfence · sksec · sksso\n  skbackup · custom apps"]
+        AR --> AOA
+    end
+
+    SYS --> GITOPS
 ```
 
 ---
@@ -85,6 +96,36 @@ Required ports:
 ---
 
 ## Quick Deploy
+
+```mermaid
+sequenceDiagram
+    participant OP as Operator
+    participant TF as OpenTofu (optional)
+    participant A1 as First Server Node
+    participant AN as Remaining Server Nodes
+    participant AW as Agent (Worker) Nodes
+    participant K as kubectl
+
+    opt Phase 1 — Infrastructure
+        OP->>TF: tofu apply (hetzner-rke2 or proxmox-swarm)
+        TF-->>OP: node IPs → inventory.yml
+    end
+
+    OP->>A1: ansible-playbook install-rke2-server.yml --limit rke2_servers[0]
+    Note over A1: RKE2 server starts\nembedded etcd initializes\ncluster token generated
+
+    OP->>AN: ansible-playbook install-rke2-server.yml --limit rke2_servers[1:]
+    Note over AN: Each node joins via token\nRaft quorum established (3/3)
+
+    OP->>AW: ansible-playbook install-rke2-agent.yml
+    Note over AW: Workers join via 9345/tcp\ncontainerd + kubelet start
+
+    OP->>A1: ansible-playbook deploy-manifests.yml
+    Note over A1: metallb, cert-manager, ingress-nginx\nlonghorn, external-secrets auto-deployed
+
+    OP->>K: kubectl apply -f cicd/argocd/app-of-apps.yaml
+    K-->>OP: ArgoCD syncs all service apps
+```
 
 ### 1. Configure inventory
 
@@ -203,6 +244,32 @@ secret resolution needed. Use only when cluster has no ESO.
 3. Configure `ClusterSecretStore` with `provider.plugin` pointing to the
    skcapstone Unix socket.
 
+```mermaid
+flowchart TD
+    subgraph OPTS["Secret Backend Integration  (choose one)"]
+        VF["vault-file\nAnsible resolves secrets\nbefore kubectl apply\n(no ESO required)"]
+
+        subgraph HV["hashicorp-vault  (recommended)"]
+            VAULTSVR["Vault server\n(Helm chart on cluster)"]
+            CSS_V["ClusterSecretStore\nVaultProvider\nK8s JWT auth"]
+            ESO_V["ExternalSecret CRDs\n→ native k8s Secrets"]
+            VAULTSVR --> CSS_V --> ESO_V
+        end
+
+        subgraph CA["capauth  (sovereign)"]
+            SKCA["skcapstone agent\n(DaemonSet or node-local)"]
+            CSS_C["ClusterSecretStore\nplugin provider\nUnix socket"]
+            ESO_C["ExternalSecret CRDs\n→ native k8s Secrets"]
+            SKCA --> CSS_C --> ESO_C
+        end
+    end
+
+    POD["Pod\nenvFrom / volumeMount"]
+    ESO_V --> POD
+    ESO_C --> POD
+    VF -->|"kubectl create secret"| POD
+```
+
 ---
 
 ## Networking: Canal vs. Calico
@@ -225,6 +292,32 @@ cni: calico
 
 Longhorn provides distributed block storage on bare metal. Each node that has
 the Longhorn agent can contribute local disks to a replicated pool.
+
+```mermaid
+flowchart LR
+    subgraph W1["worker-1\n200 GB Longhorn disk"]
+        R1A["Replica A\n(PVC data)"]
+        R2B["Replica B\n(other PVC)"]
+    end
+    subgraph W2["worker-2\n200 GB Longhorn disk"]
+        R1B["Replica B\n(PVC data)"]
+        R2C["Replica C\n(other PVC)"]
+    end
+    subgraph W3["worker-3\n200 GB Longhorn disk"]
+        R1C["Replica C\n(PVC data)"]
+        R2A["Replica A\n(other PVC)"]
+    end
+
+    POD["Pod\n(PVC mount)"]
+    LM["Longhorn Manager\nCSI driver"]
+
+    POD <-->|"iSCSI\nread/write"| LM
+    LM <-->|"replicate"| R1A
+    LM <-->|"replicate"| R1B
+    LM <-->|"replicate"| R1C
+
+    RULE["Rule of thumb:\nusable = sum(worker_disk) / replica_count\n3 × 200 GB / 3 = 200 GB usable"]
+```
 
 ```yaml
 # manifests/longhorn.yaml (key settings)

@@ -24,6 +24,29 @@ service templates.
 | **Sovereign / self-hosted** | Full | Full | **Maximum** |
 | **Complexity** | Low | High | Medium |
 
+```mermaid
+flowchart TD
+    START(["Choose a Secret Backend"])
+    Q1{"Need dynamic secrets\n(DB, PKI, SSH)?"}
+    Q2{"Compliance requirement\n(SOC2/FedRAMP/HIPAA)?"}
+    Q3{"Maximum sovereignty\nor PGP-signed provenance?"}
+    Q4{"Extra infra budget\n(Vault server)?"}
+
+    VAULT["hashicorp-vault\n✓ Dynamic secrets\n✓ Audit log\n✓ Enterprise compliance"]
+    CAPAUTH["capauth\n✓ Sovereign PGP\n✓ Offline capable\n✓ skcapstone native"]
+    VAULTFILE["vault-file\n✓ Git-native AES-256\n✓ No extra infra\n✓ ansible-native"]
+
+    START --> Q1
+    Q1 -->|Yes| VAULT
+    Q1 -->|No| Q2
+    Q2 -->|Yes| VAULT
+    Q2 -->|No| Q3
+    Q3 -->|Yes| CAPAUTH
+    Q3 -->|No| Q4
+    Q4 -->|Yes, happy to run Vault| VAULT
+    Q4 -->|No, keep it simple| VAULTFILE
+```
+
 ---
 
 ## Backend 1 — vault-file (Ansible Vault)
@@ -55,6 +78,32 @@ The rendered docker-compose / K8s manifests are ephemeral — never stored.
 3. Read:       vault-file/ansible/vault_read.yml    → resolves to template vars
 4. Rotate:     ansible-vault rekey {vault}.yml      → rotates AES key
 5. Backup:     vault-file/ansible/vault_backup.yml  → git-committed encrypted backup
+```
+
+```mermaid
+flowchart LR
+    TMPL["vault.example.yml\n(CHANGEME_ template)"]
+    INIT["vault_init.yml\nansible-vault encrypt"]
+    VAULT["group_vars/{env}/{scope}-{env}_vault.yml\n(AES-256 blob, safe to commit)"]
+    PASS["~/.vault_pass_env/.{scope}_{env}_vault_pass\n(password file, NOT in git)"]
+    READ["vault_read.yml\nansible-vault decrypt"]
+    VARS["Ansible vars\nvault_{scope}_{key}\n(in memory only)"]
+    TMPL2["Jinja2 template render\n→ docker-compose / k8s manifest"]
+    REKEY["vault_rotate.sh\nansible-vault rekey\n(rotates AES key)"]
+    BACK["vault_backup.yml\ngit commit encrypted blob"]
+
+    TMPL --> INIT
+    PASS --> INIT
+    INIT --> VAULT
+    VAULT --> READ
+    PASS --> READ
+    READ --> VARS
+    VARS --> TMPL2
+    VAULT --> REKEY
+    VAULT --> BACK
+
+    style VARS fill:#d4edda,stroke:#28a745
+    style TMPL2 fill:#d4edda,stroke:#28a745
 ```
 
 ### Password storage recommendations
@@ -108,6 +157,48 @@ a REST API. SKStacks integrates via:
 1. **Ansible**: `community.hashi_vault.hashi_vault` lookup plugin
 2. **K8s/RKE2**: External Secrets Operator `VaultProvider`
 3. **Runtime sidecar**: Vault Agent injector (K8s annotation-based)
+
+```mermaid
+flowchart TD
+    subgraph VAULTCLUSTER["HashiCorp Vault  (HA Raft, 3 nodes)"]
+        V1["vault-1\n(active)"]
+        V2["vault-2\n(standby)"]
+        V3["vault-3\n(standby)"]
+        V1 <-->|Raft| V2
+        V2 <-->|Raft| V3
+        V3 <-->|Raft| V1
+    end
+
+    subgraph AUTH["Auth Methods"]
+        AR["AppRole\nCI/CD · Ansible"]
+        KA["Kubernetes JWT\nPod service accounts"]
+        GH["GitHub OIDC\nCI runners"]
+        HU["LDAP / OIDC\nHuman operators via Authentik"]
+    end
+
+    subgraph ENG["Secret Engines"]
+        KV["kv-v2\nAPI keys · passwords\nskstacks/{env}/{scope}/{key}"]
+        PKI["pki\nInternal TLS CA"]
+        DB["database\nDynamic DB credentials"]
+        TR["transit\nEncryption-as-a-service"]
+        SSH["ssh\nDynamic SSH certs"]
+    end
+
+    AR --> VAULTCLUSTER
+    KA --> VAULTCLUSTER
+    GH --> VAULTCLUSTER
+    HU --> VAULTCLUSTER
+    VAULTCLUSTER --> KV
+    VAULTCLUSTER --> PKI
+    VAULTCLUSTER --> DB
+    VAULTCLUSTER --> TR
+    VAULTCLUSTER --> SSH
+
+    ESO["External Secrets Operator\n(K8s/RKE2)"] -->|K8s JWT auth| VAULTCLUSTER
+    ANS["Ansible\n(AppRole)"] --> VAULTCLUSTER
+    VAULTCLUSTER --> ESO
+    VAULTCLUSTER --> ANS
+```
 
 ### Auth methods used
 
@@ -204,6 +295,22 @@ result = mcp.call("capauth_decrypt_secret", {
 # → returns plaintext value, never touches disk
 ```
 
+```mermaid
+sequenceDiagram
+    participant D as Deploy Tool
+    participant MCP as skcapstone MCP<br/>Server
+    participant GPG as GnuPG<br/>(local)
+    participant FS as Secret Store<br/>~/.skstacks/secrets/
+
+    D->>MCP: capauth_decrypt_secret(scope, env, key)
+    MCP->>FS: read {env}/{scope}.gpg
+    FS-->>MCP: encrypted PGP blob
+    MCP->>GPG: decrypt(blob, agent_private_key)
+    GPG-->>MCP: JSON dict {key: value}
+    MCP-->>D: plaintext value (never written to disk)
+    Note over MCP: Every decrypt journalled<br/>in skcapstone session journal
+```
+
 ### Key management
 
 ```
@@ -233,6 +340,29 @@ prod:
 staging:
   recipients:
     - fingerprint: "AABBCCDD..."   # opus agent
+```
+
+```mermaid
+flowchart LR
+    SEC["Secret blob\n{key: value}\nJSON"]
+
+    subgraph ENC["Multi-encrypted (N recipients)"]
+        K1["🔐 opus key\nAABBCCDD..."]
+        K2["🔐 lumina key\n11223344..."]
+        K3["🔐 human operator\nDEADBEEF..."]
+    end
+
+    SEC -->|"gpg --encrypt\n--recipient each"| K1
+    SEC -->|"gpg --encrypt\n--recipient each"| K2
+    SEC -->|"gpg --encrypt\n--recipient each"| K3
+
+    BLOB["prod/skfence.gpg\n(encrypted blob in git / Syncthing)"]
+    K1 --> BLOB
+    K2 --> BLOB
+    K3 --> BLOB
+
+    DECRYPT["Any holder of a matching\nprivate key can decrypt"]
+    BLOB -->|"gpg --decrypt"| DECRYPT
 ```
 
 ### skcapstone integration
@@ -299,6 +429,19 @@ python3 secrets/migrate.py \
   --vault-addr https://vault.your-domain.com:8200 \
   --vault-token $VAULT_TOKEN \
   --pgp-fingerprint AABBCCDD...
+```
+
+```mermaid
+flowchart LR
+    VF["vault-file\n(AES-256\ngit-native)"]
+    HV["hashicorp-vault\n(HA Raft\ndynamic secrets)"]
+    CA["capauth\n(sovereign PGP\noffline)"]
+
+    VF -->|"migrate.py\n--from vault-file\n--to hashicorp-vault"| HV
+    VF -->|"migrate.py\n--from vault-file\n--to capauth"| CA
+    HV -->|"migrate.py\n--from hashicorp-vault\n--to capauth\n(sovereignty migration)"| CA
+    HV -->|"migrate.py\n--from hashicorp-vault\n--to vault-file"| VF
+    CA -->|"reencrypt.py +\nmigrate.py"| VF
 ```
 
 ---

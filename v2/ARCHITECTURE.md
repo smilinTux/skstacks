@@ -16,41 +16,38 @@
 
 ## System Layers
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│  Operator / CI Pipeline                                          │
-│  ansible-playbook | kubectl apply | argocd sync                  │
-└──────────────────────────┬───────────────────────────────────────┘
-                           │
-┌──────────────────────────▼───────────────────────────────────────┐
-│  Secret Resolution Layer                                         │
-│                                                                  │
-│  SKSecretBackend (interface.py)                                  │
-│     │                                                            │
-│     ├── VaultFileBackend        (ansible-vault AES-256)          │
-│     ├── HashiCorpVaultBackend   (HCP Vault API, dynamic secrets) │
-│     └── CapAuthBackend          (PGP / skcapstone MCP)           │
-└──────────────────────────┬───────────────────────────────────────┘
-                           │  resolved plain-text (in memory only)
-┌──────────────────────────▼───────────────────────────────────────┐
-│  Service Template Layer                                          │
-│                                                                  │
-│  core/skfence/docker-compose.yml.j2                              │
-│  core/sksec/docker-compose.yml.j2                                │
-│  core/sksso/docker-compose.yml.j2                                │
-│  core/skbackup/docker-compose.yml.j2                             │
-│  core/skha/keepalived.conf.j2                                    │
-└──────────────────────────┬───────────────────────────────────────┘
-                           │  rendered manifests (never stored)
-┌──────────────────────────▼───────────────────────────────────────┐
-│  Platform Layer                                                  │
-│                                                                  │
-│  Docker Swarm                 Kubernetes / RKE2                  │
-│  ─────────────               ────────────────                    │
-│  docker stack deploy          kubectl apply -k                   │
-│  (rendered compose)           (Kustomize + ESO)                  │
-│                               argocd sync                        │
-└──────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    OP["🖥️ Operator / CI Pipeline\nansible-playbook · kubectl apply · argocd sync"]
+
+    subgraph SRL["Secret Resolution Layer"]
+        IF["SKSecretBackend\ninterface.py"]
+        VF["VaultFileBackend\nAES-256 · ansible-vault\ngit-native encrypted files"]
+        HV["HashiCorpVaultBackend\nHA Raft · dynamic secrets\nAPI-driven · audit log"]
+        CA["CapAuthBackend\nPGP blobs · skcapstone MCP\noffline-capable · sovereign"]
+        IF --> VF
+        IF --> HV
+        IF --> CA
+    end
+
+    subgraph STL["Service Template Layer  (resolved secrets injected in-memory)"]
+        T1["core/skfence/docker-compose.yml.j2"]
+        T2["core/sksec/docker-compose.yml.j2"]
+        T3["core/sksso/docker-compose.yml.j2"]
+        T4["core/skbackup/docker-compose.yml.j2"]
+        T5["core/skha/keepalived.conf.j2"]
+    end
+
+    subgraph PL["Platform Layer"]
+        SW["Docker Swarm\ndocker stack deploy\n(rendered compose)"]
+        K8["Kubernetes / RKE2\nkubectl apply -k\nKustomize + ESO"]
+        AG["ArgoCD GitOps\nargocd sync"]
+    end
+
+    OP --> SRL
+    SRL --> STL
+    STL --> PL
+    K8 --> AG
 ```
 
 ---
@@ -134,6 +131,22 @@ overlays/
     └── values.yaml
 ```
 
+```mermaid
+flowchart LR
+    APP["app.yaml\n(secrets refs only,\nno raw values)"]
+    VYP["overlays/prod/values.yaml\nDOMAIN · CLUSTER · CIDR"]
+    VYS["overlays/staging/values.yaml"]
+    VYD["overlays/dev/values.yaml"]
+    SB["Secret Backend\n(vault-file / Vault / CapAuth)"]
+    REND["Rendered Manifest\n(ephemeral, never stored)"]
+
+    APP --> REND
+    VYP --> REND
+    VYS --> REND
+    VYD --> REND
+    SB -->|"resolved secrets\n(in-memory only)"| REND
+```
+
 ---
 
 ## Kubernetes / RKE2 Secret Flow
@@ -141,18 +154,22 @@ overlays/
 For K8s and RKE2 deployments, the **External Secrets Operator (ESO)** bridges
 the chosen secret backend into native K8s Secrets.
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  External Secrets Operator                                      │
-│                                                                 │
-│  ExternalSecret (CRD)                                           │
-│    spec.secretStoreRef → HashiCorp Vault / AWS SM / CapAuth     │
-│    spec.data[].remoteRef.key = "skstacks/prod/skfence/..."      │
-│    ↓                                                            │
-│  Syncs to → native k8s Secret (skfence-secrets)                │
-│                                                                 │
-│  Pod references k8s Secret via envFrom / volumeMount            │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+sequenceDiagram
+    participant D as Deploy Tool<br/>(Ansible / ArgoCD)
+    participant B as Secret Backend<br/>(Vault / CapAuth)
+    participant ESO as External Secrets<br/>Operator (ESO)
+    participant K8S as Kubernetes<br/>API Server
+    participant P as Pod
+
+    D->>ESO: apply ExternalSecret CRD<br/>(secretStoreRef + remoteRef.key)
+    ESO->>B: authenticate (AppRole / K8s JWT / PGP)
+    B-->>ESO: token granted
+    ESO->>B: read secret<br/>kv/data/skstacks/{env}/{scope}/{key}
+    B-->>ESO: plaintext value (in-memory only)
+    ESO->>K8S: create/update native Secret
+    K8S-->>P: mount as env var / volume
+    Note over ESO,B: Periodic resync (refreshInterval)<br/>or forced via annotation
 ```
 
 For the CapAuth backend, a lightweight ESO provider plugin communicates with
@@ -162,30 +179,44 @@ the local `skcapstone` MCP server to decrypt PGP-encrypted secret blobs.
 
 ## RKE2 Platform Architecture
 
-```
-┌───────────────────────────────────────────────────────────────┐
-│  RKE2 Cluster                                                 │
-│                                                               │
-│  Server nodes (control plane + etcd, odd count ≥ 3)          │
-│  ├─ RKE2 server process                                       │
-│  ├─ embedded etcd (HA raft)                                   │
-│  ├─ kube-apiserver, scheduler, controller-manager            │
-│  └─ containerd (runtime)                                      │
-│                                                               │
-│  Agent nodes (workers)                                        │
-│  ├─ RKE2 agent process                                        │
-│  └─ containerd (runtime)                                      │
-│                                                               │
-│  Auto-deployed manifests (/var/lib/rancher/rke2/server/manifests/)│
-│  ├─ metallb          — bare-metal LoadBalancer                │
-│  ├─ cert-manager     — TLS (ACME + Vault PKI)                 │
-│  ├─ ingress-nginx    — HTTP ingress (replaces Traefik)        │
-│  ├─ external-secrets — secret backend bridge                  │
-│  └─ longhorn         — distributed block storage             │
-│                                                               │
-│  GitOps layer (ArgoCD)                                        │
-│  └─ app-of-apps.yaml → manages all service Applications      │
-└───────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph CP["Control Plane  (odd count ≥ 3)"]
+        S1["server-1\nkube-apiserver\nscheduler\netcd :2379"]
+        S2["server-2\nkube-apiserver\nscheduler\netcd :2379"]
+        S3["server-3\nkube-apiserver\nscheduler\netcd :2379"]
+        S1 <-->|Raft consensus| S2
+        S2 <-->|Raft consensus| S3
+        S3 <-->|Raft consensus| S1
+    end
+
+    VIP["VIP :6443\nKeepalived / kube-vip"] --> CP
+
+    subgraph WN["Worker Nodes"]
+        W1["worker-1\ncontainerd"]
+        W2["worker-2\ncontainerd"]
+        W3["worker-3\ncontainerd"]
+    end
+
+    CP --> WN
+
+    subgraph AM["Auto-deployed Manifests\n/var/lib/rancher/rke2/server/manifests/"]
+        metallb["metallb — bare-metal LoadBalancer"]
+        certmgr["cert-manager — TLS (ACME + Vault PKI)"]
+        nginx["ingress-nginx — HTTP/S ingress"]
+        eso["external-secrets — secret backend bridge"]
+        longhorn["longhorn — distributed block storage"]
+    end
+
+    WN --> AM
+
+    subgraph GO["GitOps Layer"]
+        AR["ArgoCD\napp-of-apps.yaml"]
+        APPS["Service Applications\nskfence · sksec · sksso · skbackup"]
+        AR --> APPS
+    end
+
+    AM --> GO
 ```
 
 ### Why RKE2 over vanilla K8s?
@@ -204,52 +235,55 @@ the local `skcapstone` MCP server to decrypt PGP-encrypted secret blobs.
 
 ## CI/CD Pipeline Model
 
-```
-Code push
-  │
-  ├─ Forgejo / GitHub / GitLab triggers workflow
-  │
-  ├─ Build stage
-  │   ├─ Build container image
-  │   ├─ Sign image with Cosign
-  │   └─ Push to private registry (SKReg / GHCR)
-  │
-  ├─ Test stage
-  │   ├─ Lint Ansible playbooks (ansible-lint)
-  │   ├─ Lint K8s manifests (kube-score, kubelinter)
-  │   └─ Security scan (Trivy, grype)
-  │
-  └─ Deploy stage (environment-gated)
-      ├─ dev: auto-deploy on push
-      ├─ staging: auto-deploy on push to main
-      └─ prod: manual gate + ArgoCD sync
+```mermaid
+flowchart TD
+    PUSH["Code Push\n(PR or main)"]
+
+    subgraph CI["CI Trigger  (Forgejo / GitHub / GitLab)"]
+        BUILD["Build Stage\n• Build container image\n• Sign with Cosign\n• Push to SKReg / GHCR"]
+        TEST["Test Stage\n• ansible-lint playbooks\n• kube-score / kubelinter\n• Trivy / grype security scan"]
+        BUILD --> TEST
+    end
+
+    PUSH --> CI
+
+    subgraph DEPLOY["Deploy Stage  (environment-gated)"]
+        DEV["dev\nauto-deploy on push"]
+        STG["staging\nauto-deploy on push to main"]
+        PROD["prod\nmanual gate + ArgoCD sync"]
+    end
+
+    TEST --> DEV
+    TEST --> STG
+    STG -->|approval| PROD
 ```
 
 ---
 
 ## Network Topology (all platforms)
 
-```
-Internet
-  │
-  ▼ 443/80
-┌─────────────────────┐
-│  SKFence (Traefik)  │  ← reverse proxy, TLS termination, ACME
-│  or ingress-nginx   │
-└─────────┬───────────┘
-          │
-     ┌────▼──────────────────────────────┐
-     │  cloud-public overlay network     │
-     └────┬──────┬──────────────┬────────┘
-          │      │              │
-        SKSSO  SKMON         App services
-        (SSO)  (Grafana)     (custom)
-          │
-     ┌────▼─────────────────────────────┐
-     │  cloud-edge overlay network      │  ← service mesh
-     └────┬──────────────────────────── ┘
-          │
-       Socket Proxy (Docker API — read-only)
+```mermaid
+flowchart TD
+    INT["🌐 Internet"]
+    SF["SKFence · Traefik v3\nor ingress-nginx\nTLS termination · ACME · rate-limit"]
+    INT -->|"443 / 80"| SF
+
+    subgraph PUB["traefik-public overlay network"]
+        SSO["SKSSO\nAuthentik SSO\n(LDAP/SAML/OIDC)"]
+        MON["SKMON\nGrafana / Prometheus"]
+        APPS["App Services\n(custom)"]
+    end
+
+    SF --> PUB
+
+    subgraph EDGE["traefik-internal / cloud-edge overlay network  (service mesh)"]
+        SKSEC["SKSEC\nCrowdSec IDS\n+ Traefik bouncer"]
+        SOCK["Socket Proxy\nDocker API read-only"]
+    end
+
+    PUB --> EDGE
+
+    NOTE["All inter-service traffic stays\non private overlay networks.\nPublic exposure only via SKFence."]
 ```
 
 All inter-service traffic stays on private overlay networks.
@@ -266,3 +300,16 @@ Public exposure is only via SKFence/ingress-nginx.
 4. **Import to new backend** with `secrets/migrate.py --from vault-file --to hashicorp-vault`.
 5. **Deploy v2 services** alongside v1, validate, then cut over DNS.
 6. **Decommission v1** service by service.
+
+```mermaid
+flowchart LR
+    V1["SKStacks v1\nAnsible-vault only\nDocker Swarm"]
+    EXP["vault_export.yml\n→ secrets.json (encrypted)"]
+    MIG["secrets/migrate.py\n--from vault-file\n--to hashicorp-vault"]
+    V2["SKStacks v2\nPluggable backends\nSwarm + K8s + RKE2 + k3d"]
+
+    V1 -->|"keep v1 running"| EXP
+    EXP --> MIG
+    MIG --> V2
+    V1 -.->|"parallel deploy,\nvalidate, cut DNS"| V2
+```

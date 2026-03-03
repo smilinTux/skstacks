@@ -56,6 +56,33 @@ ansible-galaxy collection install community.general
 
 ## Quick start
 
+```mermaid
+sequenceDiagram
+    participant OP as Operator
+    participant AV as Ansible Vault
+    participant ANS as Ansible
+    participant N1 as swarm-manager-01
+    participant N2 as swarm-manager-02/03
+    participant WN as worker-01/02
+
+    OP->>AV: ansible-vault create all_vault.yml
+    OP->>ANS: ansible-playbook deploy.yml --ask-vault-pass
+
+    ANS->>N1: docker swarm init --advertise-addr SWARM_MANAGER_IP
+    N1-->>ANS: manager join-token + worker join-token
+
+    ANS->>N2: docker swarm join --token manager-token SWARM_MANAGER_IP:2377
+    ANS->>WN: docker swarm join --token worker-token SWARM_MANAGER_IP:2377
+
+    ANS->>N1: install keepalived (priority=100, MASTER)
+    ANS->>N2: install keepalived (priority=90/80, BACKUP)
+    ANS->>N1: ufw allow 2377,7946,4789,80,443,8080
+
+    ANS->>N1: docker node update --label-add traefik.acme.master=true
+    ANS->>N1: docker stack deploy traefik
+    Note over N1,WN: traefik-acme runs on ACME master only\ntraefik-worker runs globally on all managers
+```
+
 ### 1. Configure environment
 
 ```bash
@@ -149,32 +176,72 @@ Key variables:
 
 ## HA architecture
 
-```
-         ┌─────────────────────────────────────────┐
-         │  Keepalived VRRP (SWARM_VIP)            │
-         │  Priority: mgr-01=100, mgr-02=90, 03=80 │
-         └───────────┬─────────────┬───────────────┘
-                     │             │
-           ┌─────────▼───┐   ┌─────▼────────┐   ┌─────────────┐
-           │ swarm-mgr-01│   │ swarm-mgr-02 │   │ swarm-mgr-03│
-           │ (ACME master│   │ traefik-wrkr │   │ traefik-wrkr│
-           │  + cert renew│  │ (routing)    │   │ (routing)   │
-           └─────────────┘   └──────────────┘   └─────────────┘
-                     │             │                    │
-           ┌─────────▼─────────────▼────────────────────▼──────┐
-           │              Docker Swarm overlay network          │
-           │          (traefik-public / traefik-internal)       │
-           └───────────────────────────────────────────────────┘
-                     │             │                    │
-           ┌─────────▼───┐   ┌─────▼────────┐   ┌─────▼────────┐
-           │  worker-01  │   │  worker-02   │   │  worker-N    │
-           └─────────────┘   └──────────────┘   └──────────────┘
+```mermaid
+flowchart TD
+    subgraph VRRP["Keepalived VRRP  (floating VIP = SWARM_VIP)"]
+        direction LR
+        M1["swarm-manager-01\nPriority 100\n⭐ ACME master\n+ cert renewal"]
+        M2["swarm-manager-02\nPriority 90\nTraefik worker\n(routing)"]
+        M3["swarm-manager-03\nPriority 80\nTraefik worker\n(routing)"]
+    end
+
+    VIP["🌐 SWARM_VIP\n(active on highest-priority\nlive manager)"]
+    VIP -->|"VRRP failover"| M1
+    VIP -.->|"standby"| M2
+    VIP -.->|"standby"| M3
+
+    subgraph OVL["Docker Swarm Overlay Networks"]
+        PUB["traefik-public\n(internet-facing services)"]
+        INT["traefik-internal\n(internal services)"]
+    end
+
+    M1 --> OVL
+    M2 --> OVL
+    M3 --> OVL
+
+    subgraph WN["Worker Nodes"]
+        W1["worker-01"]
+        W2["worker-02"]
+        WN_["worker-N"]
+    end
+
+    OVL --> WN
+
+    ACME["acme.json\n(TLS certs, shared read-only\nto traefik-workers)"]
+    M1 -->|"writes certs"| ACME
+    M2 -.->|"reads certs"| ACME
+    M3 -.->|"reads certs"| ACME
 ```
 
 The `traefik-acme` service handles **certificate renewal only** and runs on
 the labeled ACME master. `traefik-worker` runs in **global mode** on all other
 managers and performs actual request routing. Workers mount `acme.json`
 read-only so they pick up renewed certificates without managing ACME themselves.
+
+```mermaid
+flowchart LR
+    subgraph ACME_NODE["ACME Master Node  (label: traefik.acme.master=true)"]
+        TA["traefik-acme\ncontainer\n(single replica)"]
+        AJ["acme.json\n(cert store on host)"]
+        TA <-->|"reads/writes"| AJ
+    end
+
+    LE["☁️ Let's Encrypt\nACME DNS-01\n(via Cloudflare API)"]
+    TA <-->|"DNS-01 challenge\nCF_DNS_API_TOKEN"| LE
+
+    subgraph WORKERS["All Other Manager Nodes  (global mode)"]
+        TW1["traefik-worker"]
+        TW2["traefik-worker"]
+    end
+
+    AJ -->|"bind-mount\nread-only"| TW1
+    AJ -->|"bind-mount\nread-only"| TW2
+
+    INT["🌐 Internet\n443 / 80"]
+    INT --> TW1
+    INT --> TW2
+    INT --> TA
+```
 
 ---
 

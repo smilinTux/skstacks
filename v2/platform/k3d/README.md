@@ -36,6 +36,34 @@ kubectl apply -k overlays/local/
 
 Your kubeconfig is automatically merged and the context switched to `k3d-skstacks`.
 
+```mermaid
+flowchart TD
+    subgraph HOST["Host Machine (Docker)"]
+        subgraph K3D["k3d cluster: skstacks"]
+            LB["k3d LoadBalancer\n:80 → :80\n:443 → :443"]
+
+            subgraph CTRL["Control Plane Container(s)"]
+                S0["k3s server-0\nkube-apiserver\nscheduler\nkubelet"]
+            end
+
+            subgraph AGENTS["Agent Containers"]
+                A0["k3s agent-0\nkubelet\ncontainerd"]
+                A1["k3s agent-1\nkubelet\ncontainerd"]
+            end
+
+            LB --> CTRL
+            CTRL --> AGENTS
+        end
+
+        KC["kubeconfig\n~/.kube/config\n(auto-merged by k3d)"]
+        CTRL -.->|"context: k3d-skstacks"| KC
+    end
+
+    DEV["Developer\nkubectl / helm / kustomize"]
+    DEV <-->|"API :6443"| CTRL
+    DEV -->|"port-forward or\nloadbalancer IP"| LB
+```
+
 ```bash
 kubectl get nodes
 # NAME                    STATUS   ROLES                  AGE
@@ -59,6 +87,47 @@ Switch profiles via `K3D_CONFIG`:
 K3D_CONFIG=staging K3D_CLUSTER_NAME=skstacks-staging ./scripts/create.sh
 ```
 
+```mermaid
+flowchart LR
+    subgraph LOCAL["local  (daily dev)"]
+        direction TB
+        LS["1× server"]
+        LA["2× agents"]
+        LLB["LB :80/:443"]
+        LS --> LA
+        LA --> LLB
+    end
+
+    subgraph CI["ci  (pipelines)"]
+        direction TB
+        CS["1× server"]
+        CNO["0 agents\nfast startup\nno LB"]
+        CS --> CNO
+    end
+
+    subgraph STG["staging  (HA validation)"]
+        direction TB
+        SS["3× servers"]
+        SA["2× agents"]
+        SLB["LB :8080/:8443"]
+        SS --> SA
+        SA --> SLB
+    end
+
+    subgraph EDGE["prod-edge  (IoT/edge)"]
+        direction TB
+        ES["1× server"]
+        ELB["LB :80/:443\nhost volume\nfor persistence"]
+        ES --> ELB
+    end
+
+    ENV["K3D_CONFIG=\nlocal | ci | staging | prod-edge"]
+    ENV --> LOCAL
+    ENV --> CI
+    ENV --> STG
+    ENV --> EDGE
+```
+
 ## Common Operations
 
 ```bash
@@ -70,6 +139,30 @@ K3D_CONFIG=staging K3D_CLUSTER_NAME=skstacks-staging ./scripts/create.sh
 
 # Destroy the cluster
 ./scripts/destroy.sh
+```
+
+```mermaid
+sequenceDiagram
+    participant DEV as Developer
+    participant K3D as k3d CLI
+    participant K as kubectl
+    participant REG as Local Registry<br/>(optional)
+
+    DEV->>K3D: ./scripts/create.sh  (K3D_CONFIG=local)
+    K3D-->>DEV: kubeconfig merged, context switched
+    DEV->>K: kubectl apply -k overlays/local/
+    K-->>DEV: namespaces + cert-manager + MetalLB ready
+
+    loop Development Iteration
+        DEV->>DEV: build myapp:latest
+        DEV->>K3D: ./scripts/load-images.sh myapp:latest
+        Note over K3D: image imported directly into\nk3d nodes — no registry push
+        DEV->>K: kubectl apply -f myapp/
+        K-->>DEV: pod running
+    end
+
+    DEV->>K3D: ./scripts/destroy.sh
+    Note over K3D: cluster deleted in ~5s
 ```
 
 ## Overlays

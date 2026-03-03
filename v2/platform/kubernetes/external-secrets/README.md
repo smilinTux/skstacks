@@ -31,6 +31,36 @@ secrets/{env}/{service}/{key}
                           prod/certs/wildcard_tls_cert
 ```
 
+```mermaid
+sequenceDiagram
+    participant APP as Application Pod
+    participant K8S as Kubernetes<br/>API Server
+    participant ESO as External Secrets<br/>Operator
+    participant CSS as ClusterSecretStore<br/>(vault-kv)
+    participant V as HashiCorp Vault<br/>(KV-v2)
+
+    Note over ESO,V: Initial sync
+    ESO->>CSS: check provider config
+    CSS->>V: authenticate (K8s JWT)
+    V-->>CSS: token (TTL 10m)
+    ESO->>V: read secrets/data/{env}/{service}
+    V-->>ESO: secret values
+    ESO->>K8S: create/update Secret object
+    K8S-->>APP: mount as envFrom / volumeMount
+
+    Note over ESO,V: Periodic resync (refreshInterval)
+    ESO->>V: read (same path)
+    V-->>ESO: updated values (if rotated)
+    ESO->>K8S: patch Secret
+
+    Note over ESO,V: Force resync (annotation)
+    APP->>K8S: annotate ExternalSecret force-sync=$(date)
+    K8S-->>ESO: reconcile trigger
+    ESO->>V: immediate read
+    V-->>ESO: current values
+    ESO->>K8S: update Secret
+```
+
 **Two storage patterns** are supported and can be mixed:
 
 | Pattern | Vault path | ESO remoteRef | Best for |
@@ -40,6 +70,23 @@ secrets/{env}/{service}/{key}
 
 The `value` property name in the flat pattern comes from how the Python secret backend
 stores secrets: `{"value": "<plaintext>"}`. Both patterns are fully compatible with ESO.
+
+```mermaid
+flowchart LR
+    subgraph GROUPED["Grouped Pattern\n(related fields)"]
+        GP["Vault path:\nsecrets/data/prod/postgres\n────────────────\nhost: db.internal\nport: 5432\nusername: myapp_user\npassword: ••••••••"]
+        GES["ExternalSecret\nkey: prod/postgres\nproperty: password"]
+        GS["k8s Secret\nDB_PASSWORD: ••••••••"]
+        GP -->|ESO sync| GES --> GS
+    end
+
+    subgraph FLAT["Flat Pattern\n(single values)"]
+        FP["Vault path:\nsecrets/data/prod/skfence/cf_token\n────────────────\nvalue: eyJhbGci..."]
+        FES["ExternalSecret\nkey: prod/skfence/cf_token\nproperty: value"]
+        FS["k8s Secret\nCF_TOKEN: eyJhbGci..."]
+        FP -->|ESO sync| FES --> FS
+    end
+```
 
 ---
 
@@ -175,6 +222,43 @@ kubectl describe externalsecret postgres-credentials -n <namespace>
 ---
 
 ## Secret Rotation Runbook
+
+```mermaid
+flowchart TD
+    START(["Secret needs rotation"])
+    TYPE{"Secret type?"}
+
+    subgraph DB["DB Password Rotation"]
+        DB1["1. Generate new password\nopenssl rand -base64 32"]
+        DB2["2. ALTER USER on DB\n(old password still works)"]
+        DB3["3. vault kv patch\nupdate Vault"]
+        DB4["4. Annotate ExternalSecret\nforce-sync"]
+        DB5["5. kubectl rollout restart"]
+        DB1 --> DB2 --> DB3 --> DB4 --> DB5
+    end
+
+    subgraph API["API Key Rotation (zero-downtime)"]
+        A1["1. Create new key\non provider (old key active)"]
+        A2["2. Write to Vault\nunder _next path"]
+        A3["3. Test new key"]
+        A4["4. Swap to live path\nin Vault"]
+        A5["5. Force ESO sync"]
+        A6["6. Revoke old key\non provider"]
+        A1 --> A2 --> A3 --> A4 --> A5 --> A6
+    end
+
+    subgraph TLS["TLS Cert Rotation"]
+        T1["1. certbot renew\nor Cloudflare dashboard"]
+        T2["2. vault kv put\nnew cert + key (base64)"]
+        T3["3. Force ESO sync\ningress auto-reloads TLS"]
+        T1 --> T2 --> T3
+    end
+
+    START --> TYPE
+    TYPE -->|"postgres / mysql"| DB
+    TYPE -->|"Stripe / CF / API key"| API
+    TYPE -->|"TLS certificate"| TLS
+```
 
 ### Forcing an immediate ESO re-sync
 

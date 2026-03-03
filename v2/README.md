@@ -21,37 +21,71 @@ RKE2. It is the successor to SKStacks v1 (Ansible-vault-only, Docker Swarm).
 
 ## Architecture at a Glance
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         SKStacks v2                                 │
-├──────────────┬──────────────────┬─────────────┬─────────────────────┤
-│ Infra Layer  │  Secret Backend  │ Service     │ Platform Layer       │
-│ ──────────── │  ─────────────   │ ──────────  │ ─────────────────── │
-│ tofu/        │  vault-file      │ core/       │ swarm/               │
-│  hetzner     │  hashicorp-vault │   skfence   │ kubernetes/          │
-│  proxmox     │  capauth (PGP)   │   sksec     │ rke2/                │
-│  cloudflare  │                  │   sksso     │ k3d/                 │
-│  tailscale   │                  │   skbackup  │   manifests/         │
-│              │                  │   skha      │   helm/              │
-│              │                  │ optional/   │                      │
-│              │                  │   skai, …   │ CI/CD                │
-│              │                  │ apps/       │ ──────────────────── │
-│              │                  │  (custom)   │ forgejo/             │
-│              │                  │             │ github/              │
-│              │                  │             │ gitlab/              │
-│              │                  │             │ argocd/              │
-└──────────────┴──────────────────┴─────────────┴─────────────────────┘
+```mermaid
+flowchart TD
+    subgraph INF["Infrastructure Layer  (tofu/)"]
+        HZ["Hetzner Cloud"]
+        PX["Proxmox VE"]
+        CF["Cloudflare DNS"]
+        TS["Tailscale Mesh"]
+    end
+
+    subgraph SEC["Secret Backend  (secrets/)"]
+        VF["vault-file\nAES-256 · git-native"]
+        HV["hashicorp-vault\nHA Raft · dynamic"]
+        CA["capauth PGP\nsovereign · offline"]
+    end
+
+    subgraph SVC["Core Services  (core/)"]
+        SKF["skfence\nTraefik v3"]
+        SKS["sksec\nCrowdSec"]
+        SSO["sksso\nAuthentik"]
+        SKB["skbackup\nDuplicati"]
+        HA["skha\nKeepalived"]
+    end
+
+    subgraph PLT["Platform Layer  (platform/)"]
+        SW["swarm/\nDocker Swarm HA\nKeepalived + Traefik"]
+        K8["kubernetes/\nKustomize overlays\n+ ESO"]
+        RK["rke2/\nCIS-hardened K8s\nLonghorn + ArgoCD"]
+        K3["k3d/\nk3s-in-Docker\nlocal/CI/edge"]
+    end
+
+    subgraph CI["CI/CD  (cicd/)"]
+        FG["forgejo/"]
+        GH["github/"]
+        GL["gitlab/"]
+        AR["argocd/"]
+    end
+
+    INF -->|"provision nodes"| PLT
+    SEC -->|"inject secrets\nat deploy time"| SVC
+    SVC -->|"deploy to"| PLT
+    PLT --> CI
 ```
 
 ### Two-phase deployment
 
-```
-Phase 1 — tofu apply          Phase 2 — ansible-playbook
-─────────────────────         ──────────────────────────────
-Provision VMs             →   Install RKE2 / Docker Swarm
-Create networks           →   Deploy core services (skfence, …)
-Set DNS records           →   Bootstrap ArgoCD
-Configure firewalls       →   Sync secrets from backend
+```mermaid
+flowchart LR
+    subgraph P1["Phase 1 — tofu apply"]
+        P1A["Provision VMs"]
+        P1B["Create networks"]
+        P1C["Set DNS records"]
+        P1D["Configure firewalls"]
+        P1A --> P1B --> P1C --> P1D
+    end
+
+    subgraph P2["Phase 2 — ansible-playbook"]
+        P2A["Install RKE2\nor Docker Swarm"]
+        P2B["Deploy core services\nskfence · sksec · …"]
+        P2C["Bootstrap ArgoCD"]
+        P2D["Sync secrets\nfrom backend"]
+        P2A --> P2B --> P2C
+        P2A --> P2D
+    end
+
+    P1 -->|"node IPs\n→ inventory.yml"| P2
 ```
 
 ---

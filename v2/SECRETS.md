@@ -22,6 +22,35 @@ Switch at any time via the migration tool:
 python3 secrets/migrate.py --from vault-file --to hashicorp-vault --env prod --dry-run
 ```
 
+```mermaid
+flowchart TD
+    START(["Choose a Secrets Backend"])
+
+    Q1{"Need dynamic DB /\nPKI / SSH secrets?"}
+    Q2{"SOC2, FedRAMP,\nor HIPAA compliance?"}
+    Q3{"Full sovereignty +\nPGP-signed provenance?"}
+    Q4{"Willing to run\na Vault cluster?"}
+
+    HV["hashicorp-vault\n🏢 Enterprise-grade\n• Dynamic secrets\n• Full audit log\n• AppRole + K8s JWT auth\n• ESO native integration"]
+    CA["capauth\n🔐 Sovereign PGP\n• No external server\n• Offline capable\n• skcapstone native\n• Multi-agent multi-encrypt"]
+    VF["vault-file\n📁 Git-native AES-256\n• Zero extra infra\n• ansible-vault encrypted\n• Simple rotation\n• Offline capable"]
+
+    START --> Q1
+    Q1 -->|Yes| HV
+    Q1 -->|No| Q2
+    Q2 -->|Yes| HV
+    Q2 -->|No| Q3
+    Q3 -->|Yes| CA
+    Q3 -->|No| Q4
+    Q4 -->|Yes| HV
+    Q4 -->|No| VF
+
+    MIGRATE["Migrate later:\nsecrets/migrate.py\n--from X --to Y --env prod"]
+    HV -.-> MIGRATE
+    CA -.-> MIGRATE
+    VF -.-> MIGRATE
+```
+
 ---
 
 ---
@@ -1131,4 +1160,44 @@ Output a markdown table:
 
 Flag anything RED (expired), YELLOW (due for rotation), GREEN (current).
 Store audit result in skcapstone memory with tag=secrets-audit.
+```
+
+---
+
+## Secrets Lifecycle Overview
+
+```mermaid
+sequenceDiagram
+    participant OP as Operator
+    participant SB as Secret Backend<br/>(vault-file/Vault/CapAuth)
+    participant ANS as Ansible / Deploy Tool
+    participant K8S as Kubernetes / Swarm
+    participant SVC as Running Service
+
+    Note over OP,SB: Initial setup
+    OP->>SB: store secret (key=cloudflare_dns_token, value=...)
+    SB-->>OP: stored + encrypted at rest
+
+    Note over ANS,SVC: Deploy time
+    ANS->>SB: resolve secrets (scope=skfence, env=prod)
+    SB-->>ANS: plaintext values (in-memory only, never written)
+    ANS->>K8S: render template → deploy stack / apply manifest
+    K8S-->>SVC: inject via env var / volume
+
+    Note over OP,SB: Rotation
+    OP->>SB: update secret (new value)
+    SB-->>OP: stored
+
+    alt Kubernetes (ESO)
+        OP->>K8S: annotate ExternalSecret force-sync=$(date)
+        K8S-->>SVC: updated Secret → rolling restart
+    else Docker Swarm
+        OP->>ANS: ansible-playbook redeploy with new value
+        ANS->>K8S: docker service update --secret-rm/--secret-add
+    end
+
+    Note over OP,SB: Scheduled rotation check (app.yaml rotation_days)
+    ANS->>SB: check secret age vs rotation_days
+    SB-->>ANS: overdue secrets list
+    ANS-->>OP: rotation reminder / automated rekey
 ```
