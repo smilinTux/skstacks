@@ -169,7 +169,7 @@ sequenceDiagram
     B-->>ESO: plaintext value (in-memory only)
     ESO->>K8S: create/update native Secret
     K8S-->>P: mount as env var / volume
-    Note over ESO,B: Periodic resync via refreshInterval or force-sync annotation
+    Note over B,ESO: Periodic resync via refreshInterval or force-sync annotation
 ```
 
 For the CapAuth backend, a lightweight ESO provider plugin communicates with
