@@ -156,20 +156,20 @@ the chosen secret backend into native K8s Secrets.
 
 ```mermaid
 sequenceDiagram
-    participant D as Deploy Tool<br/>(Ansible / ArgoCD)
-    participant B as Secret Backend<br/>(Vault / CapAuth)
-    participant ESO as External Secrets<br/>Operator (ESO)
-    participant K8S as Kubernetes<br/>API Server
+    participant D as Deploy Tool
+    participant B as Secret Backend
+    participant ESO as Ext Secrets Operator
+    participant K8S as Kubernetes API
     participant P as Pod
 
-    D->>ESO: apply ExternalSecret CRD<br/>(secretStoreRef + remoteRef.key)
+    D->>ESO: apply ExternalSecret CRD (secretStoreRef + remoteRef.key)
     ESO->>B: authenticate (AppRole / K8s JWT / PGP)
     B-->>ESO: token granted
-    ESO->>B: read secret<br/>kv/data/skstacks/{env}/{scope}/{key}
+    ESO->>B: read secret kv/data/skstacks/ENV/SCOPE/KEY
     B-->>ESO: plaintext value (in-memory only)
     ESO->>K8S: create/update native Secret
     K8S-->>P: mount as env var / volume
-    Note over ESO,B: Periodic resync (refreshInterval)<br/>or forced via annotation
+    Note over ESO,B: Periodic resync via refreshInterval or force-sync annotation
 ```
 
 For the CapAuth backend, a lightweight ESO provider plugin communicates with
@@ -282,8 +282,6 @@ flowchart TD
     end
 
     PUB --> EDGE
-
-    NOTE["All inter-service traffic stays\non private overlay networks.\nPublic exposure only via SKFence."]
 ```
 
 All inter-service traffic stays on private overlay networks.
