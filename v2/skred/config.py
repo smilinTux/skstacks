@@ -1,8 +1,8 @@
 """
-skred config — the default scope for OUR infrastructure, and config loading.
+skred config: the default scan scope.
 
-The defaults encode the smilinTux / SKWorld estate so `skred scan` is safe out of the
-box. Override via a skred.yaml (or SKRED_SCOPE_* env) when the estate changes.
+The default is loopback only, so a fresh install authorizes nothing real.
+Declare your own estate with SKRED_SCOPE_DOMAINS / SKRED_SCOPE_CIDRS.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ OWN_CIDRS = ["127.0.0.0/8"]
 
 
 def default_guard(repo_root: str | None = None) -> ScopeGuard:
-    """A ScopeGuard scoped to our estate + the current repo checkout."""
+    """A ScopeGuard for the declared estate plus the current repo checkout."""
     root = os.path.realpath(repo_root or os.getcwd())
     domains = list(OWN_DOMAINS)
     cidrs = list(OWN_CIDRS)

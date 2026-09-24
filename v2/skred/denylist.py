@@ -7,12 +7,15 @@ are public.
 
     python -m skred.denylist ROOT [--denylist FILE]
     exit 0 clean, 1 findings, 2 unusable denylist or nothing scanned
+
+Matching is per line: a value split across two lines is not found.
 """
 from __future__ import annotations
 
 import argparse
 import os
 import re
+import stat
 import sys
 
 VAULT_HEADER = b"$ANSIBLE_VAULT"
@@ -30,6 +33,8 @@ def load_patterns(path: str) -> list:
             lines = [ln.strip() for ln in fh]
     except OSError as e:
         raise DenylistError(f"denylist unreadable: {e.strerror}") from None
+    except UnicodeDecodeError:
+        raise DenylistError("denylist is not UTF-8") from None
     patterns = []
     for ln in (ln for ln in lines if ln and not ln.startswith("#")):
         try:
@@ -43,24 +48,33 @@ def load_patterns(path: str) -> list:
 
 def scan(root: str, patterns: list) -> tuple:
     """Return (hits, files scanned). A hit is (relative path, line, what).
-    Symlinks are skipped; binaries are counted but not searched."""
+    Symlinks and non-regular files (FIFOs, sockets) are skipped; binaries are
+    counted but not searched; a file that cannot be read is a finding."""
     hits, scanned = [], 0
     for dirpath, dirnames, files in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         for name in files:
             path = os.path.join(dirpath, name)
-            if os.path.islink(path):
-                continue
+            if not stat.S_ISREG(os.lstat(path).st_mode):
+                continue  # symlink, FIFO, socket, device
             rel = os.path.relpath(path, root)
             scanned += 1
-            with open(path, "rb") as fh:
-                data = fh.read()
+            try:
+                with open(path, "rb") as fh:
+                    data = fh.read()
+            except OSError:
+                hits.append((rel, 0, "unreadable"))  # fail closed: it could hold anything
+                continue
             if data.startswith(VAULT_HEADER):
                 hits.append((rel, 1, "vault"))
                 continue
-            if b"\0" in data[:8192]:
+            if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+                text = data.decode("utf-16", "replace")
+            elif b"\0" in data[:8192]:
                 continue  # binary
-            for n, line in enumerate(data.decode("utf-8", "replace").splitlines(), 1):
+            else:
+                text = data.decode("utf-8", "replace")
+            for n, line in enumerate(text.splitlines(), 1):
                 for i, rx in enumerate(patterns, 1):
                     if rx.search(line):
                         hits.append((rel, n, f"pattern {i}"))
