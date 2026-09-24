@@ -1,0 +1,104 @@
+name: skwire — test & release binaries
+
+# Builds skwire for Linux, macOS, and Windows. The universal `skwire.pyz` runs
+# anywhere with Python 3.10+; the native binaries need no Python at all. Each native
+# binary is built ON its own OS runner (you can't cross-build a macOS/Windows binary
+# from Linux), then attached to a GitHub Release when you push a `skwire-vX.Y.Z` tag.
+
+on:
+  push:
+    branches: [main]
+    paths: ['v2/skwire/**', '.github/workflows/skwire-release.yml']
+    tags: ['skwire-v*']
+  pull_request:
+    paths: ['v2/skwire/**']
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install pytest pyyaml
+      - name: pytest
+        working-directory: v2/skwire
+        env: { PYTHONPATH: .. }
+        run: python -m pytest tests/ -q
+
+  pyz:
+    # one universal single-file artifact for every OS (needs only Python 3.10+)
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: bash v2/skwire/build_pyz.sh "$GITHUB_WORKSPACE/skwire.pyz"
+      - uses: actions/upload-artifact@v4
+        with: { name: skwire.pyz, path: skwire.pyz }
+
+  binary:
+    # native, no-Python-needed executables — built on each OS's own runner
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  asset: skwire-linux-x64,       sep: ':' }
+          - { os: macos-latest,   asset: skwire-macos-arm64,     sep: ':' }
+          - { os: windows-latest, asset: skwire-windows-x64.exe, sep: ';' }
+          # Intel-Mac (macos-13) native binary is omitted: GitHub's Intel runners
+          # queue unreliably and would block releases. Intel Macs run skwire.pyz
+          # (system Python) or `pip install skwire`. Re-add macos-13 here if needed.
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install pyinstaller
+      - name: build native binary
+        shell: bash
+        working-directory: v2
+        run: |
+          printf 'from skwire.cli import main\nimport sys\nsys.exit(main())\n' > _entry.py
+          pyinstaller --onefile --name skwire \
+            --add-data "skwire/web/index.html${{ matrix.sep }}skwire/web" \
+            --add-data "skwire/packs/skhf/skhf${{ matrix.sep }}skwire/packs/skhf" \
+            --collect-submodules skwire \
+            _entry.py
+          # normalise the output name per-platform
+          if [ -f dist/skwire.exe ]; then mv dist/skwire.exe "dist/${{ matrix.asset }}"; \
+          else mv dist/skwire "dist/${{ matrix.asset }}"; fi
+      - name: smoke test the binary
+        shell: bash
+        working-directory: v2
+        env:
+          PYTHONUTF8: '1'          # insurance; the binary also self-forces UTF-8 stdio
+        run: "dist/${{ matrix.asset }} scan"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: v2/dist/${{ matrix.asset }}
+
+  release:
+    # only when a tag like `skwire-v0.1.0` is pushed — bundle everything into a Release
+    if: startsWith(github.ref, 'refs/tags/skwire-v')
+    needs: [pyz, binary]
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/checkout@v4               # for the installer scripts
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts }
+      - name: collect artifacts + installers
+        run: |
+          mkdir -p release
+          find artifacts -type f -exec cp {} release/ \;
+          cp v2/skwire/install.sh v2/skwire/install.ps1 release/
+          ls -la release
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true

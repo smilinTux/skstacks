@@ -1,0 +1,22 @@
+# exposure/pangolin (Swarm) — Newt connector. Dials OUT to the public Pangolin/
+# Gerbil node and forwards to the in-cluster Traefik Gateway. No inbound ports.
+services:
+  newt:
+    image: fosrl/newt:1.0.0
+    environment:
+      - PANGOLIN_ENDPOINT=${PANGOLIN_ENDPOINT}     # public Pangolin/Gerbil URL
+      - NEWT_ID=${NEWT_ID}                          # from secret backend
+      - NEWT_SECRET=${NEWT_SECRET}                  # from secret backend
+    cap_add: [NET_ADMIN]
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    networks:
+      - traefik-public
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any }
+# Newt targets are configured in the Pangolin dashboard → https://traefik:443.
+networks:
+  traefik-public:
+    external: true
+    name: traefik-public-${ENV:-prod}

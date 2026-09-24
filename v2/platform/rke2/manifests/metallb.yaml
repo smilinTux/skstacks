@@ -1,0 +1,75 @@
+# MetalLB — bare-metal LoadBalancer (L2/ARP mode)
+# Auto-deployed by RKE2 from /var/lib/rancher/rke2/server/manifests/
+#
+# Step 1: This file deploys the MetalLB controller + speaker (CRDs included).
+# Step 2: metallb-config.yaml (in this dir) deploys IPAddressPool + L2Advertisement.
+#         The helm-controller retries Step 2 until MetalLB CRDs are available.
+#
+# Tuning: see helm/metallb-values.yaml for all configurable defaults.
+# Override per-env: use a HelmChartConfig in overlays/{env}/metallb-helmchartconfig.yaml
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: metallb-system
+  labels:
+    # Required by Pod Security Admission — MetalLB speaker needs host-network + privileged
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: privileged
+    pod-security.kubernetes.io/warn: privileged
+---
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: metallb
+  namespace: kube-system
+spec:
+  repo: https://metallb.github.io/metallb
+  chart: metallb
+  version: "0.14.5"
+  targetNamespace: metallb-system
+  createNamespace: true
+  valuesContent: |-
+    # CRD management — let Helm own the MetalLB CRDs
+    crds:
+      enabled: true
+      validationFailurePolicy: Ignore   # Don't block pool creation if webhook is slow
+
+    # Speaker — L2/ARP mode (no BGP, no FRR daemon)
+    speaker:
+      frr:
+        enabled: false
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          cpu: 100m
+          memory: 100Mi
+      # Uncomment to restrict speaker to specific nodes:
+      # nodeSelector:
+      #   node-role.kubernetes.io/worker: "true"
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          effect: NoSchedule
+          operator: Exists
+
+    # Controller
+    controller:
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          cpu: 100m
+          memory: 128Mi
+
+    # Prometheus metrics (picked up by kube-prometheus-stack if present)
+    prometheus:
+      scrapeAnnotations: true
+      serviceAccount: ""
+      namespace: ""
+      rbacPrometheus: true
+      serviceMonitor:
+        enabled: true

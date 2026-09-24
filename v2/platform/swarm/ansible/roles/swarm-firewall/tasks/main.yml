@@ -1,0 +1,97 @@
+---
+# swarm-firewall: Open UFW ports required by Docker Swarm and Traefik.
+#
+# Swarm cluster ports:
+#   2377/tcp  — cluster management (manager nodes only)
+#   7946/tcp  — container network discovery
+#   7946/udp  — container network discovery
+#   4789/udp  — VXLAN overlay network data plane
+#
+# Application ports (Traefik):
+#   80/tcp    — HTTP
+#   443/tcp   — HTTPS
+#   8080/tcp  — Traefik dashboard (restrict source in production)
+#
+# Set swarm_firewall_restrict_management: true to limit 2377/7946 to a
+# trusted management CIDR (swarm_management_cidr, e.g. 10.0.0.0/8).
+
+- name: Ensure UFW is installed
+  ansible.builtin.package:
+    name: ufw
+    state: present
+
+- name: Allow SSH (prevent lockout)
+  community.general.ufw:
+    rule: allow
+    port: "{{ ansible_port | default('22') }}"
+    proto: tcp
+    comment: SSH
+
+- name: Allow Docker Swarm cluster management (tcp 2377)
+  community.general.ufw:
+    rule: allow
+    port: '2377'
+    proto: tcp
+    src: "{{ swarm_management_cidr | default('any') }}"
+    comment: Docker Swarm cluster management
+
+- name: Allow Docker Swarm node discovery (tcp 7946)
+  community.general.ufw:
+    rule: allow
+    port: '7946'
+    proto: tcp
+    src: "{{ swarm_management_cidr | default('any') }}"
+    comment: Docker Swarm node discovery TCP
+
+- name: Allow Docker Swarm node discovery (udp 7946)
+  community.general.ufw:
+    rule: allow
+    port: '7946'
+    proto: udp
+    src: "{{ swarm_management_cidr | default('any') }}"
+    comment: Docker Swarm node discovery UDP
+
+- name: Allow VXLAN overlay network (udp 4789)
+  community.general.ufw:
+    rule: allow
+    port: '4789'
+    proto: udp
+    src: "{{ swarm_management_cidr | default('any') }}"
+    comment: Docker Swarm VXLAN overlay
+
+- name: Allow HTTP (Traefik)
+  community.general.ufw:
+    rule: allow
+    port: '80'
+    proto: tcp
+    comment: Traefik HTTP
+
+- name: Allow HTTPS (Traefik)
+  community.general.ufw:
+    rule: allow
+    port: '443'
+    proto: tcp
+    comment: Traefik HTTPS
+
+- name: Allow Traefik dashboard (restrict source in production)
+  community.general.ufw:
+    rule: allow
+    port: '8080'
+    proto: tcp
+    src: "{{ traefik_dashboard_allowed_cidr | default('any') }}"
+    comment: Traefik dashboard
+
+- name: Enable UFW (default deny incoming)
+  community.general.ufw:
+    state: enabled
+    policy: deny
+    direction: incoming
+
+- name: Report UFW status
+  ansible.builtin.command: ufw status verbose
+  register: ufw_status
+  changed_when: false
+
+- name: Print UFW status
+  ansible.builtin.debug:
+    var: ufw_status.stdout_lines

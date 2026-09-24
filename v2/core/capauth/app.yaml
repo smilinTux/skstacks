@@ -1,0 +1,54 @@
+# SKStacks v2 — capauth app descriptor (STUB)
+#
+# This is a capability stub — structure only, NO real secrets.
+# Replace CHANGEME_* placeholders with real values before deploy.
+# Provider is the recommended sovereign adapter from the skos capability map.
+#
+# See: docs/superpowers/specs/2026-06-09-skos-capability-map.md
+
+name: capauth
+description: "Sovereign machine-to-machine auth — PGP-based CapAuth for agent identity and secret access without OAuth."
+capability: "Sovereign M2M auth — PGP-based identity and secret access without OAuth"
+scope: capauth
+ha: true            # "if you need one, get two" — identity root — redundant
+min_replicas: 3
+version: "CHANGEME_VERSION"
+platforms: [docker-swarm, bare-metal]
+provider: CapAuth (sovereign PGP-based; skcapstone MCP integration)
+alternates:
+  - Zitadel (OIDC M2M for human+agent hybrid)
+  - SPIFFE/SPIRE (workload identity)
+
+# Secret keys this service needs (values resolved from secret backend at deploy time)
+secrets:
+  - key: capauth_pgp_private_key
+    description: "CapAuth PGP private key (armored) for this agent/service"
+    rotation_days: 730
+    required: true
+    sensitive: true
+  - key: capauth_pgp_passphrase
+    description: "Passphrase protecting the CapAuth PGP private key"
+    required: true
+    sensitive: true
+
+# Non-sensitive config (overridden by overlay values)
+config:
+  LOG_LEVEL: INFO
+  DOMAIN: "${SKSTACKS_DOMAIN}"
+  CLUSTER: "${SKSTACKS_CLUSTER}"
+
+# Health check (fill in real URL/path before deploy)
+healthcheck:
+  url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/healthz"
+  interval: 30s
+  timeout: 5s
+  retries: 3
+
+# Deploy block — sovereign CapAuth identity service (HA). Built image from our registry.
+deploy:
+  container: capauth
+  image: "ghcr.io/smilintux/capauth:latest"
+  ports:
+    - "8081:8081"
+  volumes:
+    - "capauth-trust:/var/lib/capauth"

@@ -1,0 +1,60 @@
+# k3d SimpleConfig — production edge node
+# Single server with a host-path volume mount so k3s state (including etcd snapshots,
+# deployed manifests, and Longhorn data if used) survives cluster recreation.
+# Registry mirrors are configured to avoid Docker Hub rate limits in production.
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+
+metadata:
+  name: skstacks-prod-edge
+
+servers: 1
+agents: 0
+
+ports:
+  - port: "80:80"
+    nodeFilters:
+      - loadbalancer
+  - port: "443:443"
+    nodeFilters:
+      - loadbalancer
+
+volumes:
+  # K3D_DATA_DIR is the host-side path that persists across k3d cluster recreations.
+  # Mount it to the k3s data root inside the container so etcd snapshots, manifests,
+  # and certificates are durable.
+  - volume: "${K3D_DATA_DIR:-/var/lib/k3d-skstacks}:/var/lib/rancher/k3s"
+    nodeFilters:
+      - server:0
+
+options:
+  k3s:
+    extraArgs:
+      - arg: --disable=traefik
+        nodeFilters:
+          - server:*
+      - arg: --disable=servicelb
+        nodeFilters:
+          - server:*
+    nodeLabels:
+      - label: skstacks.io/env=prod-edge
+        nodeFilters:
+          - server:*
+      - label: skstacks.io/managed=true
+        nodeFilters:
+          - server:*
+      - label: skstacks.io/platform=k3d
+        nodeFilters:
+          - server:*
+
+registries:
+  # Mirror configuration — avoids Docker Hub pull-rate limits and reduces latency.
+  # Override endpoints via K3D_REGISTRY_MIRROR / K3D_GHCR_MIRROR in .env.
+  config: |
+    mirrors:
+      "docker.io":
+        endpoint:
+          - "${K3D_REGISTRY_MIRROR:-https://registry-1.docker.io}"
+      "ghcr.io":
+        endpoint:
+          - "${K3D_GHCR_MIRROR:-https://ghcr.io}"

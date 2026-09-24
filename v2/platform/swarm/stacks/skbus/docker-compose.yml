@@ -1,0 +1,36 @@
+# skbus — NATS JetStream on Docker Swarm (the agent fabric's message bus).
+# 3-node cluster with JetStream persistence. Underpins skcomms pubsub +
+# coordination. Passwords come from the secret backend (env), never committed.
+services:
+  nats:
+    image: nats:2.10-alpine
+    command: ["--config", "/etc/nats/nats-server.conf"]
+    environment:
+      - NATS_SERVER_NAME={{.Task.Slot}}              # unique per replica
+      - NATS_SYS_PASSWORD=${NATS_SYS_PASSWORD}        # ← secret backend at deploy
+      - NATS_SKCOMMS_PASSWORD=${NATS_SKCOMMS_PASSWORD}
+    networks:
+      - skstacks
+    volumes:
+      - ${SKBUS_CONFIG_DIR}/nats-server.conf:/etc/nats/nats-server.conf:ro
+      - nats-data:/data
+      - skbus-certs:/certs:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8222/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      replicas: 3
+      restart_policy:
+        condition: any
+      placement:
+        max_replicas_per_node: 1        # spread the cluster across nodes (HA)
+
+volumes:
+  nats-data:
+  skbus-certs:
+
+networks:
+  skstacks:
+    external: true

@@ -1,0 +1,33 @@
+# exposure/netbird (Swarm) — a Netbird agent that joins the sovereign WireGuard
+# mesh and exposes the Traefik Gateway to other mesh peers (routing peer).
+#
+# BOOTSTRAP CAVEAT (the soft catch-22 you flagged): the agent must reach the
+# Netbird MANAGEMENT server to join. Host management where the lan/ baseline can
+# reach it, so the mesh self-bootstraps and never depends on the mesh being up.
+services:
+  netbird:
+    image: netbirdio/netbird:0.62.0
+    environment:
+      - NB_SETUP_KEY=${NETBIRD_SETUP_KEY}                 # from secret backend
+      - NB_MANAGEMENT_URL=${NETBIRD_MGMT_URL}             # self-hosted mgmt (LAN-reachable)
+      # advertise the Traefik VIP / service subnet so peers can route to it
+      - NB_EXTRA_ARGS=--extra-iface-blacklist=docker0
+    cap_add: [NET_ADMIN, SYS_ADMIN]
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - netbird-state:/var/lib/netbird
+    networks:
+      - traefik-public
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+# Configure this peer as a routing/ingress peer in the Netbird dashboard so the
+# Traefik Gateway (https://traefik:443) is reachable to authorized mesh members.
+volumes:
+  netbird-state:
+networks:
+  traefik-public:
+    external: true
+    name: traefik-public-${ENV:-prod}

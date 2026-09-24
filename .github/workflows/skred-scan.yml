@@ -1,0 +1,80 @@
+name: skred — self-hardening security scan
+
+# The closed loop: best-of-breed OSS scanners run through skred's scope-locked
+# orchestrator on every PR/push + nightly. HIGH+ findings fail the gate. skred
+# normalizes all tools into one report and (optionally) asks the local LLM for fixes.
+
+on:
+  push:
+    # Every branch: once the public repo is canonical, any pushed branch is
+    # public, so scanning only main/develop would let a feature branch leak
+    # unscanned until a PR is opened.
+    branches: ['**']
+  pull_request:
+    # No paths filter. gitleaks walks up to the git root and scans the whole
+    # repo regardless of --source, so a v2-only filter never limited the scan,
+    # it just meant PRs touching v1 were never scanned at all.
+
+  schedule:
+    - cron: '17 7 * * *'        # nightly drift/dep-CVE sweep
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks scans git history. The default shallow clone hid most of
+          # it: 98 findings in CI against 249 on a full clone.
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+
+      - name: install scanners (gitleaks, trivy, semgrep)
+        run: |
+          # trivy
+          curl -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sh -s -- -b "$HOME/.local/bin"
+          # gitleaks
+          GL=8.21.2
+          curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GL}/gitleaks_${GL}_linux_x64.tar.gz" \
+            | tar -xz -C "$HOME/.local/bin" gitleaks
+          # semgrep
+          pip install semgrep
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: skred gate (scope-locked, fail on HIGH+)
+        working-directory: v2
+        env:
+          PYTHONPATH: .
+          SKWIRE_LLM_DISABLE: '1'     # CI has no local model; keep it deterministic
+          # Known, accepted debt. The gate fails on NEW findings only.
+          SKRED_BASELINE: ${{ github.workspace }}/.skred/baseline-fingerprints.txt
+        run: |
+          python -m skred.cli report . --json > "$GITHUB_WORKSPACE/skred-report.json" || true
+          python -m skred.cli gate . --fail-on high
+
+      - name: estate denylist gate (patterns from a private secret)
+        # Fork PRs cannot read secrets; they still get the gitleaks gate above.
+        # !cancelled(): a step with its own if: still inherits success(), so a
+        # HIGH finding from trivy or semgrep above would silently skip this check.
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        working-directory: v2
+        env:
+          PYTHONPATH: .
+          ESTATE_DENYLIST: ${{ secrets.ESTATE_DENYLIST }}
+        run: |
+          printf '%s\n' "$ESTATE_DENYLIST" > "$RUNNER_TEMP/deny.txt"
+          # An unset secret produces an empty file, which exits 2 (fail closed).
+          python -m skred.denylist "$GITHUB_WORKSPACE" --denylist "$RUNNER_TEMP/deny.txt"
+
+      - name: upload findings report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: skred-report
+          path: skred-report.json

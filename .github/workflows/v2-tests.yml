@@ -1,0 +1,37 @@
+name: v2 — package tests
+
+# Unit tests for the v2 Python packages: skwire (wiring), skred (security loop),
+# skrender (descriptor→deploy parity). Fast, no external services.
+
+on:
+  push:
+    branches: [main]
+    paths: ['v2/**', '.github/workflows/v2-tests.yml']
+  pull_request:
+    paths: ['v2/**']
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install pytest pyyaml
+      - name: skwire
+        working-directory: v2
+        env: { PYTHONPATH: . }
+        run: python -m pytest skwire/tests -q
+      - name: skred
+        working-directory: v2
+        env: { PYTHONPATH: . }
+        run: python -m pytest skred/tests -q
+      - name: skrender (descriptor→deploy parity)
+        working-directory: v2
+        env: { PYTHONPATH: . }
+        run: python -m pytest skrender/tests -q
+      - name: skbloom (installer engine + concierge)
+        working-directory: v2
+        env: { PYTHONPATH: . }
+        run: python -m pytest skbloom/tests -q

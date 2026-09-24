@@ -1,0 +1,37 @@
+# skobject — Garage S3 on Docker Swarm  (RATIFIED: Garage; MinIO archived Apr 2026)
+#
+# 3 replicas with replication_factor=3 in garage.toml gives zone-aware HA.
+# For a single node, run replicas: 1 and replication_factor=1.
+#
+# Required env / mounts:
+#   GARAGE_CONFIG_DIR  — host path holding garage.toml (rpc_secret, S3 region, etc.)
+services:
+  garage:
+    image: dxflrs/garage:v1.0.1
+    networks:
+      - skstacks
+    volumes:
+      - ${GARAGE_CONFIG_DIR}/garage.toml:/etc/garage.toml:ro
+      - garage-meta:/var/lib/garage/meta
+      - garage-data:/var/lib/garage/data
+    healthcheck:
+      test: ["CMD", "/garage", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      replicas: 3
+      restart_policy:
+        condition: any
+      placement:
+        max_replicas_per_node: 1          # spread the 3 copies across nodes (HA)
+        constraints:
+          - node.role == worker
+
+volumes:
+  garage-meta:
+  garage-data:
+
+networks:
+  skstacks:
+    external: true

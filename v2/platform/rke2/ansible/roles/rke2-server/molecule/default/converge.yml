@@ -1,0 +1,15 @@
+---
+# Applies rke2-common then rke2-server on a single init server node.
+- name: Converge
+  hosts: all
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: Update apt cache (Debian/Ubuntu)
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+  roles:
+    - role: rke2-common
+    - role: rke2-server

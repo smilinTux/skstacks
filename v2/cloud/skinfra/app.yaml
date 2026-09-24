@@ -1,0 +1,47 @@
+# SKStacks v2 — skinfra app descriptor (STUB)
+#
+# This is a capability stub — structure only, NO real secrets.
+# Replace CHANGEME_* placeholders with real values before deploy.
+# Provider is the recommended sovereign adapter from the skos capability map.
+#
+# See: docs/superpowers/specs/2026-06-09-skos-capability-map.md
+
+name: skinfra
+description: "Infrastructure provisioning — OpenTofu modules for Hetzner, Proxmox, and Cloudflare targets."
+capability: "Infrastructure provisioning — cloud/on-prem VM and network lifecycle via IaC"
+scope: skinfra
+version: "CHANGEME_VERSION"
+platforms: [bare-metal]
+provider: OpenTofu (Terraform-compatible, BSL-free)
+alternates:
+  - Terraform (BSL)
+  - Pulumi
+
+# Secret keys this service needs (values resolved from secret backend at deploy time)
+secrets:
+  - key: hetzner_api_token
+    description: "Hetzner Cloud API token"
+    rotation_days: 90
+    required: false
+    sensitive: true
+  - key: proxmox_api_token_secret
+    description: "Proxmox VE API token secret"
+    required: false
+    sensitive: true
+  - key: cloudflare_api_token
+    description: "Cloudflare API token (DNS + WAF rules)"
+    required: false
+    sensitive: true
+
+# Non-sensitive config (overridden by overlay values)
+config:
+  LOG_LEVEL: INFO
+  DOMAIN: "${SKSTACKS_DOMAIN}"
+  CLUSTER: "${SKSTACKS_CLUSTER}"
+
+# Health check (fill in real URL/path before deploy)
+healthcheck:
+  url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/healthz"
+  interval: 30s
+  timeout: 5s
+  retries: 3

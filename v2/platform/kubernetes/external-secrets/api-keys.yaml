@@ -1,0 +1,74 @@
+# ExternalSecret — API keys (flat per-key paths)
+# coord task: 55d31c18
+#
+# Vault KV layout — one KV secret per key:
+#
+#   vault kv put secrets/prod/skfence/cloudflare_dns_token value="CHANGEME_CF_TOKEN"
+#   vault kv put secrets/prod/myapp/stripe_secret_key      value="CHANGEME_STRIPE_KEY"
+#   vault kv put secrets/prod/myapp/sendgrid_api_key       value="CHANGEME_SG_KEY"
+#
+# Path convention: secrets/{env}/{service}/{key}
+#   Each API key occupies its own KV path with a single "value" field.
+#   This matches the storage format written by HashiCorpVaultBackend.set() in
+#   secrets/hashicorp_vault/backend.py — compatible with the Python secret backend.
+#
+# Rotation:
+#   1. Regenerate the key on the provider's dashboard (Stripe, Cloudflare, etc.).
+#   2. Store the new key in Vault:
+#        vault kv put secrets/prod/myapp/stripe_secret_key value="NEW_KEY"
+#   3. ESO re-syncs within refreshInterval (1h by default).
+#      Force immediate sync:
+#        kubectl annotate externalsecret myapp-api-keys -n CHANGEME_APP_NAMESPACE \
+#          force-sync="$(date +%s)" --overwrite
+#   4. Zero-downtime rotation: Stripe supports two active keys simultaneously.
+#      Add the new key to Vault while the old key is still valid, verify traffic,
+#      then revoke the old key on the provider side.
+#
+# Apply:
+#   # Edit CHANGEME_ placeholders first, then:
+#   kubectl apply -f platform/kubernetes/external-secrets/api-keys.yaml
+
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: myapp-api-keys
+  namespace: CHANGEME_APP_NAMESPACE
+  labels:
+    app.kubernetes.io/managed-by: external-secrets
+    skstacks.io/secret-scope: api-keys
+spec:
+  refreshInterval: 1h
+
+  secretStoreRef:
+    name: vault-kv
+    kind: ClusterSecretStore
+
+  target:
+    name: myapp-api-keys
+    creationPolicy: Owner
+    deletionPolicy: Retain
+
+  # remoteRef.key      = full path within the "secrets" KV mount: {env}/{service}/{key}
+  # remoteRef.property = always "value" (matches HashiCorpVaultBackend storage format)
+  data:
+    - secretKey: STRIPE_SECRET_KEY
+      remoteRef:
+        key: "CHANGEME_ENV/myapp/stripe_secret_key"   # e.g. prod/myapp/stripe_secret_key
+        property: "value"
+
+    - secretKey: SENDGRID_API_KEY
+      remoteRef:
+        key: "CHANGEME_ENV/myapp/sendgrid_api_key"
+        property: "value"
+
+    - secretKey: CLOUDFLARE_DNS_TOKEN
+      remoteRef:
+        key: "CHANGEME_ENV/skfence/cloudflare_dns_token"
+        property: "value"
+
+    # Add additional API keys following the same pattern:
+    # - secretKey: SOME_OTHER_API_KEY
+    #   remoteRef:
+    #     key: "CHANGEME_ENV/CHANGEME_SERVICE/CHANGEME_KEY_NAME"
+    #     property: "value"

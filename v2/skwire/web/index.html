@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>skwire</title>
+<style>
+  :root{ --accent:#22d3ee; --bg:#0b0f14; --panel:#121821; --panel2:#1a2230;
+         --text:#e6edf3; --muted:#8b98a8; --me:#1f6feb22; }
+  *{box-sizing:border-box} html,body{height:100%}
+  body{margin:0;background:radial-gradient(1200px 600px at 50% -10%, #16202e, var(--bg));
+       color:var(--text);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
+       display:flex;flex-direction:column;align-items:center}
+  header{width:100%;max-width:760px;display:flex;align-items:center;gap:12px;padding:18px 20px}
+  .logo{font-size:26px;width:42px;height:42px;display:grid;place-items:center;
+        background:var(--panel);border-radius:12px;border:1px solid #ffffff14}
+  .brand h1{font-size:17px;margin:0;font-weight:650;letter-spacing:.2px}
+  .brand p{margin:0;color:var(--muted);font-size:12.5px}
+  .credit{margin-left:auto;color:var(--muted);font-size:11.5px;opacity:.8}
+  main{width:100%;max-width:760px;flex:1;display:flex;flex-direction:column;
+       gap:14px;padding:8px 20px 24px;overflow-y:auto}
+  .row{display:flex;gap:10px;align-items:flex-end;animation:rise .28s ease both}
+  .row.me{flex-direction:row-reverse}
+  .av{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;font-size:15px;
+      background:var(--panel2);border:1px solid #ffffff10;flex:0 0 auto}
+  .av.bot{background:linear-gradient(135deg,var(--accent),#3b82f6);color:#04121a}
+  .bubble{background:var(--panel);border:1px solid #ffffff12;padding:11px 14px;border-radius:14px;
+          max-width:78%;white-space:pre-wrap}
+  .me .bubble{background:var(--me);border-color:#3b82f655}
+  .q .bubble{border-left:3px solid var(--accent)}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:2px}
+  .chip{background:var(--panel2);border:1px solid #ffffff14;color:var(--muted);
+        padding:4px 10px;border-radius:999px;font-size:12px}
+  .card{background:var(--panel);border:1px solid #ffffff12;border-radius:16px;padding:16px;max-width:78%}
+  .card h3{margin:0 0 8px;font-size:14px}
+  .edge{font-size:13px;color:var(--muted);padding:3px 0}
+  .edge b{color:var(--text)}
+  .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
+  button{font:inherit;border:0;border-radius:11px;padding:10px 16px;cursor:pointer;
+          background:var(--panel2);color:var(--text);border:1px solid #ffffff16;transition:.15s}
+  button:hover{transform:translateY(-1px);border-color:#ffffff33}
+  button.cta{background:linear-gradient(135deg,var(--accent),#3b82f6);color:#04121a;font-weight:700;border:0}
+  .typing{display:inline-flex;gap:4px}
+  .typing i{width:6px;height:6px;border-radius:50%;background:var(--muted);animation:blink 1s infinite}
+  .typing i:nth-child(2){animation-delay:.15s}.typing i:nth-child(3){animation-delay:.3s}
+  @keyframes blink{0%,60%,100%{opacity:.25}30%{opacity:1}}
+  @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .composer{position:sticky;bottom:0;width:100%;max-width:760px;display:flex;gap:10px;
+            padding:12px 20px 18px;background:linear-gradient(0deg,var(--bg) 70%,transparent)}
+  .composer input{flex:1;font:inherit;color:var(--text);background:var(--panel);
+                  border:1px solid #ffffff1c;border-radius:14px;padding:13px 16px;outline:none}
+  .composer input:focus{border-color:var(--accent)}
+  .composer button{font:inherit;border:0;border-radius:14px;padding:0 18px;cursor:pointer;font-weight:700;
+                   background:linear-gradient(135deg,var(--accent),#3b82f6);color:#04121a}
+  .result{font-size:13px;color:var(--muted);padding:2px 0}.result b{color:var(--text)}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo" id="logo">◈</div>
+  <div class="brand"><h1 id="bname">skwire</h1><p id="btag">the universal bootstrapper</p></div>
+  <div class="credit" id="credit"></div>
+</header>
+<main id="chat"></main>
+<footer class="composer">
+  <input id="composer" type="text" autocomplete="off"
+         placeholder="Type what you want — e.g. “just install the hf downloader”" />
+  <button id="send">Send</button>
+</footer>
+
+<script>
+const chat = document.getElementById('chat');
+let BRAND = {name:'skwire', accent:'#22d3ee'};
+
+function el(t,c,h){const e=document.createElement(t); if(c)e.className=c; if(h!=null)e.innerHTML=h; return e;}
+function scroll(){chat.scrollTop=chat.scrollHeight;}
+function bot(node,q){const r=el('div','row'+(q?' q':'')); r.append(el('div','av bot','◈')); const b=el('div','bubble'); if(typeof node==='string')b.textContent=node; else b.append(node); r.append(b); chat.append(r); scroll(); return r;}
+function me(text){const r=el('div','row me'); r.append(el('div','av','🙂')); const b=el('div','bubble'); b.textContent=text; r.append(b); chat.append(r); scroll();}
+async function typing(ms=550){const r=bot(el('span','typing','<i></i><i></i><i></i>')); await new Promise(s=>setTimeout(s,ms)); r.remove();}
+function actions(btns){const r=el('div','row'); const wrap=el('div','actions'); btns.forEach(([label,fn,cta])=>{const b=el('button',cta?'cta':'',label); b.onclick=()=>{r.remove(); me(label); fn();}; wrap.append(b);}); r.append(wrap); chat.append(r); scroll();}
+
+async function start(){
+  BRAND = await (await fetch('/api/branding')).json();
+  document.documentElement.style.setProperty('--accent', BRAND.accent||'#22d3ee');
+  document.getElementById('bname').textContent = BRAND.name;
+  document.getElementById('btag').textContent = BRAND.tagline||'';
+  document.getElementById('logo').textContent = BRAND.logo||'◈';
+  document.title = BRAND.name;
+  if((BRAND.name||'').toLowerCase()!=='skwire') document.getElementById('credit').textContent='powered by skwire';
+  await typing();
+  bot(`Hey! I'm ${BRAND.name}. Tell me what you want set up — like “just install the hf downloader” — and I'll wire it up for you. You can also let me scan your box first.`);
+  await typing(400);
+  bot('What are we building? (type below) — or:');
+  actions([['Scan my environment 👀', doScan], ['Browse the app store 🛍️', doCatalog]]);
+}
+
+// ── free-text composer: the user can TYPE, not just click ──────────────────────
+let HISTORY = [];                       // threaded conversation memory
+async function handleUser(text){
+  const t = text.trim(); if(!t) return;
+  me(t);
+  await typing();
+  const r = await (await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({message:t, history:HISTORY})})).json();
+  HISTORY = r.history || HISTORY;       // remember the turn for next time
+  if(r.model){ document.getElementById('credit').textContent =
+      (r.model==='keyword-router' ? 'skwire smart-routing ⚡' : 'model: '+r.model); }
+  bot(r.reply);
+  if(r.kind === 'add_one' || r.kind === 'add_all'){
+    if((r.added||[]).length){
+      await typing(300);
+      actions([['Yes — wire it up 🚀', doPlan, true], ['Add something else', ()=>focusComposer()]]);
+    }
+  } else if(r.kind === 'search'){
+    if((r.results||[]).length){
+      const card=el('div'); card.append(el('h3',null,'Top matches on Hugging Face'));
+      r.results.forEach(x=>card.append(el('div','result',
+        `<b>${x.id}</b> · ⬇ ${Number(x.downloads).toLocaleString()} · ♥ ${x.likes}`)));
+      const row=el('div','row'); row.append(el('div','av bot','◈'));
+      const c=el('div','card'); c.append(card); row.append(c); chat.append(row); scroll();
+      await typing(250); bot('Want me to grab one? Tell me which — or paste the repo id.');
+    } else { bot("Couldn't reach the HF Hub just now — paste the repo id and I'll still set it up."); }
+  } else if(r.kind === 'plan'){
+    await renderPlan(r.plan);
+  } else if((r.suggestions||[]).length){
+    actions(r.suggestions.map(n=>[`Add ${n}`, ()=>handleUser('install '+n)]));
+  }
+  await offerNext();
+}
+
+function focusComposer(){ document.getElementById('composer').focus(); }
+function wireComposer(){
+  const input=document.getElementById('composer'), btn=document.getElementById('send');
+  const go=()=>{ const v=input.value; input.value=''; handleUser(v); };
+  btn.onclick=go;
+  input.addEventListener('keydown', e=>{ if(e.key==='Enter') go(); });
+}
+
+async function doScan(){
+  await typing();
+  const s = await (await fetch('/api/scan')).json();
+  const e = s.env;
+  const chips = el('div','chips');
+  [`${e.os}`,`${e.cpu_cores} cores`,`${e.ram_gb}GB RAM`, e.gpus.length?`GPU`:`no GPU`,
+   e.has_docker?'docker':'', e.has_kubectl?'k8s':'', e.has_ollama?'ollama':''].filter(Boolean)
+   .forEach(t=>chips.append(el('span','chip',t)));
+  bot(chips);
+  for(const sug of s.suggestions){ await typing(350); bot(sug.text, sug.kind==='question'); }
+  await typing(300);
+  actions([['Show me the plan 📋', doPlan, true], ['Browse the app store 🛍️', doCatalog]]);
+}
+
+async function doCatalog(){
+  await typing();
+  bot('Here\'s what I can set up — all best-of-breed open source. Add anything you like:');
+  const cat = await (await fetch('/api/catalog')).json();
+  for(const o of cat.offerings){
+    const r=el('div','row'); r.append(el('div','av bot','◈'));
+    const c=el('div','card');
+    c.append(el('h3',null,`${o.icon||'📦'} ${o.title}`));
+    c.append(el('div','edge',o.description));
+    if(o.repo) c.append(el('div','edge',`<span style="opacity:.6">open source (${o.license}) · fork it / contribute back</span>`));
+    const a=el('div','actions'); const b=el('button','',`Add ${o.name}`);
+    b.onclick=async()=>{ b.disabled=true; b.textContent='Adding…';
+      const res=await (await fetch('/api/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:o.name})})).json();
+      bot(res.installed?`Added ${o.title} 👍`:`${o.title}: ${res.hint||res.reason}`); };
+    a.append(b); c.append(a); r.append(c); chat.append(r); scroll();
+  }
+  await typing(300);
+  actions([['Done — show me the plan 📋', doPlan, true]]);
+}
+
+async function doPlan(){
+  await typing();
+  const p = await (await fetch('/api/plan')).json();
+  await renderPlan(p);
+}
+
+async function renderPlan(p){
+  if(!p || !p.services){ bot((p&&p.text) || 'Nothing to wire yet — tell me what to add.'); return; }
+  const card = el('div'); card.append(el('h3',null,`Here's the plan — ${p.services} services`));
+  p.edges.forEach(ed=>card.append(el('div','edge',`<b>${ed.consumer}</b> → ${ed.provider} <span style="opacity:.6">(via ${ed.secret})</span>`)));
+  const r=el('div','row'); r.append(el('div','av bot','◈')); const c=el('div','card'); c.append(card); r.append(c); chat.append(r); scroll();
+  for(const adv of (p.redundancy||[])){ await typing(350); bot(adv, true); }
+  await typing(400);
+  bot('Want me to just do it?');
+  window._planHash = p.plan_hash;
+  actions([['Heck yeah, do it! 🚀', doApprove, true], ['Not yet', ()=>bot('No worries — take your time.')]]);
+}
+
+async function doApprove(){
+  await typing();
+  const res = await (await fetch('/api/approve',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({plan_hash:window._planHash, approver:'you'})})).json();
+  bot(res.approved ? res.note : `Hmm — ${res.reason}.`);
+  for(const tip of (res.tips||[])){ await typing(300); bot(tip); }
+  if(res.approved && res.rotation_offer){
+    await typing(400);
+    bot('🔑 ' + res.rotation_offer);
+    actions([['Yes, schedule rotations ⏱️', ()=>bot('Scheduled — I\'ll keep your keys fresh across the whole stack.')],
+             ['Not now', ()=>bot('Okay — you can ask me to rotate anytime.')]]);
+  }
+  await offerNext();
+}
+
+// Always close a turn with a few options — the default rendered as the primary CTA.
+async function offerNext(){
+  await typing(300);
+  const {steps} = await (await fetch('/api/next')).json();
+  bot('What next?');
+  const ordered = [...steps].sort((a,b)=> (b.default?1:0)-(a.default?1:0));
+  actions(ordered.map(s=>[
+    s.default ? `${s.label} ⭐` : s.label,
+    ()=>bot(`Run \`${s.command}\` — ${s.label}.`),
+    s.default,
+  ]));
+}
+wireComposer();
+start();
+</script>
+</body>
+</html>

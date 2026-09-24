@@ -1,0 +1,40 @@
+# skcicd/scm/gitlab — self-hosted GitLab (the "big" all-in-one DevOps platform:
+# Git + CI/CD pipelines + container registry + more). Omnibus image on Swarm.
+# Secrets (initial root password) come from the secret backend.
+services:
+  gitlab:
+    image: gitlab/gitlab-ce:17.10.1-ce.0
+    hostname: "git.${SKSTACKS_DOMAIN}"
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'https://git.${SKSTACKS_DOMAIN}'
+        nginx['listen_port'] = 80
+        nginx['listen_https'] = false        # TLS terminated at the Traefik Gateway
+        registry_external_url 'https://registry.${SKSTACKS_DOMAIN}'
+    env_file:
+      - ${SKCICD_SECRETS_ENV}                # GITLAB_ROOT_PASSWORD etc. (from secret backend)
+    networks: [skstacks]
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-logs:/var/log/gitlab
+      - gitlab-data:/var/opt/gitlab
+    healthcheck:
+      test: ["CMD", "/opt/gitlab/bin/gitlab-healthcheck", "--fail"]
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 300s                     # GitLab is slow to boot
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any }
+      resources:
+        limits: { memory: 6G }               # GitLab is heavy — size the node
+
+volumes:
+  gitlab-config:
+  gitlab-logs:
+  gitlab-data:
+
+networks:
+  skstacks:
+    external: true

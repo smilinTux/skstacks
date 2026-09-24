@@ -1,0 +1,62 @@
+# SKStacks v2 — sksso app descriptor (STUB)
+#
+# This is a capability stub — structure only, NO real secrets.
+# Replace CHANGEME_* placeholders with real values before deploy.
+# Provider is the recommended sovereign adapter from the skos capability map.
+#
+# See: docs/superpowers/specs/2026-06-09-skos-capability-map.md
+
+name: sksso
+description: "Identity / SSO — Authentik for human SSO (OIDC/SAML/LDAP); Zitadel path for agent/M2M service auth."
+capability: "Identity / SSO — human SSO (OIDC/SAML/LDAP) + agent service-auth upgrade path"
+depends_on: [skdata, skcache]   # wiring (bridge → skwire needs)
+scope: sksso
+ha: true            # "if you need one, get two" — SSO is load-bearing — run 2+ replicas behind the Gateway
+min_replicas: 3
+version: "CHANGEME_VERSION"
+platforms: [docker-swarm, kubernetes]
+provider: Authentik (human SSO, OIDC/SAML/LDAP); Zitadel as M2M/agent service-auth upgrade path
+alternates:
+  - Zitadel (strong M2M/agent service-auth)
+
+# Secret keys this service needs (values resolved from secret backend at deploy time)
+secrets:
+  - key: authentik_secret_key
+    description: "Authentik SECRET_KEY (Django signing)"
+    rotation_days: 365
+    required: true
+    sensitive: true
+  - key: authentik_db_password
+    description: "PostgreSQL password for Authentik database"
+    required: true
+    sensitive: true
+  - key: authentik_redis_password
+    description: "Redis/Valkey password for Authentik cache"
+    required: false
+    sensitive: true
+
+# Non-sensitive config (overridden by overlay values)
+config:
+  LOG_LEVEL: INFO
+  DOMAIN: "${SKSTACKS_DOMAIN}"
+  CLUSTER: "${SKSTACKS_CLUSTER}"
+
+# Health check (fill in real URL/path before deploy)
+healthcheck:
+  url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/healthz"
+  interval: 30s
+  timeout: 5s
+  retries: 3
+
+# Deploy block — Authentik SSO server, HA replicas behind the Gateway.
+deploy:
+  container: authentik-server
+  image: "ghcr.io/goauthentik/server:2024.10"
+  command: ["server"]
+  ports:
+    - "9000:9000"
+    - "9443:9443"
+  volumes:
+    - "authentik-media:/media"
+    - "authentik-templates:/templates"
+  healthcheck_test: ["CMD", "ak", "healthcheck"]

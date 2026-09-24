@@ -1,0 +1,88 @@
+# traefik.yml — Traefik v3 static configuration
+# Place this file at the path pointed to by TRAEFIK_CONFIG_DIR/traefik.yml.
+#
+# Sensitive values (CF_DNS_API_TOKEN, acme.email) are injected via environment
+# variables or Docker secrets — never hard-code them here.
+
+# ── API / Dashboard ─────────────────────────────────────────────────────────
+api:
+  dashboard: true
+  insecure: false   # Dashboard exposed via Traefik router with auth middleware
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+log:
+  level: INFO
+  filePath: /logs/traefik.log
+
+accessLog:
+  filePath: /logs/access.log
+  bufferingSize: 100
+  # Redact headers that may carry PII or credentials
+  fields:
+    headers:
+      defaultMode: drop
+      names:
+        User-Agent: keep
+        X-Forwarded-For: keep
+
+# ── Entry points ─────────────────────────────────────────────────────────────
+entryPoints:
+  web:
+    address: ":80"
+    # Redirect all plain-HTTP to HTTPS
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+
+  websecure:
+    address: ":443"
+    http:
+      tls:
+        certResolver: main
+    # Enable PROXY Protocol from load balancer if present
+    # proxyProtocol:
+    #   trustedIPs:
+    #     - "${SWARM_VIP}"
+
+  metrics:
+    address: ":8082"
+
+# ── Providers ────────────────────────────────────────────────────────────────
+providers:
+  # Docker Swarm provider — workers read labels from swarm services
+  swarm:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    network: traefik-public-prod   # override with ENV suffix if needed
+
+  # Optional: file-based dynamic config (middlewares, TLS options, etc.)
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+# ── Certificate resolvers ─────────────────────────────────────────────────────
+certificatesResolvers:
+  main:
+    acme:
+      # Email injected at runtime via env; fallback shown for reference only.
+      email: "${ACME_EMAIL}"
+      storage: /acme/acme.json
+      caServer: "https://acme-v02.api.letsencrypt.org/directory"
+      # Use staging CA during initial setup to avoid rate limits:
+      # caServer: "https://acme-staging-v02.api.letsencrypt.org/directory"
+      dnsChallenge:
+        provider: cloudflare          # set CF_DNS_API_TOKEN env var
+        delayBeforeCheck: 60s
+        resolvers:
+          - "1.1.1.1:53"
+          - "8.8.8.8:53"
+
+# ── Metrics (optional Prometheus scrape) ────────────────────────────────────
+# metrics:
+#   prometheus:
+#     entryPoint: metrics
+#     addEntryPointsLabels: true
+#     addServicesLabels: true

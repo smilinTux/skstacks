@@ -1,0 +1,28 @@
+# skdns/failover — multi-provider authoritative DNS with health-checked failover.
+# No single provider/zone is a single point of takedown. Consumed by the deploy
+# tooling (publishes records to BOTH providers; the health check drives cutover).
+apiVersion: skstacks.io/v1
+kind: DNSFailoverPolicy
+metadata:
+  name: skstacks-dns
+spec:
+  zone: "${SKSTACKS_DOMAIN}"
+  # Records are published to ALL providers; resolvers get both NS sets.
+  providers:
+    - name: cloudflare           # managed, anycast, fast
+      role: primary
+      module: infra/tofu/modules/cloudflare-dns
+    - name: technitium-secondary # sovereign self-host (different location/ASN)
+      role: secondary
+      stack: cloud/skdns/resolution/technitium
+    # optional 3rd: deSEC (free, DNSSEC, non-profit) for provider diversity
+  healthcheck:
+    # skpulse/Gatus probes the origin; on sustained failure, flip the record's
+    # answer (or lower the failed provider's NS priority).
+    target: "https://CHANGEME_HOST.${SKSTACKS_DOMAIN}/healthz"
+    interval: 30s
+    failuresToTrip: 3
+  failover:
+    mode: automatic              # auto-cutover; set 'manual' to require approval
+    ttl: 60                      # low TTL so failover propagates fast
+    dnssec: true                 # signed on every provider

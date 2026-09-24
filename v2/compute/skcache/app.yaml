@@ -1,0 +1,51 @@
+# SKStacks v2 — skcache app descriptor (STUB)
+#
+# This is a capability stub — structure only, NO real secrets.
+# Replace CHANGEME_* placeholders with real values before deploy.
+# Provider is the recommended sovereign adapter from the skos capability map.
+#
+# See: docs/superpowers/specs/2026-06-09-skos-capability-map.md
+
+name: skcache
+description: "Cache / KV store — Valkey (BSD-3 Redis drop-in; Redis 8 went AGPLv3 May 2025 — swap is 1 config change)."
+capability: "Cache / KV store — ephemeral data, session state, pub/sub"
+scope: skcache
+ha: true            # "if you need one, get two" — Valkey — replicated
+min_replicas: 3
+version: "CHANGEME_VERSION"
+platforms: [docker-swarm, kubernetes]
+provider: Valkey (BSD-3, drop-in Redis replacement); DragonflyDB as scale alternative
+alternates:
+  - DragonflyDB (10-25x perf at scale)
+
+# Secret keys this service needs (values resolved from secret backend at deploy time)
+secrets:
+  - key: valkey_password
+    description: "Valkey/Redis AUTH password"
+    rotation_days: 90
+    required: false
+    sensitive: true
+
+# Non-sensitive config (overridden by overlay values)
+config:
+  LOG_LEVEL: INFO
+  DOMAIN: "${SKSTACKS_DOMAIN}"
+  CLUSTER: "${SKSTACKS_CLUSTER}"
+
+# Health check (fill in real URL/path before deploy)
+healthcheck:
+  url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/healthz"
+  interval: 30s
+  timeout: 5s
+  retries: 3
+
+# Deploy block — Valkey (Redis-compatible cache), HA replicas.
+deploy:
+  container: valkey
+  image: "valkey/valkey:8-alpine"
+  command: ["valkey-server", "--appendonly", "yes"]
+  ports:
+    - "6379:6379"
+  volumes:
+    - "valkey-data:/data"
+  healthcheck_test: ["CMD", "valkey-cli", "ping"]

@@ -1,0 +1,44 @@
+# SKStacks v2 — skvoice app descriptor (STUB)
+#
+# This is a capability stub — structure only, NO real secrets.
+# Replace CHANGEME_* placeholders with real values before deploy.
+# Provider is the recommended sovereign adapter from the skos capability map.
+#
+# See: docs/superpowers/specs/2026-06-09-skos-capability-map.md
+
+name: skvoice
+description: "Voice/video RTC — LiveKit SFU with Agents framework wiring STT+TTS+LLM as room participants."
+capability: "Voice/video RTC — SFU for agent-in-call (STT+TTS+LLM room participants)"
+depends_on: [skbus, skmodel]   # wiring (bridge → skwire needs)
+scope: skvoice
+version: "CHANGEME_VERSION"
+platforms: [docker-swarm, kubernetes]
+provider: "LiveKit (SFU + Agents framework: STT=Whisper, TTS=Chatterbox, LLM=Ollama)"
+alternates:
+  - mediasoup
+  - Janus (SIP)
+
+# Secret keys this service needs (values resolved from secret backend at deploy time)
+secrets:
+  - key: livekit_api_key
+    description: "LiveKit API key"
+    rotation_days: 90
+    required: true
+  - key: livekit_api_secret
+    description: "LiveKit API secret"
+    rotation_days: 90
+    required: true
+    sensitive: true
+
+# Non-sensitive config (overridden by overlay values)
+config:
+  LOG_LEVEL: INFO
+  DOMAIN: "${SKSTACKS_DOMAIN}"
+  CLUSTER: "${SKSTACKS_CLUSTER}"
+
+# Health check (fill in real URL/path before deploy)
+healthcheck:
+  url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/healthz"
+  interval: 30s
+  timeout: 5s
+  retries: 3

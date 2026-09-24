@@ -1,0 +1,51 @@
+---
+# rke2-agent role — installs the RKE2 agent and joins it to the cluster.
+# Prereqs (sysctl/modules/swap/firewall) come from rke2-common (run first).
+
+- name: Create RKE2 config directory
+  ansible.builtin.file:
+    path: /etc/rancher/rke2
+    state: directory
+    mode: "0700"
+    owner: root
+    group: root
+
+- name: Get cluster join token from the first server
+  ansible.builtin.slurp:
+    src: /var/lib/rancher/rke2/server/node-token
+  register: _rke2_token_raw
+  delegate_to: "{{ groups['rke2_servers'] | first }}"
+
+- name: Write RKE2 agent config
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: /etc/rancher/rke2/config.yaml
+    mode: "0600"
+    owner: root
+    group: root
+  notify: Restart rke2-agent
+
+- name: Download RKE2 installer (agent)
+  ansible.builtin.get_url:
+    url: https://get.rke2.io
+    dest: /tmp/rke2-install.sh
+    mode: "0750"
+  environment:
+    INSTALL_RKE2_TYPE: agent
+    INSTALL_RKE2_VERSION: "{{ rke2_version }}"
+    INSTALL_RKE2_CHANNEL: "{{ rke2_channel }}"
+
+- name: Run RKE2 installer (agent)
+  ansible.builtin.shell:
+    cmd: /tmp/rke2-install.sh
+    creates: /usr/local/bin/rke2
+  environment:
+    INSTALL_RKE2_TYPE: agent
+    INSTALL_RKE2_VERSION: "{{ rke2_version }}"
+
+- name: Enable and start rke2-agent
+  ansible.builtin.systemd:
+    name: rke2-agent
+    state: started
+    enabled: true
+    daemon_reload: true

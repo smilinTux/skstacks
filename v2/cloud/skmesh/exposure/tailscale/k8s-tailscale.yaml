@@ -1,0 +1,20 @@
+# exposure/tailscale (K8s) — expose the Traefik Gateway on the tailnet.
+# Requires the Tailscale Kubernetes Operator installed in the cluster
+# (helm repo: https://pkgs.tailscale.com/helmcharts). The operator watches for the
+# annotation below and provisions a tailnet device that proxies to the Service.
+#
+# This is a PATCH on the Traefik LoadBalancer Service — apply via the platform
+# overlay so the same Traefik also gets a stable tailnet name (MagicDNS).
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik
+  namespace: traefik
+  labels: { skstacks.io/exposure: tailscale }
+  annotations:
+    tailscale.com/expose: "true"
+    tailscale.com/hostname: "skstacks-gateway"   # → skstacks-gateway.<tailnet>.ts.net
+# (Service spec is otherwise inherited from the Traefik HelmChart; this patch only
+#  adds the Tailscale operator annotations. Use Headscale as the coordination
+#  server for a sovereign tailnet.)

@@ -1,0 +1,22 @@
+# Example HTTPRoute — how a service attaches to the shared skstacks Gateway.
+# Replaces the old `kind: Ingress` pattern. Copy per service/scope.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: skfence-example
+  namespace: skfence
+spec:
+  parentRefs:
+    - name: skstacks
+      namespace: traefik
+      sectionName: websecure
+  hostnames:
+    - "example.skworld.io"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: skfence
+          port: 80

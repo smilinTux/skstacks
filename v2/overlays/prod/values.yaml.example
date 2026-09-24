@@ -1,0 +1,61 @@
+# SKStacks v2 — Production overlay values
+#
+# Copy to values.yaml, fill in real values, and commit (no secrets here).
+# Secret values come from the secret backend — never put them in this file.
+#
+# Usage:
+#   cp values.yaml.example values.yaml
+#   $EDITOR values.yaml
+#   # Then deploy:
+#   ansible-playbook -e @overlays/prod/values.yaml ...
+
+# ── Identity ────────────────────────────────────────────────────────────────
+
+env: prod
+cluster_name: CHANGEME_CLUSTER_NAME       # e.g. skstack01
+domain: CHANGEME_DOMAIN                    # e.g. your-domain.com
+
+# ── Networking ──────────────────────────────────────────────────────────────
+
+# Management/control VIP (Keepalived or kube-vip)
+vip_ip: "CHANGEME_VIP_IP"                 # e.g. 192.168.1.10
+vip_interface: "CHANGEME_IFACE"           # e.g. eth0
+
+# MetalLB LoadBalancer pool (K8s/RKE2)
+metallb_pool: "CHANGEME_LB_POOL"          # e.g. 192.168.1.200-192.168.1.250
+
+# Docker Swarm overlay networks
+swarm_networks:
+  cloud_edge:    "172.16.50.0/24"
+  cloud_public:  "172.16.200.0/24"
+  socket_proxy:  "172.16.25.0/24"
+  crowdsec:      "172.16.64.0/24"
+
+# ── TLS / Certificates ───────────────────────────────────────────────────────
+
+cert_resolver: letsencrypt-prod            # or: vault-pki (for internal CA)
+acme_email: CHANGEME_EMAIL
+
+# ── Replicas & Resources ─────────────────────────────────────────────────────
+
+skfence:
+  replicas: 2
+  resources:
+    limits:   { cpu: "500m", memory: "256Mi" }
+    requests: { cpu: "100m", memory: "64Mi" }
+
+sksso:
+  replicas: 2
+
+sksec:
+  replicas: 2
+
+# ── Backup target ────────────────────────────────────────────────────────────
+
+backup_target: s3://CHANGEME_BUCKET/CHANGEME_PREFIX
+backup_schedule: "0 2 * * *"               # 2am daily
+
+# ── Secret backend ───────────────────────────────────────────────────────────
+
+secret_backend: vault-file                 # vault-file | hashicorp-vault | capauth
+# vault_addr: https://vault.CHANGEME_DOMAIN:8200   # (hashicorp-vault only)

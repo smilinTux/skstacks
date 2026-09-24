@@ -1,0 +1,37 @@
+# SKStacks v2 — skwaf app descriptor (STUB)
+#
+# This is a capability stub — structure only, NO real secrets.
+# Replace CHANGEME_* placeholders with real values before deploy.
+# Provider is the recommended sovereign adapter from the skos capability map.
+#
+# See: docs/superpowers/specs/2026-06-09-skos-capability-map.md
+
+name: skwaf
+description: "Web application firewall — Coraza + OWASP CRS v4 as Traefik WASM plugin (zero new processes, config change only)."
+capability: "Web application firewall — OWASP Top 10 protection at the ingress layer"
+depends_on: [skfence]   # wiring (bridge → skwire needs)
+scope: skwaf
+version: "CHANGEME_VERSION"
+platforms: [docker-swarm, kubernetes]
+provider: Coraza WAF + OWASP CRS v4 (Traefik WASM plugin; BunkerWeb as GUI alternative)
+alternates:
+  - BunkerWeb (GUI wrapper)
+
+# Secret keys this service needs (values resolved from secret backend at deploy time)
+secrets:
+  - key: coraza_custom_rules
+    description: "Path to custom Coraza rule set (optional override)"
+    required: false
+
+# Non-sensitive config (overridden by overlay values)
+config:
+  LOG_LEVEL: INFO
+  DOMAIN: "${SKSTACKS_DOMAIN}"
+  CLUSTER: "${SKSTACKS_CLUSTER}"
+
+# Health check (fill in real URL/path before deploy)
+healthcheck:
+  url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/healthz"
+  interval: 30s
+  timeout: 5s
+  retries: 3

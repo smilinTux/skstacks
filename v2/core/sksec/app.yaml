@@ -1,0 +1,65 @@
+# SKStacks v2 — sksec app descriptor (STUB)
+#
+# This is a capability stub — structure only, NO real secrets.
+# Replace CHANGEME_* placeholders with real values before deploy.
+# Provider is the recommended sovereign adapter from the skos capability map.
+#
+# See: docs/superpowers/specs/2026-06-09-skos-capability-map.md
+
+name: sksec
+description: "Threat defense — CrowdSec (reputation + bouncer) + Falco (runtime/eBPF) + Wazuh (HIDS/FIM/SIEM) + Suricata (NIDS)."
+capability: "Threat defense — reputation, runtime, host, and network intrusion detection"
+depends_on: [skbus]   # wiring (bridge → skwire needs)
+scope: sksec
+version: "CHANGEME_VERSION"
+platforms: [docker-swarm, kubernetes, bare-metal]
+provider: CrowdSec (reputation/bouncer) + Falco (runtime eBPF) + Wazuh (HIDS/FIM/SIEM) + Suricata (NIDS)
+alternates:
+  - Tetragon (eBPF enforcement) + Kyverno (admission policy)
+
+# Tiered defense (stack-validation §7): T1 CrowdSec → T2 +Falco/Tetragon/Kyverno → T3 +Wazuh/Zeek.
+# DevSecOps closed-loop layers (designs + configs):
+ci_scanners: [gitleaks, trufflehog, semgrep, trivy, grype, syft, checkov, kubescape]   # cicd/security/scan.yml
+closed_loop: core/sksec/closed-loop/       # scan → AI-triage → remediation PR → re-scan → deploy → verify (never auto-merge)
+redteam: core/sksec/redteam/               # skred — authorized autonomous self-red-team (scope-locked to OWN targets, non-destructive default)
+
+# Secret keys this service needs (values resolved from secret backend at deploy time)
+secrets:
+  - key: crowdsec_enrollment_key
+    description: "CrowdSec Central API enrollment key"
+    rotation_days: 365
+    required: false
+  - key: wazuh_api_password
+    description: "Wazuh REST API password"
+    rotation_days: 90
+    required: true
+    sensitive: true
+  - key: wazuh_cluster_key
+    description: "Wazuh cluster communication key"
+    rotation_days: 365
+    required: false
+    sensitive: true
+
+# Non-sensitive config (overridden by overlay values)
+config:
+  LOG_LEVEL: INFO
+  DOMAIN: "${SKSTACKS_DOMAIN}"
+  CLUSTER: "${SKSTACKS_CLUSTER}"
+
+# Health check (fill in real URL/path before deploy)
+healthcheck:
+  url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/healthz"
+  interval: 30s
+  timeout: 5s
+  retries: 3
+
+# Deploy block — CrowdSec runs as a per-node agent (global mode → DaemonSet on K8s).
+deploy:
+  container: crowdsec
+  image: "crowdsecurity/crowdsec:latest"
+  mode: global
+  volumes:
+    - "crowdsec-config:/etc/crowdsec"
+    - "crowdsec-data:/var/lib/crowdsec/data"
+    - "/var/log:/var/log:ro"
+  healthcheck_test: ["CMD", "cscli", "lapi", "status"]

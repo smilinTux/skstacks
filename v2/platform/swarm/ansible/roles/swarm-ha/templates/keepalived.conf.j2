@@ -1,0 +1,52 @@
+# keepalived.conf — rendered by Ansible (swarm-ha role)
+# Unicast VRRP for Docker Swarm manager HA.
+# auth_pass must be stored in Ansible vault (keepalived_auth_pass).
+
+global_defs {
+    router_id {{ inventory_hostname | upper }}_SWARM_HA
+    enable_script_security
+    script_user root
+}
+
+vrrp_script chk_traefik {
+    script "/usr/local/bin/swarm_check_traefik.sh"
+    interval 5
+    weight   -10
+    fall     2
+    rise     2
+    timeout  3
+}
+
+vrrp_instance SWARM_VIP {
+    state     {{ keepalived_state }}
+    interface {{ primary_interface }}
+    virtual_router_id {{ keepalived_vrid | default(51) }}
+    priority  {{ keepalived_priority }}
+    advert_int 1
+    nopreempt
+
+    authentication {
+        auth_type PASS
+        auth_pass {{ keepalived_auth_pass }}   # set in vault
+    }
+
+    # Unicast — avoids multicast issues in cloud/VPS environments.
+    unicast_src_ip {{ ansible_facts['default_ipv4']['address'] }}
+    unicast_peer {
+{% for peer in keepalived_peers %}
+        {{ peer }}
+{% endfor %}
+    }
+
+    track_script {
+        chk_traefik
+    }
+
+    virtual_ipaddress {
+        {{ swarm_vip }}   # e.g. 10.0.0.10/24
+    }
+
+    notify_master "/usr/local/bin/swarm_ha_notify.sh master"
+    notify_backup "/usr/local/bin/swarm_ha_notify.sh backup"
+    notify_fault  "/usr/local/bin/swarm_ha_notify.sh fault"
+}

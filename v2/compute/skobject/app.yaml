@@ -1,0 +1,63 @@
+# SKStacks v2 — skobject app descriptor (STUB)
+#
+# This is a capability stub — structure only, NO real secrets.
+# Replace CHANGEME_* placeholders with real values before deploy.
+# Provider is the recommended sovereign adapter from the skos capability map.
+#
+# See: docs/superpowers/specs/2026-06-09-skos-capability-map.md
+
+name: skobject
+description: "Object / S3 storage — Garage (replaces archived MinIO Apr 2026; single binary, AGPLv3, S3-compatible)."
+capability: "Object / S3 storage — blob storage with S3-compatible API"
+scope: skobject
+ha: true            # "if you need one, get two" — Garage — 3 nodes, replication_factor=3
+min_replicas: 3
+version: "CHANGEME_VERSION"
+platforms: [docker-swarm, bare-metal]
+provider: Garage (AGPLv3, single binary, S3-compatible); SeaweedFS for Object-Lock / large scale
+alternates:
+  - SeaweedFS (Object-Lock / large scale)
+
+# Secret keys this service needs (values resolved from secret backend at deploy time)
+secrets:
+  - key: garage_rpc_secret
+    description: "Garage cluster RPC secret (hex, 32 bytes)"
+    rotation_days: 365
+    required: true
+    sensitive: true
+  - key: garage_admin_token
+    description: "Garage admin API token"
+    rotation_days: 90
+    required: true
+    sensitive: true
+  - key: garage_s3_access_key
+    description: "S3-compatible access key for service consumers"
+    required: true
+  - key: garage_s3_secret_key
+    description: "S3-compatible secret key for service consumers"
+    required: true
+    sensitive: true
+
+# Non-sensitive config (overridden by overlay values)
+config:
+  LOG_LEVEL: INFO
+  DOMAIN: "${SKSTACKS_DOMAIN}"
+  CLUSTER: "${SKSTACKS_CLUSTER}"
+
+# Health check (fill in real URL/path before deploy)
+healthcheck:
+  url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/healthz"
+  interval: 30s
+  timeout: 5s
+  retries: 3
+
+# Deploy block — Garage S3-compatible object store, HA (3 nodes, replication_factor=3).
+deploy:
+  container: garage
+  image: "dxflrs/garage:v1.0.1"
+  ports:
+    - "3900:3900"
+    - "3903:3903"
+  volumes:
+    - "garage-meta:/var/lib/garage/meta"
+    - "garage-data:/var/lib/garage/data"

@@ -1,0 +1,63 @@
+# skmon — observability on Docker Swarm.
+# Prometheus (metrics) + Grafana (dashboards) + VictoriaLogs (logs, NOT Loki) +
+# Tempo (traces) + Grafana Alloy (OTel collector). VictoriaLogs is the ratified
+# swap off Loki (Apache-2.0, ~87% less RAM).
+services:
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d"]
+    volumes:
+      - ${SKMON_CONFIG_DIR}/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks: [skstacks]
+    deploy: { replicas: 1, restart_policy: { condition: any } }
+
+  victorialogs:
+    image: victoriametrics/victoria-logs:v1.18.0-victorialogs
+    command: ["--storageDataPath=/vlogs", "--retentionPeriod=30d"]
+    volumes:
+      - victorialogs-data:/vlogs
+    networks: [skstacks]
+    deploy: { replicas: 1, restart_policy: { condition: any } }
+
+  tempo:
+    image: grafana/tempo:2.7.1
+    command: ["-config.file=/etc/tempo/tempo.yml"]
+    volumes:
+      - ${SKMON_CONFIG_DIR}/tempo.yml:/etc/tempo/tempo.yml:ro
+      - tempo-data:/var/tempo
+    networks: [skstacks]
+    deploy: { replicas: 1, restart_policy: { condition: any } }
+
+  grafana:
+    image: grafana/grafana:11.5.2
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD__FILE=/run/secrets/grafana_admin_password
+    secrets: [grafana_admin_password]
+    volumes:
+      - ${SKMON_CONFIG_DIR}/grafana-datasources.yml:/etc/grafana/provisioning/datasources/ds.yml:ro
+      - grafana-data:/var/lib/grafana
+    networks: [skstacks]
+    deploy: { replicas: 1, restart_policy: { condition: any } }
+
+  alloy:
+    image: grafana/alloy:v1.7.1
+    command: ["run", "/etc/alloy/config.alloy"]
+    volumes:
+      - ${SKMON_CONFIG_DIR}/config.alloy:/etc/alloy/config.alloy:ro
+    networks: [skstacks]
+    deploy: { mode: global }     # one OTel collector per node
+
+secrets:
+  grafana_admin_password:
+    external: true
+
+volumes:
+  prometheus-data:
+  victorialogs-data:
+  tempo-data:
+  grafana-data:
+
+networks:
+  skstacks:
+    external: true

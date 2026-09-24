@@ -1,0 +1,40 @@
+# Traefik v3 as the Gateway API controller (RKE2/k3s helm-controller).
+# Exposed as a LoadBalancer Service → MetalLB assigns the VIP from the pool in
+# metallb-config.yaml. Kubernetes Gateway provider ON; legacy Ingress provider OFF.
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  repo: https://traefik.github.io/charts
+  chart: traefik
+  version: "33.2.1"          # Traefik v3.x chart — pin for reproducibility
+  targetNamespace: traefik
+  createNamespace: true
+  valuesContent: |-
+    providers:
+      kubernetesGateway:
+        enabled: true        # Gateway API (HTTPRoute/Gateway) — the new path
+      kubernetesIngress:
+        enabled: false       # legacy Ingress off — we do NOT run ingress-nginx
+      kubernetesCRD:
+        enabled: true        # IngressRoute/Middleware CRDs (skfence edge reuse)
+    gateway:
+      enabled: false         # we manage our own Gateway resource (gateway.yaml)
+    gatewayClass:
+      enabled: false         # GatewayClass managed by us (gateway.yaml)
+    service:
+      type: LoadBalancer     # MetalLB VIP
+    ports:
+      web:
+        exposedPort: 80
+        redirectTo:
+          port: websecure    # HTTP → HTTPS at the edge
+      websecure:
+        exposedPort: 443
+        tls:
+          enabled: true
+    logs:
+      access:
+        enabled: true

@@ -1,0 +1,39 @@
+---
+# RKE2 Agent Node Installation
+# =============================
+# Installs RKE2 agents (workers) and joins them to the cluster. Run AFTER the
+# server control-plane is up.
+#
+#   ansible-playbook -i inventory.yml install-rke2-agent.yml
+
+- name: Install RKE2 agent nodes
+  hosts: rke2_agents
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Verify OS family
+      ansible.builtin.fail:
+        msg: "Unsupported OS: {{ ansible_distribution }}. Use RHEL/Rocky/Alma/Ubuntu/Debian."
+      when: ansible_os_family not in ["RedHat", "Debian"]
+
+    - name: Ensure at least one server exists to join
+      ansible.builtin.fail:
+        msg: "No hosts in group 'rke2_servers' — bring up the control-plane first."
+      when: groups['rke2_servers'] | default([]) | length == 0
+
+  roles:
+    - role: rke2-common
+    - role: rke2-agent
+
+  tasks:
+    - name: Wait for the agent node to register (from the first server)
+      ansible.builtin.shell: >
+        /usr/local/bin/kubectl get node {{ inventory_hostname }}
+        --kubeconfig /etc/rancher/rke2/rke2.yaml 2>/dev/null
+      delegate_to: "{{ groups['rke2_servers'] | first }}"
+      register: _agent_reg
+      until: _agent_reg.rc == 0
+      retries: 30
+      delay: 10
+      changed_when: false

@@ -1,0 +1,10 @@
+---
+# prod: full IP pool — set to your actual bare-metal LB range (see overlays/prod/values.yaml.example)
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: default-pool
+  namespace: metallb-system
+spec:
+  addresses:
+    - 192.168.1.200-192.168.1.250

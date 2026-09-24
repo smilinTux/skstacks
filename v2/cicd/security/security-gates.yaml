@@ -1,0 +1,36 @@
+# SKStacks v2 — security gate policy. The pipeline (scan.yml) and the closed-loop
+# consult this to decide block-vs-warn and what auto-remediates.
+apiVersion: skstacks.io/v1
+kind: SecurityGatePolicy
+metadata:
+  name: skstacks-default
+spec:
+  # Deploy gates — what BLOCKS a merge/deploy
+  block_on:
+    cve_severity: ["CRITICAL"]        # critical CVEs block; high → warn + ticket
+    secret_findings: any              # any verified secret leak blocks (always)
+    iac_misconfig: ["CRITICAL"]
+    sast_severity: ["ERROR"]
+  warn_on:
+    cve_severity: ["HIGH"]
+    iac_misconfig: ["HIGH"]
+
+  # Grace windows — don't block on brand-new CVEs with no fix yet
+  grace:
+    no_fix_available: warn            # if no patched version exists, warn not block
+    fixable_high_sla_days: 7          # auto-remediate fixable HIGH within 7d
+    fixable_critical_sla_days: 1      # CRITICAL → same-day closed-loop
+
+  # Closed-loop autonomy — what the agent may do unattended vs PR-only
+  closed_loop:
+    auto_pr: ["dependency_bump", "base_image_bump", "iac_misconfig_fix"]
+    auto_merge: []                    # NEVER auto-merge — human/CAB approval always
+    require_passing_rescan: true      # remediation PR must pass a clean re-scan
+    require_passing_tests: true
+
+  # Suppressions (reviewed false-positives / accepted risk) — time-boxed, audited
+  allowlist:
+    - id: "CHANGEME-CVE-EXAMPLE"
+      reason: "no fix; not reachable in our config"
+      expires: "2026-09-01"
+      approved_by: "CHANGEME"

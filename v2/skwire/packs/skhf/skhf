@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# skhf — foolproof Hugging Face downloads + live search (resumable, right disk, no blown FS).
+#
+#   skhf <repo_id> --dest /mnt/bigdisk [--type model|dataset]
+#        [--safetensors] [--gguf] [--include P ...] [--exclude P ...] [--local-dir DIR] [--token hf_xxx]
+#   skhf search <query> [--type dataset|model]     # live HF Hub search (real results, ranked by downloads)
+#   skhf popular [--type dataset|model]            # the big well-known training datasets/models
+#
+# Presets:
+#   --safetensors   *.safetensors + config/tokenizer only (skip duplicate .bin/.pth/.h5/.gguf/fp16)
+#   --gguf          *.gguf only (Ollama / llama.cpp); narrow a quant with --include "*Q4_K_M*"
+#
+# Fixes (verified mid-2026): set HF_HOME (not just HF_HUB_CACHE → Xet cache also moves off ~/);
+# Xet chunk-resume (hf_transfer is dead); --dry-run vs df pre-flight; retry loop for robust resume.
+set -euo pipefail
+
+_api() { curl -fsSL "https://huggingface.co/api/$1" 2>/dev/null; }
+
+_search() {  # $1=query  $2=kind(datasets|models)
+  local q="$1" kind="$2"
+  echo "🔎 live HF $kind matching '$q' (by downloads):"
+  _api "${kind}?search=$(printf '%s' "$q" | tr ' ' '+')&limit=12&sort=downloads&direction=-1" \
+    | python3 -c "import sys,json
+for r in json.load(sys.stdin):
+    dl=r.get('downloads',0); print(f\"  {r['id']:<55} {dl:>12,} downloads\")" 2>/dev/null \
+    || echo "  (search needs network / python3)"
+  echo "→ grab one:  skhf <id> --dest /mnt/bigdisk${kind/datasets/ --type dataset}"
+}
+
+_popular() {  # $2=datasets|models
+  if [ "${1:-datasets}" = models ]; then
+    echo "Popular models (use --safetensors or --gguf):"
+    printf "  %s\n" "meta-llama/Llama-3.3-70B-Instruct" "Qwen/Qwen3-32B" "mistralai/Mistral-Small-3.2-24B-Instruct-2506" \
+      "deepseek-ai/DeepSeek-V3" "google/gemma-3-27b-it" "unsloth/Llama-3.3-70B-Instruct-GGUF (gguf)"
+  else
+    echo "Big well-known training datasets (the ones everyone pulls):"
+    printf "  %-42s %s\n" \
+      "HuggingFaceFW/fineweb"        "(15T-token web corpus; subsets via --include)" \
+      "HuggingFaceFW/fineweb-edu"    "(filtered, higher quality)" \
+      "togethercomputer/RedPajama-Data-V2" "(30T tokens)" \
+      "cerebras/SlimPajama-627B"     "(deduped Pile/RedPajama)" \
+      "allenai/dolma"               "(3T tokens, open)" \
+      "EleutherAI/pile"             "(The Pile, 825GB — 'the other big one')" \
+      "allenai/c4"                  "(C4, ~750GB)" \
+      "Skylion007/openwebtext"      "(38GB)" \
+      "corym, enron / snoop2head/enron_aeslc_emails" "(Enron email sets)"
+    echo "(not sure of the exact id? →  skhf search \"enron email\" --type dataset)"
+  fi
+}
+
+# ---- subcommands ----
+if [ "${1:-}" = "search" ]; then
+  shift; Q=""; KIND="datasets"
+  while [ $# -gt 0 ]; do case "$1" in --type) [ "$2" = model ] && KIND=models; shift 2;; *) Q="$Q $1"; shift;; esac; done
+  _search "${Q# }" "$KIND"; exit 0
+fi
+if [ "${1:-}" = "popular" ]; then
+  shift; KIND=datasets; [ "${1:-}" = "--type" ] && [ "${2:-}" = model ] && KIND=models
+  _popular "$KIND"; exit 0
+fi
+
+# ---- download (default) ----
+REPO=""; TYPE="model"; DEST=""; TOKEN="${HF_TOKEN:-}"; LOCALDIR=""; INCLUDES=(); EXCLUDES=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --type) TYPE="$2"; shift 2;;
+    --dest) DEST="$2"; shift 2;;
+    --include) INCLUDES+=("$2"); shift 2;;
+    --exclude) EXCLUDES+=("$2"); shift 2;;
+    --safetensors) INCLUDES+=("*.safetensors" "*.json" "*.model" "*.txt" "tokenizer*" "*.tiktoken"); shift;;
+    --gguf) INCLUDES+=("*.gguf" "*.json"); shift;;
+    --token) TOKEN="$2"; shift 2;;
+    --local-dir) LOCALDIR="$2"; shift 2;;
+    -h|--help) sed -n '2,16p' "$0"; exit 0;;
+    -*) echo "unknown flag: $1" >&2; exit 1;;
+    *) REPO="$1"; shift;;
+  esac
+done
+[ -n "$REPO" ] || { echo "usage: skhf <repo_id> --dest /big/disk [--type model|dataset] [--safetensors|--gguf]"; echo "       skhf search <query> [--type dataset|model]   |   skhf popular"; exit 1; }
+[ -n "$DEST" ] || { echo "ERROR: --dest /path/on/a/big/disk is required (don't fill ~/ or /)."; exit 1; }
+
+export HF_HOME="$DEST/hf"                  # THE fix: cascades cache + Xet + token to the big disk
+export HF_HUB_DOWNLOAD_TIMEOUT=60
+export HF_XET_HIGH_PERFORMANCE=1           # the hf_transfer replacement
+unset HF_HUB_ENABLE_HF_TRANSFER 2>/dev/null || true
+mkdir -p "$HF_HOME"
+[ -n "$TOKEN" ] && export HF_TOKEN="$TOKEN"
+command -v hf >/dev/null 2>&1 || { echo "installing huggingface_hub[hf_xet]…"; pip install -U "huggingface_hub[hf_xet]"; }
+
+ARGS=( "$REPO" --max-workers 16 )
+[ "$TYPE" = "dataset" ] && ARGS+=( --repo-type dataset )
+for p in "${INCLUDES[@]}"; do ARGS+=( --include "$p" ); done
+for p in "${EXCLUDES[@]}"; do ARGS+=( --exclude "$p" ); done
+[ -n "$LOCALDIR" ] && ARGS+=( --local-dir "$LOCALDIR" )
+
+echo "── skhf ──  repo=$REPO  type=$TYPE  HF_HOME=$HF_HOME"
+[ ${#INCLUDES[@]} -gt 0 ] && echo "  include: ${INCLUDES[*]}"
+echo "▶ pre-flight: size vs free space"
+hf download "${ARGS[@]}" --dry-run 2>/dev/null || echo "(dry-run unavailable — continuing)"
+df -h "$DEST" | tail -1
+echo "▶ downloading (Xet chunk-resume + retry loop; Ctrl-C safe)…"
+n=0; until hf download "${ARGS[@]}"; do n=$((n+1)); echo "  died (attempt $n) — Xet resumes from cached chunks; retry 15s…"; sleep 15; done
+echo "✓ done → $HF_HOME/hub"

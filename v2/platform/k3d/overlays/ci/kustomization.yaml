@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# CI overlay — minimal footprint.
+# Only namespaces are deployed; no MetalLB, no cert-manager, no ClusterIssuer.
+# CI tests access services via kubectl port-forward or NodePort.
+# Apply: kubectl apply -k platform/k3d/overlays/ci/
+resources:
+  - ../../manifests/namespaces.yaml
+
+commonLabels:
+  skstacks.io/env: ci
+  skstacks.io/platform: k3d

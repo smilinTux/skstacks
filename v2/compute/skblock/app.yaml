@@ -1,0 +1,42 @@
+# SKStacks v2 — skblock app descriptor (STUB)
+#
+# Part of the skstorage family (skblock + skfile + skobject). Structure only,
+# NO real secrets. Replace CHANGEME_* before deploy.
+# See: docs/superpowers/specs/2026-06-11-skstacks-v2-stack-validation.md (§5)
+
+name: skblock
+description: "HA replicated block storage (RWO) for databases / StatefulSets."
+capability: "Block storage — replicated persistent volumes (RWO)"
+scope: skblock
+version: "CHANGEME_VERSION"
+# Block HA is a K8s/CSI concern. On Swarm (no CSI) use host-local volumes with
+# application-level replication (Patroni) or host-level DRBD (LINSTOR).
+platforms: [kubernetes, rke2]
+provider: Longhorn (Apache-2.0, K8s-native synchronous replication + S3 backup)
+alternates:
+  - OpenEBS Mayastor (NVMe/SPDK — higher IOPS, dedicated NVMe)
+  - Rook-Ceph RBD (at consolidation, >=5-6 dedicated-disk nodes)
+  - Piraeus/LINSTOR DRBD (host-level; the Swarm-capable replicated-block option)
+
+# Snapshot/backup ships to the object plane (skobject) per the skstorage
+# backup-target convention.
+secrets:
+  - key: longhorn_backup_s3_access_key
+    description: "S3 access key for the Longhorn backup target (→ skobject)"
+    required: true
+  - key: longhorn_backup_s3_secret_key
+    description: "S3 secret key for the Longhorn backup target (→ skobject)"
+    required: true
+    sensitive: true
+
+config:
+  REPLICA_COUNT: "3"
+  # Backup target resolves to the object plane you already run.
+  BACKUP_TARGET: "s3://skstacks-longhorn@${SKSTACKS_DOMAIN}"   # → skobject (Garage/SeaweedFS)
+  DATA_ENGINE: "v1"   # v2 (SPDK/NVMe-oF) is GA but young — opt in per hot volume
+
+healthcheck:
+  url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/v1/healthz"
+  interval: 30s
+  timeout: 5s
+  retries: 3

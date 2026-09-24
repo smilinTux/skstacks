@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "skred"
+version = "0.1.0"
+description = "Scope-locked self-hardening security loop: best-of-breed OSS scanners → one normalized report → CI gate → LLM-suggested fixes."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "smilinTux / SKWorld" }]
+dependencies = []                      # pure-stdlib core; scanners are external CLIs
+
+[project.scripts]
+skred = "skred.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+include = ["skred*"]
+
+[tool.pytest.ini_options]
+pythonpath = [".."]
+testpaths = ["tests"]
+addopts = "-q"

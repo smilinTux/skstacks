@@ -1,0 +1,125 @@
+---
+# swarm-ha: Deploy keepalived VRRP HA Virtual IP on swarm manager nodes.
+#
+# Assigns a floating VIP (${SWARM_VIP}) across manager nodes using unicast VRRP.
+# Priority is auto-calculated: first manager gets highest priority (MASTER),
+# subsequent managers are BACKUP (priority decrements by 10 per node).
+#
+# Required variables (from group_vars/all.yml or vault):
+#   swarm_vip               — Virtual IP address (CIDR, e.g. 10.0.0.10/24)
+#   keepalived_auth_pass    — VRRP authentication password (store in vault)
+#   keepalived_vrid         — Virtual router ID, 1-255, unique per L2 segment (default: 51)
+
+- name: Gather network facts
+  ansible.builtin.setup:
+    gather_subset:
+      - network
+
+- name: Determine primary interface
+  ansible.builtin.set_fact:
+    primary_interface: "{{ ansible_facts['default_ipv4']['interface'] }}"
+
+- name: Collect all manager IPs for unicast peers
+  ansible.builtin.set_fact:
+    all_manager_ips: >-
+      {{
+        ansible_play_hosts
+        | map('extract', hostvars, ['ansible_default_ipv4', 'address'])
+        | select('defined')
+        | list
+      }}
+  run_once: true
+  delegate_to: localhost
+  connection: local
+
+- name: Build unicast peer list (exclude self)
+  ansible.builtin.set_fact:
+    keepalived_peers: >-
+      {{
+        all_manager_ips
+        | reject('equalto', ansible_facts['default_ipv4']['address'])
+        | list
+      }}
+
+- name: Calculate node index in sorted manager list
+  ansible.builtin.set_fact:
+    node_index: "{{ loop_index0 }}"
+  loop: "{{ ansible_play_hosts | sort }}"
+  when: item == inventory_hostname
+  loop_control:
+    index_var: loop_index0
+    label: "{{ item }}"
+
+- name: Default node index if not resolved
+  ansible.builtin.set_fact:
+    node_index: 0
+  when: node_index is not defined
+
+- name: Set keepalived priority (100 − node_index × 10)
+  ansible.builtin.set_fact:
+    keepalived_priority: "{{ (100 - (node_index | int * 10)) | int }}"
+
+- name: Set keepalived state (MASTER for index 0, BACKUP for others)
+  ansible.builtin.set_fact:
+    keepalived_state: "{{ 'MASTER' if (node_index | int == 0) else 'BACKUP' }}"
+
+- name: Debug keepalived assignment
+  ansible.builtin.debug:
+    msg: >-
+      host={{ inventory_hostname }}
+      ip={{ ansible_facts['default_ipv4']['address'] }}
+      state={{ keepalived_state }}
+      priority={{ keepalived_priority }}
+      peers={{ keepalived_peers }}
+
+- name: Install keepalived
+  ansible.builtin.package:
+    name: keepalived
+    state: present
+
+- name: Ensure /usr/local/bin exists
+  ansible.builtin.file:
+    path: /usr/local/bin
+    state: directory
+    mode: '0755'
+
+- name: Deploy Traefik health-check script
+  ansible.builtin.copy:
+    dest: /usr/local/bin/swarm_check_traefik.sh
+    mode: '0755'
+    owner: root
+    group: root
+    content: |
+      #!/bin/bash
+      # Check that Traefik is responding on HTTP and HTTPS entry points.
+      curl -fsS --max-time 3 http://127.0.0.1:80/ > /dev/null 2>&1 || \
+      curl -fsSk --max-time 3 https://127.0.0.1:443/ > /dev/null 2>&1
+      exit $?
+
+- name: Deploy VIP notify script
+  ansible.builtin.copy:
+    dest: /usr/local/bin/swarm_ha_notify.sh
+    mode: '0755'
+    owner: root
+    group: root
+    content: |
+      #!/bin/bash
+      # Notify script called by keepalived on state transitions.
+      # $1 = master|backup|fault
+      ROLE="$1"
+      logger -t keepalived "swarm-ha VIP transition: ${ROLE} on $(hostname)"
+
+- name: Template keepalived.conf
+  ansible.builtin.template:
+    src: keepalived.conf.j2
+    dest: /etc/keepalived/keepalived.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart keepalived
+
+- name: Enable and start keepalived
+  ansible.builtin.service:
+    name: keepalived
+    state: started
+    enabled: true

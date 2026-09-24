@@ -1,0 +1,18 @@
+# exposure/cloudflared (Swarm) — Cloudflare Tunnel → Traefik on the overlay net.
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:2026.6.1
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARED_TUNNEL_TOKEN}   # from secret backend
+    networks:
+      - traefik-public
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: any
+# Public-hostname → origin `https://traefik:443` configured in the tunnel config.
+networks:
+  traefik-public:
+    external: true
+    name: traefik-public-${ENV:-prod}

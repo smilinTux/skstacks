@@ -1,0 +1,56 @@
+# SKStacks v2 — skbus app descriptor (STUB)
+#
+# This is a capability stub — structure only, NO real secrets.
+# Replace CHANGEME_* placeholders with real values before deploy.
+# Provider is the recommended sovereign adapter from the skos capability map.
+#
+# See: docs/superpowers/specs/2026-06-09-skos-capability-map.md
+
+name: skbus
+description: "Machine A2A event bus — NATS JetStream for sovereign agent-to-agent messaging (subjects: skos.agent.*.events)."
+capability: "Machine A2A event bus — durable pub/sub for agent-to-agent messaging"
+scope: skbus
+ha: true            # "if you need one, get two" — NATS JetStream — 3-node cluster
+min_replicas: 3
+version: "CHANGEME_VERSION"
+platforms: [docker-swarm, kubernetes, bare-metal]
+provider: NATS JetStream (10 MB binary, sub-millisecond latency, built-in persistence)
+alternates:
+  - Redpanda (Kafka-compat at scale)
+
+# Secret keys this service needs (values resolved from secret backend at deploy time)
+secrets:
+  - key: nats_sys_password
+    description: "NATS $SYS account password for operator/admin"
+    rotation_days: 90
+    required: true
+    sensitive: true
+  - key: nats_skos_agent_password
+    description: "NATS password for skos.agent.* subject namespace"
+    required: true
+    sensitive: true
+
+# Non-sensitive config (overridden by overlay values)
+config:
+  LOG_LEVEL: INFO
+  DOMAIN: "${SKSTACKS_DOMAIN}"
+  CLUSTER: "${SKSTACKS_CLUSTER}"
+
+# Health check (fill in real URL/path before deploy)
+healthcheck:
+  url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/healthz"
+  interval: 30s
+  timeout: 5s
+  retries: 3
+
+# Deploy block — NATS JetStream message bus, HA (3-node cluster).
+deploy:
+  container: nats
+  image: "nats:2.10-alpine"
+  command: ["-js", "-m", "8222"]
+  ports:
+    - "4222:4222"
+    - "8222:8222"
+  volumes:
+    - "nats-data:/data"
+  healthcheck_test: ["CMD", "wget", "-qO-", "http://localhost:8222/healthz"]

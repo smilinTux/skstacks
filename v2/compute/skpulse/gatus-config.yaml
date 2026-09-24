@@ -1,0 +1,34 @@
+# skpulse — Gatus config-as-code (RATIFIED swap off Uptime-Kuma).
+# GitOps-native uptime: endpoints live beside service definitions, versioned and
+# reviewable. Failures feed skops ITIL incident ingest via the webhook alert.
+metrics: true        # expose Prometheus metrics for skmon to scrape
+
+alerting:
+  custom:
+    # → skops ITIL incident ingest (Gatus/Healthchecks already wired there)
+    url: "https://skops.${SKSTACKS_DOMAIN}/api/itil/ingest"
+    method: "POST"
+    body: |
+      {"service":"[ENDPOINT_NAME]","status":"[ALERT_TRIGGERED_OR_RESOLVED]","desc":"[ALERT_DESCRIPTION]"}
+
+endpoints:
+  - name: traefik-gateway
+    group: edge
+    url: "https://${SKSTACKS_DOMAIN}/ping"
+    interval: 30s
+    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 168h"]
+    alerts: [{ type: custom, failure-threshold: 3, send-on-resolved: true }]
+
+  - name: openbao
+    group: secrets
+    url: "https://openbao.${SKSTACKS_DOMAIN}:8200/v1/sys/health"
+    interval: 30s
+    conditions: ["[STATUS] == 200"]
+    alerts: [{ type: custom, failure-threshold: 2, send-on-resolved: true }]
+
+  - name: skbus-nats
+    group: fabric
+    url: "tcp://nats.${SKSTACKS_DOMAIN}:4222"
+    interval: 30s
+    conditions: ["[CONNECTED] == true"]
+    alerts: [{ type: custom, failure-threshold: 3, send-on-resolved: true }]

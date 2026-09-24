@@ -1,0 +1,38 @@
+# SKStacks v2 — skturn app descriptor (coturn TURN/STUN)
+#
+# Media-relay plane for WebRTC (skchat/skvoice consume the resulting FQDN).
+# Structure only — NO secret values. The static-auth-secret is the EXISTING
+# skhub.turn_secret, supplied as a docker secret (never committed, never regen'd).
+
+name: skturn
+description: "WebRTC TURN/STUN media relay (coturn). Host-published edge service; the media plane that cannot traverse Traefik/cloudflared."
+capability: "WebRTC media relay — TURN/STUN for NAT traversal"
+scope: skturn
+version: "4.6"
+platforms: [docker-swarm]            # host-network edge service (K8s = hostNetwork DaemonSet, see README)
+provider: "coturn 4.6 (host-published edge node; DNS grey-cloud / DNS-only)"
+alternates:
+  - eturnal (Erlang TURN)
+  - Pion TURN (Go, embeddable)
+
+# The auth secret is SHARED across consumers — DO NOT generate a new one.
+secrets:
+  - key: turn_secret
+    description: "EXISTING skhub.turn_secret — shared static-auth-secret for Nextcloud Talk (spreed), netbird, and skchat. Supplied as docker secret coturn_static_auth_secret. NEVER regenerate (breaks all 3); NEVER reuse the leaked NC_PASS; NEVER commit."
+    required: true
+    sensitive: true
+    shared_with: [nextcloud-talk, netbird, skchat]
+
+config:
+  TURN_REALM: "${SKSTACKS_DOMAIN}"
+  MIN_PORT: "49160"
+  MAX_PORT: "49200"
+  # DNS: turn-<cluster>.<domain>  A → edge public IP, GREY-CLOUD (DNS-only, not proxied)
+  FQDN: "turn-${SKSTACKS_CLUSTER}.${SKSTACKS_DOMAIN}"
+
+healthcheck:
+  # TURN has no HTTP health; check the listener with turnutils or a UDP probe.
+  command: "turnutils_uclient -y -u test -w test 127.0.0.1"
+  interval: 60s
+  timeout: 10s
+  retries: 3

@@ -1,0 +1,55 @@
+---
+# group_vars/all.yml.example
+#
+# Copy to group_vars/all.yml and replace every ${VAR} placeholder with a real value.
+# Secrets (keepalived_auth_pass, acme_email) should be stored in an Ansible vault file
+# (group_vars/all_vault.yml) and referenced here.
+#
+# Encrypt with:
+#   ansible-vault encrypt group_vars/all_vault.yml
+
+# ─── Swarm networking ────────────────────────────────────────────────────────
+
+# IP address that the primary manager advertises to swarm peers.
+# This is the node's reachable management IP, NOT the VIP.
+swarm_manager_ip: "${SWARM_MANAGER_IP}"           # e.g. 10.0.1.10
+
+# Floating Virtual IP for HA (keepalived VRRP).
+# Must be in the same L2 subnet as the manager nodes.
+swarm_vip: "${SWARM_VIP}/24"                       # e.g. 10.0.1.5/24
+
+# Optional: restrict swarm management ports to this CIDR.
+# Leave as 'any' if nodes are on an isolated private network.
+swarm_management_cidr: "${SWARM_MANAGEMENT_CIDR}" # e.g. 10.0.0.0/8 or 'any'
+
+# ─── Keepalived ──────────────────────────────────────────────────────────────
+
+# VRRP Virtual Router ID — must be unique per L2 broadcast domain (1–255).
+keepalived_vrid: 51
+
+# VRRP authentication password — store the real value in vault.
+keepalived_auth_pass: "{{ vault_keepalived_auth_pass }}"
+
+# ─── Domain / TLS ────────────────────────────────────────────────────────────
+
+# Primary domain served by this cluster.
+domain: "${DOMAIN}"                               # e.g. example.com
+
+# Email for Let's Encrypt ACME registration and expiry notifications.
+acme_email: "{{ vault_acme_email }}"             # keep in vault
+
+# ─── Overlay networks ────────────────────────────────────────────────────────
+# List of Docker overlay networks to create before deploying stacks.
+swarm_overlay_networks:
+  - name: "traefik-public-{{ env | default('prod') }}"
+    subnet: "${TRAEFIK_PUBLIC_SUBNET}"            # e.g. 172.16.100.0/24
+  - name: "traefik-internal-{{ env | default('prod') }}"
+    subnet: "${TRAEFIK_INTERNAL_SUBNET}"          # e.g. 172.16.101.0/24
+
+# ─── Traefik dashboard access ────────────────────────────────────────────────
+# Source CIDR allowed to reach port 8080 (Traefik dashboard).
+# Restrict to your VPN/management network in production.
+traefik_dashboard_allowed_cidr: "${TRAEFIK_DASHBOARD_CIDR}"  # e.g. 10.0.0.0/8
+
+# ─── Environment tag ─────────────────────────────────────────────────────────
+env: "${ENV}"                                    # prod | staging | dev

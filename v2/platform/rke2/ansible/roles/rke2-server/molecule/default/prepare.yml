@@ -1,0 +1,11 @@
+---
+- name: Prepare
+  hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Wait for systemd to be ready
+      ansible.builtin.command: systemctl is-system-running --wait
+      register: systemd_status
+      changed_when: false
+      failed_when: systemd_status.stdout not in ["running", "degraded"]

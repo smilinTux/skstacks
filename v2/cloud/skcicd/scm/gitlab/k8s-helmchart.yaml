@@ -1,0 +1,29 @@
+# skcicd/scm/gitlab (K8s) — GitLab via the official cloud-native Helm chart.
+# Heavy (many subcharts). TLS at the Traefik Gateway; secrets from ESO.
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: gitlab
+  namespace: kube-system
+spec:
+  repo: https://charts.gitlab.io
+  chart: gitlab
+  version: "8.10.1"
+  targetNamespace: gitlab
+  createNamespace: true
+  valuesContent: |-
+    global:
+      hosts:
+        domain: "${SKSTACKS_DOMAIN}"
+      ingress:
+        configureCertmanager: false   # TLS handled by Traefik Gateway / cert-manager
+        class: "none"                  # we front it with an HTTPRoute, not the bundled ingress
+      initialRootPassword:
+        secret: gitlab-root            # ESO-synced (skcicd/gitlab_root_password)
+        key: password
+    certmanager:
+      install: false
+    nginx-ingress:
+      enabled: false                   # use the skstacks Traefik Gateway
+    gitlab-runner:
+      install: true                    # CI runners

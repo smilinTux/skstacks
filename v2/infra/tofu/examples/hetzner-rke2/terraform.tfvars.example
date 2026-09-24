@@ -1,0 +1,37 @@
+# Copy to terraform.tfvars and fill in your values.
+# NEVER commit terraform.tfvars — it may contain secrets.
+# Add it to .gitignore.
+
+# ── Cloud credentials ─────────────────────────────────────────────────────────
+# Prefer loading these via the secret backend wrapper instead of here.
+# For vault-file:  eval $(../../secrets/vault-file-wrapper.sh --env prod)
+# For vault:       use ../../secrets/vault-provider.tf
+
+hcloud_token          = "CHANGEME_HETZNER_API_TOKEN"
+cloudflare_api_token  = "CHANGEME_CF_API_TOKEN"
+cloudflare_zone_id    = "CHANGEME_CF_ZONE_ID"
+
+# ── Cluster identity ──────────────────────────────────────────────────────────
+
+cluster_name = "skstack01"
+env          = "prod"
+domain       = "CHANGEME_DOMAIN"          # e.g. your-domain.com
+
+# ── SSH ───────────────────────────────────────────────────────────────────────
+
+ssh_public_key    = "CHANGEME_SSH_PUBLIC_KEY"  # content of ~/.ssh/id_ed25519.pub
+ssh_allowed_cidrs = ["CHANGEME_YOUR_IP/32"]    # restrict SSH to your IP(s)
+
+# ── Compute ───────────────────────────────────────────────────────────────────
+
+server_count      = 3                          # RKE2 control-plane (must be odd)
+server_type       = "cx32"                     # 4 vCPU / 8 GB
+agent_count       = 3                          # RKE2 workers
+agent_server_type = "cx42"                     # 8 vCPU / 16 GB
+image             = "ubuntu-24.04"
+location          = "fsn1"                     # Falkenstein, Germany
+
+# ── Optional ──────────────────────────────────────────────────────────────────
+
+deploy_coturn          = false                 # set true if running coturn on cluster nodes
+enable_cloudflare_waf  = false                 # set true to add CF rate-limiting rules

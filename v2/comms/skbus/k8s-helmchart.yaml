@@ -1,0 +1,43 @@
+# skbus — NATS JetStream on K8s via the official Helm chart (helm-controller).
+# 3-replica cluster with JetStream file storage + auth. Passwords sync from the
+# secret backend via ESO → the `nats-auth` Secret (never inlined here).
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: nats
+  namespace: kube-system
+spec:
+  repo: https://nats-io.github.io/k8s/helm/charts/
+  chart: nats
+  version: "1.2.6"
+  targetNamespace: skbus
+  createNamespace: true
+  valuesContent: |-
+    config:
+      cluster:
+        enabled: true
+        replicas: 3
+      jetstream:
+        enabled: true
+        fileStore:
+          enabled: true
+          pvc:
+            size: 10Gi
+            storageClassName: longhorn      # skblock
+      merge:
+        accounts:
+          SYS:
+            users: [ { user: sys, password: "$SYS_PASSWORD" } ]
+          SKCOMMS:
+            jetstream: enabled
+            users: [ { user: skcomms, password: "$SKCOMMS_PASSWORD" } ]
+        system_account: SYS
+    # passwords injected from the ESO-synced Secret as env, not stored here
+    container:
+      env:
+        SYS_PASSWORD:
+          valueFrom: { secretKeyRef: { name: nats-auth, key: sys_password } }
+        SKCOMMS_PASSWORD:
+          valueFrom: { secretKeyRef: { name: nats-auth, key: skcomms_password } }
+    natsBox:
+      enabled: true                          # nats CLI box for ops

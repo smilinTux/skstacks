@@ -1,0 +1,30 @@
+# Application namespaces — mirrors kubernetes/base/namespaces.yaml
+# Helm-managed namespaces (cert-manager, metallb-system, longhorn-system,
+# external-secrets) are created by their respective HelmChart manifests.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: skfence
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    skstacks.io/managed: "true"
+    skstacks.io/tier: core
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: skseed
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    skstacks.io/managed: "true"
+    skstacks.io/tier: ai
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sksec
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    skstacks.io/managed: "true"
+    skstacks.io/tier: security

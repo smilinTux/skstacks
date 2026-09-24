@@ -1,0 +1,48 @@
+---
+# Molecule scenario for rke2-server. Single server node (cluster-init path).
+# Requires a privileged systemd container + network (RKE2 installer pulls binaries).
+dependency:
+  name: galaxy
+  options:
+    requirements-file: ../../../../requirements.yml
+
+driver:
+  name: docker
+
+platforms:
+  - name: rke2-server-ubuntu2204
+    image: "geerlingguy/docker-ubuntu2204-ansible:latest"
+    cgroupns_mode: host
+    privileged: true
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    command: /lib/systemd/systemd
+    pre_build_image: true
+    groups:
+      - rke2_servers          # single-node init path → rke2_is_init_server = true
+
+provisioner:
+  name: ansible
+  inventory:
+    host_vars:
+      rke2-server-ubuntu2204:
+        rke2_version: "v1.31.4+rke2r1"
+        rke2_channel: stable
+        rke2_vip_ip: "127.0.0.1"
+        cluster_name: molecule-test
+        ansible_host: "127.0.0.1"
+  playbooks:
+    prepare: prepare.yml
+    converge: converge.yml
+    verify: verify.yml
+  config_options:
+    defaults:
+      callbacks_enabled: profile_tasks
+
+verifier:
+  name: ansible
+
+lint: |
+  set -e
+  yamllint .
+  ansible-lint --strict

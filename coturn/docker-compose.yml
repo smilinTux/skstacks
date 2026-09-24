@@ -1,0 +1,58 @@
+# coturn standalone compose snippet — sovereign TURN/STUN server
+#
+# Usage (standalone, from this directory):
+#   cp .env.example .env && $EDITOR .env
+#   docker compose up -d
+#
+# Usage (from project root via profile):
+#   docker compose --profile turn up -d coturn
+#
+# Required env vars (set in .env or environment):
+#   COTURN_EXTERNAL_IP   — public IP of this host
+#   COTURN_AUTH_SECRET   — HMAC secret (openssl rand -hex 32)
+#
+# Optional:
+#   COTURN_TLS_CERT      — cert path inside container (default: /etc/coturn/certs/fullchain.pem)
+#   COTURN_TLS_PKEY      — key path inside container  (default: /etc/coturn/certs/privkey.pem)
+#   COTURN_CERTS_DIR     — host cert dir to mount     (default: /etc/letsencrypt/live/turn.skworld.io)
+
+services:
+  coturn:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: skworld-coturn:latest
+    container_name: skworld-coturn
+    environment:
+      COTURN_EXTERNAL_IP: "${COTURN_EXTERNAL_IP:?set COTURN_EXTERNAL_IP to your public IP}"
+      COTURN_AUTH_SECRET: "${COTURN_AUTH_SECRET:?set COTURN_AUTH_SECRET to a 32-byte hex secret}"
+      COTURN_TLS_CERT: "${COTURN_TLS_CERT:-/etc/coturn/certs/fullchain.pem}"
+      COTURN_TLS_PKEY: "${COTURN_TLS_PKEY:-/etc/coturn/certs/privkey.pem}"
+    ports:
+      # STUN/TURN plain
+      - "${COTURN_PORT:-3478}:3478/udp"
+      - "${COTURN_PORT:-3478}:3478/tcp"
+      # STUN/TURN TLS
+      - "${COTURN_TLS_PORT:-5349}:5349/tcp"
+      - "${COTURN_TLS_PORT:-5349}:5349/udp"
+      # Media relay range — large range; Docker maps this 1:1
+      - "49152-65535:49152-65535/udp"
+    volumes:
+      # Mount Let's Encrypt certs (or any cert dir) read-only
+      - "${COTURN_CERTS_DIR:-/etc/letsencrypt/live/turn.skworld.io}:/etc/coturn/certs:ro"
+      - coturn_logs:/var/log/coturn
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "turnutils_stunclient 127.0.0.1 2>/dev/null || exit 0"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+volumes:
+  coturn_logs:
+    driver: local

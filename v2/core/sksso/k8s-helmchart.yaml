@@ -1,0 +1,34 @@
+# sksso (K8s) — Authentik via the official Helm chart. Secrets (secret key, DB +
+# bootstrap creds) sync from the secret backend via ESO → the authentik Secret.
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: authentik
+  namespace: kube-system
+spec:
+  repo: https://charts.goauthentik.io
+  chart: authentik
+  version: "2026.2.0"
+  targetNamespace: sksso
+  createNamespace: true
+  valuesContent: |-
+    authentik:
+      secret_key:
+        valueFrom: { secretKeyRef: { name: authentik, key: secret_key } }
+      postgresql:
+        password:
+          valueFrom: { secretKeyRef: { name: authentik, key: pg_password } }
+    server:
+      replicas: 2
+    worker:
+      replicas: 1
+    postgresql:
+      enabled: true
+      auth:
+        existingSecret: authentik           # ESO-synced
+    redis:
+      enabled: false                        # use skcache (Valkey) instead of bundled redis
+    global:
+      env:
+        - name: AUTHENTIK_REDIS__HOST
+          value: "valkey.skcache.svc"

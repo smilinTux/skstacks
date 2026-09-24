@@ -1,0 +1,28 @@
+---
+# Platform layer — namespaces, MetalLB, cert-manager ClusterIssuer, Traefik
+# (Gateway API controller) + the shared skstacks Gateway. Deploys the prod
+# overlay; point a per-env app at overlays/dev|staging for other environments.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: skstacks-platform
+  namespace: argocd
+  labels:
+    skstacks.io/managed: "true"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: skstacks
+  source:
+    repoURL: https://github.com/smilinTux/skstacks.git
+    targetRevision: main
+    path: v2/platform/kubernetes/overlays/prod
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true        # CRDs (Gateway API, MetalLB, cert-manager)

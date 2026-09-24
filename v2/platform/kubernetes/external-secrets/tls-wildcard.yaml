@@ -1,0 +1,108 @@
+# ExternalSecret — TLS wildcard certificate
+# coord task: 55d31c18
+#
+# Two options for wildcard TLS in this stack:
+#
+#   Option A (this file) — Pull from Vault KV.
+#     The cert + key are stored in Vault, managed externally (cert-manager renewal,
+#     Cloudflare Origin CA, or a manual ACME workflow). ESO syncs them into a
+#     kubernetes.io/tls Secret that ingress-nginx or Traefik can use directly.
+#
+#   Option B — cert-manager + Vault PKI issuer (dynamic, preferred for production).
+#     cert-manager creates the Secret directly without an ExternalSecret.
+#     See platform/rke2/manifests/cert-manager.yaml and ARCHITECTURE.md.
+#     Use this when your Vault has a PKI secrets engine configured.
+#
+# Use Option A when:
+#   - The TLS cert comes from a commercial CA or Cloudflare Origin CA.
+#   - You want a single Vault source of truth for certs across multiple clusters.
+#   - cert-manager Vault PKI integration is not yet set up.
+#
+# Vault KV layout:
+#
+#   # Store PEM cert chain (base64-encoded to safely handle newlines in Vault)
+#   vault kv put secrets/prod/certs/wildcard_tls_cert \
+#     value="$(base64 -w0 /etc/ssl/certs/wildcard-fullchain.pem)"
+#
+#   # Store PEM private key (base64-encoded)
+#   vault kv put secrets/prod/certs/wildcard_tls_key \
+#     value="$(base64 -w0 /etc/ssl/private/wildcard.key)"
+#
+# Path convention: secrets/{env}/{service}/{key}
+#   env     = prod / staging / dev
+#   service = certs  (shared cert namespace; not tied to one app)
+#   key     = wildcard_tls_cert | wildcard_tls_key
+#
+# The resulting K8s Secret (type: kubernetes.io/tls) is consumed by:
+#   - ingress-nginx:  spec.tls[].secretName: wildcard-tls
+#   - Traefik:        stores.default.tlsStore.defaultCertificate.secretName
+#
+# Cross-namespace access: deploy this ExternalSecret in each namespace that needs
+# the cert, or use a single ExternalSecret in ingress-nginx namespace and reference
+# it from Ingress resources.
+#
+# Rotation (Option A):
+#   1. Obtain renewed cert from CA (certbot renew, Cloudflare dashboard, etc.).
+#   2. Update Vault:
+#        vault kv put secrets/prod/certs/wildcard_tls_cert \
+#          value="$(base64 -w0 /etc/ssl/certs/wildcard-fullchain.pem)"
+#        vault kv put secrets/prod/certs/wildcard_tls_key \
+#          value="$(base64 -w0 /etc/ssl/private/wildcard.key)"
+#   3. ESO re-syncs within refreshInterval (12h). Force immediate sync:
+#        kubectl annotate externalsecret wildcard-tls -n CHANGEME_NAMESPACE \
+#          force-sync="$(date +%s)" --overwrite
+#   4. Ingress controllers reload TLS automatically upon Secret update.
+#      No pod restarts needed for ingress-nginx or Traefik.
+#   Monitor cert expiry: set refreshInterval to 12h and alert when Vault secret
+#   metadata.created_time + cert_validity < 14 days (see README.md).
+#
+# Apply:
+#   # Edit CHANGEME_ placeholders first, then:
+#   kubectl apply -f platform/kubernetes/external-secrets/tls-wildcard.yaml
+
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: wildcard-tls
+  # Deploy in the namespace where your ingress controller expects the Secret,
+  # or in a shared namespace with ExternalSecret cloning (see ESO docs).
+  namespace: CHANGEME_NAMESPACE   # e.g. ingress-nginx, traefik, or your app namespace
+  labels:
+    app.kubernetes.io/managed-by: external-secrets
+    skstacks.io/secret-scope: tls
+spec:
+  # Certs don't change frequently; 12h avoids hammering Vault.
+  # Reduce to 1h if you rotate certs more aggressively.
+  refreshInterval: 12h
+
+  secretStoreRef:
+    name: vault-kv
+    kind: ClusterSecretStore
+
+  target:
+    name: wildcard-tls
+    creationPolicy: Owner
+    deletionPolicy: Retain
+    template:
+      # kubernetes.io/tls type enables TLS validation by K8s and ingress controllers.
+      type: kubernetes.io/tls
+      # ESO decodes the base64-encoded values from Vault before writing the Secret,
+      # so ingress controllers receive raw PEM bytes as expected by kubernetes.io/tls.
+      engineVersion: v2
+      data:
+        tls.crt: "{{ .tlsCrt | b64dec }}"
+        tls.key: "{{ .tlsKey | b64dec }}"
+
+  data:
+    # Cert chain (PEM, base64-encoded in Vault)
+    - secretKey: tlsCrt
+      remoteRef:
+        key: "CHANGEME_ENV/certs/wildcard_tls_cert"   # e.g. prod/certs/wildcard_tls_cert
+        property: "value"
+
+    # Private key (PEM, base64-encoded in Vault)
+    - secretKey: tlsKey
+      remoteRef:
+        key: "CHANGEME_ENV/certs/wildcard_tls_key"    # e.g. prod/certs/wildcard_tls_key
+        property: "value"

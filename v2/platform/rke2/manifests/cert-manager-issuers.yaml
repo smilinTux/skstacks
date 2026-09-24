@@ -1,0 +1,116 @@
+# cert-manager ClusterIssuers — Let's Encrypt staging + production
+# Auto-deployed by RKE2 helm-controller from /var/lib/rancher/rke2/server/manifests/
+#
+# ORDERING: Requires cert-manager.yaml (HelmChart with installCRDs: true) to finish
+# first. RKE2's helm-controller retries this file automatically until
+# cert-manager.io CRDs are registered — no manual ordering needed.
+#
+# CONFIGURE: Set LETSENCRYPT_EMAIL and choose solvers in helm/cert-manager-values.yaml.
+# Ansible renders this from a Jinja2 template before copying to manifests dir.
+#
+# USAGE:
+#   Staging (test before going prod — no rate limits, untrusted CA):
+#     cert-manager.io/cluster-issuer: "letsencrypt-staging"
+#
+#   Production (trusted certs, strict LE rate limits apply):
+#     cert-manager.io/cluster-issuer: "letsencrypt-prod"
+#
+# VERIFY:
+#   kubectl get clusterissuer -o wide
+#   kubectl describe clusterissuer letsencrypt-prod
+
+---
+# Staging issuer — use this first to validate your ACME setup.
+# Certificates are signed by "(STAGING) Let's Encrypt" — browsers will warn.
+# Rate limits: 30,000 new orders/3h (vs 50/week for prod). Safe to iterate.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+  annotations:
+    skstacks.io/managed-by: "rke2-manifests"
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: admin@CHANGEME_DOMAIN   # REQUIRED: set certManager.letsencrypt.email in helm/cert-manager-values.yaml
+    privateKeySecretRef:
+      name: letsencrypt-staging-key
+    solvers:
+      # HTTP-01: proves domain ownership via a temporary HTTP endpoint.
+      # Works for all domains reachable from the internet on port 80.
+      # Requires: ingress-nginx (or another ingress) to be running.
+      - http01:
+          ingress:
+            class: nginx   # must match your IngressClass name
+
+      # DNS-01 (disabled by default — uncomment for wildcard certs):
+      # Proves ownership by creating a TXT record in your DNS provider.
+      # Required for *.domain.com wildcard certificates.
+      #
+      # Cloudflare example:
+      # - dns01:
+      #     cloudflare:
+      #       email: admin@CHANGEME_DOMAIN
+      #       apiTokenSecretRef:
+      #         name: cloudflare-api-token   # kubectl create secret generic cloudflare-api-token ...
+      #         key: api-token
+      #
+      # Route53 example:
+      # - dns01:
+      #     route53:
+      #       region: us-east-1
+      #       accessKeyIDSecretRef:
+      #         name: route53-credentials
+      #         key: access-key-id
+      #       secretAccessKeySecretRef:
+      #         name: route53-credentials
+      #         key: secret-access-key
+
+---
+# Production issuer — use only after confirming staging works.
+# Certificates are trusted by all browsers and OS trust stores.
+# Rate limits: 50 certificates/domain/week. Do NOT iterate here.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+  annotations:
+    skstacks.io/managed-by: "rke2-manifests"
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: admin@CHANGEME_DOMAIN   # REQUIRED: set certManager.letsencrypt.email in helm/cert-manager-values.yaml
+    privateKeySecretRef:
+      name: letsencrypt-prod-key
+    solvers:
+      # HTTP-01 solver — default for single-domain certs
+      - http01:
+          ingress:
+            class: nginx
+
+      # DNS-01 solver — required for wildcard certs (uncomment to enable):
+      #
+      # Cloudflare (recommended — fast propagation, scoped API token):
+      # - dns01:
+      #     cloudflare:
+      #       email: admin@CHANGEME_DOMAIN
+      #       apiTokenSecretRef:
+      #         name: cloudflare-api-token
+      #         key: api-token
+      #   selector:
+      #     dnsZones:
+      #       - "CHANGEME_DOMAIN"   # limit this solver to your zone
+      #
+      # Route53:
+      # - dns01:
+      #     route53:
+      #       region: us-east-1
+      #       accessKeyIDSecretRef:
+      #         name: route53-credentials
+      #         key: access-key-id
+      #       secretAccessKeySecretRef:
+      #         name: route53-credentials
+      #         key: secret-access-key
+      #   selector:
+      #     dnsZones:
+      #       - "CHANGEME_DOMAIN"

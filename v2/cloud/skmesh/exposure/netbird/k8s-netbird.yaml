@@ -1,0 +1,41 @@
+# exposure/netbird (K8s) — Netbird routing peer that exposes the Traefik Gateway
+# over the sovereign WireGuard mesh. Setup key + mgmt URL from the secret backend.
+#
+# BOOTSTRAP CAVEAT: the agent must reach the Netbird MANAGEMENT server to join —
+# keep that LAN-reachable (via the lan/ baseline) so the mesh self-bootstraps.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netbird-ingress
+  namespace: traefik
+  labels: { skstacks.io/exposure: netbird }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: netbird-ingress }
+  template:
+    metadata:
+      labels: { app: netbird-ingress }
+    spec:
+      containers:
+        - name: netbird
+          image: netbirdio/netbird:0.62.0
+          securityContext:
+            capabilities: { add: ["NET_ADMIN"] }
+          env:
+            - name: NB_SETUP_KEY
+              valueFrom:
+                secretKeyRef: { name: netbird-setup-key, key: key }   # from ExternalSecret
+            - name: NB_MANAGEMENT_URL
+              value: "https://CHANGEME_NETBIRD_MGMT"                   # self-hosted, LAN-reachable
+          volumeMounts:
+            - { name: state, mountPath: /var/lib/netbird }
+            - { name: tun, mountPath: /dev/net/tun }
+      volumes:
+        - name: state
+          emptyDir: {}
+        - name: tun
+          hostPath: { path: /dev/net/tun }
+# Mark this peer as a routing/ingress peer in the Netbird dashboard so authorized
+# mesh members reach the Traefik Gateway (traefik.traefik.svc:443).

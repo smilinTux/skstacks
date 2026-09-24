@@ -1,0 +1,9 @@
+# A project ships its pack by declaring this entry point. Installing the project
+# then makes the pack auto-discoverable via skwire.load_packs_from_entrypoints().
+[project]
+name = "hello-pack"
+version = "0.1.0"
+dependencies = ["skwire"]
+
+[project.entry-points."skwire.packs"]
+hello = "hello_pack:pack"

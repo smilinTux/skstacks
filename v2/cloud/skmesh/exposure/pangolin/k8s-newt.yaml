@@ -1,0 +1,33 @@
+# exposure/pangolin (K8s) — Newt connector Deployment. Outbound tunnel to the
+# public Pangolin/Gerbil node; forwards to the in-cluster Traefik Gateway.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: newt
+  namespace: traefik
+  labels: { skstacks.io/exposure: pangolin }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: newt }
+  template:
+    metadata:
+      labels: { app: newt }
+    spec:
+      containers:
+        - name: newt
+          image: fosrl/newt:1.0.0
+          securityContext:
+            capabilities: { add: ["NET_ADMIN"] }
+          env:
+            - name: PANGOLIN_ENDPOINT
+              value: "https://CHANGEME_PANGOLIN_PUBLIC"
+            - name: NEWT_ID
+              valueFrom: { secretKeyRef: { name: pangolin-newt, key: id } }      # ESO-synced
+            - name: NEWT_SECRET
+              valueFrom: { secretKeyRef: { name: pangolin-newt, key: secret } }  # ESO-synced
+          volumeMounts:
+            - { name: tun, mountPath: /dev/net/tun }
+      volumes:
+        - name: tun
+          hostPath: { path: /dev/net/tun }

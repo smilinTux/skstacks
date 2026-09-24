@@ -1,0 +1,37 @@
+# sksec — CrowdSec on Docker Swarm  (Tier-1 defense: always-on, MIT engine)
+#
+# Global mode = one CrowdSec agent per node, ingesting that node's logs. The
+# Traefik bouncer (skfence) queries the LAPI to block malicious IPs at the edge.
+#
+# Required env:
+#   CROWDSEC_ENROLL_KEY   — (optional) console enrollment key
+#   BOUNCER_KEY_TRAEFIK   — shared API key for the Traefik bouncer (from secrets)
+services:
+  crowdsec:
+    image: crowdsecurity/crowdsec:latest
+    environment:
+      - COLLECTIONS=crowdsecurity/traefik crowdsecurity/linux
+      - BOUNCER_KEY_traefik=${BOUNCER_KEY_TRAEFIK}
+    networks:
+      - skstacks
+    volumes:
+      - crowdsec-config:/etc/crowdsec
+      - crowdsec-data:/var/lib/crowdsec/data
+      - /var/log:/var/log:ro                # host logs (read-only)
+    healthcheck:
+      test: ["CMD", "cscli", "lapi", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      mode: global                          # one agent per node
+      restart_policy:
+        condition: any
+
+volumes:
+  crowdsec-config:
+  crowdsec-data:
+
+networks:
+  skstacks:
+    external: true

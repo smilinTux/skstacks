@@ -1,0 +1,48 @@
+# skmon (K8s) — kube-prometheus-stack (Prometheus + Grafana + Alloy + Tempo via
+# add-ons) and VictoriaLogs (NOT Loki). Two HelmCharts on the helm-controller.
+---
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: kube-prometheus-stack
+  namespace: kube-system
+spec:
+  repo: https://prometheus-community.github.io/helm-charts
+  chart: kube-prometheus-stack
+  version: "70.3.0"
+  targetNamespace: skmon
+  createNamespace: true
+  valuesContent: |-
+    grafana:
+      admin:
+        existingSecret: grafana-admin           # ESO-synced (skmon/grafana_admin_password)
+      additionalDataSources:
+        - name: VictoriaLogs
+          type: victoriametrics-logs-datasource
+          url: http://victoria-logs:9428
+    prometheus:
+      prometheusSpec:
+        retention: 30d
+        storageSpec:
+          volumeClaimTemplate:
+            spec:
+              storageClassName: longhorn         # skblock
+              resources: { requests: { storage: 50Gi } }
+---
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: victoria-logs
+  namespace: kube-system
+spec:
+  repo: https://victoriametrics.github.io/helm-charts/
+  chart: victoria-logs-single                    # Apache-2.0; replaces Loki (AGPL)
+  version: "0.8.10"
+  targetNamespace: skmon
+  valuesContent: |-
+    server:
+      retentionPeriod: 30d
+      persistentVolume:
+        enabled: true
+        storageClassName: longhorn
+        size: 30Gi

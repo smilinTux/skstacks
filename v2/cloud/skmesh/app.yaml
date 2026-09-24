@@ -1,0 +1,60 @@
+# SKStacks v2 — skmesh app descriptor (STUB)
+#
+# This is a capability stub — structure only, NO real secrets.
+# Replace CHANGEME_* placeholders with real values before deploy.
+# Provider is the recommended sovereign adapter from the skos capability map.
+#
+# See: docs/superpowers/specs/2026-06-09-skos-capability-map.md
+
+name: skmesh
+description: "Overlay mesh / tunnel — sovereign WireGuard-based networking across nodes."
+capability: "Overlay mesh / tunnels — sovereign WireGuard networking across nodes"
+scope: skmesh
+version: "CHANGEME_VERSION"
+platforms: [docker-swarm, kubernetes, rke2, bare-metal]
+# RATIFIED 2026-06-11 mesh ladder: Tailscale for EASE (incl. bootstrapping) →
+# Netbird (self-hosted) as the SOVEREIGN target. Headscale = supported, NOT recommended.
+provider: "Netbird (self-hosted, sovereign target); Tailscale for ease + bootstrap; Pangolin as sovereign cloudflared replacement"
+# Two parallel exposure ladders — start easy, graduate to sovereign:
+mesh_ladder:        # private remote access (devices/team)
+  - tailscale       # easiest — use during bootstrap and for low-friction remote access
+  - netbird         # graduate to this: sovereign self-hosted mesh (recommended end state)
+tunnel_ladder:      # public exposure (no open WAN ports / static IP)
+  - cloudflared     # easiest managed tunnel
+  - pangolin        # graduate to this: self-hosted sovereign tunnel (AGPL/$100K threshold)
+alternates:
+  - Headscale (supported, NOT recommended — pre-1.0, hobbyist, Tailscale-client-coupled)
+  - Pangolin (sovereign cloudflared replacement)
+
+# Pluggable INGRESS ENTRY POINTS (stackable, on top of the Traefik Gateway).
+# Configs in skmesh/exposure/ — keep `lan` always-on as the bootstrap baseline.
+exposure:
+  - lan          # MetalLB VIP / Keepalived — sovereign baseline, always available
+  - tailscale    # tailnet (operator / serve) — ease + bootstrap
+  - netbird      # sovereign WireGuard mesh routing peer (mgmt must be LAN-reachable)
+  - cloudflared  # Cloudflare Tunnel — outbound only, no open ports (easy)
+  - pangolin     # self-hosted sovereign tunnel — cloudflared replacement
+
+# Secret keys this service needs (values resolved from secret backend at deploy time)
+secrets:
+  - key: netbird_management_token
+    description: "Netbird management API token"
+    rotation_days: 90
+    required: true
+  - key: headscale_oidc_client_secret
+    description: "OIDC client secret for Headscale SSO integration"
+    required: false
+    sensitive: true
+
+# Non-sensitive config (overridden by overlay values)
+config:
+  LOG_LEVEL: INFO
+  DOMAIN: "${SKSTACKS_DOMAIN}"
+  CLUSTER: "${SKSTACKS_CLUSTER}"
+
+# Health check (fill in real URL/path before deploy)
+healthcheck:
+  url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/healthz"
+  interval: 30s
+  timeout: 5s
+  retries: 3

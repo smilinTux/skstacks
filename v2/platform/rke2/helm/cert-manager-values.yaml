@@ -1,0 +1,134 @@
+# cert-manager + Let's Encrypt ClusterIssuer defaults
+# Used by: Ansible rke2-server role to render manifests/cert-manager-issuers.yaml
+# Override per-environment in overlays/{env}/cert-manager-values.yaml
+#
+# Ansible usage:
+#   ansible-playbook deploy-manifests.yml -e @helm/cert-manager-values.yaml
+#
+# To override for a specific env:
+#   ansible-playbook deploy-manifests.yml \
+#     -e @helm/cert-manager-values.yaml \
+#     -e @overlays/prod/cert-manager-values.yaml
+
+# ──────────────────────────────────────────────────────────
+# cert-manager Helm chart values
+# Applied via manifests/cert-manager.yaml (HelmChart CRD)
+# ──────────────────────────────────────────────────────────
+certManager:
+  replicaCount: 2
+  installCRDs: true           # Let Helm manage cert-manager CRDs
+
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+  webhook:
+    replicaCount: 2
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 50m
+        memory: 64Mi
+
+  cainjector:
+    replicaCount: 2
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 50m
+        memory: 128Mi
+
+  prometheus:
+    enabled: true
+    servicemonitor:
+      enabled: true           # requires kube-prometheus-stack CRDs
+
+# ──────────────────────────────────────────────────────────
+# Let's Encrypt ClusterIssuer config
+# Applied via manifests/cert-manager-issuers.yaml
+# ──────────────────────────────────────────────────────────
+letsencrypt:
+  # REQUIRED: your admin email — Let's Encrypt sends expiry warnings here
+  email: "admin@CHANGEME_DOMAIN"
+
+  staging:
+    name: letsencrypt-staging
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    privateKeySecretRef: letsencrypt-staging-key
+
+  prod:
+    name: letsencrypt-prod
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef: letsencrypt-prod-key
+
+  # ──────────────────────────────────────────────
+  # Solvers — configure at least one
+  # ──────────────────────────────────────────────
+  solvers:
+    # HTTP-01: domain ownership via temporary HTTP endpoint on port 80.
+    # Works for all single-domain certs reachable from the internet.
+    # Requires ingress-nginx (or another ingress) to be deployed first.
+    http01:
+      enabled: true
+      ingressClass: nginx     # must match your IngressClass name (kubectl get ingressclass)
+
+    # DNS-01: domain ownership via DNS TXT record.
+    # REQUIRED for wildcard certificates (*.domain.com).
+    # Choose one provider and set its credentials.
+    dns01:
+      enabled: false          # set to true to activate DNS-01 solver
+
+      # Provider: cloudflare | route53 | azuredns | digitalocean | akamai
+      provider: cloudflare
+
+      # ── Cloudflare ──────────────────────────────────────────
+      # Scoped API Token (preferred over Global API Key):
+      #   Zone: Zone: Read
+      #   Zone: DNS: Edit
+      #   Include: Specific zone — your domain
+      cloudflare:
+        email: "admin@CHANGEME_DOMAIN"    # CF account email (required for Global Key, optional for Token)
+        apiTokenSecretRef:
+          name: cloudflare-api-token      # kubectl create secret generic cloudflare-api-token \
+          key: api-token                  #   --from-literal=api-token=<TOKEN> -n cert-manager
+
+      # ── AWS Route53 ─────────────────────────────────────────
+      # IAM policy required: route53:GetChange, route53:ChangeResourceRecordSets,
+      #                       route53:ListHostedZonesByName
+      # route53:
+      #   region: us-east-1
+      #   # Use IAM role annotation on cert-manager SA (IRSA) — no static keys:
+      #   # serviceAccountAnnotations:
+      #   #   eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/cert-manager-dns01
+      #   # OR static credentials (less preferred):
+      #   accessKeyIDSecretRef:
+      #     name: route53-credentials
+      #     key: access-key-id
+      #   secretAccessKeySecretRef:
+      #     name: route53-credentials
+      #     key: secret-access-key
+
+      # ── Azure DNS ───────────────────────────────────────────
+      # azuredns:
+      #   clientID: ""                    # Service Principal or MSI client ID
+      #   clientSecretSecretRef:
+      #     name: azure-dns-credentials
+      #     key: client-secret
+      #   subscriptionID: ""
+      #   tenantID: ""
+      #   resourceGroupName: ""
+      #   hostedZoneName: "CHANGEME_DOMAIN"
+      #   environment: AzurePublicCloud    # AzurePublicCloud | AzureChinaCloud | AzureGermanCloud
+
+      # Optional: restrict DNS-01 solver to specific zones only.
+      # Leave empty to apply DNS-01 to all zones.
+      dnsZones: []
+      #   - "CHANGEME_DOMAIN"

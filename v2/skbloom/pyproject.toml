@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "skbloom"
+version = "0.1.0"
+description = "AI-first sovereign SKStacks installer: resumable named-step state machine + LLM concierge that only emits validated descriptors."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = ["pyyaml>=6.0"]
+
+[project.scripts]
+skbloom = "skbloom.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["skbloom*"]
+
+[tool.setuptools.package-data]
+"skbloom.web" = ["index.html"]
+
+[tool.pytest.ini_options]
+pythonpath = [".."]
+testpaths = ["tests"]
+addopts = "-q"

@@ -1,0 +1,59 @@
+# sksso — Authentik on Docker Swarm (human SSO: OIDC/SAML/LDAP).
+# Server + worker + dedicated Postgres; cache via skcache (Valkey, not Redis).
+# Secrets (secret key, DB + bootstrap passwords) come from the secret backend.
+services:
+  postgresql:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_DB=authentik
+      - POSTGRES_USER=authentik
+      - POSTGRES_PASSWORD__FILE=/run/secrets/authentik_pg_password
+    secrets: [authentik_pg_password]
+    volumes:
+      - authentik-db:/var/lib/postgresql/data
+    networks: [skstacks]
+    deploy: { replicas: 1, restart_policy: { condition: any } }
+
+  server:
+    image: ghcr.io/goauthentik/server:2026.2
+    command: server
+    environment:
+      - AUTHENTIK_SECRET_KEY__FILE=/run/secrets/authentik_secret_key
+      - AUTHENTIK_POSTGRESQL__HOST=postgresql
+      - AUTHENTIK_POSTGRESQL__USER=authentik
+      - AUTHENTIK_POSTGRESQL__NAME=authentik
+      - AUTHENTIK_POSTGRESQL__PASSWORD__FILE=/run/secrets/authentik_pg_password
+      - AUTHENTIK_REDIS__HOST=valkey          # skcache (Valkey, RESP-compatible)
+    secrets: [authentik_secret_key, authentik_pg_password]
+    networks: [skstacks]
+    deploy:
+      replicas: 2
+      restart_policy: { condition: any }
+      labels:
+        # routed by the Traefik Gateway / skfence edge (HTTP plane)
+        - "traefik.enable=true"
+
+  worker:
+    image: ghcr.io/goauthentik/server:2026.2
+    command: worker
+    environment:
+      - AUTHENTIK_SECRET_KEY__FILE=/run/secrets/authentik_secret_key
+      - AUTHENTIK_POSTGRESQL__HOST=postgresql
+      - AUTHENTIK_POSTGRESQL__PASSWORD__FILE=/run/secrets/authentik_pg_password
+      - AUTHENTIK_REDIS__HOST=valkey
+    secrets: [authentik_secret_key, authentik_pg_password]
+    networks: [skstacks]
+    deploy: { replicas: 1, restart_policy: { condition: any } }
+
+secrets:
+  authentik_secret_key:
+    external: true
+  authentik_pg_password:
+    external: true
+
+volumes:
+  authentik-db:
+
+networks:
+  skstacks:
+    external: true

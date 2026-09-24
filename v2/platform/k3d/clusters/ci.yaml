@@ -1,0 +1,47 @@
+# k3d SimpleConfig — CI pipeline cluster
+# Optimised for fast startup, zero persistence, no load balancer.
+# Tests reach services via kubectl port-forward or NodePort.
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+
+metadata:
+  name: skstacks-ci
+
+servers: 1
+agents: 0
+
+# No ports block — no load balancer container spun up.
+# CI tests use kubectl port-forward or NodePort services.
+
+options:
+  k3s:
+    extraArgs:
+      - arg: --disable=traefik
+        nodeFilters:
+          - server:*
+      - arg: --disable=servicelb
+        nodeFilters:
+          - server:*
+      # Skip local-path provisioner — no PVCs needed in CI
+      - arg: --disable=local-storage
+        nodeFilters:
+          - server:*
+      # Skip built-in Helm controller — CI applies manifests directly
+      - arg: --disable=helm-controller
+        nodeFilters:
+          - server:*
+      # Skip metrics-server — reduces startup time
+      - arg: --disable=metrics-server
+        nodeFilters:
+          - server:*
+    nodeLabels:
+      - label: skstacks.io/env=ci
+        nodeFilters:
+          - server:*
+      - label: skstacks.io/platform=k3d
+        nodeFilters:
+          - server:*
+  kubeAPI:
+    # Bind to all interfaces so the CI runner (potentially in a container) can reach it
+    host: "0.0.0.0"
+    hostPort: "6443"

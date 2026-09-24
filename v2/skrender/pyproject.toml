@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "skrender"
+version = "0.1.0"
+description = "Descriptor→deploy: render one app.yaml into a Swarm stack AND K8s manifests (secrets/HA/networks wired)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = ["pyyaml>=6.0"]
+
+[project.scripts]
+skrender = "skrender.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["skrender*"]
+
+[tool.pytest.ini_options]
+pythonpath = [".."]
+testpaths = ["tests"]
+addopts = "-q"

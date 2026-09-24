@@ -1,0 +1,10 @@
+---
+# dev: small local IP pool — avoids conflicts with lab DHCP ranges
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: default-pool
+  namespace: metallb-system
+spec:
+  addresses:
+    - 192.168.100.200-192.168.100.210

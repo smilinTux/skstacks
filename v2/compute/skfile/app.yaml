@@ -1,0 +1,48 @@
+# SKStacks v2 — skfile app descriptor (STUB)
+#
+# Part of the skstorage family. The default adapter (JuiceFS) is ADAPTER
+# COMPOSITION: it gets HA POSIX-RWX with NO second clustered filesystem by
+# layering on the object plane (skobject) for data and PostgreSQL (skdata) for
+# metadata. Both must be HA (object replication + Patroni).
+# See: docs/superpowers/specs/2026-06-11-skstacks-v2-stack-validation.md (§5)
+
+name: skfile
+description: "HA shared POSIX file storage (RWX) — JuiceFS over the object layer."
+capability: "Shared file storage — POSIX RWX, many concurrent writers"
+scope: skfile
+version: "CHANGEME_VERSION"
+# CSI driver on K8s; FUSE mount on Swarm (no CSI needed — just a mount).
+platforms: [kubernetes, rke2, docker-swarm]
+provider: JuiceFS CE (Apache-2.0; data=skobject S3, metadata=PostgreSQL/skdata)
+alternates:
+  - CephFS (at Ceph consolidation)
+  - SeaweedFS filer (when SeaweedFS is already the object layer)
+
+# Composition: skfile's default adapter depends on the object + metadata planes.
+depends_on:
+  - skobject   # JuiceFS data chunks (Garage/SeaweedFS S3)
+  - skdata     # JuiceFS metadata engine (PostgreSQL 17 / skmem-pg)
+
+secrets:
+  - key: juicefs_meta_url
+    description: "JuiceFS metadata DSN (postgres://... → skdata/PG17, HA via Patroni)"
+    required: true
+    sensitive: true
+  - key: juicefs_s3_access_key
+    description: "S3 access key for JuiceFS data chunks (→ skobject)"
+    required: true
+  - key: juicefs_s3_secret_key
+    description: "S3 secret key for JuiceFS data chunks (→ skobject)"
+    required: true
+    sensitive: true
+
+config:
+  META_ENGINE: postgres        # data HA = object replication; meta HA = Postgres HA
+  OBJECT_BACKEND: skobject
+  BUCKET: "skstacks-juicefs"
+
+healthcheck:
+  url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/healthz"
+  interval: 30s
+  timeout: 5s
+  retries: 3

@@ -1,0 +1,47 @@
+# SKStacks v2 — skmodel app descriptor (STUB)
+#
+# This is a capability stub — structure only, NO real secrets.
+# Replace CHANGEME_* placeholders with real values before deploy.
+# Provider is the recommended sovereign adapter from the skos capability map.
+#
+# See: docs/superpowers/specs/2026-06-09-skos-capability-map.md
+
+name: skmodel
+description: "LLM / inference serving — stable seam for model-serving; Ollama for simplicity, vLLM for throughput at scale."
+capability: "LLM / inference serving — stable seam for local and remote model serving"
+scope: skmodel
+version: "CHANGEME_VERSION"
+platforms: [docker-swarm, bare-metal]
+provider: Ollama (simple, wide model support); vLLM (high-throughput production serving)
+alternates:
+  - vLLM (high-throughput production)
+  - llama.cpp (direct GGUF)
+
+# Secret keys this service needs (values resolved from secret backend at deploy time)
+secrets:
+  - key: ollama_api_key
+    description: "Ollama API key (if auth is enabled)"
+    required: false
+    sensitive: true
+
+# Non-sensitive config (overridden by overlay values)
+config:
+  LOG_LEVEL: INFO
+  DOMAIN: "${SKSTACKS_DOMAIN}"
+  CLUSTER: "${SKSTACKS_CLUSTER}"
+
+# Health check (fill in real URL/path before deploy)
+healthcheck:
+  url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/healthz"
+  interval: 30s
+  timeout: 5s
+  retries: 3
+
+# Deploy block — Ollama model server.
+deploy:
+  container: ollama
+  image: "ollama/ollama:latest"
+  ports:
+    - "11434:11434"
+  volumes:
+    - "ollama-models:/root/.ollama"

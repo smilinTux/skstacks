@@ -1,0 +1,53 @@
+# SKStacks v2 — skflow app descriptor (STUB)
+#
+# This is a capability stub — structure only, NO real secrets.
+# Replace CHANGEME_* placeholders with real values before deploy.
+# Provider is the recommended sovereign adapter from the skos capability map.
+#
+# See: docs/superpowers/specs/2026-06-09-skos-capability-map.md
+
+name: skflow
+description: "Automation / workflow — visual and code-first automation with human-in-the-loop support for agent pipelines."
+capability: "Automation / workflow — visual and code-first agent + human-in-loop pipelines"
+depends_on: [skdata]   # wiring (bridge → skwire needs)
+scope: skflow
+version: "CHANGEME_VERSION"
+platforms: [docker-swarm, kubernetes]
+# RATIFIED 2026-06-11 (stack-validation): default = Windmill (AGPL, OSI-open,
+# code-first). n8n demoted to license-flagged optional (fair-code / non-OSI,
+# no-SaaS clause). Activepieces (MIT) = permissive visual option.
+provider: Windmill (AGPLv3, OSI-open, code-first; visual + scripts)
+alternates:
+  - Activepieces (MIT — permissive visual builder)
+  - Temporal (durable workflows at scale)
+  - n8n (fair-code / non-OSI — optional, license-flagged; large node ecosystem)
+
+# Secret keys this service needs (values resolved from secret backend at deploy time)
+secrets:
+  - key: windmill_db_password
+    description: "PostgreSQL password for the Windmill database"
+    rotation_days: 90
+    required: true
+    sensitive: true
+  - key: windmill_superadmin_password
+    description: "Initial Windmill superadmin password"
+    required: true
+    sensitive: true
+  - key: windmill_cookie_secret
+    description: "Windmill session/cookie signing secret"
+    rotation_days: 365
+    required: true
+    sensitive: true
+
+# Non-sensitive config (overridden by overlay values)
+config:
+  LOG_LEVEL: INFO
+  DOMAIN: "${SKSTACKS_DOMAIN}"
+  CLUSTER: "${SKSTACKS_CLUSTER}"
+
+# Health check (fill in real URL/path before deploy)
+healthcheck:
+  url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/healthz"
+  interval: 30s
+  timeout: 5s
+  retries: 3

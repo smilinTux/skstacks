@@ -1,0 +1,57 @@
+# SKStacks v2 — skvault app descriptor (STUB)
+#
+# This is a capability stub — structure only, NO real secrets.
+# Replace CHANGEME_* placeholders with real values before deploy.
+# Provider is the recommended sovereign adapter from the skos capability map.
+#
+# See: docs/superpowers/specs/2026-06-09-skos-capability-map.md
+
+name: skvault
+description: "Secrets management — the SKSecretBackend port; vault-file / HashiCorp Vault / CapAuth adapters, all sharing the same interface."
+capability: "Secrets management — pluggable backend: vault-file / HashiCorp Vault / CapAuth"
+scope: skvault
+ha: true            # "if you need one, get two" — OpenBao HA Raft — 3-node quorum (no single point for secrets)
+min_replicas: 3
+version: "CHANGEME_VERSION"
+platforms: [docker-swarm, kubernetes, bare-metal]
+provider: "SKSecretBackend interface (secrets/interface.py): OpenBao (HA Raft, default) / vault-file (AES-256) / SOPS+age / CapAuth (PGP); HashiCorp Vault = compatible alt"
+alternates:
+  - AWS Secrets Manager
+  - 1Password Secrets Automation
+
+# Secret keys this service needs (values resolved from secret backend at deploy time)
+secrets:
+  - key: vault_unseal_key_1
+    description: "HashiCorp Vault unseal key shard 1 (Shamir — only needed for Vault backend)"
+    required: false
+    sensitive: true
+  - key: vault_root_token
+    description: "HashiCorp Vault root token (bootstrap only — revoke after initial setup)"
+    required: false
+    sensitive: true
+
+# Non-sensitive config (overridden by overlay values)
+config:
+  LOG_LEVEL: INFO
+  DOMAIN: "${SKSTACKS_DOMAIN}"
+  CLUSTER: "${SKSTACKS_CLUSTER}"
+
+# Health check (fill in real URL/path before deploy)
+healthcheck:
+  url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/healthz"
+  interval: 30s
+  timeout: 5s
+  retries: 3
+
+# Deploy block — OpenBao secret server. NOTE: the authoritative HA Raft cluster (3-node
+# quorum, PGP no-catch-22 bootstrap) lives in secrets/openbao/; this renders the single
+# service shape for descriptor→deploy parity. HA replicas spread one-per-node.
+deploy:
+  container: openbao
+  image: "openbao/openbao:2.5.4"
+  command: ["server", "-config=/openbao/config/openbao.hcl"]
+  ports:
+    - "8200:8200"
+  volumes:
+    - "openbao-data:/openbao/data"
+  healthcheck_test: ["CMD", "bao", "status"]

@@ -1,0 +1,36 @@
+# skcicd/scm/skgit — Forgejo (the sovereign default Git + Forgejo Actions).
+# Lightweight self-hosted Git; the GitOps repo + CI live here by default.
+services:
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:12
+    environment:
+      - FORGEJO__server__DOMAIN=git.${SKSTACKS_DOMAIN}
+      - FORGEJO__server__ROOT_URL=https://git.${SKSTACKS_DOMAIN}/
+      - FORGEJO__server__SSH_DOMAIN=git.${SKSTACKS_DOMAIN}
+      - FORGEJO__actions__ENABLED=true          # Forgejo Actions (CI)
+      - FORGEJO__database__DB_TYPE=postgres
+      - FORGEJO__database__HOST=skdata:5432       # → skdata (PG17)
+      - FORGEJO__database__NAME=forgejo
+      - FORGEJO__database__USER=forgejo
+    env_file:
+      - ${SKCICD_SECRETS_ENV}                     # FORGEJO__database__PASSWD etc. (secret backend)
+    networks: [skstacks]
+    volumes:
+      - forgejo-data:/data
+    ports:
+      - { target: 22, published: 2222, protocol: tcp, mode: host }   # git SSH
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any }
+
+volumes:
+  forgejo-data:
+
+networks:
+  skstacks:
+    external: true

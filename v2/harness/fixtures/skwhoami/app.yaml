@@ -1,0 +1,20 @@
+# Harness fixture — a REAL service that actually becomes Ready, exercising the full
+# pipeline: descriptor → skrender → ESO ExternalSecret → k8s Secret → pod env → Ready.
+name: skwhoami
+capability: "Test echo service for the deploy harness"
+description: "traefik/whoami — starts cleanly, used to prove end-to-end deploy"
+scope: skwhoami
+version: "1.10"
+platforms: [docker-swarm, kubernetes]
+provider: "traefik/whoami"
+secrets:
+  - key: dummy_token
+    description: "a throwaway token to prove the secret pipeline lands in the pod"
+    required: true
+config:
+  WHOAMI_PORT_NUMBER: "80"
+deploy:
+  container: whoami
+  image: "traefik/whoami:v1.10"
+  ports:
+    - "80:80"

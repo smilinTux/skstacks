@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>skbloom</title>
+<style>
+  /* ── design tokens (dark · flat · calm — no glass) ── */
+  :root{
+    --bg:#0b0d10; --surface:#15181d; --surface2:#1b1f26; --border:#ffffff14; --border2:#ffffff26;
+    --text:#e8edf2; --muted:#8a97a6; --accent:#2dd4bf; --accent2:#14b8a6;
+    --ok:#34d399; --warn:#fbbf24; --err:#f87171; --radius:13px; --gap:14px;
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
+  }
+  @media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+  *{box-sizing:border-box} html,body{height:100%}
+  body{margin:0;background:radial-gradient(900px 480px at 50% -12%,#0f1a1c,var(--bg));
+       color:var(--text);font:15px/1.5 var(--font);display:flex;flex-direction:column;align-items:center}
+  header{width:100%;max-width:800px;display:flex;align-items:center;gap:12px;padding:16px 20px}
+  .logo{font-size:22px;width:40px;height:40px;display:grid;place-items:center;background:var(--surface);
+        border-radius:11px;border:1px solid var(--border)}
+  h1{font-size:16px;margin:0;font-weight:640;letter-spacing:.2px}.sub{margin:0;color:var(--muted);font-size:12px}
+  .nav{margin-left:auto;display:flex;gap:6px}
+  .nav button{font:inherit;font-size:13px;color:var(--muted);background:transparent;border:1px solid transparent;
+              border-radius:9px;padding:6px 11px;cursor:pointer}
+  .nav button.on{color:var(--text);background:var(--surface);border-color:var(--border)}
+  .kbd{margin-left:6px;color:var(--muted);font-size:11px;border:1px solid var(--border);border-radius:6px;padding:2px 6px}
+  main{width:100%;max-width:800px;flex:1;display:flex;flex-direction:column;gap:var(--gap);padding:4px 20px 20px;overflow-y:auto}
+  /* chat */
+  .row{display:flex;gap:10px;align-items:flex-start;animation:rise .22s ease both}.row.me{flex-direction:row-reverse}
+  .av{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;font-size:15px;background:var(--surface2);flex:0 0 auto}
+  .av.bot{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#04140f}
+  .bubble{background:var(--surface);border:1px solid var(--border);padding:11px 14px;border-radius:14px;max-width:82%;white-space:pre-wrap}
+  .me .bubble{background:#1f6feb1a;border-color:#3b82f655}
+  /* cards */
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:15px;max-width:82%;
+        box-shadow:0 1px 0 #00000040,0 8px 24px -16px #000}
+  .card h3{margin:0 0 4px;font-size:14px}.muted{color:var(--muted)}.small{font-size:12.5px}
+  .svc{border-top:1px solid var(--border);padding:10px 0 4px;margin-top:8px}
+  .svc:first-of-type{border-top:0}
+  .svc .head{display:flex;align-items:center;gap:8px}
+  .chip{font-size:11px;color:var(--muted);background:var(--surface2);border:1px solid var(--border);border-radius:999px;padding:2px 8px}
+  .tune-btn{margin-left:auto;font:inherit;font-size:12px;color:var(--accent);background:transparent;border:1px solid var(--border);border-radius:8px;padding:3px 9px;cursor:pointer}
+  .tune{margin-top:8px;display:none;border-left:2px solid var(--accent2);padding-left:12px}
+  .tune.open{display:block;animation:rise .18s ease both}
+  .fld{display:flex;align-items:center;gap:10px;padding:3px 0;font-size:13px}
+  .fld label{color:var(--muted);min-width:160px}
+  .fld input,.fld select{font:inherit;font-size:13px;color:var(--text);background:var(--surface2);border:1px solid var(--border);
+        border-radius:8px;padding:5px 9px;outline:none;flex:1;min-width:0}
+  .fld input:focus,.fld select:focus{border-color:var(--accent)}
+  .step{font-size:12.5px;color:var(--muted);padding:2px 0;font-family:ui-monospace,SFMono-Regular,monospace;display:flex;gap:8px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:0 0 auto;margin-top:5px}
+  .dot.run{background:var(--warn);animation:pulse 1s infinite}.dot.ok{background:var(--ok)}.dot.err{background:var(--err)}
+  .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+  button.cta{font:inherit;border:0;border-radius:11px;padding:9px 16px;cursor:pointer;font-weight:700;
+             background:linear-gradient(135deg,var(--accent),var(--accent2));color:#04140f}
+  button.ghost{font:inherit;border:1px solid var(--border2);border-radius:11px;padding:9px 14px;cursor:pointer;background:transparent;color:var(--text)}
+  /* stacks tiles */
+  .tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+  .tile{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px}
+  .tile .t{display:flex;align-items:center;gap:8px;font-weight:600}.tile .s{margin-top:6px}
+  .svc-link{display:flex;align-items:center;gap:8px;margin-top:7px;padding:5px 8px;border-radius:8px;font-size:13px;
+            color:var(--text);text-decoration:none;background:var(--surface2);border:1px solid var(--border)}
+  .svc-link:hover{border-color:var(--accent);color:var(--accent)}.svc-link .ext{margin-left:auto;color:var(--muted)}
+  .skel{height:74px;border-radius:var(--radius);background:linear-gradient(100deg,var(--surface) 30%,var(--surface2) 50%,var(--surface) 70%);
+        background-size:200% 100%;animation:shimmer 1.2s infinite}
+  /* composer */
+  .composer{position:sticky;bottom:0;width:100%;max-width:800px;display:flex;gap:10px;padding:12px 20px 18px;
+            background:linear-gradient(0deg,var(--bg) 72%,transparent)}
+  .composer input{flex:1;font:inherit;color:var(--text);background:var(--surface);border:1px solid var(--border2);
+                  border-radius:14px;padding:13px 16px;outline:none}
+  .composer input:focus{border-color:var(--accent)}
+  .composer button{padding:0 18px;font-weight:700;border:0;border-radius:14px;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#04140f;cursor:pointer}
+  /* command palette */
+  dialog#pal{border:1px solid var(--border2);background:var(--surface);color:var(--text);border-radius:16px;padding:0;
+             width:min(560px,92vw);box-shadow:0 24px 80px -24px #000}
+  dialog#pal::backdrop{background:#000a;backdrop-filter:blur(1px)}
+  #pal input{width:100%;font:inherit;font-size:15px;color:var(--text);background:transparent;border:0;border-bottom:1px solid var(--border);padding:14px 16px;outline:none}
+  #pal ul{list-style:none;margin:0;padding:6px;max-height:50vh;overflow-y:auto}
+  #pal li{padding:9px 12px;border-radius:9px;cursor:pointer;display:flex;gap:10px;align-items:center;font-size:14px}
+  #pal li.sel{background:var(--surface2)}#pal li .k{color:var(--muted);font-size:12px;margin-left:auto}
+  .toast{position:fixed;bottom:84px;left:50%;transform:translateX(-50%);background:var(--surface2);border:1px solid var(--border2);
+         border-radius:11px;padding:9px 15px;font-size:13px;animation:rise .2s ease both}
+  @keyframes rise{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  @keyframes shimmer{to{background-position:-200% 0}}
+</style></head>
+<body>
+<header>
+  <div class="logo" id="logo">🌱</div>
+  <div><h1 id="bn">skbloom</h1><p class="sub">describe your stack — I'll wire it up</p></div>
+  <div class="nav">
+    <button id="nav-chat" class="on" onclick="setView('chat')">Compose</button>
+    <button id="nav-stacks" onclick="setView('stacks')">Stacks</button>
+    <span class="kbd" title="command palette">⌘K</span>
+  </div>
+</header>
+<main id="view"></main>
+<footer class="composer" id="composer">
+  <input id="msg" autocomplete="off" placeholder="e.g. “sso and an ingress, call the sso login” — or ⌘K"/>
+  <button onclick="go()">Send</button>
+</footer>
+
+<dialog id="pal"><input id="palq" placeholder="Search apps & actions…"/><ul id="palist"></ul></dialog>
+
+<script>
+let CATALOG=[], BYPATH={}, VIEW='chat', POLL=null;
+const chat=[];      // chat transcript nodes live in the DOM; we only re-render on view switch
+const view=document.getElementById('view');
+function el(t,c,h){const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e}
+function toast(m){const t=el('div','toast',m);document.body.append(t);setTimeout(()=>t.remove(),2200)}
+function scrl(){view.scrollTop=view.scrollHeight}
+
+async function start(){
+  const br=await (await fetch('/api/branding')).json();
+  document.documentElement.style.setProperty('--accent',br.accent||'#2dd4bf');
+  document.getElementById('logo').textContent=br.logo||'🌱';document.getElementById('bn').textContent=br.name;document.title=br.name;
+  const cat=await (await fetch('/api/services')).json();CATALOG=cat.services;CATALOG.forEach(s=>BYPATH[s.path]=s);
+  renderChat();
+}
+
+/* ── views ── */
+function setView(v){VIEW=v;
+  document.getElementById('nav-chat').classList.toggle('on',v==='chat');
+  document.getElementById('nav-stacks').classList.toggle('on',v==='stacks');
+  document.getElementById('composer').style.display=v==='chat'?'flex':'none';
+  if(POLL){clearInterval(POLL);POLL=null}
+  v==='chat'?renderChat():renderStacks();
+}
+function renderChat(){view.innerHTML='';chat.forEach(n=>view.append(n));
+  if(!chat.length){bot("Hey! Tell me what you want to run — like “sso and an ingress” — and I'll propose a wired plan you can tune and install.");
+    const c=el('div','card');c.append(el('div',null,'<b>What I can set up</b> <span class="muted small">('+CATALOG.length+' services)</span>'));
+    CATALOG.forEach(s=>c.append(el('div','small muted',`<b style="color:var(--text)">${s.name}</b> — ${s.capability||s.provider||''}`)));
+    push(c);}
+}
+function push(node){chat.push(node);if(VIEW==='chat'){view.append(node);scrl()}}
+function bot(t){const r=el('div','row');r.append(el('div','av bot','🌱'));const b=el('div','bubble');
+  if(typeof t==='string')b.textContent=t;else b.append(t);r.append(b);push(r)}
+function me(t){const r=el('div','row me');r.append(el('div','av','🙂'));const b=el('div','bubble');b.textContent=t;r.append(b);push(r)}
+
+async function renderStacks(){view.innerHTML='';const grid=el('div','tiles');view.append(grid);
+  for(let i=0;i<3;i++)grid.append(el('div','skel'));
+  const poll=async()=>{const d=await (await fetch('/api/status')).json();grid.innerHTML='';
+    if(!d.clusters.length){grid.append(el('div','muted small','No stacks yet — Compose one and Install.'));return}
+    d.clusters.forEach(c=>{const t=el('div','tile');
+      const dot=c.complete?'ok':'run';
+      t.append(el('div','t',`<span class="dot ${dot}"></span> ${c.cluster}`));
+      t.append(el('div','s small muted',`${c.steps_done} steps · ${c.services.length} service(s)`));
+      (c.services||[]).forEach(s=>{
+        if(s.url){const a=el('a','svc-link');a.href=s.url;a.target='_blank';a.rel='noopener';
+          a.innerHTML=`<span class="dot ok"></span> ${s.name} <span class="ext">↗</span>`;t.append(a);}
+        else t.append(el('div','s small',`• ${s.name}`));});
+      grid.append(t);});};
+  await poll();POLL=setInterval(poll,5000);
+}
+
+/* ── compose: propose → tunable plan → install ── */
+async function ask(text){me(text);
+  const r=await (await fetch('/api/propose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({intent:text})})).json();
+  bot(r.reply);
+  if(!r.profile.services.length)return;
+  const c=el('div','card');c.append(el('h3',null,`Plan — ${r.plan.length} steps on '${r.profile.cluster}'`));
+  const overrides={};
+  r.profile.services.forEach(entry=>{
+    const path=entry.split('=')[0], deployed=entry.includes('=')?entry.split('=')[1]:path.split('/').pop();
+    const s=BYPATH[path]||{name:deployed,config:{},secrets:[]};
+    const row=el('div','svc');const head=el('div','head');
+    head.append(el('div',null,`<b>${deployed}</b> <span class="chip">${s.capability||s.name}</span>`));
+    const tbtn=el('button','tune-btn','⚙ Tune');head.append(tbtn);row.append(head);
+    const tune=el('div','tune');
+    // replica stepper (HA)
+    if(s.ha){const f=el('div','fld');f.innerHTML='<label>replicas</label>';
+      const inp=el('input');inp.type='number';inp.min=1;inp.value=s.min_replicas||1;f.append(inp);tune.append(f);}
+    // config knobs (form-from-descriptor)
+    Object.entries(s.config||{}).forEach(([k,def])=>{const f=el('div','fld');f.innerHTML=`<label>${k}</label>`;
+      let inp; if(k==='LOG_LEVEL'){inp=el('select');['INFO','DEBUG','WARN','ERROR'].forEach(o=>{const op=el('option',null,o);op.value=o;if(o===def)op.selected=true;inp.append(op)});}
+      else if(/^\d+$/.test(String(def))){inp=el('input');inp.type='number';inp.value=def;}
+      else{inp=el('input');inp.value=def;}
+      inp.oninput=inp.onchange=()=>{(overrides[deployed]=overrides[deployed]||{})[k]=inp.value;};
+      f.append(inp);tune.append(f);});
+    if(s.secrets&&s.secrets.length){const sd=el('div','fld');sd.innerHTML=`<label>secrets</label><span class="small muted">${s.secrets.join(', ')} — set at deploy</span>`;tune.append(sd);}
+    tbtn.onclick=()=>tune.classList.toggle('open');
+    row.append(tune);c.append(row);
+  });
+  if(r.rotation&&(r.rotation.secrets||r.rotation.certs))
+    c.append(el('div','small muted',`🔁 ${r.rotation.secrets} credential(s) + ${r.rotation.certs} cert(s) auto-rotate`));
+  const a=el('div','actions');
+  const inst=el('button','cta','🌱 Install');
+  inst.onclick=()=>{inst.disabled=true;inst.textContent='Installing…';runInstall(r.profile,overrides)};
+  const cli=el('button','ghost','CLI command');
+  cli.onclick=()=>bot('skbloom up '+r.profile.services.join(' '));
+  a.append(inst);a.append(cli);c.append(a);push(c);
+}
+
+async function runInstall(profile,overrides){
+  const card=el('div','card');card.append(el('h3',null,`Installing on '${profile.cluster}'…`));
+  const steps=el('div');card.setAttribute('aria-live','polite');card.append(steps);bot(card);
+  const rows={};const mk=n=>{const r=el('div','step');r.append(el('div','dot'));r.append(el('span',null,n));steps.append(r);return r};
+  try{
+    const res=await fetch('/api/up',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({cluster:profile.cluster,services:profile.services,config_overrides:overrides})});
+    const rd=res.body.getReader();const dec=new TextDecoder();let buf='';
+    while(true){const{value,done}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});
+      let i;while((i=buf.indexOf('\n\n'))>=0){const line=buf.slice(0,i).trim();buf=buf.slice(i+2);
+        if(!line.startsWith('data:'))continue;const ev=JSON.parse(line.slice(5).trim());
+        if(ev.event==='end'){card.append(el('div','step',ev.ok?'✅ your stack is up — see Stacks':'✗ stopped — fix it and run skbloom resume'));scrl();continue}
+        const r=rows[ev.step]||(rows[ev.step]=mk(ev.step));const dot=r.querySelector('.dot');
+        dot.className='dot '+(ev.event==='start'?'run':ev.event==='done'?'ok':ev.event==='failed'?'err':'');
+        scrl();}}
+    toast('install finished');
+  }catch(e){card.append(el('div','step','✗ '+e));}
+}
+
+/* ── ⌘K command palette ── */
+const pal=document.getElementById('pal'),palq=document.getElementById('palq'),palist=document.getElementById('palist');
+let palItems=[],palSel=0;
+function openPal(){palItems=[
+  {ic:'🧭',t:'View Stacks',k:'go',run:()=>setView('stacks')},
+  {ic:'💬',t:'New install (Compose)',k:'go',run:()=>setView('chat')},
+  ...CATALOG.map(s=>({ic:'📦',t:'Install '+s.name,k:s.capability||'',run:()=>{setView('chat');ask('install '+s.name)}})),
+];palSel=0;palq.value='';drawPal('');pal.showModal();palq.focus()}
+function drawPal(q){const f=palItems.filter(it=>(it.t+' '+it.k).toLowerCase().includes(q.toLowerCase()));
+  palist.innerHTML='';f.forEach((it,i)=>{const li=el('li',i===palSel?'sel':'',`<span>${it.ic}</span><span>${it.t}</span><span class="k">${it.k}</span>`);
+    li.onclick=()=>{pal.close();it.run()};palist.append(li)});pal._f=f}
+palq&&palq.addEventListener('input',()=>{palSel=0;drawPal(palq.value)});
+document.addEventListener('keydown',e=>{
+  if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();pal.open?pal.close():openPal();return}
+  if(!pal.open)return;const f=pal._f||[];
+  if(e.key==='ArrowDown'){e.preventDefault();palSel=Math.min(palSel+1,f.length-1);drawPal(palq.value)}
+  if(e.key==='ArrowUp'){e.preventDefault();palSel=Math.max(palSel-1,0);drawPal(palq.value)}
+  if(e.key==='Enter'){e.preventDefault();if(f[palSel]){pal.close();f[palSel].run()}}
+  if(e.key==='Escape')pal.close();
+});
+
+const inp=document.getElementById('msg');
+function go(){const v=inp.value.trim();if(v){inp.value='';if(VIEW!=='chat')setView('chat');ask(v)}}
+inp.addEventListener('keydown',e=>{if(e.key==='Enter')go()});
+start();
+</script></body></html>

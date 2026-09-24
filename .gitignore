@@ -1,0 +1,130 @@
+# ===========================================
+# SKStacks Global .gitignore
+# ===========================================
+
+# Node.js - ignore ALL node_modules everywhere
+**/node_modules/
+node_modules/
+
+# Vite cache and build artifacts
+**/.vite/
+.vite/
+**/dist/
+dist/
+
+# Build outputs
+**/build/
+build/
+
+# Environment files (secrets)
+.env
+.env.local
+.env.*.local
+**/.env
+**/.env.local
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Python
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.so
+.eggs/
+*.egg-info/
+*.egg
+
+# Ansible
+*.retry
+
+# Logs
+*.log
+logs/
+**/logs/
+
+# Database files (local dev)
+*.db
+*.sqlite
+*.sqlite3
+**/*.db
+**/*.sqlite
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Coverage and test artifacts
+coverage/
+.coverage
+htmlcov/
+.pytest_cache/
+.nyc_output/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Package manager locks (optional - uncomment if you don't want these)
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+
+# Secrets and credentials (extra safety)
+*_vault_pass
+*.pem
+*.key
+!*.pub
+
+# Ansible Vault files (encrypted secrets — keep in private repo only)
+*_vault.yml
+**/*_vault.yml
+
+# 2026-08-16 security: never commit vault backup bundles. A tarball under
+# group_vars_backups/ was found in history containing an ansible-vault file
+# AND its own .prod_vault_service_pass password file — the encryption was void
+# because the key shipped beside it. That history was purged with git-filter-repo.
+v1/ansible/**/group_vars_backups/**/*.tar.gz
+v1/ansible/**/group_vars_backups/**/*.tgz
+v1/ansible/**/group_vars_backups/**/*.zip
+# Plaintext "recovery" vault dumps
+v1/ansible/**/*_vault_recovery_backup_*.yml
+# Any stray vault password file
+**/.vault_pass*
+**/*_vault_pass
+
+# Editor/tooling backups of config and vault files. These are how plaintext
+# secrets get committed: someone saves foo_vault.yml as foo_vault.yml.new,
+# ansible never loads the .new suffix so nothing breaks, and the unencrypted
+# copy sits in git unnoticed. Found 2026-09-01 in skport-prod (smtp/imap
+# passwords) and skhub.env.bk (mysql root + S3 secret).
+*.bk
+*.bak
+*.bak.*
+*.orig
+*.save
+*_vault.yml.new
+*_vault.yml.tmp
+
+# Per-developer AI tool state. A Google API key reached the tree this way.
+.gemini/

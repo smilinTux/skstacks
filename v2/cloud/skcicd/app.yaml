@@ -1,0 +1,66 @@
+# SKStacks v2 — skcicd app descriptor (STUB)
+#
+# This is a capability stub — structure only, NO real secrets.
+# Replace CHANGEME_* placeholders with real values before deploy.
+# Provider is the recommended sovereign adapter from the skos capability map.
+#
+# See: docs/superpowers/specs/2026-06-09-skos-capability-map.md
+
+name: skcicd
+description: "CI/CD — Forgejo Actions (CI) + Ansible (Swarm/node CD) + ArgoCD (Kubernetes GitOps)."
+capability: "CI/CD — container image build + GitOps deployment pipeline"
+scope: skcicd
+version: "CHANGEME_VERSION"
+platforms: [kubernetes, rke2]
+provider: Forgejo Actions (CI) + Ansible (node/Swarm CD) + ArgoCD (K8s GitOps)
+alternates:
+  - Flux (GitOps alt)
+
+# Pluggable Git/SCM provider for the generated GitOps repo + CI (configs in
+# skcicd/scm/). Ladder: GitHub (ease) → GitLab (enterprise self-host) → skgit (sovereign).
+scm_providers:
+  - skgit       # Forgejo + Forgejo Actions — sovereign default (deployable: scm/skgit/)
+  - gitlab      # GitLab — the big all-in-one self-hosted DevOps platform (scm/gitlab/)
+  - github      # GitHub + Actions — managed
+  - gitea       # lighter Forgejo alt
+scm_default: skgit
+
+# Secret keys this service needs (values resolved from secret backend at deploy time)
+secrets:
+  - key: argocd_admin_password_hash
+    description: "ArgoCD admin bcrypt password hash"
+    rotation_days: 180
+    required: true
+    sensitive: true
+  - key: forgejo_runner_token
+    description: "Forgejo Actions runner registration token"
+    required: true
+    sensitive: true
+  - key: argocd_repo_ssh_key
+    description: "SSH private key ArgoCD uses to pull GitOps repo"
+    required: false
+    sensitive: true
+
+# Non-sensitive config (overridden by overlay values)
+config:
+  LOG_LEVEL: INFO
+  DOMAIN: "${SKSTACKS_DOMAIN}"
+  CLUSTER: "${SKSTACKS_CLUSTER}"
+
+# Health check (fill in real URL/path before deploy)
+healthcheck:
+  url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/healthz"
+  interval: 30s
+  timeout: 5s
+  retries: 3
+
+# Deploy block — Forgejo (git forge + Actions CI). The CD side (Ansible / ArgoCD GitOps)
+# is wired as platform components, not a single container.
+deploy:
+  container: forgejo
+  image: "codeberg.org/forgejo/forgejo:10"
+  ports:
+    - "3000:3000"
+  volumes:
+    - "forgejo-data:/data"
+  healthcheck_test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/healthz"]

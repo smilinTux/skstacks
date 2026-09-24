@@ -1,0 +1,35 @@
+# Proxmox + Docker Swarm example — fill in and copy to terraform.tfvars
+
+# ── Proxmox ───────────────────────────────────────────────────────────────────
+proxmox_endpoint        = "https://CHANGEME_PROXMOX_HOST:8006"
+proxmox_api_token       = "CHANGEME_USER@pam!CHANGEME_TOKEN_NAME=CHANGEME_TOKEN_VALUE"
+proxmox_skip_tls_verify = false             # set true only for self-signed certs in dev
+proxmox_node            = "pve"
+
+vm_template_id = 9000                       # ID of your ubuntu-24.04 cloud-init template
+gateway        = "CHANGEME_GATEWAY_IP"     # e.g. 192.168.1.1
+
+# ── Cloudflare ────────────────────────────────────────────────────────────────
+cloudflare_api_token = "CHANGEME_CF_API_TOKEN"
+cloudflare_zone_id   = "CHANGEME_CF_ZONE_ID"
+
+# ── Cluster ───────────────────────────────────────────────────────────────────
+cluster_name   = "skstack01"
+env            = "prod"
+domain         = "CHANGEME_DOMAIN"
+public_ip      = "CHANGEME_YOUR_PUBLIC_IP"   # NAT entry or public IP for DNS A record
+ssh_public_key = "CHANGEME_SSH_PUBLIC_KEY"
+
+# ── Docker Swarm sizing ───────────────────────────────────────────────────────
+manager_count     = 3
+manager_cores     = 4
+manager_memory_mb = 8192
+manager_disk_gb   = 80
+
+worker_count      = 3
+worker_cores      = 8
+worker_memory_mb  = 16384
+worker_disk_gb    = 150
+
+# ── Secret backend ────────────────────────────────────────────────────────────
+secret_backend = "vault-file"              # vault-file | hashicorp-vault | capauth

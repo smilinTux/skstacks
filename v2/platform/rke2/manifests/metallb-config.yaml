@@ -1,0 +1,62 @@
+# MetalLB L2 configuration — IPAddressPool + L2Advertisement
+# Auto-deployed by RKE2 helm-controller from /var/lib/rancher/rke2/server/manifests/
+#
+# ORDERING: Requires metallb.yaml (HelmChart) to finish installing CRDs first.
+# RKE2's helm-controller retries this file automatically until the
+# metallb.io CRDs exist — no manual ordering needed.
+#
+# CONFIGURE: Before deploying, substitute METALLB_ADDRESS_CIDR and
+# METALLB_POOL_NAME with values from helm/metallb-values.yaml.
+# Ansible role: rke2-server renders this via Jinja2 template at deploy time.
+#
+# VERIFY: kubectl get ipaddresspool,l2advertisement -n metallb-system
+
+---
+# IPAddressPool — the CIDR (or range) MetalLB will assign to LoadBalancer Services.
+# Set spec.addresses to match your bare-metal LAN's reserved range.
+# Multiple CIDR blocks or dash-notation ranges are both supported:
+#   - "192.168.1.200-192.168.1.250"   (range)
+#   - "10.0.0.0/24"                   (CIDR block)
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: default-pool
+  namespace: metallb-system
+  annotations:
+    # Rendered by Ansible from helm/metallb-values.yaml: metallb.addressPool.cidr
+    skstacks.io/managed-by: "rke2-manifests"
+spec:
+  addresses:
+    - 192.168.1.200-192.168.1.250   # CHANGEME: set metallb.addressPool.cidr in helm/metallb-values.yaml
+  autoAssign: true
+  avoidBuggyIPs: false              # true = skip .0 and .255 addresses
+
+---
+# L2Advertisement — tells MetalLB speakers to respond to ARP requests
+# for addresses in the referenced IPAddressPool(s).
+# L2 mode: one node "owns" each address and responds to ARP; traffic
+# flows to that node, then routes internally via kube-proxy.
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: default-l2
+  namespace: metallb-system
+  annotations:
+    skstacks.io/managed-by: "rke2-manifests"
+spec:
+  # Reference the pool(s) this advertisement covers.
+  # Remove ipAddressPools to advertise all pools.
+  ipAddressPools:
+    - default-pool
+
+  # Optional: restrict which nodes act as L2 speakers for this pool.
+  # Useful when only worker nodes (not control-plane) should answer ARP.
+  # Uncomment and adjust the label selector to activate:
+  # nodeSelectors:
+  #   - matchLabels:
+  #       node-role.kubernetes.io/worker: "true"
+
+  # Optional: restrict to specific network interfaces on each node.
+  # Useful on multi-homed nodes to avoid advertising on management interfaces.
+  # interfaces:
+  #   - eth0

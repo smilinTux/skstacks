@@ -1,0 +1,37 @@
+---
+# Asserts rke2-server produced the expected artifacts.
+- name: Verify rke2-server
+  hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Stat the RKE2 server config
+      ansible.builtin.stat:
+        path: /etc/rancher/rke2/config.yaml
+      register: rke2_cfg
+    - name: Assert config was written
+      ansible.builtin.assert:
+        that: rke2_cfg.stat.exists
+        fail_msg: "/etc/rancher/rke2/config.yaml was not created."
+        success_msg: "RKE2 server config exists."
+
+    - name: Stat the rke2 binary
+      ansible.builtin.stat:
+        path: /usr/local/bin/rke2
+      register: rke2_bin
+    - name: Assert rke2 binary installed
+      ansible.builtin.assert:
+        that: rke2_bin.stat.exists
+        fail_msg: "rke2 binary missing — installer did not run."
+        success_msg: "rke2 binary installed."
+
+    - name: Check rke2-server unit is enabled
+      ansible.builtin.command: systemctl is-enabled rke2-server
+      register: rke2_enabled
+      changed_when: false
+      failed_when: false
+    - name: Assert rke2-server enabled
+      ansible.builtin.assert:
+        that: "'enabled' in rke2_enabled.stdout"
+        fail_msg: "rke2-server unit is not enabled."
+        success_msg: "rke2-server unit enabled."

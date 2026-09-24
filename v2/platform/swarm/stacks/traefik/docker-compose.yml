@@ -1,0 +1,147 @@
+# Traefik v3 — Docker Swarm stack
+#
+# HA configuration:
+#   traefik-acme   — 1 replica, pinned to the ACME-master node
+#                    (handles Let's Encrypt certificate renewal only)
+#   traefik-worker — Global mode on remaining managers
+#                    (read-only cert bind-mount, handles all routing)
+#
+# For single-node deployments collapse to a single replicated service
+# and remove the node label constraints.
+#
+# Required environment variables (set in .env or passed via Ansible):
+#   DOMAIN                — primary domain, e.g. example.com
+#   ACME_EMAIL            — Let's Encrypt registration email
+#   TRAEFIK_CONFIG_DIR    — host path to static/dynamic config files
+#   TRAEFIK_ACME_DIR      — host path to acme.json storage
+#   TRAEFIK_LOGS_DIR      — host path for access + error logs
+#
+# Node labels expected:
+#   traefik.acme.master=true  on exactly ONE manager node
+
+services:
+
+  # ── ACME master — certificate renewal only ──────────────────────────────
+  traefik-acme:
+    image: traefik:v3
+    command:
+      - "--configFile=/etc/traefik/traefik.yml"
+    environment:
+      # DNS challenge credentials — inject via secret or env
+      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}
+    ports:
+      # Dashboard only — never expose to internet; restrict via UFW
+      - target: 8080
+        published: 8080
+        protocol: tcp
+        mode: host
+    volumes:
+      - ${TRAEFIK_CONFIG_DIR}/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ${TRAEFIK_ACME_DIR}/acme.json:/acme/acme.json
+      - ${TRAEFIK_LOGS_DIR}:/logs
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - traefik-public
+      - traefik-internal
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+          - node.labels.traefik.acme.master == true
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        monitor: 30s
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: pause
+      restart_policy:
+        condition: any
+        delay: 5s
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+        reservations:
+          cpus: '0.10'
+          memory: 128M
+      labels:
+        - traefik.enable=false   # ACME node is not a routing node
+
+  # ── Workers — routing on all other managers ──────────────────────────────
+  traefik-worker:
+    image: traefik:v3
+    command:
+      - "--configFile=/etc/traefik/traefik.yml"
+      - "--api.dashboard=true"
+      - "--api.insecure=false"
+      - "--log.level=INFO"
+      # Workers use read-only acme.json — no renewal, only reads
+      - "--certificatesresolvers.main.acme.storage=/acme/acme.json"
+    ports:
+      - target: 80
+        published: 80
+        protocol: tcp
+        mode: ingress
+      - target: 443
+        published: 443
+        protocol: tcp
+        mode: ingress
+    volumes:
+      - ${TRAEFIK_CONFIG_DIR}/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ${TRAEFIK_ACME_DIR}/acme.json:/acme/acme.json:ro
+      - ${TRAEFIK_LOGS_DIR}:/logs
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - traefik-public
+      - traefik-internal
+    deploy:
+      mode: global
+      placement:
+        constraints:
+          - node.role == manager
+          - node.labels.traefik.acme.master != true
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        monitor: 30s
+        order: stop-first   # avoid host-port conflicts during rolling update
+      restart_policy:
+        condition: any
+        delay: 5s
+      resources:
+        limits:
+          cpus: '1.00'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.dashboard.rule=Host(`traefik.${DOMAIN}`)
+        - traefik.http.routers.dashboard.service=api@internal
+        - traefik.http.routers.dashboard.entrypoints=websecure
+        - traefik.http.routers.dashboard.tls=true
+        - traefik.http.routers.dashboard.tls.certresolver=main
+        - traefik.http.services.dashboard-noop.loadbalancer.server.port=8080
+        # Basic-auth middleware — generate hash with:
+        #   echo $(htpasswd -nB admin) | sed -e 's/\$/\$\$/g'
+        - traefik.http.middlewares.dashboard-auth.basicauth.users=${TRAEFIK_DASHBOARD_AUTH}
+        - traefik.http.routers.dashboard.middlewares=dashboard-auth
+
+networks:
+  traefik-public:
+    external: true
+    name: traefik-public-${ENV:-prod}
+
+  traefik-internal:
+    external: true
+    name: traefik-internal-${ENV:-prod}

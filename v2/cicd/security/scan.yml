@@ -1,0 +1,71 @@
+# SKStacks v2 — security scan pipeline (Forgejo / GitHub Actions syntax).
+# Runs on every push/PR + nightly. Findings gate the deploy (see security-gates.yaml)
+# and feed the closed-loop (core/sksec/closed-loop/). The same stages render to
+# GitLab CI / Forgejo Actions via skcicd.
+name: security-scan
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 3 * * *"        # nightly re-scan (new CVEs land on old artifacts)
+
+permissions:
+  contents: read
+  security-events: write       # upload SARIF
+
+jobs:
+  secrets:
+    name: secret scan (gitleaks + trufflehog)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+      - name: trufflehog (verified only)
+        uses: trufflesecurity/trufflehog@main
+        with: { extra_args: --only-verified }
+
+  sast:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: semgrep/semgrep-action@v1
+        with: { config: "p/ci p/security-audit p/secrets" }
+
+  iac:
+    name: IaC misconfig (Trivy config + Checkov)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trivy config (kustomize/compose/tofu/helm)
+        uses: aquasecurity/trivy-action@master
+        with: { scan-type: config, format: sarif, output: trivy-iac.sarif, severity: "HIGH,CRITICAL" }
+      - name: Checkov
+        uses: bridgecrewio/checkov-action@master
+        with: { quiet: true, framework: "kubernetes,dockerfile,terraform" }
+
+  sca-image:
+    name: SBOM + image/dep CVEs (Syft + Grype + Trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate SBOM (Syft)
+        uses: anchore/sbom-action@v0
+        with: { format: cyclonedx-json, output-file: sbom.cdx.json }
+      - name: Grype scan (fail on high)
+        uses: anchore/scan-action@v4
+        with: { sbom: sbom.cdx.json, fail-build: true, severity-cutoff: high }
+      - name: Trivy filesystem (deps + secrets)
+        uses: aquasecurity/trivy-action@master
+        with: { scan-type: fs, format: sarif, output: trivy-fs.sarif, severity: "HIGH,CRITICAL" }
+
+  k8s-posture:
+    name: K8s posture (kubescape NSA/CIS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Kubescape
+        uses: kubescape/github-action@main
+        with: { files: "v2/platform/kubernetes", frameworks: "nsa,cis" }

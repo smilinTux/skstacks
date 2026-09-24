@@ -1,0 +1,9 @@
+---
+# rke2-server handlers. (Fixes the previously-dangling `notify: Restart rke2-server`
+# in tasks/main.yml — the handler did not exist, so config changes never triggered
+# a restart.)
+- name: Restart rke2-server
+  ansible.builtin.systemd:
+    name: rke2-server
+    state: restarted
+    daemon_reload: true

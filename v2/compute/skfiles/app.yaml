@@ -1,0 +1,46 @@
+# SKStacks v2 — skfiles app descriptor (STUB)
+#
+# This is a capability stub — structure only, NO real secrets.
+# Replace CHANGEME_* placeholders with real values before deploy.
+# Provider is the recommended sovereign adapter from the skos capability map.
+#
+# See: docs/superpowers/specs/2026-06-09-skos-capability-map.md
+
+name: skfiles
+description: "File sync and collaboration — Nextcloud for web/team collaboration + Syncthing for sovereign p2p device sync."
+capability: "File sync and collaboration — web UI + peer-to-peer device sync"
+scope: skfiles
+version: "CHANGEME_VERSION"
+platforms: [docker-swarm, kubernetes]
+provider: Nextcloud (collaboration/WebDAV) + Syncthing (p2p sync)
+alternates:
+  - Seafile (raw speed)
+
+# Secret keys this service needs (values resolved from secret backend at deploy time)
+secrets:
+  - key: nextcloud_admin_password
+    description: "Nextcloud admin account password"
+    rotation_days: 90
+    required: true
+    sensitive: true
+  - key: nextcloud_db_password
+    description: "PostgreSQL password for Nextcloud database"
+    required: true
+    sensitive: true
+  - key: nextcloud_secret_key
+    description: "Nextcloud instance secret key"
+    required: true
+    sensitive: true
+
+# Non-sensitive config (overridden by overlay values)
+config:
+  LOG_LEVEL: INFO
+  DOMAIN: "${SKSTACKS_DOMAIN}"
+  CLUSTER: "${SKSTACKS_CLUSTER}"
+
+# Health check (fill in real URL/path before deploy)
+healthcheck:
+  url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/healthz"
+  interval: 30s
+  timeout: 5s
+  retries: 3

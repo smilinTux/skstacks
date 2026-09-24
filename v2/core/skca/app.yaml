@@ -1,0 +1,51 @@
+# SKStacks v2 — skca app descriptor (STUB)
+#
+# This is a capability stub — structure only, NO real secrets.
+# Replace CHANGEME_* placeholders with real values before deploy.
+# Provider is the recommended sovereign adapter from the skos capability map.
+#
+# See: docs/superpowers/specs/2026-06-09-skos-capability-map.md
+
+name: skca
+description: "Internal PKI / mTLS — step-ca for ACME internal cert issuance, X.509 mTLS service identity, and SSH CA."
+capability: "Internal PKI / mTLS — ACME for internal certs, X.509 mTLS service identity, SSH CA"
+scope: skca
+version: "CHANGEME_VERSION"
+platforms: [docker-swarm, kubernetes, bare-metal]
+provider: step-ca (ACME for internal endpoints, X.509 mTLS, SSH certificate authority)
+alternates: []
+
+# Secret keys this service needs (values resolved from secret backend at deploy time)
+secrets:
+  - key: step_ca_password
+    description: "step-ca provisioner password (encrypts CA key)"
+    rotation_days: 730
+    required: true
+    sensitive: true
+  - key: step_ca_root_key_password
+    description: "step-ca root CA private key password (offline — store in CapAuth)"
+    rotation_days: 3650
+    required: true
+    sensitive: true
+
+# Non-sensitive config (overridden by overlay values)
+config:
+  LOG_LEVEL: INFO
+  DOMAIN: "${SKSTACKS_DOMAIN}"
+  CLUSTER: "${SKSTACKS_CLUSTER}"
+
+# Health check (fill in real URL/path before deploy)
+healthcheck:
+  url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/healthz"
+  interval: 30s
+  timeout: 5s
+  retries: 3
+
+# Deploy block — step-ca internal CA (X.509/ACME/SSH). Distroless image → no exec probe.
+deploy:
+  container: step-ca
+  image: "smallstep/step-ca:0.27.4"
+  ports:
+    - "9000:9000"
+  volumes:
+    - "step-ca-data:/home/step"

@@ -1,0 +1,66 @@
+---
+# RKE2 cluster inventory
+# Copy to inventory.yml, replace CHANGEME_ values, then run playbooks.
+#
+# Naming convention:
+#   rke2_servers: control-plane nodes (min 1, recommend 3 for HA etcd)
+#   rke2_agents:  worker nodes (optional, min 0)
+
+all:
+  vars:
+    # SSH connection
+    ansible_user: CHANGEME_SSH_USER          # e.g. ubuntu, rocky, debian
+    ansible_ssh_private_key_file: ~/.ssh/CHANGEME_KEY
+    ansible_python_interpreter: /usr/bin/python3
+
+    # RKE2 version — pin to a specific release for reproducibility
+    # Find versions: https://github.com/rancher/rke2/releases
+    rke2_version: "v1.29.4+rke2r1"
+    rke2_channel: stable                     # stable | latest | testing
+
+    # Cluster identity
+    cluster_name: CHANGEME_CLUSTER_NAME      # e.g. skstack01
+    cluster_domain: CHANGEME_DOMAIN          # e.g. your-domain.com
+
+    # VIP for the kube-apiserver (required for HA)
+    # Used by kube-vip or keepalived. Must be a free IP on the management network.
+    rke2_vip_ip: "CHANGEME_VIP_IP"          # e.g. 192.168.1.10
+    rke2_vip_interface: CHANGEME_IFACE       # e.g. eth0, ens3
+
+    # Pod / Service CIDRs (defaults are fine unless they conflict)
+    rke2_cluster_cidr: "10.42.0.0/16"
+    rke2_service_cidr: "10.43.0.0/16"
+
+    # CNI plugin: canal (default), calico, cilium, none
+    rke2_cni: canal
+
+    # MetalLB address pool (addresses on your LAN for LoadBalancer services)
+    metallb_address_pool: "CHANGEME_LB_POOL"  # e.g. 192.168.1.200-192.168.1.250
+
+    # Secret backend for this cluster
+    secret_backend: vault-file               # vault-file | hashicorp-vault | capauth
+
+  children:
+    rke2_servers:
+      hosts:
+        server-1:
+          ansible_host: CHANGEME_SERVER1_IP
+          rke2_role: server
+        server-2:
+          ansible_host: CHANGEME_SERVER2_IP
+          rke2_role: server
+        server-3:
+          ansible_host: CHANGEME_SERVER3_IP
+          rke2_role: server
+
+    rke2_agents:
+      hosts:
+        worker-1:
+          ansible_host: CHANGEME_WORKER1_IP
+          rke2_role: agent
+        worker-2:
+          ansible_host: CHANGEME_WORKER2_IP
+          rke2_role: agent
+        worker-3:
+          ansible_host: CHANGEME_WORKER3_IP
+          rke2_role: agent

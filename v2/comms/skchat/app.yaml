@@ -1,0 +1,77 @@
+# SKStacks v2 — skchat app descriptor (STUB)
+#
+# This is a capability stub — structure only, NO real secrets.
+# Replace CHANGEME_* placeholders with real values before deploy.
+# Provider is the recommended sovereign adapter from the skos capability map.
+#
+# See: docs/superpowers/specs/2026-06-09-skos-capability-map.md
+
+name: skchat
+description: "Human/agent chat + federation — Tuwunel (Apache-2.0 Rust Matrix homeserver, single binary, low-RAM). Keeps the Matrix protocol; swaps the homeserver off Synapse."
+capability: "Human/agent chat + federation — Matrix E2EE with federation bridge"
+# Real edges a chat homeserver needs that exist in the catalog:
+#   skbus   — A2A event bus (bridge → skwire wiring)
+#   skdata  — Postgres backing store (Synapse fallback path; also bridge state)
+#   skobject — media/blob store for attachments + avatars
+#   skmodel — agent inference for bot/agent participants
+depends_on: [skbus, skdata, skobject, skmodel]
+scope: skchat
+version: "CHANGEME_VERSION"
+platforms: [docker-swarm, kubernetes]
+# RATIFIED 2026-06-11 (stack-validation): default = Tuwunel (Apache-2.0, single
+# Rust binary, embedded RocksDB — no Postgres). Synapse kept as the scale-out
+# fallback when worker-scale federation / brand-new MSCs are needed.
+provider: Tuwunel (Apache-2.0, Rust single-binary Matrix homeserver; conduwuit successor)
+alternates:
+  - Matrix Synapse (scale-out fallback — worker-scale federation, feature-currency)
+  - XMPP/Prosody
+  - Nostr (broadcast/identity)
+
+# Secret keys this service needs (values resolved from secret backend at deploy time)
+secrets:
+  # Tuwunel (default): registration token; signing key is generated on first run
+  # and persisted in the RocksDB data volume (no external Postgres needed).
+  - key: matrix_registration_token
+    description: "Tuwunel registration token (gates new-account creation)"
+    rotation_days: 365
+    required: true
+    sensitive: true
+  # Synapse fallback only (worker-scale federation): re-enable these if you swap
+  # the adapter back to Synapse.
+  - key: matrix_macaroon_secret_key
+    description: "[Synapse fallback] Macaroon secret key"
+    required: false
+    sensitive: true
+  - key: postgres_password
+    description: "[Synapse fallback] PostgreSQL password (Tuwunel uses embedded RocksDB)"
+    required: false
+    sensitive: true
+
+# Non-sensitive config (overridden by overlay values)
+config:
+  LOG_LEVEL: INFO
+  DOMAIN: "${SKSTACKS_DOMAIN}"
+  CLUSTER: "${SKSTACKS_CLUSTER}"
+
+# Health check (fill in real URL/path before deploy)
+healthcheck:
+  url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/healthz"
+  interval: 30s
+  timeout: 5s
+  retries: 3
+
+# Deploy block — Tuwunel (Apache-2.0 Rust single-binary Matrix homeserver, embedded
+# RocksDB; no external Postgres in the default path). SINGLE container — the renderer
+# does not yet do multi-container, so the federation bridge / media offload to
+# skobject and the Synapse-path skdata wiring are configured at deploy time, not here.
+# Port 8008 = Matrix client-server (HTTP); 8448 = federation.
+# coordinate deploy specifics with the skchat infrastructure session
+deploy:
+  container: tuwunel
+  image: "ghcr.io/matrix-construct/tuwunel:latest"
+  ports:
+    - "8008:8008"
+    - "8448:8448"
+  volumes:
+    - "skchat-data:/var/lib/tuwunel"
+  healthcheck_test: ["CMD", "curl", "-fsS", "http://localhost:8008/_matrix/client/versions"]

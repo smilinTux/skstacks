@@ -1,0 +1,56 @@
+# SKStacks v2 — skdata app descriptor (STUB)
+#
+# This is a capability stub — structure only, NO real secrets.
+# Replace CHANGEME_* placeholders with real values before deploy.
+# Provider is the recommended sovereign adapter from the skos capability map.
+#
+# See: docs/superpowers/specs/2026-06-09-skos-capability-map.md
+
+name: skdata
+description: "Relational + vector + graph + search — Postgres 17 with pgvector, pg_search (BM25), and Apache AGE (graph)."
+capability: "Relational + vector + graph + full-text search — consolidated Postgres multitool"
+scope: skdata
+ha: true            # "if you need one, get two" — the DB everything uses — HA (Patroni / streaming replication)
+min_replicas: 3
+version: "CHANGEME_VERSION"
+platforms: [docker-swarm, bare-metal]
+provider: "PostgreSQL 17 (skmem-pg:pg17-bm25-age image: pgvector + ParadeDB pg_search + Apache AGE — one engine)"
+alternates:
+  - ArcadeDB (graph algos at scale)
+
+# Secret keys this service needs (values resolved from secret backend at deploy time)
+secrets:
+  - key: postgres_password
+    description: "PostgreSQL superuser password"
+    rotation_days: 90
+    required: true
+    sensitive: true
+  - key: skmemory_db_password
+    description: "skmemory application database password"
+    required: true
+    sensitive: true
+
+# Non-sensitive config (overridden by overlay values)
+config:
+  LOG_LEVEL: INFO
+  DOMAIN: "${SKSTACKS_DOMAIN}"
+  CLUSTER: "${SKSTACKS_CLUSTER}"
+
+# Health check (fill in real URL/path before deploy)
+healthcheck:
+  url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/healthz"
+  interval: 30s
+  timeout: 5s
+  retries: 3
+
+# Deploy block — PostgreSQL 17 (the shared relational DB), HA via replicas. Note: the
+# sovereign image is skmem-pg:pg17-bm25-age (pgvector + pg_search + AGE) — set via an
+# overlay; the stock image here keeps the descriptor renderable everywhere.
+deploy:
+  container: postgres
+  image: "postgres:17-alpine"
+  ports:
+    - "5432:5432"
+  volumes:
+    - "skdata-pgdata:/var/lib/postgresql/data"
+  healthcheck_test: ["CMD", "pg_isready", "-U", "postgres"]

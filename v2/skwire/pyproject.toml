@@ -1,0 +1,36 @@
+# skwire — embeddable wiring/bootstrap primitive. Pure-stdlib core (zero runtime
+# deps) so any project can depend on it. Unlike the v2 `secrets` package, the
+# import name `skwire` is clean (no stdlib shadow) — designed to graduate to a
+# standalone repo/package.
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "skwire"
+version = "0.1.0"
+description = "Universal bootstrapper + wiring fabric: mint-then-inject service/agent wiring with a signed plan↔approval handshake."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "smilinTux / SKWorld" }]
+dependencies = []                      # core is stdlib-only — embeddable anywhere
+
+[project.scripts]
+skwire = "skwire.cli:main"             # the all-in-one `skwire` command
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pyyaml>=6.0"]   # pyyaml only for descriptor-loading tests
+
+[tool.setuptools.packages.find]
+include = ["skwire*"]
+
+[tool.setuptools.package-data]
+# ship the chat UI + the bundled skhf downloader inside the wheel/sdist
+"skwire.web" = ["index.html"]
+"skwire.packs.skhf" = ["skhf", "README.md"]
+
+[tool.pytest.ini_options]
+pythonpath = [".."]
+testpaths = ["tests"]
+addopts = "-q"

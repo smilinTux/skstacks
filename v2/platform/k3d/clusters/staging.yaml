@@ -1,0 +1,47 @@
+# k3d SimpleConfig — staging cluster (HA, 3 servers + 2 agents)
+# 3 servers give embedded etcd Raft quorum (tolerates 1 server failure).
+# LB ports are configurable via env vars so they do not clash with host services.
+# Set K3D_LB_PORT_HTTP / K3D_LB_PORT_HTTPS in .env before running scripts/create.sh.
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+
+metadata:
+  name: skstacks-staging
+
+servers: 3
+agents: 2
+
+ports:
+  # K3D_LB_PORT_HTTP and K3D_LB_PORT_HTTPS are exported from .env by create.sh
+  - port: "${K3D_LB_PORT_HTTP:-8080}:80"
+    nodeFilters:
+      - loadbalancer
+  - port: "${K3D_LB_PORT_HTTPS:-8443}:443"
+    nodeFilters:
+      - loadbalancer
+
+options:
+  k3s:
+    extraArgs:
+      - arg: --disable=traefik
+        nodeFilters:
+          - server:*
+      - arg: --disable=servicelb
+        nodeFilters:
+          - server:*
+    nodeLabels:
+      - label: skstacks.io/env=staging
+        nodeFilters:
+          - server:*
+          - agent:*
+      - label: skstacks.io/managed=true
+        nodeFilters:
+          - server:*
+          - agent:*
+      - label: skstacks.io/platform=k3d
+        nodeFilters:
+          - server:*
+          - agent:*
+
+# k3d's built-in load balancer container acts as the HA entry point;
+# no external VIP or keepalived required for local/staging use.

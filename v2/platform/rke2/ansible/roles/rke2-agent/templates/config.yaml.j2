@@ -1,0 +1,9 @@
+# RKE2 agent config — joins the cluster via the first server's supervisor (:9345).
+server: https://{{ hostvars[groups['rke2_servers'] | first].ansible_host | default(groups['rke2_servers'] | first) }}:9345
+token: {{ _rke2_token_raw.content | b64decode | trim }}
+{% if rke2_agent_node_labels | default([]) %}
+node-label:
+{% for label in rke2_agent_node_labels %}
+  - {{ label }}
+{% endfor %}
+{% endif %}

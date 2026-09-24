@@ -1,0 +1,54 @@
+# SKStacks v2 — skdns app descriptor (STUB)
+#
+# This is a capability stub — structure only, NO real secrets.
+# Replace CHANGEME_* placeholders with real values before deploy.
+# Provider is the recommended sovereign adapter from the skos capability map.
+#
+# See: docs/superpowers/specs/2026-06-09-skos-capability-map.md
+
+name: skdns
+description: "Sovereign DNS — internal authoritative DNS + resolver/filter with split-horizon and DNS-01 ACME support."
+capability: "Sovereign DNS — internal authoritative + resolver/filter, split-horizon, DNS-01 ACME"
+scope: skdns
+ha: true            # "if you need one, get two" — DNS — multi-provider failover (no single takedown)
+min_replicas: 3
+version: "CHANGEME_VERSION"
+platforms: [docker-swarm, kubernetes, bare-metal]
+provider: "Technitium (self-host: authoritative + recursive + filtering + DoH/DoT/DoQ, one binary)"
+alternates:
+  - PowerDNS + AdGuard Home (split self-host)
+  - Cloudflare (managed; default for public zones, not required with Tailscale/Headscale MagicDNS)
+  - Handshake (HNS) / ENS (censorship-resistant blockchain naming roots)
+
+# Secure DNS resolution options (configs in skdns/resolution/). Layered + stackable.
+resolution:
+  - technitium     # self-host all-in-one (authoritative+resolver+DoH/DoT/DoQ) — default
+  - cloudflare     # managed public zones (infra/tofu/modules/cloudflare-dns)
+  - blockchain     # Handshake/ENS decentralized roots (skdweb naming) — takedown-resistant
+  - failover       # multi-provider, health-checked auto-failover (no single takedown point)
+secure_transport: [DoH, DoT, DoQ]   # no plaintext :53 over the WAN
+
+# Secret keys this service needs (values resolved from secret backend at deploy time)
+secrets:
+  - key: powerdns_api_key
+    description: "PowerDNS HTTP API key"
+    rotation_days: 90
+    required: true
+    sensitive: true
+  - key: adguard_admin_password
+    description: "AdGuard Home admin password hash"
+    required: true
+    sensitive: true
+
+# Non-sensitive config (overridden by overlay values)
+config:
+  LOG_LEVEL: INFO
+  DOMAIN: "${SKSTACKS_DOMAIN}"
+  CLUSTER: "${SKSTACKS_CLUSTER}"
+
+# Health check (fill in real URL/path before deploy)
+healthcheck:
+  url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/healthz"
+  interval: 30s
+  timeout: 5s
+  retries: 3

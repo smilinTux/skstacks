@@ -1,0 +1,42 @@
+# SKStacks v2 — skdweb app descriptor (STUB)
+#
+# This is a capability stub — structure only, NO real secrets.
+# Replace CHANGEME_* placeholders with real values before deploy.
+# Provider is the recommended sovereign adapter from the skos capability map.
+#
+# See: docs/superpowers/specs/2026-06-09-skos-capability-map.md
+
+name: skdweb
+description: "Decentralized availability + sovereign naming — IPFS content pinning and HNS/ENS seizure-proof names."
+capability: "Decentralized availability + sovereign naming — IPFS pinning + seizure-proof names"
+scope: skdweb
+version: "CHANGEME_VERSION"
+platforms: [docker-swarm, bare-metal]
+provider: IPFS + IPFS-Cluster (content availability) + Handshake HNS / ENS (sovereign naming)
+alternates:
+  - ENS (.eth on existing sketh)
+
+# Secret keys this service needs (values resolved from secret backend at deploy time)
+secrets:
+  - key: ipfs_cluster_secret
+    description: "IPFS-Cluster shared secret (hex, 32 bytes)"
+    rotation_days: 365
+    required: true
+    sensitive: true
+  - key: ipfs_cluster_restapi_basic_auth_credentials
+    description: "REST API basic-auth credentials for IPFS-Cluster (user:pass)"
+    required: false
+    sensitive: true
+
+# Non-sensitive config (overridden by overlay values)
+config:
+  LOG_LEVEL: INFO
+  DOMAIN: "${SKSTACKS_DOMAIN}"
+  CLUSTER: "${SKSTACKS_CLUSTER}"
+
+# Health check (fill in real URL/path before deploy)
+healthcheck:
+  url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/healthz"
+  interval: 30s
+  timeout: 5s
+  retries: 3

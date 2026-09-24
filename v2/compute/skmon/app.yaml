@@ -1,0 +1,43 @@
+# SKStacks v2 — skmon app descriptor (STUB)
+#
+# This is a capability stub — structure only, NO real secrets.
+# Replace CHANGEME_* placeholders with real values before deploy.
+# Provider is the recommended sovereign adapter from the skos capability map.
+#
+# See: docs/superpowers/specs/2026-06-09-skos-capability-map.md
+
+name: skmon
+description: "Observability (metrics + logs + traces) — Prometheus + Grafana + Loki + Tempo + Grafana Alloy (OTel collector)."
+capability: "Observability — metrics, logs, traces with OTel standard"
+depends_on: [skbus]   # wiring (bridge → skwire needs)
+scope: skmon
+version: "CHANGEME_VERSION"
+platforms: [docker-swarm, kubernetes]
+provider: "Prometheus (metrics) + Grafana (dashboards) + VictoriaLogs (logs, Apache-2.0, replaces Loki) + Tempo (traces) + Grafana Alloy (OTel)"
+alternates:
+  - SigNoz (all-in-one, ClickHouse)
+
+# Secret keys this service needs (values resolved from secret backend at deploy time)
+secrets:
+  - key: grafana_admin_password
+    description: "Grafana admin password"
+    rotation_days: 90
+    required: true
+    sensitive: true
+  - key: grafana_secret_key
+    description: "Grafana secret key for cookie signing"
+    required: true
+    sensitive: true
+
+# Non-sensitive config (overridden by overlay values)
+config:
+  LOG_LEVEL: INFO
+  DOMAIN: "${SKSTACKS_DOMAIN}"
+  CLUSTER: "${SKSTACKS_CLUSTER}"
+
+# Health check (fill in real URL/path before deploy)
+healthcheck:
+  url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/healthz"
+  interval: 30s
+  timeout: 5s
+  retries: 3

@@ -1,0 +1,13 @@
+---
+# local k3d: use Docker bridge IP range for MetalLB.
+# k3d creates a bridge network (default subnet 172.18.0.0/16).
+# Container node IPs occupy .0.x–.10.x; .255.200–.250 is safe for LB assignment.
+# Run `docker network inspect k3d-skstacks` to confirm the actual subnet.
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: default-pool
+  namespace: metallb-system
+spec:
+  addresses:
+    - 172.18.255.200-172.18.255.250

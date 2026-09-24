@@ -1,0 +1,39 @@
+# SKStacks v2 — skpulse app descriptor (STUB)
+#
+# This is a capability stub — structure only, NO real secrets.
+# Replace CHANGEME_* placeholders with real values before deploy.
+# Provider is the recommended sovereign adapter from the skos capability map.
+#
+# See: docs/superpowers/specs/2026-06-09-skos-capability-map.md
+
+name: skpulse
+description: "Uptime / status monitoring — Uptime-Kuma with Blackbox Exporter for internal endpoint probing."
+capability: "Uptime / external status monitoring — endpoint probing and public status page"
+depends_on: [skmon]   # wiring (bridge → skwire needs)
+scope: skpulse
+version: "CHANGEME_VERSION"
+platforms: [docker-swarm, kubernetes]
+provider: "Gatus (config-as-code uptime, feeds skops ITIL) + Prometheus Blackbox Exporter (internal probing)"
+alternates:
+  - Prometheus Blackbox Exporter (internal probing)
+
+# Secret keys this service needs (values resolved from secret backend at deploy time)
+secrets:
+  - key: gatus_alerting_webhook
+    description: "Webhook URL/token for Gatus alerting (Slack/Discord/PagerDuty) — optional"
+    rotation_days: 180
+    required: false
+    sensitive: true
+
+# Non-sensitive config (overridden by overlay values)
+config:
+  LOG_LEVEL: INFO
+  DOMAIN: "${SKSTACKS_DOMAIN}"
+  CLUSTER: "${SKSTACKS_CLUSTER}"
+
+# Health check (fill in real URL/path before deploy)
+healthcheck:
+  url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/healthz"
+  interval: 30s
+  timeout: 5s
+  retries: 3

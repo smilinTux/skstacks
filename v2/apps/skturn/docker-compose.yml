@@ -1,0 +1,58 @@
+# skturn — standalone coturn TURN/STUN (WebRTC media-relay plane)
+# ================================================================
+# Decoupled from skhub so TURN survives the skhub stack being down. This is the
+# MEDIA plane (WebRTC UDP) — it canNOT traverse Traefik/cloudflared (HTTP/TCP).
+# It must be HOST-PUBLISHED on a public-reachable edge node, DNS grey-cloud
+# (DNS-only, NOT proxied). See README.md.
+#
+# Required (NOT in git):
+#   docker secret  coturn_static_auth_secret  = the EXISTING skhub.turn_secret
+#                  (shared by Nextcloud Talk + netbird — DO NOT regenerate)
+#   env TURN_REALM = cluster domain, e.g. skstack01.example.com
+#   volume skturn-certs = turns TLS cert/key (ACME DNS-01)
+services:
+  coturn:
+    image: coturn/coturn:4.6
+    command:
+      - -n
+      - --use-auth-secret
+      - --static-auth-secret-file=/run/secrets/coturn_static_auth_secret
+      - --realm=${TURN_REALM}
+      - --min-port=49160
+      - --max-port=49200
+      - --fingerprint
+      - --no-cli
+      - --cert=/certs/turn.crt
+      - --pkey=/certs/turn.key
+      - --no-tlsv1
+      - --no-tlsv1_1
+    ports:
+      # host-mode so the client sees the real public IP (NAT-transparent)
+      - { target: 3478, published: 3478, protocol: udp, mode: host }     # STUN/TURN
+      - { target: 3478, published: 3478, protocol: tcp, mode: host }
+      - { target: 5349, published: 5349, protocol: tcp, mode: host }     # TURNS (TLS)
+      - { target: 5349, published: 5349, protocol: udp, mode: host }
+      - { target: 49160, published: 49160, protocol: udp, mode: host }   # relay range
+      # NOTE: publish the FULL 49160-49200/udp relay range in the engine/UFW
+      #       (compose long-syntax lists one; deploy script opens the range).
+    secrets:
+      - coturn_static_auth_secret
+    volumes:
+      - skturn-certs:/certs:ro
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.edge == true        # pin to a public-IP edge node
+      restart_policy:
+        condition: any
+
+secrets:
+  coturn_static_auth_secret:
+    external: true                            # = skhub.turn_secret (migrated, not regenerated)
+
+volumes:
+  skturn-certs:
+
+# No networks: block — host-mode publishing means coturn binds the node's
+# interfaces directly (required for WebRTC relay).

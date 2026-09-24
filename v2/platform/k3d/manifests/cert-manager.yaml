@@ -1,0 +1,60 @@
+# cert-manager — auto-deploy manifest for k3s/k3d
+# k3s watches /var/lib/rancher/k3s/server/manifests/ and applies these automatically.
+# For k3d, copy this file into the container or apply via kubectl:
+#   kubectl apply -f platform/k3d/manifests/cert-manager.yaml
+#
+# After apply, patch the ClusterIssuer email:
+#   kubectl patch clusterissuer letsencrypt-prod --type=merge \
+#     -p '{"spec":{"acme":{"email":"you@example.com"}}}'
+---
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: cert-manager
+  namespace: kube-system
+spec:
+  repo: https://charts.jetstack.io
+  chart: cert-manager
+  version: "v1.14.5"
+  targetNamespace: cert-manager
+  createNamespace: true
+  set:
+    # Install CRDs via Helm (avoids a separate kubectl apply step)
+    installCRDs: "true"
+    # Disable Prometheus by default; enable if deploying kube-prometheus-stack
+    prometheus.enabled: "false"
+    # Single replica for local/CI; increase to 2+ for staging/prod
+    replicaCount: "1"
+---
+# Staging issuer — uses Let's Encrypt staging ACME to avoid rate limits.
+# Switch to letsencrypt-prod once DNS and ingress are validated.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: CHANGEME_ACME_EMAIL
+    privateKeySecretRef:
+      name: letsencrypt-staging-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: nginx
+---
+# Production issuer — only use after staging validates successfully.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: CHANGEME_ACME_EMAIL
+    privateKeySecretRef:
+      name: letsencrypt-prod-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: nginx

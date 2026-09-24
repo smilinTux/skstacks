@@ -1,0 +1,33 @@
+# exposure/cloudflared (K8s) — Cloudflare Tunnel → Traefik Gateway.
+# Outbound-only: no inbound ports, no public IP needed. The tunnel token comes
+# from the secret backend (ExternalSecret → cloudflared-token Secret).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  namespace: traefik
+  labels: { skstacks.io/exposure: cloudflared }
+spec:
+  replicas: 2                     # HA — two tunnel connectors
+  selector:
+    matchLabels: { app: cloudflared }
+  template:
+    metadata:
+      labels: { app: cloudflared }
+    spec:
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:2026.6.1
+          args: ["tunnel", "--no-autoupdate", "run"]
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cloudflared-token     # from ExternalSecret (skmesh/cloudflared_tunnel_token)
+                  key: token
+          # The tunnel's public-hostname → service mapping is configured in the
+          # Cloudflare dashboard / config to point at the in-cluster Traefik:
+          #   service: https://traefik.traefik.svc:443  (origin: noTLSVerify or step-ca CA)
+          resources:
+            limits: { memory: 128Mi }

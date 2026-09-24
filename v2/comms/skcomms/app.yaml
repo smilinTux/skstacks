@@ -1,0 +1,46 @@
+# SKStacks v2 — skcomms app descriptor (STUB)
+#
+# This is a capability stub — structure only, NO real secrets.
+# Replace CHANGEME_* placeholders with real values before deploy.
+# Provider is the recommended sovereign adapter from the skos capability map.
+#
+# See: docs/superpowers/specs/2026-06-09-skos-capability-map.md
+
+name: skcomms
+description: "Multi-channel outbound transport (17 paths) — subscribes to skbus and routes messages to Telegram, email, SMS, etc."
+capability: "Multi-channel outbound transport — subscribes to skbus, routes to external channels"
+depends_on: [skbus]   # wiring (bridge → skwire needs)
+scope: skcomms
+version: "CHANGEME_VERSION"
+platforms: [docker-swarm, kubernetes]
+provider: skcomms (sovereign, custom) — subscribes to NATS JetStream skbus
+alternates: []
+
+# Secret keys this service needs (values resolved from secret backend at deploy time)
+secrets:
+  - key: telegram_bot_token
+    description: "Telegram Bot API token"
+    rotation_days: 365
+    required: true
+    sensitive: true
+  - key: smtp_password
+    description: "SMTP relay password for email delivery"
+    required: false
+    sensitive: true
+  - key: twilio_auth_token
+    description: "Twilio auth token for SMS fallback"
+    required: false
+    sensitive: true
+
+# Non-sensitive config (overridden by overlay values)
+config:
+  LOG_LEVEL: INFO
+  DOMAIN: "${SKSTACKS_DOMAIN}"
+  CLUSTER: "${SKSTACKS_CLUSTER}"
+
+# Health check (fill in real URL/path before deploy)
+healthcheck:
+  url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/healthz"
+  interval: 30s
+  timeout: 5s
+  retries: 3
