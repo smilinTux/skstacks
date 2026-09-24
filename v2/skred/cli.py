@@ -88,6 +88,9 @@ def main(argv=None) -> int:
         _print_human(report)
 
     if args.cmd == "gate":
+        if not report.scanned_targets:
+            print("no target was in scope, nothing scanned: refusing to pass", file=sys.stderr)
+            return 2
         res = gate_fn(report.findings, threshold=Severity.from_str(args.fail_on))
         print("\n" + res.summary())
         return 0 if res.passed else 1

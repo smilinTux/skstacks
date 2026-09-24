@@ -122,3 +122,43 @@ def test_reports_files_scanned(tmp_path, capsys):
     (root / "b.md").write_text("ok\n")
     assert main([str(root), "--denylist", _deny(tmp_path, PAT)]) == 0
     assert "2 files scanned" in capsys.readouterr().out
+
+
+def test_non_utf8_denylist_is_unusable_not_a_finding(tmp_path, capsys):
+    root = _tree(tmp_path)
+    (root / "a.md").write_text("fine\n")
+    bad = tmp_path / "deny.txt"
+    bad.write_bytes(b"\xff\xfe\xfa not utf-8\n")
+    assert main([str(root), "--denylist", str(bad)]) == 2
+    assert "not UTF-8" in capsys.readouterr().err
+
+
+def test_unreadable_file_is_reported_not_a_crash(tmp_path, capsys):
+    root = _tree(tmp_path)
+    locked = root / "locked.md"
+    locked.write_text("acmehost1003\n")
+    locked.chmod(0)
+    try:
+        assert main([str(root), "--denylist", _deny(tmp_path, PAT)]) == 1
+        assert "locked.md:0: unreadable" in capsys.readouterr().out
+    finally:
+        locked.chmod(0o600)
+
+
+def test_fifo_is_skipped_instead_of_hanging(tmp_path):
+    import signal
+    root = _tree(tmp_path)
+    (root / "a.md").write_text("fine\n")
+    os.mkfifo(root / "pipe")
+    signal.signal(signal.SIGALRM, lambda *a: (_ for _ in ()).throw(TimeoutError("hung on FIFO")))
+    signal.alarm(5)
+    try:
+        assert main([str(root), "--denylist", _deny(tmp_path, PAT)]) == 0
+    finally:
+        signal.alarm(0)
+
+
+def test_utf16_file_is_searched_not_skipped_as_binary(tmp_path):
+    root = _tree(tmp_path)
+    (root / "notes.txt").write_text("build host acmehost1003\n", encoding="utf-16")
+    assert main([str(root), "--denylist", _deny(tmp_path, PAT)]) == 1

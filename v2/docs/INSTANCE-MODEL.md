@@ -169,6 +169,8 @@ Cloning an existing instance always needs the submodule:
 git clone --recurse-submodules git@your-git:yourorg/acme-prod.git
 # already cloned without it?
 git submodule update --init
+# push-disable is local config, so a fresh clone needs it again:
+git -C framework remote set-url --push origin DISABLED
 ```
 
 ## Running each platform from an instance
@@ -297,7 +299,7 @@ same public framework and upgrades on its own schedule.
 
 | Guardrail | Where | Stops |
 |---|---|---|
-| Publish gate (secrets, estate addresses, hostnames, client names, emails) | framework CI on every PR *(planned; runs on release exports today)* | real values reaching the public repo |
+| Publish gate (secrets, estate addresses, hostnames, client names, emails) | framework CI on every push and same-repo PR (`skred.denylist`, patterns from a CI secret) | real values reaching the public repo |
 | skred security scan | framework CI | new secrets and vulnerable patterns |
 | Push disabled on `framework/` | every instance clone | editing the framework from inside an instance |
 | No framework push remote in instances | instance setup | a stray `git push` publishing a cluster |
@@ -318,24 +320,22 @@ it are not built yet.
 - Secret backends that already take their location from the environment
   (`SKSTACKS_VAULT_DIR`, `SKSTACKS_VAULT_PASS_DIR`, `SKSTACKS_SOPS_DIR`).
 - `.example` templates for overlays, inventories and tfvars.
-- skred, with fail-closed default scope.
-- A publish gate for the public export.
+- skred, with fail-closed default scope, running in framework CI.
+- The estate denylist gate (`skred.denylist`) in framework CI on every push and
+  same-repo PR, plus the publish gate on release exports.
+- A CHANGELOG, starting at `skstacks-v2.9.0`.
+- Platform scripts that already work from an instance, unchanged. Checked
+  2026-09-24: the k3d scripts only source a `.env` *if one exists*, and a
+  clean `framework/` checkout has none, so they use the variables you export;
+  swarm and rke2 take the inventory with `-i`, and the framework's
+  `ansible/group_vars/*.example` sit beside the example inventory, not beside
+  the playbooks, so they are never loaded when you pass your own inventory.
 
 **To build** (tracked as implementation work)
 
 - v1 onto the model: role `defaults/` instead of playbook-side `group_vars`,
   and no estate values baked into templates (for example
   `| default('<a real domain>')`), service by service.
-
-- Nothing in the platform scripts. Checked 2026-09-24: the k3d scripts only
-  source a `.env` *if one exists*, and a clean `framework/` checkout has none,
-  so they use the variables you export; swarm and rke2 take the inventory with
-  `-i`, and the framework's `ansible/group_vars/*.example` sit beside the
-  example inventory, not beside the playbooks, so they are never loaded when
-  you pass your own inventory.
-- The publish gate running in framework CI on every PR (today it runs as a
-  script on the release export).
-- A CHANGELOG. None exists yet; it starts with the `skstacks-v2.9.0` entry.
 
 ## FAQ
 
