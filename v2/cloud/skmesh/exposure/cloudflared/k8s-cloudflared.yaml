@@ -16,6 +16,11 @@ spec:
     metadata:
       labels: { app: cloudflared }
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532              # the image's own nonroot user
+        runAsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: cloudflared
           image: cloudflare/cloudflared:2026.6.1
@@ -29,5 +34,9 @@ spec:
           # The tunnel's public-hostname → service mapping is configured in the
           # Cloudflare dashboard / config to point at the in-cluster Traefik:
           #   service: https://traefik.traefik.svc:443  (origin: noTLSVerify or step-ca CA)
+          securityContext:
+            readOnlyRootFilesystem: true  # token comes from env; nothing is written
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
           resources:
             limits: { memory: 128Mi }
