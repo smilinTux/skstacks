@@ -3,7 +3,7 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
-## Unreleased
+## skstacks-v2.10.0 - 2026-09-24
 
 - skred.denylist: a non-UTF-8 denylist exits 2; unreadable files are
   findings; FIFOs and sockets are skipped instead of hanging; UTF-16 text is
