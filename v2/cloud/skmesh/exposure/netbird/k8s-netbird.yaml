@@ -18,11 +18,18 @@ spec:
     metadata:
       labels: { app: netbird-ingress }
     spec:
+      securityContext:
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: netbird
           image: netbirdio/netbird:0.62.0
           securityContext:
-            capabilities: { add: ["NET_ADMIN"] }
+            # ponytail: root + NET_ADMIN is what a WireGuard peer needs; writable
+            # state lives only in the emptyDirs below. Add a mount if a new
+            # netbird release writes somewhere else.
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL], add: ["NET_ADMIN"] }
           env:
             - name: NB_SETUP_KEY
               valueFrom:
@@ -31,9 +38,15 @@ spec:
               value: "https://CHANGEME_NETBIRD_MGMT"                   # self-hosted, LAN-reachable
           volumeMounts:
             - { name: state, mountPath: /var/lib/netbird }
+            - { name: config, mountPath: /etc/netbird }
+            - { name: tmp, mountPath: /tmp }
             - { name: tun, mountPath: /dev/net/tun }
       volumes:
         - name: state
+          emptyDir: {}
+        - name: config
+          emptyDir: {}
+        - name: tmp
           emptyDir: {}
         - name: tun
           hostPath: { path: /dev/net/tun }

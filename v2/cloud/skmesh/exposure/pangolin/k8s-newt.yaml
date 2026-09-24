@@ -14,11 +14,17 @@ spec:
     metadata:
       labels: { app: newt }
     spec:
+      securityContext:
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: newt
           image: fosrl/newt:1.0.0
           securityContext:
-            capabilities: { add: ["NET_ADMIN"] }
+            # ponytail: root + NET_ADMIN for the tunnel; writable paths are the
+            # emptyDirs below. Add a mount if a newt release writes elsewhere.
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL], add: ["NET_ADMIN"] }
           env:
             - name: PANGOLIN_ENDPOINT
               value: "https://CHANGEME_PANGOLIN_PUBLIC"
@@ -27,7 +33,13 @@ spec:
             - name: NEWT_SECRET
               valueFrom: { secretKeyRef: { name: pangolin-newt, key: secret } }  # ESO-synced
           volumeMounts:
+            - { name: home, mountPath: /root }
+            - { name: tmp, mountPath: /tmp }
             - { name: tun, mountPath: /dev/net/tun }
       volumes:
+        - name: home
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
         - name: tun
           hostPath: { path: /dev/net/tun }
