@@ -12,8 +12,17 @@ Each entry says what an instance must do, if anything.
   tasks it uses. `select_vault_file.yml` honours `skstacks_vault_dir` so an
   instance keeps its own vaults.
 
+- swarm platform: `deploy.yml` found none of its roles (fixed with a
+  `playbooks/roles` link) and its plays are now tagged `bootstrap`, `ha`,
+  `traefik`; `--tags bootstrap` builds just the swarm.
+- k3d platform: `scripts/create.sh` and `clusters/ci.yaml` were rejected by
+  k3d v5 (`--name`, `kubeAPI` under `options`); both fixed.
+- CI: `framework tests` workflow runs the v1, swarm, k3d and tofu suites.
+
 Instance action: none unless you adopt v1 skgraph; then set
-`skstacks_vault_dir` and see `v1/README.md`.
+`skstacks_vault_dir`, share `/var/data` across all nodes, and see
+`v1/README.md`. If you ran the swarm `deploy.yml` with your own role path
+workaround, you can drop it.
 
 ## skstacks-v2.10.0 - 2026-09-24
 

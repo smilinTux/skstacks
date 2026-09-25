@@ -51,3 +51,7 @@ def test_vault_dir_prefers_the_domain_cluster_file_when_present(tmp_path):
     f.parent.mkdir(parents=True)
     f.write_text("x: 1\n")
     assert _vault_path(tmp_path, "-e", f"skstacks_vault_dir={inst}") == str(f)
+
+
+def test_empty_vault_dir_falls_back_to_the_default(tmp_path):
+    assert _vault_path(tmp_path, "-e", "skstacks_vault_dir=") == str(V1 / "ansible/optional/group_vars/dev/zzprobe-dev_vault.yml")

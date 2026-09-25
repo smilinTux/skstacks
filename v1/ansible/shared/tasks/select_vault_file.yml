@@ -126,7 +126,7 @@
 - name: Construct domain+cluster vault file path
   set_fact:
     vault_file_path_domain_cluster: >-
-      {{ skstacks_vault_dir | default(ansible_root_dir) }}/{{ vault_base_dir }}/{{ env }}/{{ _service_name }}-{{ env }}-{{ vault_domain_safe }}-{{ vault_cluster }}_vault.yml
+      {{ skstacks_vault_dir | default(ansible_root_dir, true) }}/{{ vault_base_dir }}/{{ env }}/{{ _service_name }}-{{ env }}-{{ vault_domain_safe }}-{{ vault_cluster }}_vault.yml
   when: >-
     vault_domain != ""
     and vault_cluster != ""
@@ -134,7 +134,7 @@
 - name: Construct legacy vault file path
   set_fact:
     vault_file_path_legacy: >-
-      {{ skstacks_vault_dir | default(ansible_root_dir) }}/{{ vault_base_dir }}/{{ env }}/{{ _service_name }}-{{ env }}_vault.yml
+      {{ skstacks_vault_dir | default(ansible_root_dir, true) }}/{{ vault_base_dir }}/{{ env }}/{{ _service_name }}-{{ env }}_vault.yml
 
 - name: Check if domain+cluster vault file exists
   stat:

@@ -1,0 +1,29 @@
+# Tests for the Ansible and OpenTofu parts of the framework (v1 services, the
+# swarm and k3d platforms, the libvirt-cluster module). The Python packages
+# under v2/ have their own workflow (v2-tests.yml).
+name: framework tests
+on:
+  push:
+    branches: ['**']
+    paths: ['v1/**', 'v2/platform/**', 'v2/infra/tofu/**', '.github/workflows/framework-tests.yml']
+  pull_request:
+    paths: ['v1/**', 'v2/platform/**', 'v2/infra/tofu/**', '.github/workflows/framework-tests.yml']
+
+jobs:
+  ansible:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install pytest pyyaml ansible
+      - run: python -m pytest -q v1/tests v2/platform/swarm/tests v2/platform/k3d/tests
+
+  tofu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+      - working-directory: v2/infra/tofu/modules/libvirt-cluster
+        run: tofu init -backend=false && tofu test
+      - run: tofu fmt -check -recursive v2/infra/tofu/modules/libvirt-cluster v2/infra/tofu/examples/libvirt-swarm

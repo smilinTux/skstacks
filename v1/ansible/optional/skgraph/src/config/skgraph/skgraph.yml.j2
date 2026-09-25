@@ -32,7 +32,7 @@ services:
       - /var/data/skgraph-{{ env }}/data:/var/lib/falkordb/data
     ports:
       # Publish FalkorDB on the host via the swarm ingress routing mesh so
-      # external clients (e.g. skwhisper on .158) can reach it directly at
+      # external clients can reach it directly at
       # <any-node-ip>:16379. Redis protocol on container port 6379.
       - target: 6379
         published: {{ skgraph.PUBLISHED_PORT | default('16379') }}
