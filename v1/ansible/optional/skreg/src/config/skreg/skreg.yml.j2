@@ -6,7 +6,7 @@ services:
     ports:
       - "5000:5000"
     environment:
-      - REGISTRY_HTTP_SECRET={{ vault_skreg_registry_http_secret | default('a-very-secret-string') }}
+      - REGISTRY_HTTP_SECRET={{ vault_skreg_registry_http_secret }}
       - REGISTRY_HTTP_ADDR={{ vault_skreg_registry_http_addr | default('0.0.0.0:5000') }}
     volumes:
       - /var/data/skreg-{{ env }}/data:/var/lib/registry
