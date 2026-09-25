@@ -14,7 +14,11 @@ An instance repo pins this framework as `framework/` and supplies:
   vault is looked up at
   `<skstacks_vault_dir>/<core|optional|standalone>/group_vars/<env>/<service>-<env>-<domain with dashes>-<cluster>_vault.yml`,
   falling back to `<service>-<env>_vault.yml` in the same directory;
-- the vault password via `--vault-password-file`.
+- the vault password via `--vault-password-file`;
+- **`/var/data` shared by every swarm node** (for example an NFS mount).
+  v1 services write configs and data under `/var/data` on the manager that
+  runs the playbook and bind-mount them into containers that may land on any
+  node, so a node-local `/var/data` leaves tasks pending forever.
 
 Example:
 
