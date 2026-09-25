@@ -16,7 +16,17 @@
 ---
 - import_playbook: ../../shared/meta/skstack-header.yml
 
-- hosts: "{{ target_manager_group | default('swarm_managers') }}"
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+- hosts: selected_manager_group
   become: true
   vars:
     app: skreg
