@@ -3,6 +3,18 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased
+
+- tofu: `v2/infra/tofu/modules/libvirt-cluster` (local KVM VMs, Ubuntu 24.04
+  with the HWE kernel, Docker; inventory in the swarm platform's layout) and
+  `examples/libvirt-swarm`.
+- v1: first published v1 service, **skgraph** (FalkorDB), with the shared
+  tasks it uses. `select_vault_file.yml` honours `skstacks_vault_dir` so an
+  instance keeps its own vaults.
+
+Instance action: none unless you adopt v1 skgraph; then set
+`skstacks_vault_dir` and see `v1/README.md`.
+
 ## skstacks-v2.10.0 - 2026-09-24
 
 - skred.denylist: a non-UTF-8 denylist exits 2; unreadable files are

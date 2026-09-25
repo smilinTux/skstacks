@@ -1,0 +1,75 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+- hosts: localhost
+  connection: local
+  become: false
+  gather_facts: false
+  vars:
+    skstack_banner_path: "{{ playbook_dir }}/../../banners/skstack-header.txt"
+    meta_git_commit: "{{ lookup('file', playbook_dir + '/skstack-git-meta.txt') | default('N/A', true) }}"
+    meta_timestamp: "2025-05-09T21:17:42-04:00"
+    meta_author: "SKStacks maintainers"
+    meta_project: "Skstack Platform"
+    meta_description: "Secure, Automated Docker Swarm & Service Migration Platform. See docs/technical/services/vault_management.md for vault best practices."
+  tasks:
+    - name: Check if update_git_meta script exists
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/../../../scripts/update_git_meta.sh"
+      register: skstack_update_script
+
+    - name: Update git meta file for Skstack banner/meta
+      ansible.builtin.command: "{{ playbook_dir }}/../../../scripts/update_git_meta.sh"
+      args:
+        chdir: "{{ playbook_dir }}/../../../"
+      when: skstack_update_script.stat.exists
+
+    - name: Print Python version and location
+      ansible.builtin.shell: |
+        echo "Python version: $(python3 --version)"
+        echo "Python location: $(which python3)"
+      register: python_version_location
+      changed_when: false
+
+    - name: Print Skstack ASCII art banner
+      ansible.builtin.shell: cat {{ skstack_banner_path }}
+      register: banner_out
+      changed_when: false
+
+    - name: Print Skstack banner to console
+      ansible.builtin.debug:
+        msg: "{{ banner_out.stdout_lines }}"
+
+    - name: Print Skstack meta information
+      ansible.builtin.debug:
+        msg: >
+          {{
+            [
+              "Project: " ~ meta_project,
+              "Description: " ~ meta_description,
+              "Playbook: " ~ (ansible_playbook_python | default('N/A')),
+              "Run as: " ~ (ansible_user_id | default('N/A')),
+              "Host: " ~ (inventory_hostname | default('N/A')),
+              "Timestamp: " ~ meta_timestamp,
+              "Git Commits:"
+            ]
+            + (meta_git_commit.splitlines() | list)
+            + [
+              "Author: " ~ meta_author,
+              "Environment: " ~ (env | default('N/A'))
+            ]
+          }}
+      changed_when: false 

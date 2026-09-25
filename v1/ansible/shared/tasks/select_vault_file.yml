@@ -1,0 +1,168 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# Instances set skstacks_vault_dir (for example in their inventory group_vars)
+# to keep vaults in their own repo: vaults then resolve under
+# <skstacks_vault_dir>/<core|optional|standalone>/group_vars/<env>/.
+# Unset, vaults resolve beside the playbooks as before.
+# Select Vault File Based on Domain and Cluster
+# This task detects domain and cluster_name from inventory host variables
+# and constructs the appropriate vault file path with fallback to legacy format
+#
+# Usage in playbook:
+#   - hosts: selected_manager_group
+#     vars:
+#       env: staging  # Define at play level
+#     tasks:
+#       - import_tasks: ../../shared/tasks/select_vault_file.yml
+#         # NO vars block needed - variables are inherited from play level
+#         # DO NOT pass vars like: env: "{{ env }}" - this causes recursion!
+#
+#   Then use: include_vars:
+#     - "{{ vault_file_path }}"
+#
+# Variables (inherited from play level):
+#   - env: Environment (dev, staging, prod) - REQUIRED at play level
+#   - service_name: Optional, auto-detected from playbook path
+#   - service_type: Optional, auto-detected from playbook path
+#
+# Behavior:
+#   1. Gets domain and cluster_name from host variables (inventory)
+#   2. Constructs domain+cluster vault path: {service}-{env}-{domain}-{cluster}_vault.yml
+#   3. Falls back to legacy format if domain/cluster vault doesn't exist
+#   4. Sets vault_file_path fact for use in vars_files
+
+- name: Verify env variable is defined (prevents recursion errors)
+  fail:
+    msg: |
+      ERROR: 'env' variable is not defined!
+      
+      This task requires 'env' to be defined at the PLAY level, not passed via vars block.
+      
+      CORRECT usage:
+        - hosts: selected_manager_group
+          vars:
+            env: staging  # <-- Define here at play level
+          tasks:
+            - import_tasks: ../../shared/tasks/select_vault_file.yml
+              # NO vars block - variables are inherited
+      
+      WRONG usage (causes recursion):
+        - import_tasks: ../../shared/tasks/select_vault_file.yml
+          vars:
+            env: "{{ env }}"  # <-- DO NOT DO THIS!
+  when: env is not defined
+
+- name: Get domain and cluster_name from inventory
+  set_fact:
+    vault_domain: "{{ hostvars[inventory_hostname]['domain'] | default('') }}"
+    vault_cluster: "{{ hostvars[inventory_hostname]['cluster_name'] | default('') }}"
+
+- name: Debug domain and cluster detection
+  debug:
+    msg: "inventory_hostname={{ inventory_hostname }}, vault_domain={{ vault_domain }}, vault_cluster={{ vault_cluster }}, hostvars_domain={{ hostvars[inventory_hostname]['domain'] | default('NOT_SET') }}"
+
+- name: Determine service type from playbook path (avoids variable recursion)
+  set_fact:
+    _service_type: >-
+      {%- if '/optional/' in playbook_dir -%}
+      optional
+      {%- elif '/standalone/' in playbook_dir -%}
+      standalone
+      {%- else -%}
+      core
+      {%- endif -%}
+
+- name: Determine vault file base directory (core)
+  set_fact:
+    vault_base_dir: 'core/group_vars'
+  when: _service_type == 'core'
+
+- name: Determine vault file base directory (optional)
+  set_fact:
+    vault_base_dir: 'optional/group_vars'
+  when: _service_type == 'optional'
+
+- name: Determine vault file base directory (standalone)
+  set_fact:
+    vault_base_dir: 'standalone/group_vars'
+  when: _service_type == 'standalone'
+
+- name: Set default vault base directory
+  set_fact:
+    vault_base_dir: 'group_vars'
+  when: vault_base_dir is not defined
+
+- name: Sanitize domain for filename (replace dots with dashes)
+  set_fact:
+    vault_domain_safe: "{{ vault_domain | replace('.', '-') }}"
+  when: vault_domain != ""
+
+- name: Get playbook directory
+  set_fact:
+    _playbook_dir: "{{ playbook_dir | default(ansible_env.PWD | default('/tmp')) }}"
+
+- name: Get ansible root directory (parent of core/optional/standalone)
+  set_fact:
+    ansible_root_dir: "{{ _playbook_dir | regex_replace('/(core|optional|standalone)/.*', '') }}"
+
+- name: Extract service name from playbook path (avoids variable recursion)
+  set_fact:
+    _service_name: "{{ playbook_dir | regex_replace('.*/(core|optional|standalone)/([^/]+)(/.*)?$', '\\2') }}"
+
+- name: Construct domain+cluster vault file path
+  set_fact:
+    vault_file_path_domain_cluster: >-
+      {{ skstacks_vault_dir | default(ansible_root_dir) }}/{{ vault_base_dir }}/{{ env }}/{{ _service_name }}-{{ env }}-{{ vault_domain_safe }}-{{ vault_cluster }}_vault.yml
+  when: >-
+    vault_domain != ""
+    and vault_cluster != ""
+
+- name: Construct legacy vault file path
+  set_fact:
+    vault_file_path_legacy: >-
+      {{ skstacks_vault_dir | default(ansible_root_dir) }}/{{ vault_base_dir }}/{{ env }}/{{ _service_name }}-{{ env }}_vault.yml
+
+- name: Check if domain+cluster vault file exists
+  stat:
+    path: "{{ vault_file_path_domain_cluster }}"
+  register: vault_file_stat_domain_cluster
+  when: >-
+    vault_domain != ""
+    and vault_cluster != ""
+  become: false
+  check_mode: false
+  delegate_to: localhost
+
+- name: Set vault file path (domain+cluster if exists, else legacy)
+  set_fact:
+    vault_file_path: >-
+      {{
+        vault_file_path_domain_cluster
+        if (vault_domain != "" and vault_cluster != "" and vault_file_stat_domain_cluster.stat.exists | default(false))
+        else vault_file_path_legacy
+      }}
+
+- name: Display selected vault file
+  debug:
+    msg: >-
+      Selected vault file: {{ vault_file_path }}
+      {% if vault_domain != "" and vault_cluster != "" %}
+      (domain: {{ vault_domain }}, cluster: {{ vault_cluster }})
+      {% else %}
+      (legacy format - no domain/cluster specified)
+      {% endif %}
+
