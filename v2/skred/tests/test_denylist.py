@@ -162,3 +162,12 @@ def test_utf16_file_is_searched_not_skipped_as_binary(tmp_path):
     root = _tree(tmp_path)
     (root / "notes.txt").write_text("build host acmehost1003\n", encoding="utf-16")
     assert main([str(root), "--denylist", _deny(tmp_path, PAT)]) == 1
+
+
+def test_worktree_git_pointer_file_is_skipped(tmp_path):
+    # In a `git worktree`, .git is a FILE ("gitdir: /home/<user>/...") that
+    # holds a local path; it is plumbing, never content, so it must not match.
+    root = _tree(tmp_path)
+    (root / ".git").write_text("gitdir: /home/acmehost1003/repo/.git/worktrees/x\n")
+    (root / "a.md").write_text("fine\n")
+    assert main([str(root), "--denylist", _deny(tmp_path, PAT)]) == 0

@@ -54,6 +54,8 @@ def scan(root: str, patterns: list) -> tuple:
     for dirpath, dirnames, files in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         for name in files:
+            if name in SKIP_DIRS:
+                continue  # a git worktree's .git is a pointer FILE, not a directory
             path = os.path.join(dirpath, name)
             if not stat.S_ISREG(os.lstat(path).st_mode):
                 continue  # symlink, FIFO, socket, device
