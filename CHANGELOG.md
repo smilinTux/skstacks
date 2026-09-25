@@ -3,7 +3,7 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
-## Unreleased
+## skstacks-v2.12.0 - 2026-09-25
 
 - v1: second published v1 service, **skvector** (Qdrant), with dev and
   staging playbooks brought to prod parity (dropped the removed-`ipam`
