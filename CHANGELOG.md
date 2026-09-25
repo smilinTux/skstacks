@@ -3,6 +3,17 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased
+
+- v1: third published v1 service, **skpdf** (Stirling-PDF), with dev and
+  staging playbooks brought to prod parity (dropped the self-referencing
+  vault-select vars).
+
+Instance action: if you adopt v1 skpdf, set its vault values including
+`CLUSTERNAME` and `DOMAIN` (both now required, no estate default), and
+share `/var/data` across all nodes the same way skgraph and skvector
+require.
+
 ## skstacks-v2.12.0 - 2026-09-25
 
 - v1: second published v1 service, **skvector** (Qdrant), with dev and

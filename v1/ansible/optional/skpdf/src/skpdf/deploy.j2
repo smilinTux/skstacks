@@ -1,0 +1,152 @@
+#!/bin/bash
+set -e
+
+# SKPdf{% if env == 'prod' %}-Prod{% elif env == 'staging' %}-Staging{% else %}-Dev{% endif %} Deployment Script
+APP="skpdf"
+STACK_NAME=skpdf{% if env == 'prod' %}-prod{% elif env == 'staging' %}-staging{% else %}-dev{% endif %}
+
+SKPDF_CONFIG_DIR="/var/data/config/${STACK_NAME}"
+SKPDF_COMPOSE_FILE="${SKPDF_CONFIG_DIR}/docker-compose.yml"
+CONFIG_DIR="${SKPDF_CONFIG_DIR}"
+COMPOSE_FILE="${SKPDF_COMPOSE_FILE}"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+echo -e "${GREEN}🚀 Deploying ${STACK_NAME} stack (Stirling-PDF Document Tools)...${NC}"
+
+# Source environment variables (preserve CONFIG_DIR and COMPOSE_FILE)
+if [ -f "${SKPDF_CONFIG_DIR}/${APP}.sh.env" ]; then
+    echo -e "${YELLOW}📦 Loading environment variables...${NC}"
+    # Use unset to prevent any CONFIG_DIR or COMPOSE_FILE from env file
+    set -a
+    unset CONFIG_DIR COMPOSE_FILE 2>/dev/null || true
+    . "${SKPDF_CONFIG_DIR}/${APP}.sh.env"
+    set +a
+    # Restore critical variables (they may have been overwritten)
+    CONFIG_DIR="${SKPDF_CONFIG_DIR}"
+    COMPOSE_FILE="${SKPDF_COMPOSE_FILE}"
+fi
+
+# Export environment for docker
+export CLUSTER_NAME DOMAIN INSTANCE APP_ENV
+
+# Debug output
+echo -e "${BLUE}🔍 Debug info:${NC}"
+echo "STACK_NAME: ${STACK_NAME}"
+echo "CONFIG_DIR: ${CONFIG_DIR}"
+echo "COMPOSE_FILE: ${COMPOSE_FILE}"
+echo "PWD: $(pwd)"
+echo "Files in CONFIG_DIR: $(ls -la ${CONFIG_DIR}/ 2>/dev/null || echo 'CONFIG_DIR not found')"
+echo ""
+
+# Check if compose file exists
+if [ ! -f "${COMPOSE_FILE}" ]; then
+    echo -e "${RED}❌ Error: Compose file not found: ${COMPOSE_FILE}${NC}"
+    exit 1
+fi
+
+# Define networks with their subnets (idempotent network creation)
+# Networks are created if they don't exist, or verified if they do
+{% if env == 'prod' %}
+declare -A NETWORKS=(
+    ["skpdf-prod"]="172.16.71.0/24"
+    ["cloud-public-prod"]="172.16.200.0/24"
+)
+{% elif env == 'staging' %}
+declare -A NETWORKS=(
+    ["skpdf-staging"]="172.16.168.0/24"
+    ["cloud-public-staging"]="172.16.201.0/24"
+)
+{% else %}
+declare -A NETWORKS=(
+    ["skpdf-dev"]="172.16.169.0/24"
+    ["cloud-public-dev"]="172.16.202.0/24"
+)
+{% endif %}
+
+# Create or verify networks exist with correct subnets
+echo -e "${YELLOW}🌐 Ensuring networks exist...${NC}"
+for NETWORK_NAME in "${!NETWORKS[@]}"; do
+    SUBNET="${NETWORKS[$NETWORK_NAME]}"
+    
+    if docker network ls --format "{{ '{{' }}.Name{{ '}}' }}" | grep -q "^${NETWORK_NAME}$"; then
+        # Network exists - verify subnet matches
+        CURRENT_SUBNET=$(docker network inspect "${NETWORK_NAME}" --format "{{ '{{' }}.IPAM.Config{{ '}}' }}" 2>/dev/null | grep -o '"Subnet":"[^"]*"' | cut -d'"' -f4 | head -1 || echo "")
+        
+        if [ -n "$CURRENT_SUBNET" ] && [ "$CURRENT_SUBNET" != "$SUBNET" ]; then
+            echo -e "${YELLOW}⚠️  Network ${NETWORK_NAME} exists with subnet ${CURRENT_SUBNET}, expected ${SUBNET}${NC}"
+            echo -e "${YELLOW}   Removing network to recreate with correct subnet...${NC}"
+            docker network rm "${NETWORK_NAME}" 2>/dev/null || true
+            sleep 2
+            
+            # Recreate with correct subnet
+            if docker network create --driver overlay --attachable --subnet "${SUBNET}" "${NETWORK_NAME}" 2>/dev/null; then
+                echo -e "${GREEN}✓ Network ${NETWORK_NAME} recreated with subnet ${SUBNET}${NC}"
+                sleep 2
+            else
+                echo -e "${RED}❌ Failed to recreate network ${NETWORK_NAME}${NC}"
+                exit 1
+            fi
+        else
+            echo -e "${GREEN}✓ Network ${NETWORK_NAME} exists with correct subnet${NC}"
+        fi
+    else
+        # Network doesn't exist - create it
+        echo -e "${YELLOW}   Creating network ${NETWORK_NAME} with subnet ${SUBNET}...${NC}"
+        if docker network create --driver overlay --attachable --subnet "${SUBNET}" "${NETWORK_NAME}" 2>/dev/null; then
+            echo -e "${GREEN}✓ Network ${NETWORK_NAME} created successfully${NC}"
+            sleep 2
+        else
+            echo -e "${RED}❌ Failed to create network ${NETWORK_NAME}${NC}"
+            exit 1
+        fi
+    fi
+done
+
+echo -e "${GREEN}✓ All networks verified/created${NC}"
+echo ""
+
+# Deploy stack
+echo -e "${YELLOW}📝 Deploying stack configuration...${NC}"
+docker stack deploy \
+    -c "${COMPOSE_FILE}" \
+    --prune \
+    --with-registry-auth \
+    "${STACK_NAME}"
+
+# Wait for services to register
+sleep 5
+
+# Force update services
+echo -e "${YELLOW}🔄 Forcing service updates...${NC}"
+docker service update --force --detach=false ${STACK_NAME}_stirling-pdf || true
+
+# Wait for stabilization
+echo -e "${YELLOW}⏳ Waiting for services to stabilize...${NC}"
+sleep 10
+
+# Show service status
+echo -e "${GREEN}📊 Service Status:${NC}"
+docker service ls | grep "${STACK_NAME}"
+
+# Health check
+echo -e "${YELLOW}🏥 Checking service health...${NC}"
+PDF_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_stirling-pdf" --format "{{ '{{.Replicas}}' }}")
+
+if [[ "$PDF_REPLICAS" == "1/1" ]]; then
+    echo -e "${GREEN}✅ ${STACK_NAME} is healthy and running!${NC}"
+    echo -e "${GREEN}🌐 Access at: https://skpdf{% if env == 'staging' %}-staging{% elif env == 'dev' %}-dev{% endif %}.${CLUSTERNAME}.${DOMAIN}${NC}"
+    echo -e "${GREEN}📋 Stirling-PDF service: ${STACK_NAME}_stirling-pdf${NC}"
+else
+    echo -e "${RED}⚠️  ${STACK_NAME} health check issues:${NC}"
+    echo -e "${YELLOW}📋 Stirling-PDF: ${PDF_REPLICAS}${NC}"
+    echo -e "${YELLOW}📋 Recent logs:${NC}"
+    docker service logs --tail 20 ${STACK_NAME}_stirling-pdf
+fi
+
+echo -e "${GREEN}✨ Deployment complete!${NC}"
