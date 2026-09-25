@@ -1,0 +1,37 @@
+#cloud-config
+hostname: ${hostname}
+manage_etc_hosts: true
+users:
+  - name: ${admin_user}
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ${ssh_public_key}
+ssh_pwauth: false
+package_update: true
+packages:
+  - linux-generic-hwe-24.04
+  - qemu-guest-agent
+  - python3-docker
+  - ca-certificates
+  - curl
+runcmd:
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+  - sh -c 'echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list'
+  - apt-get update
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+  - usermod -aG docker ${admin_user}
+  - systemctl enable docker qemu-guest-agent
+%{ if k3d ~}
+  - curl -fsSL https://github.com/k3d-io/k3d/releases/download/v5.8.3/k3d-linux-amd64 -o /usr/local/bin/k3d
+  - curl -fsSL https://dl.k8s.io/release/v1.31.5/bin/linux/amd64/kubectl -o /usr/local/bin/kubectl
+  - chmod 0755 /usr/local/bin/k3d /usr/local/bin/kubectl
+%{ endif ~}
+# Reboot once so the HWE kernel is the running kernel before anything deploys.
+power_state:
+  mode: reboot
+  condition: true
