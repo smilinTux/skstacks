@@ -37,9 +37,8 @@ for cmd in k3d kubectl; do
 done
 
 echo "==> Creating k3d cluster '${K3D_CLUSTER_NAME}' (config: ${K3D_CONFIG})"
-k3d cluster create \
-  --config "${CLUSTER_CONFIG}" \
-  --name "${K3D_CLUSTER_NAME}"
+k3d cluster create "${K3D_CLUSTER_NAME}" \
+  --config "${CLUSTER_CONFIG}"
 
 echo "==> Merging kubeconfig..."
 "${SCRIPT_DIR}/kubeconfig-merge.sh"

@@ -1,0 +1,154 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# Shared task: Create Docker Swarm overlay networks from app_networks variable
+#
+# ⚠️ IMPORTANT: Network Subnet Management
+# Before using this task, ensure the network subnets are recorded in shared/networks
+# This file is the single source of truth for all Docker Swarm overlay network subnets.
+#
+# When creating a new service:
+# 1. Check shared/networks to find an available subnet
+# 2. Add the network entry to shared/networks
+# 3. Use the subnet in app_networks variable below
+# 4. Verify no conflicts with existing networks
+#
+# Expected variable structure (preferably from vault):
+# app_networks:
+#   - name: "cloud-edge-{{ env }}"
+#     subnet: "172.16.50.0/24"  # ← Must match shared/networks
+#   - name: "cloud-public-{{ env }}"
+#     subnet: "172.16.200.0/24"  # ← Must match shared/networks
+#   - name: "cloud-socket-proxy-{{ env }}"
+#     subnet: "172.16.25.0/24"  # ← Must match shared/networks
+#
+# Reference: See shared/networks for all registered network subnets
+# Documentation: See docs/DEPLOYMENT_TEMPLATE_GUIDE.md for network configuration guide
+
+- name: Debug app_networks variable
+  debug:
+    msg: "Creating networks: {{ app_networks | default([]) }}"
+  run_once: true
+
+- name: Check existing network configuration
+  shell: |
+    echo "Checking network {{ item.name }}..."
+    if docker network ls --format "{{ '{{' }}.Name{{ '}}' }}" | grep -q "^{{ item.name }}$"; then
+      echo "Network {{ item.name }} exists"
+      CURRENT_SUBNET=$(docker network inspect {{ item.name }} --format "{{ '{{' }}.IPAM.Config{{ '}}' }}" | grep -o '"Subnet":"[^"]*"' | cut -d'"' -f4 | head -1)
+      if [ "$CURRENT_SUBNET" != "{{ item.subnet }}" ]; then
+        echo "Network {{ item.name }} has subnet $CURRENT_SUBNET, updating to {{ item.subnet }}"
+        docker network rm {{ item.name }} 2>/dev/null || true
+        echo "update_required"
+      else
+        echo "Network {{ item.name }} already has correct subnet {{ item.subnet }}"
+        echo "no_update"
+      fi
+    else
+      echo "Network {{ item.name }} does not exist"
+      echo "create_required"
+    fi
+  loop: "{{ app_networks }}"
+  loop_control:
+    label: "{{ item.name }} ({{ item.subnet }})"
+  register: network_check
+  ignore_errors: true
+  run_once: true
+
+- name: Remove networks that need subnet updates
+  shell: |
+    echo "Removing network {{ item.item.name }} for subnet update..."
+    docker network rm {{ item.item.name }}
+  loop: "{{ network_check.results | selectattr('stdout', 'match', 'update_required') | list }}"
+  loop_control:
+    label: "{{ item.item.name }} (removing for update)"
+  when: network_check is defined and network_check.results is defined
+  ignore_errors: true
+  run_once: true
+
+- name: Create or recreate networks with correct subnets
+  shell: |
+    set -e
+    echo "Creating/updating network {{ item.name }} with subnet {{ item.subnet }}..."
+    if docker network ls --format "{{ '{{' }}.Name{{ '}}' }}" | grep -q "^{{ item.name }}$"; then
+      echo "Network {{ item.name }} already exists - checking if it's usable..."
+      # Check if network is in use by trying to inspect it
+      if docker network inspect {{ item.name }} >/dev/null 2>&1; then
+        echo "Network {{ item.name }} exists and is accessible"
+      else
+        echo "Network {{ item.name }} exists but is not accessible - this may cause deployment issues"
+      fi
+    else
+      echo "Network {{ item.name }} does not exist - creating..."
+      if docker network create --driver overlay --attachable --subnet "{{ item.subnet }}" "{{ item.name }}"; then
+        echo "Network {{ item.name }} created successfully"
+        # Wait a moment for network to propagate
+        sleep 2
+      else
+        echo "ERROR: Failed to create network {{ item.name }}"
+        exit 1
+      fi
+    fi
+  loop: "{{ app_networks }}"
+  loop_control:
+    label: "{{ item.name }} ({{ item.subnet }})"
+  register: network_create_result
+  failed_when: network_create_result.rc != 0
+  run_once: true
+
+- name: Display network creation result
+  debug:
+    msg: "{{ network_create_result.results | default([]) | map(attribute='stdout_lines') | list }}"
+  run_once: true
+  when: network_create_result is defined
+
+- name: Verify networks were created
+  shell: |
+    set -e
+    echo "Verifying networks exist..."
+    for network in {{ app_networks | map(attribute='name') | join(' ') }}; do
+      if docker network ls --format "{{ '{{' }}.Name{{ '}}' }}" | grep -q "^${network}$"; then
+        echo "✓ Network ${network} exists"
+      else
+        echo "✗ Network ${network} does NOT exist - attempting to create..."
+        # Get subnet for this network
+        SUBNET=$(echo '{{ app_networks | to_json }}' | jq -r ".[] | select(.name==\"${network}\") | .subnet")
+        if [ -n "$SUBNET" ]; then
+          docker network create --driver overlay --attachable --subnet "$SUBNET" "${network}" || true
+          sleep 2
+          if docker network ls --format "{{ '{{' }}.Name{{ '}}' }}" | grep -q "^${network}$"; then
+            echo "✓ Network ${network} created successfully"
+          else
+            echo "✗ Failed to create network ${network}"
+            exit 1
+          fi
+        else
+          echo "✗ Could not find subnet for network ${network}"
+          exit 1
+        fi
+      fi
+    done
+    echo "All networks verified/created successfully"
+  register: network_verify
+  failed_when: network_verify.rc != 0
+  run_once: true
+
+- name: Display network verification results
+  debug:
+    msg: "{{ network_verify.stdout_lines | default([]) }}"
+  when: network_verify is defined
+  run_once: true
+

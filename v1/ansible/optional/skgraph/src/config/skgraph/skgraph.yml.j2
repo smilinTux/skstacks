@@ -1,0 +1,80 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+version: '3.8'
+
+services:
+  falkordb:
+    image: falkordb/falkordb:{{ skgraph.FALKORDB_VERSION | default('latest') }}
+    env_file: /var/data/config/skgraph-{{ env }}/skgraph.env
+    logging:
+      driver: json-file
+      options:
+        max-size: "{{ skgraph.LOG_MAX_SIZE | default('10m') }}"
+        max-file: "{{ skgraph.LOG_MAX_FILES | default('3') }}"
+    volumes:
+      # Main data storage - NFS backed for persistence.
+      # NOTE: falkordb/falkordb stores its RDB/AOF under /var/lib/falkordb/data
+      # (NOT /data). Binding the NFS dir at the image's real data dir is what
+      # makes the graph data actually persist across container reschedules.
+      - /var/data/skgraph-{{ env }}/data:/var/lib/falkordb/data
+    ports:
+      # Publish FalkorDB on the host via the swarm ingress routing mesh so
+      # external clients can reach it directly at
+      # <any-node-ip>:16379. Redis protocol on container port 6379.
+      - target: 6379
+        published: {{ skgraph.PUBLISHED_PORT | default('16379') }}
+        protocol: tcp
+        mode: ingress
+    networks:
+      - skgraph-{{ env }}
+      - cloud-public-{{ env }}
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    deploy:
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 120s
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      resources:
+        limits:
+          cpus: '{{ skgraph.RESOURCES_LIMITS_CPUS | default("2.00") }}'
+          memory: {{ skgraph.RESOURCES_LIMITS_MEMORY | default("2048M") }}
+        reservations:
+          cpus: '{{ skgraph.RESOURCES_RESERVATIONS_CPUS | default("0.50") }}'
+          memory: {{ skgraph.RESOURCES_RESERVATIONS_MEMORY | default("512M") }}
+      # FalkorDB uses Redis protocol (TCP 6379) - no web UI
+      # Access via internal overlay network from other services
+      # No Traefik labels needed
+
+networks:
+  skgraph-{{ env }}:
+    external: true
+  cloud-public-{{ env }}:
+    external: true

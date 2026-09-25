@@ -1,0 +1,205 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# Select Manager Node with Failover
+# This task set selects an available manager node from the inventory
+# with failover logic: tries each manager sequentially until one is available
+#
+# Usage in playbook:
+#   - hosts: localhost
+#     gather_facts: false
+#     tasks:
+#       - import_tasks: ../../shared/tasks/select_manager_node.yml
+#         vars:
+#           target_group: "{{ manager_group | default('swarm_managers') }}"
+#
+#   - hosts: "{{ selected_manager }}"
+#     # ... rest of playbook
+#
+# Variables:
+#   - target_group: Inventory group to select from (default: swarm_managers)
+#     If playbook is run with -l <hostname>, Ansible limits hosts automatically
+#
+# Behavior:
+#   1. Gets all managers from target_group
+#   2. If ansible_limit is set (via -l), filters to matching managers
+#   3. Tries each manager sequentially until one is reachable
+#   4. Sets selected_manager fact for use in next play
+
+- name: Initialize selected_manager early
+  set_fact:
+    selected_manager: "{{ selected_manager | default('') }}"
+    forced_manager: "{{ force_manager | default('') }}"
+    target_group_name: "{{ target_group | default('swarm_managers') }}"
+
+- name: Use forced manager if specified
+  set_fact:
+    selected_manager: "{{ forced_manager }}"
+    manager_nodes: "{{ [forced_manager] }}"
+  when: forced_manager != ""
+
+- name: Get manager nodes from target group
+  set_fact:
+    all_manager_nodes: >-
+      {{
+        groups[target_group | default('swarm_managers')]
+        | default([])
+      }}
+    target_group_name: "{{ target_group | default('swarm_managers') }}"
+  when: forced_manager == ""
+  failed_when: false
+
+- name: Fallback to explicit manager list if groups not accessible
+  set_fact:
+    all_manager_nodes: "{{ explicit_manager_list.split(',') | map('trim') | list }}"
+  when: >-
+    forced_manager == ""
+    and (all_manager_nodes is not defined or all_manager_nodes | length == 0)
+    and explicit_manager_list is defined
+    and explicit_manager_list != ""
+  failed_when: false
+
+- name: Debug explicit manager list fallback
+  debug:
+    msg: >-
+      Using explicit_manager_list fallback: {{ explicit_manager_list }},
+      Parsed managers: {{ all_manager_nodes | default([]) }}
+  when: >-
+    forced_manager == ""
+    and explicit_manager_list is defined
+    and explicit_manager_list != ""
+    and (all_manager_nodes is not defined or all_manager_nodes | length == 0)
+  failed_when: false
+
+- name: Debug inventory groups access
+  debug:
+    msg: >-
+      Target group: {{ target_group_name | default(target_group | default('swarm_managers')) }},
+      Groups available: {{ groups.keys() | list | join(', ') }},
+      Target group exists: {{ (target_group_name | default(target_group | default('swarm_managers'))) in groups.keys() }},
+      Manager nodes found: {{ all_manager_nodes | default([]) | length }}
+  when: forced_manager == "" and all_manager_nodes is defined
+  failed_when: false
+
+- name: Get limited hosts if -l was used
+  set_fact:
+    limited_hosts: "{{ ansible_play_hosts_all | default(ansible_play_hosts) | default(groups['all']) | default([]) }}"
+  when: forced_manager == ""
+
+- name: Filter managers to only those in the current limit
+  set_fact:
+    manager_nodes: >-
+      {{
+        all_manager_nodes
+        | intersect(limited_hosts)
+        | list
+      }}
+  when: >-
+    forced_manager == ""
+    and limited_hosts is defined
+    and limited_hosts | length > 0
+
+- name: Use all manager nodes if no limit was used
+  set_fact:
+    manager_nodes: "{{ all_manager_nodes | default([]) }}"
+  when: >-
+    forced_manager == ""
+    and (manager_nodes is not defined
+    or (limited_hosts is defined and limited_hosts | length == 0))
+    and all_manager_nodes is defined
+    and all_manager_nodes | length > 0
+
+- name: Check if manager nodes list is empty
+  fail:
+    msg: >-
+      No manager nodes found in group
+      '{{ target_group | default('swarm_managers') }}'.
+      Check inventory configuration.
+  when: >-
+    forced_manager == ""
+    and manager_nodes | length == 0
+
+- name: Ensure selected_manager is initialized
+  set_fact:
+    selected_manager: "{{ selected_manager | default('') }}"
+  when: forced_manager == "" and selected_manager is not defined
+
+- name: Try each manager node until one is reachable
+  when: forced_manager == ""
+  block:
+    - name: Check manager connectivity
+      wait_for_connection:
+        timeout: 5
+      delegate_to: "{{ item }}"
+      register: manager_check
+      failed_when: false
+      retries: 2
+      delay: 2
+      check_mode: false
+      loop: "{{ manager_nodes }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Select first available manager
+      set_fact:
+        selected_manager: "{{ item.item }}"
+      when: >-
+        selected_manager == ""
+        and not item.failed | default(true)
+      loop: "{{ manager_check.results | default([]) }}"
+      failed_when: false
+
+  rescue:
+    - name: Set first manager as fallback if checks fail
+      set_fact:
+        selected_manager: "{{ manager_nodes[0] }}"
+      when: selected_manager == ""
+
+- name: Set default manager if not selected (check mode or all skipped)
+  set_fact:
+    selected_manager: "{{ manager_nodes[0] }}"
+  when: >-
+    forced_manager == ""
+    and selected_manager == ""
+    and manager_nodes | length > 0
+
+- name: Verify at least one manager is available
+  fail:
+    msg: >-
+      No available manager nodes found in
+      {{ target_group | default('swarm_managers') }}.
+      Tried: {{ manager_nodes | join(', ') }}
+  when: >-
+    forced_manager == ""
+    and (selected_manager == ""
+    or (manager_nodes | length == 0))
+
+- name: Display selected manager node
+  debug:
+    msg: >-
+      ✓ Selected manager node: {{ selected_manager }}
+      (from {{ manager_nodes | default([]) | length }} available managers in
+      {{ target_group | default('swarm_managers') }})
+      Manager nodes: {{ manager_nodes | default([]) | join(', ') }}
+      All manager nodes: {{ all_manager_nodes | default([]) | join(', ') }}
+      Explicit manager list: {{ explicit_manager_list | default('not provided') }}
+
+- name: Add selected manager as a dynamic host
+  add_host:
+    name: "{{ selected_manager }}"
+    groups: selected_manager_group
+  when: selected_manager is defined and selected_manager != ""
+  tags: always

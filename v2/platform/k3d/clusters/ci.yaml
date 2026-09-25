@@ -13,6 +13,11 @@ agents: 0
 # No ports block — no load balancer container spun up.
 # CI tests use kubectl port-forward or NodePort services.
 
+kubeAPI:
+  # Bind to all interfaces so the CI runner (potentially in a container) can reach it
+  host: "0.0.0.0"
+  hostPort: "6443"
+
 options:
   k3s:
     extraArgs:
@@ -41,7 +46,3 @@ options:
       - label: skstacks.io/platform=k3d
         nodeFilters:
           - server:*
-  kubeAPI:
-    # Bind to all interfaces so the CI runner (potentially in a container) can reach it
-    host: "0.0.0.0"
-    hostPort: "6443"
