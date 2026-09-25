@@ -1,4 +1,6 @@
 ---
+# Plays are tagged: bootstrap (preflight, firewall, init, join), ha (keepalived VIP),
+# traefik. `--tags bootstrap` builds just the swarm; no tags runs everything.
 # deploy.yml — Full Docker Swarm cluster bootstrap and stack deployment.
 #
 # Usage:
@@ -17,6 +19,7 @@
 # ─── 1. Preflight ────────────────────────────────────────────────────────────
 - name: Preflight — verify Docker is installed on all nodes
   hosts: swarm_managers:swarm_workers
+  tags: [bootstrap]
   become: true
   gather_facts: false
   tasks:
@@ -35,6 +38,7 @@
 # ─── 2. Firewall ─────────────────────────────────────────────────────────────
 - name: Configure UFW firewall on all nodes
   hosts: swarm_managers:swarm_workers
+  tags: [bootstrap]
   become: true
   roles:
     - role: swarm-firewall
@@ -42,6 +46,7 @@
 # ─── 3. Init — bootstrap leader ──────────────────────────────────────────────
 - name: Initialize swarm on the primary manager
   hosts: swarm_manager_primary
+  tags: [bootstrap]
   become: true
   roles:
     - role: swarm-init
@@ -49,6 +54,7 @@
 # ─── 4. Join — additional managers ───────────────────────────────────────────
 - name: Join additional manager nodes
   hosts: swarm_managers:!swarm_manager_primary
+  tags: [bootstrap]
   become: true
   vars:
     swarm_node_role: manager
@@ -63,6 +69,7 @@
 # ─── 5. Join — workers ───────────────────────────────────────────────────────
 - name: Join worker nodes
   hosts: swarm_workers
+  tags: [bootstrap]
   become: true
   vars:
     swarm_node_role: worker
@@ -76,6 +83,7 @@
 # ─── 6. HA — keepalived VIP ──────────────────────────────────────────────────
 - name: Deploy keepalived VRRP VIP on manager nodes
   hosts: swarm_managers
+  tags: [ha]
   become: true
   roles:
     - role: swarm-ha
@@ -83,6 +91,7 @@
 # ─── 7. Traefik stack ────────────────────────────────────────────────────────
 - name: Deploy Traefik v3 stack
   hosts: swarm_manager_primary
+  tags: [traefik]
   become: true
   vars:
     stack_name: traefik
