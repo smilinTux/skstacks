@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  stirling-pdf:
+    image: frooodle/s-pdf:{{ skpdf.IMAGE_TAG | default('latest') }}
+    env_file: /var/data/config/skpdf-{{ env }}/skpdf.env
+    logging:
+      driver: json-file
+      options:
+        max-size: 4m
+        max-file: "1"
+    volumes:
+      # OCR training data (Tesseract language files)
+      - /var/data/skpdf-{{ env }}/trainingData:/usr/share/tessdata
+      # Stirling-PDF configuration files
+      - /var/data/skpdf-{{ env }}/extraConfigs:/configs
+      # Custom files (templates, fonts, etc.)
+      - /var/data/skpdf-{{ env }}/customFiles:/customFiles
+      # Pipeline configurations
+      - /var/data/skpdf-{{ env }}/pipeline:/pipeline
+      # Logs directory
+      - /var/data/skpdf-{{ env }}/logs:/logs
+    networks:
+      - skpdf-{{ env }}
+      - cloud-public-{{ env }}
+    deploy:
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          memory: {{ skpdf.MEMORY_LIMIT | default('2G') }}
+        reservations:
+          memory: {{ skpdf.MEMORY_RESERVATION | default('512M') }}
+      labels:
+        # === TRAEFIK: HTTP ===
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        # === TRAEFIK: ROUTERS ===
+        - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skpdf.CLUSTERNAME }}.{{ skpdf.DOMAIN }}`)"
+        - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
+        - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
+        - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
+        - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
+        # 2026-08-16: the skpdf-*-upload buffering middleware below was DEFINED but
+        # never attached to this router, so MAX_UPLOAD_SIZE / MAX_RESPONSE_SIZE had
+        # no effect and large PDFs hit Traefik's defaults. Appended to the chain.
+        # Bare name resolves within the same (swarm) provider, i.e. ...-upload@swarm.
+        - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares=default-no-crowdsec@file,skpdf{% if env != 'prod' %}-{{ env }}{% endif %}-upload"
+        - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.service=skpdf{% if env != 'prod' %}-{{ env }}{% endif %}"
+        # === TRAEFIK: SERVICES ===
+        - "traefik.http.services.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=8080"
+{% if skpdf.LARGE_FILE_UPLOAD | default(true) %}
+        # === LARGE FILE UPLOAD: Enable for PDF processing ===
+        # PDF files can be large, increase upload limits
+        - "traefik.http.middlewares.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}-upload.buffering.maxRequestBodyBytes={{ skpdf.MAX_UPLOAD_SIZE | default('500000000') }}"
+        - "traefik.http.middlewares.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}-upload.buffering.maxResponseBodyBytes={{ skpdf.MAX_RESPONSE_SIZE | default('500000000') }}"
+{% endif %}
+
+networks:
+  cloud-public-{{ env }}:
+    external: true
+  skpdf-{{ env }}:
+    external: true
