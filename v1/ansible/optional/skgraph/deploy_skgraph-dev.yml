@@ -39,10 +39,6 @@
   pre_tasks:
     - name: Select vault file based on domain and cluster
       import_tasks: ../../shared/tasks/select_vault_file.yml
-      vars:
-        service_name: "{{ service_name }}"
-        env: "{{ env }}"
-        service_type: "{{ service_type }}"
 
     - name: Load vault file
       include_vars: "{{ vault_file_path }}"
