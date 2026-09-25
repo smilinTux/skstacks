@@ -3,6 +3,16 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased
+
+- v1: second published v1 service, **skvector** (Qdrant), with dev and
+  staging playbooks brought to prod parity (dropped the removed-`ipam`
+  docker_network task, added the control script symlink task).
+
+Instance action: if you adopt v1 skvector, set its vault values including
+`CLUSTERNAME` and `DOMAIN` (both now required, no estate default), and
+share `/var/data` across all nodes the same way skgraph requires.
+
 ## skstacks-v2.11.0 - 2026-09-25
 
 - tofu: `v2/infra/tofu/modules/libvirt-cluster` (local KVM VMs, Ubuntu 24.04
