@@ -1,0 +1,26 @@
+# skmem-pg — LOCAL single-user run.  `docker compose up -d` → ready skmemory store.
+# Builds the custom image (pgvector + pg_search BM25 + AGE) and runs init SQL on first boot.
+services:
+  skmem-pg:
+    build: ./image
+    image: skmem-pg:pg17-bm25-age
+    container_name: skmem-pg
+    restart: unless-stopped
+    command: ["-c", "shared_preload_libraries=pg_search,age"]
+    environment:
+      POSTGRES_PASSWORD: ${SKMEM_PG_PASSWORD:-skmemory}
+      POSTGRES_DB: skmemory
+    ports:
+      - "${SKMEM_PG_PORT:-5432}:5432"          # use 5433 if 5432 is taken
+    volumes:
+      - skmem_pgdata:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro   # runs once on fresh volume
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+volumes:
+  skmem_pgdata:
+# Embedding: point your skmemory client at an mxbai-embed-large endpoint
+#   SKMEMORY_EMBED_URL=http://<host>:11434/api/embed  SKMEMORY_EMBED_MODEL=mxbai-embed-large
