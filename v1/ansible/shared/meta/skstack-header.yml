@@ -20,7 +20,7 @@
   gather_facts: false
   vars:
     skstack_banner_path: "{{ playbook_dir }}/../../banners/skstack-header.txt"
-    meta_git_commit: "{{ lookup('file', playbook_dir + '/skstack-git-meta.txt') | default('N/A', true) }}"
+    meta_git_commit: "{{ lookup('file', playbook_dir + '/skstack-git-meta.txt', errors='ignore') | default('N/A', true) }}"
     meta_timestamp: "2025-05-09T21:17:42-04:00"
     meta_author: "SKStacks maintainers"
     meta_project: "Skstack Platform"
