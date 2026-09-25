@@ -1,3 +1,5 @@
+-- Rendered by Ansible (template). Instances may set skmem_pg_default_agent
+-- and skmem_pg_graph; runs once, on a fresh data volume.
 -- skmem-pg init — runs once on a fresh data volume (/docker-entrypoint-initdb.d).
 -- Requires the container to start with: -c shared_preload_libraries=pg_search,age
 -- Produces a ready skmemory store: pgvector + pg_search(BM25, stemming) + AGE + hybrid fns.
@@ -17,7 +19,7 @@ CREATE TABLE IF NOT EXISTS docs (
   meta        jsonb DEFAULT '{}'::jsonb,
   embedding   vector(1024),                 -- mxbai-embed-large
   emb_bge_legal vector(1024),               -- optional legacy/legal backup column
-  agent       text DEFAULT 'default',
+  agent       text DEFAULT '{{ skmem_pg_default_agent | default('default') }}',
   tsv         tsvector GENERATED ALWAYS AS (to_tsvector('english', COALESCE(content,''))) STORED
 );
 CREATE TABLE IF NOT EXISTS memories (
@@ -34,7 +36,7 @@ CREATE TABLE IF NOT EXISTS memories (
   memory_json jsonb NOT NULL,
   embedding   vector(1024),
   emb_bge_legal vector(1024),
-  agent       text DEFAULT 'default',
+  agent       text DEFAULT '{{ skmem_pg_default_agent | default('default') }}',
   tsv         tsvector GENERATED ALWAYS AS (
                 to_tsvector('english', COALESCE(title,'')||' '||COALESCE(content,'')||' '||COALESCE(summary,''))) STORED
 );
@@ -82,6 +84,6 @@ $$ LANGUAGE sql STABLE;
 
 -- ---- AGE graph (per-agent knowledge graph) ----
 LOAD 'age'; SET search_path = ag_catalog, "$user", public;
-SELECT create_graph('agent_knowledge');
+SELECT create_graph('{{ skmem_pg_graph | default('agent_knowledge') }}');
 
 ALTER DATABASE skmemory SET paradedb.check_topk_scan = false;

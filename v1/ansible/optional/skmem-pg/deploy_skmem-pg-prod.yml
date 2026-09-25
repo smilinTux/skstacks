@@ -64,7 +64,7 @@
         - { p: "/var/data/runtime/{{ app }}-{{ env }}/postgres", m: "0700" }
         - { p: "/var/data/{{ app }}-{{ env }}/database-dump",    m: "0750" }
     - name: Install {{ app }} init SQL (runs once on a fresh volume; :ro-mounted by the stack)
-      copy: { src: "{{ playbook_dir }}/init/01-init-skmem-pg.sql", dest: "/var/data/config/{{ app }}-{{ env }}/init/01-init-skmem-pg.sql", mode: "0644" }
+      template: { src: "{{ playbook_dir }}/init/01-init-skmem-pg.sql.j2", dest: "/var/data/config/{{ app }}-{{ env }}/init/01-init-skmem-pg.sql", mode: "0644" }
       tags: [init]
     - name: Process {{ app }} env templates
       template: { src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}", dest: "{{ item.dest }}", mode: '0640' }
