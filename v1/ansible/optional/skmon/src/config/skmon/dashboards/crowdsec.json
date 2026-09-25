@@ -1,0 +1,29 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [],
+  "refresh": "30s",
+  "schemaVersion": 27,
+  "style": "dark",
+  "tags": ["crowdsec", "security"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "CrowdSec Security (Placeholder - Create custom dashboard)",
+  "uid": "crowdsec",
+  "version": 0,
+  "description": "This is a placeholder dashboard. To enable:\n1. Check if CrowdSec exposes Prometheus metrics endpoint\n2. Uncomment crowdsec job in prometheus.yml.j2 if metrics available\n3. Create custom dashboard using CrowdSec metrics\n4. Recommended metrics (if available):\n   - Threats blocked: crowdsec_threats_blocked_total\n   - IPs banned: crowdsec_ips_banned_total\n   - Decision rates: crowdsec_decisions_*"
+}
+

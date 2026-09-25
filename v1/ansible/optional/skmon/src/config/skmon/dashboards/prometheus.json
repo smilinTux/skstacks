@@ -1,0 +1,29 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [],
+  "refresh": "30s",
+  "schemaVersion": 27,
+  "style": "dark",
+  "tags": ["prometheus", "monitoring"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Prometheus Self-Monitoring (Placeholder - Import from Grafana.com or create custom)",
+  "uid": "prometheus",
+  "version": 0,
+  "description": "This is a placeholder dashboard. To enable:\n1. Uncomment prometheus-self job in prometheus.yml.j2\n2. Import dashboard ID 3662 from Grafana.com\n3. Or create custom dashboard using Prometheus self-metrics\n4. Recommended metrics:\n   - Scrape targets: up\n   - Scrape duration: prometheus_target_interval_length_seconds\n   - Storage: prometheus_tsdb_*"
+}
+

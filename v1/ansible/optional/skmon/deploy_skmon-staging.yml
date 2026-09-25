@@ -1,0 +1,218 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# skmon: monitoring + tracing stack (Prometheus, Grafana, Loki, Promtail,
+# cAdvisor, node-exporter, Alertmanager, Jaeger) — adapted from
+# optional/skgraph and optional/skmem-pg SOP.
+# TODO before deploy: register the skmon-{{ env }} overlay subnet in
+# shared/networks (pick a free /24 if these placeholders collide on your
+# estate); set the skmon vault vars (see src/config/skmon/skmon.env.j2 and
+# skmon.sh.env.j2 for the full list); ensure images are pullable on swarm
+# nodes.
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+# Step 1: Select manager node with failover
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+# Step 2: Deploy to selected manager
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skmon
+    env: staging
+    service_name: skmon
+    service_type: optional
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Define network variables (⚠️ TODO register subnet in shared/networks — placeholder)
+      # Networks are created idempotently by the create_networks.yml shared
+      # task below. Reference: See shared/networks for all registered
+      # network subnets.
+      set_fact:
+        app_networks: "{{ skmon.networks | default([
+          { 'name': 'skmon-staging', 'subnet': '172.16.224.0/24', 'driver': 'overlay', 'attachable': true },
+          { 'name': 'cloud-public-staging', 'subnet': '172.16.201.0/24', 'driver': 'overlay', 'attachable': true }
+        ]) }}"
+      tags:
+        - networks
+        - config
+
+  tasks:
+    - name: Deploying {{ app }}
+      debug:
+        msg: Running SKStacks deploy {{ app }} scripts...
+
+    - name: Create the {{ app }} directories
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "/var/data/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/prometheus/data", owner: "65534", group: "65534", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/grafana/data", owner: "472", group: "472", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/loki-data", owner: "10001", group: "10001", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/loki-data/rules", owner: "10001", group: "10001", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/loki-data/chunks", owner: "10001", group: "10001", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/loki-data/tsdb-index", owner: "10001", group: "10001", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/loki-data/tsdb-cache", owner: "10001", group: "10001", mode: "0755" }
+        - { path: "/var/data/config/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/config/{{ app }}-{{ env }}/prometheus", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/config/{{ app }}-{{ env }}/grafana/provisioning/datasources", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/config/{{ app }}-{{ env }}/grafana/provisioning/dashboards", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/config/{{ app }}-{{ env }}/loki", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/config/{{ app }}-{{ env }}/promtail", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/config/{{ app }}-{{ env }}/alertmanager", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/alertmanager/data", owner: "root", group: "root", mode: "0777" }
+        - { path: "/var/data/{{ app }}-{{ env }}/jaeger/badger", owner: "root", group: "root", mode: "0777" }
+        - { path: "/var/data/{{ app }}-{{ env }}/jaeger/badger/key", owner: "root", group: "root", mode: "0777" }
+        - { path: "/var/data/{{ app }}-{{ env }}/jaeger/badger/value", owner: "root", group: "root", mode: "0777" }
+        - { path: "/var/data/logs/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/logs/{{ app }}-{{ env }}/prometheus", owner: "65534", group: "65534", mode: "0755" }
+        - { path: "/var/data/logs/{{ app }}-{{ env }}/grafana", owner: "472", group: "472", mode: "0755" }
+        - { path: "/var/data/logs/{{ app }}-{{ env }}/loki", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/logs/{{ app }}-{{ env }}/promtail", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/logs/{{ app }}-{{ env }}/cadvisor", owner: "root", group: "root", mode: "0755" }
+
+    - name: Process {{ app }} environment templates
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: '0640'
+      loop:
+        - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env" }
+        - { src: "{{ app }}.sh.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env" }
+      tags:
+        - templates
+
+    - name: Process {{ app }} configuration templates
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - { src: "prometheus.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/prometheus/prometheus.yml" }
+        - { src: "grafana-datasources.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/grafana/provisioning/datasources/datasources.yml" }
+        - { src: "grafana-dashboards.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/grafana/provisioning/dashboards/dashboards.yml" }
+        - { src: "loki-config.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/loki/local-config.yaml" }
+        - { src: "promtail-config.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/promtail/promtail-config.yaml" }
+        - { src: "alertmanager-config.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/alertmanager/config.yml" }
+      tags:
+        - config
+
+    - name: Copy dashboard JSON files
+      copy:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/dashboards/{{ item }}"
+        dest: "/var/data/config/{{ app }}-{{ env }}/grafana/provisioning/dashboards/{{ item }}"
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - docker-swarm.json
+        - traefik.json
+        - prometheus.json
+        - grafana.json
+        - crowdsec.json
+        - qdrant.json
+        - forgejo.json
+      tags:
+        - dashboards
+
+    - name: Process {{ app }} Docker Compose template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags:
+        - compose
+
+    - name: Create docker-compose.yml symlink
+      file:
+        src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags:
+        - compose
+
+    # Traefik routing is configured via Docker labels (Docker provider).
+    # No file provider deployment needed - all labels are in the compose
+    # file. Certificates: provided by traefik-certs-dumper (runs on the
+    # ACME master node of your edge/ingress stack).
+
+    - name: Process deploy script template
+      template:
+        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/deploy"
+        owner: root
+        group: root
+        mode: '0755'
+      tags:
+        - deploy-script
+
+    - name: Create {{ app }} control script symlink
+      file:
+        src: "/var/data/{{ app }}-{{ env }}/deploy"
+        dest: "/var/data/deploy_{{ app }}-{{ env }}"
+        force: yes
+        owner: root
+        group: root
+        mode: '0755'
+        state: link
+      tags:
+        - deploy-script
+
+    - name: Ensure overlay networks exist from app_networks variable
+      include_tasks: ../../shared/tasks/create_networks.yml
+      tags:
+        - networks
+
+    - name: Deploy {{ app }} stack
+      shell: |
+        cd /var/data/{{ app }}-{{ env }}
+        ./deploy
+      register: deploy_output
+      tags:
+        - deploy
+
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags:
+        - deploy

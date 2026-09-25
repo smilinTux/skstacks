@@ -1,0 +1,277 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+version: '3.8'
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - /var/data/config/skmon-{{ env }}/prometheus:/etc/prometheus:ro
+      - /var/data/skmon-{{ env }}/prometheus/data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time={{ skmon.PROMETHEUS_RETENTION | default("30d") }}'
+      - '--web.enable-lifecycle'
+    networks:
+      - skmon-{{ env }}
+      - cloud-public-{{ env }}
+    deploy:
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          cpus: '{{ skmon.PROMETHEUS_CPU_LIMIT | default("0.5") }}'
+          memory: {{ skmon.PROMETHEUS_MEMORY_LIMIT | default("1024M") }}
+        reservations:
+          cpus: '{{ skmon.PROMETHEUS_CPU_RESERVATION | default("0.1") }}'
+          memory: {{ skmon.PROMETHEUS_MEMORY_RESERVATION | default("128M") }}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.routers.prometheus{% if env != 'prod' %}-{{ env }}{% endif %}-secure.rule=Host(`prometheus{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}`)"
+        - "traefik.http.routers.prometheus{% if env != 'prod' %}-{{ env }}{% endif %}-secure.entrypoints=websecure"
+        - "traefik.http.routers.prometheus{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls=true"
+        - "traefik.http.routers.prometheus{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls.certresolver=main"
+        - "traefik.http.routers.prometheus{% if env != 'prod' %}-{{ env }}{% endif %}-secure.service=prometheus{% if env != 'prod' %}-{{ env }}{% endif %}"
+        - "traefik.http.services.prometheus{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=9090"
+        - "traefik.http.routers.prometheus{% if env != 'prod' %}-{{ env }}{% endif %}-secure.middlewares=default-security-headers@file,gzip@file,traefikAuth@file"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9090/-/healthy || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  grafana:
+    image: grafana/grafana:latest
+    env_file:
+      - /var/data/config/skmon-{{ env }}/skmon.env
+    environment:
+      - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+      - GF_PATHS_DATA=/var/lib/grafana
+      - GF_METRICS_ENABLED=true
+      - GF_METRICS_BASIC_AUTH_ENABLED=false
+    volumes:
+      - /var/data/skmon-{{ env }}/grafana/data:/var/lib/grafana
+      - /var/data/config/skmon-{{ env }}/grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - skmon-{{ env }}
+      - cloud-public-{{ env }}
+    depends_on:
+      - prometheus
+      - loki
+    deploy:
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          cpus: '{{ skmon.GRAFANA_CPU_LIMIT | default("0.5") }}'
+          memory: {{ skmon.GRAFANA_MEMORY_LIMIT | default("512M") }}
+        reservations:
+          cpus: '{{ skmon.GRAFANA_CPU_RESERVATION | default("0.1") }}'
+          memory: {{ skmon.GRAFANA_MEMORY_RESERVATION | default("128M") }}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.routers.grafana{% if env != 'prod' %}-{{ env }}{% endif %}-secure.rule=Host(`skmon{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}`)"
+        - "traefik.http.routers.grafana{% if env != 'prod' %}-{{ env }}{% endif %}-secure.entrypoints=websecure"
+        - "traefik.http.routers.grafana{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls=true"
+        - "traefik.http.routers.grafana{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls.certresolver=main"
+        - "traefik.http.routers.grafana{% if env != 'prod' %}-{{ env }}{% endif %}-secure.service=grafana{% if env != 'prod' %}-{{ env }}{% endif %}"
+        - "traefik.http.services.grafana{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=3000"
+        - "traefik.http.routers.grafana{% if env != 'prod' %}-{{ env }}{% endif %}-secure.middlewares=default-security-headers@file,gzip@file,traefikAuth@file"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  loki:
+    image: grafana/loki:3.5.4
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - /var/data/config/skmon-{{ env }}/loki:/etc/loki
+      - /var/data/skmon-{{ env }}/loki-data:/loki
+      - /var/data/skmon-{{ env }}/loki-data/tsdb-index:/loki/tsdb-index
+      - /var/data/skmon-{{ env }}/loki-data/tsdb-cache:/loki/tsdb-cache
+    networks:
+      - skmon-{{ env }}
+    deploy:
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          cpus: '{{ skmon.LOKI_CPU_LIMIT | default("0.5") }}'
+          memory: {{ skmon.LOKI_MEMORY_LIMIT | default("512M") }}
+        reservations:
+          cpus: '{{ skmon.LOKI_CPU_RESERVATION | default("0.1") }}'
+          memory: {{ skmon.LOKI_MEMORY_RESERVATION | default("256M") }}
+
+  promtail:
+    image: grafana/promtail:2.9.15
+    command: -config.file=/etc/promtail/promtail-config.yaml
+    volumes:
+      - /var/data/config/skmon-{{ env }}/promtail:/etc/promtail
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/log:/var/log:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - skmon-{{ env }}
+    deploy:
+      mode: global
+      resources:
+        limits:
+          cpus: '{{ skmon.PROMTAIL_CPU_LIMIT | default("0.25") }}'
+          memory: {{ skmon.PROMTAIL_MEMORY_LIMIT | default("256M") }}
+        reservations:
+          cpus: '{{ skmon.PROMTAIL_CPU_RESERVATION | default("0.1") }}'
+          memory: {{ skmon.PROMTAIL_MEMORY_RESERVATION | default("64M") }}
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks:
+      - skmon-{{ env }}
+    deploy:
+      mode: global
+      resources:
+        limits:
+          cpus: '{{ skmon.CADVISOR_CPU_LIMIT | default("0.25") }}'
+          memory: {{ skmon.CADVISOR_MEMORY_LIMIT | default("256M") }}
+        reservations:
+          cpus: '{{ skmon.CADVISOR_CPU_RESERVATION | default("0.1") }}'
+          memory: {{ skmon.CADVISOR_MEMORY_RESERVATION | default("64M") }}
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    networks:
+      - skmon-{{ env }}
+    deploy:
+      mode: global
+      resources:
+        limits:
+          cpus: '{{ skmon.NODE_EXPORTER_CPU_LIMIT | default("0.10") }}'
+          memory: {{ skmon.NODE_EXPORTER_MEMORY_LIMIT | default("128M") }}
+        reservations:
+          cpus: '{{ skmon.NODE_EXPORTER_CPU_RESERVATION | default("0.05") }}'
+          memory: {{ skmon.NODE_EXPORTER_MEMORY_RESERVATION | default("32M") }}
+
+  alertmanager:
+    image: prom/alertmanager:{{ skmon.ALERTMANAGER_IMAGE_VERSION | default('latest') }}
+    user: "0:0"
+    command:
+      - '--config.file=/etc/alertmanager/config.yml'
+      - '--storage.path=/alertmanager'
+    volumes:
+      - /var/data/config/skmon-{{ env }}/alertmanager/config.yml:/etc/alertmanager/config.yml:ro
+      - /var/data/skmon-{{ env }}/alertmanager/data:/alertmanager
+    networks:
+      - skmon-{{ env }}
+      - cloud-public-{{ env }}
+    deploy:
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          cpus: '{{ skmon.ALERTMANAGER_CPU_LIMIT | default("0.25") }}'
+          memory: {{ skmon.ALERTMANAGER_MEMORY_LIMIT | default("256M") }}
+        reservations:
+          cpus: '{{ skmon.ALERTMANAGER_CPU_RESERVATION | default("0.1") }}'
+          memory: {{ skmon.ALERTMANAGER_MEMORY_RESERVATION | default("64M") }}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.routers.alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}-secure.rule=Host(`alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}`)"
+        - "traefik.http.routers.alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}-secure.entrypoints=websecure"
+        - "traefik.http.routers.alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls=true"
+        - "traefik.http.routers.alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls.certresolver=main"
+        - "traefik.http.routers.alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}-secure.service=alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}"
+        - "traefik.http.services.alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=9093"
+        - "traefik.http.routers.alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}-secure.middlewares=default-security-headers@file,gzip@file,traefikAuth@file"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9093/-/healthy || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  jaeger:
+    image: jaegertracing/all-in-one:{{ skmon.JAEGER_IMAGE_VERSION | default('latest') }}
+    user: "0:0"
+    environment:
+      - SPAN_STORAGE_TYPE=badger
+      - BADGER_EPHEMERAL=false
+      - BADGER_DIRECTORY_KEY=/badger/key
+      - BADGER_DIRECTORY_VALUE=/badger/value
+    volumes:
+      - /var/data/skmon-{{ env }}/jaeger/badger:/badger
+    networks:
+      - skmon-{{ env }}
+      - cloud-public-{{ env }}
+    deploy:
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          cpus: '{{ skmon.JAEGER_CPU_LIMIT | default("0.5") }}'
+          memory: {{ skmon.JAEGER_MEMORY_LIMIT | default("512M") }}
+        reservations:
+          cpus: '{{ skmon.JAEGER_CPU_RESERVATION | default("0.1") }}'
+          memory: {{ skmon.JAEGER_MEMORY_RESERVATION | default("128M") }}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.routers.jaeger{% if env != 'prod' %}-{{ env }}{% endif %}-secure.rule=Host(`jaeger{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}`)"
+        - "traefik.http.routers.jaeger{% if env != 'prod' %}-{{ env }}{% endif %}-secure.entrypoints=websecure"
+        - "traefik.http.routers.jaeger{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls=true"
+        - "traefik.http.routers.jaeger{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls.certresolver=main"
+        - "traefik.http.routers.jaeger{% if env != 'prod' %}-{{ env }}{% endif %}-secure.service=jaeger{% if env != 'prod' %}-{{ env }}{% endif %}"
+        - "traefik.http.services.jaeger{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=16686"
+        - "traefik.http.routers.jaeger{% if env != 'prod' %}-{{ env }}{% endif %}-secure.middlewares=default-security-headers@file,gzip@file,traefikAuth@file"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:16686/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+networks:
+  skmon-{{ env }}:
+    external: true
+  cloud-public-{{ env }}:
+    external: true

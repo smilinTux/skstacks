@@ -1,0 +1,156 @@
+global:
+  scrape_interval: {{ skmon.PROMETHEUS_SCRAPE_INTERVAL | default('15s') }}
+  evaluation_interval: {{ skmon.PROMETHEUS_EVALUATION_INTERVAL | default('15s') }}
+  external_labels:
+    cluster: {{ skmon.CLUSTERNAME }}
+    environment: {{ skmon.APP_ENV | default(env) }}
+    service: skmon
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - 'skmon-{{ env }}_alertmanager:9093'
+
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          service: prometheus
+
+  # Node exporter (global service, use DNS SD)
+  - job_name: 'node-exporter'
+    dns_sd_configs:
+      - names:
+          - 'tasks.skmon-{{ env }}_node-exporter'
+        type: 'A'
+        port: 9100
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+    relabel_configs:
+      - source_labels: [__meta_dns_name]
+        regex: 'tasks\.skmon-.*_node-exporter'
+        target_label: service
+        replacement: 'node-exporter'
+      - target_label: component
+        replacement: 'host-metrics'
+    metric_relabel_configs:
+      # Extract hostname from node_uname_info metric's nodename label.
+      # The nodename label contains the actual server hostname (not the
+      # container ID), so Grafana/Prometheus show hostnames instead of
+      # container IDs.
+      - source_labels: [nodename]
+        regex: '(.+)'
+        target_label: nodename
+        replacement: '${1}'
+      # Replace the instance label with hostname:port for readability
+      # (changes "container-id:9100" into "hostname:9100").
+      - source_labels: [nodename]
+        regex: '(.+)'
+        target_label: instance
+        replacement: '${1}:9100'
+
+  # cAdvisor (container metrics - global service, use DNS SD)
+  - job_name: 'cadvisor'
+    dns_sd_configs:
+      - names:
+          - 'tasks.skmon-{{ env }}_cadvisor'
+        type: 'A'
+        port: 8080
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+    relabel_configs:
+      - source_labels: [__meta_dns_name]
+        regex: 'tasks\.skmon-.*_cadvisor'
+        target_label: service
+        replacement: 'cadvisor'
+      - target_label: component
+        replacement: 'container-metrics'
+
+  # Grafana metrics
+  - job_name: 'grafana'
+    static_configs:
+      - targets: ['skmon-{{ env }}_grafana:3000']
+        labels:
+          service: grafana
+          component: visualization
+          environment: '{{ env }}'
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+  # Alertmanager metrics (self-monitoring)
+  - job_name: 'alertmanager'
+    static_configs:
+      - targets: ['skmon-{{ env }}_alertmanager:9093']
+        labels:
+          service: alertmanager
+          component: alerting
+          environment: '{{ env }}'
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+  # Jaeger metrics
+  - job_name: 'jaeger'
+    static_configs:
+      - targets: ['skmon-{{ env }}_jaeger:14269']
+        labels:
+          service: jaeger
+          component: tracing
+          environment: '{{ env }}'
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+  # Loki metrics
+  - job_name: 'loki'
+    static_configs:
+      - targets: ['skmon-{{ env }}_loki:3100']
+        labels:
+          service: loki
+          component: logging
+          environment: '{{ env }}'
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+  # Promtail metrics (global service, use DNS SD)
+  - job_name: 'promtail'
+    dns_sd_configs:
+      - names:
+          - 'tasks.skmon-{{ env }}_promtail'
+        type: 'A'
+        port: 9080
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+    relabel_configs:
+      - source_labels: [__meta_dns_name]
+        regex: 'tasks\.skmon-.*_promtail'
+        target_label: service
+        replacement: 'promtail'
+      - target_label: component
+        replacement: 'log-collection'
+
+  # Additional scrape targets for other stacks on this cluster (Traefik,
+  # a git server, a vector DB, a security agent, ...). None are assumed to
+  # exist; add real entries via the skmon vault's EXTRA_SCRAPE_TARGETS list.
+  # Example vault entry:
+  #   skmon:
+  #     EXTRA_SCRAPE_TARGETS:
+  #       - job_name: traefik
+  #         target: "example-edge-prod_traefik:8082"
+  #         metrics_path: /metrics
+  #         scrape_interval: 15s
+  #         bearer_token: ""   # optional
+{% for target in skmon.EXTRA_SCRAPE_TARGETS | default([]) %}
+  - job_name: '{{ target.job_name }}'
+    static_configs:
+      - targets: ['{{ target.target }}']
+        labels:
+          service: '{{ target.job_name }}'
+          environment: '{{ env }}'
+    metrics_path: '{{ target.metrics_path | default("/metrics") }}'
+    scrape_interval: {{ target.scrape_interval | default('30s') }}
+{% if target.bearer_token is defined and target.bearer_token | length > 0 %}
+    bearer_token: '{{ target.bearer_token }}'
+{% endif %}
+{% endfor %}

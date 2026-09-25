@@ -1,0 +1,29 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [],
+  "refresh": "30s",
+  "schemaVersion": 27,
+  "style": "dark",
+  "tags": ["traefik", "reverse-proxy"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Traefik Metrics (Placeholder - Import from Grafana.com or create custom)",
+  "uid": "traefik",
+  "version": 0,
+  "description": "This is a placeholder dashboard. To enable:\n1. Import dashboard from Grafana.com (search for Traefik dashboards)\n2. Or create custom dashboard using Traefik v3.6.2 metrics\n3. Recommended metrics:\n   - Request rates: rate(traefik_entrypoint_requests_total[5m])\n   - Latencies: traefik_service_request_duration_seconds\n   - Error rates: rate(traefik_entrypoint_requests_total{code=~\"5..\"}[5m])\n   - Router/service stats: traefik_router_*, traefik_service_*"
+}
+
