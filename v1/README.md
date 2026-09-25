@@ -2,7 +2,8 @@
 
 v1 is the Swarm framework the current production clusters run on. It is being
 published one service at a time as each is cleaned of estate values; today
-this tree holds **skgraph** (FalkorDB) and the shared tasks it uses.
+this tree holds **skgraph** (FalkorDB), **skvector** (Qdrant) and the
+shared tasks they use.
 
 ## Instance contract
 
