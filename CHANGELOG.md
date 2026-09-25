@@ -3,7 +3,7 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
-## Unreleased
+## skstacks-v2.13.0 - 2026-09-25
 
 - v1: third published v1 service, **skpdf** (Stirling-PDF), with dev and
   staging playbooks brought to prod parity (dropped the self-referencing
