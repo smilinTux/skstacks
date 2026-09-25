@@ -1,0 +1,121 @@
+{%- if skvector.CLOUDFLARED | default(false) -%}
+  {%- set _base_domain = skvector.DOMAIN -%}
+{%- else -%}
+  {%- set _base_domain = skvector.CLUSTERNAME ~ '.' ~ skvector.DOMAIN -%}
+{%- endif -%}
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+version: '3.8'
+
+services:
+  qdrant:
+    image: qdrant/qdrant:{{ skvector.QDRANT_VERSION | default('latest') }}
+    env_file: /var/data/config/skvector-{{ env }}/skvector.env
+    logging:
+      driver: json-file
+      options:
+        max-size: "{{ skvector.LOG_MAX_SIZE | default('10m') }}"
+        max-file: "{{ skvector.LOG_MAX_FILES | default('3') }}"
+    volumes:
+      # Main storage - NFS backed for persistence
+      - /var/data/skvector-{{ env }}/storage:/qdrant/storage
+      # Snapshots - NFS backed for backup/recovery
+      - /var/data/skvector-{{ env }}/snapshots:/qdrant/snapshots
+      # Config file for advanced settings
+{% if skvector.CONFIG_PATH is defined %}
+      - {{ skvector.CONFIG_PATH }}:/qdrant/config/config.yaml:ro
+{% endif %}
+    networks:
+      - skvector-{{ env }}
+      - cloud-public-{{ env }}
+    deploy:
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 120s
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          # Optimized for large document ingestion from SKAid
+          # Handles chunked embeddings from 150MB PDFs
+          cpus: '{{ skvector.RESOURCES_LIMITS_CPUS | default("2.00") }}'
+          memory: {{ skvector.RESOURCES_LIMITS_MEMORY | default("4096M") }}
+        reservations:
+          cpus: '{{ skvector.RESOURCES_RESERVATIONS_CPUS | default("0.50") }}'
+          memory: {{ skvector.RESOURCES_RESERVATIONS_MEMORY | default("1024M") }}
+      labels:
+        # === TRAEFIK: HTTP ===
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+
+        # === TRAEFIK: REQUEST SIZE for Large Batch Uploads ===
+        # Support batch embedding uploads from SKAid document ingestion
+        - "traefik.http.middlewares.skvector{% if env != 'prod' %}-{{ env }}{% endif %}-buffering.buffering.maxRequestBodyBytes={{ skvector.MAX_REQUEST_BODY_BYTES | default('104857600') }}"
+        - "traefik.http.middlewares.skvector{% if env != 'prod' %}-{{ env }}{% endif %}-buffering.buffering.memRequestBodyBytes={{ skvector.MEM_REQUEST_BODY_BYTES | default('10485760') }}"
+
+        # === TRAEFIK: ROUTERS ===
+        - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skvector{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`)"
+        - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
+        - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
+        - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
+        - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
+        - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares=skvector{% if env != 'prod' %}-{{ env }}{% endif %}-buffering,default-no-crowdsec@file"
+        - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}.service=skvector{% if env != 'prod' %}-{{ env }}{% endif %}"
+
+        # === TRAEFIK: SERVICES ===
+        - "traefik.http.services.skvector{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=6333"
+
+        # === TRAEFIK: gRPC ROUTER (for high-performance batch operations) ===
+        - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}-grpc.rule=Host(`skvector{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && PathPrefix(`/qdrant.`)"
+        - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}-grpc.entrypoints=websecure"
+        - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}-grpc.tls=true"
+        - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}-grpc.tls.certresolver=main"
+        - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}-grpc.tls.options=intermediate@file"
+        - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}-grpc.middlewares=default-no-crowdsec@file"
+        - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}-grpc.service=skvector{% if env != 'prod' %}-{{ env }}{% endif %}-grpc"
+        - "traefik.http.services.skvector{% if env != 'prod' %}-{{ env }}{% endif %}-grpc.loadbalancer.server.port=6334"
+        - "traefik.http.services.skvector{% if env != 'prod' %}-{{ env }}{% endif %}-grpc.loadbalancer.server.scheme=h2c"
+
+        # === TRAEFIK: HEALTH CHECK ===
+        - "traefik.http.services.skvector{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.healthcheck.path=/healthz"
+        - "traefik.http.services.skvector{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.healthcheck.interval=30s"
+        - "traefik.http.services.skvector{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.healthcheck.timeout=10s"
+
+volumes:
+  skvector-{{ env }}-storage:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/data/skvector-{{ env }}/storage
+  skvector-{{ env }}-snapshots:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/data/skvector-{{ env }}/snapshots
+
+networks:
+  skvector-{{ env }}:
+    external: true
+  cloud-public-{{ env }}:
+    external: true
