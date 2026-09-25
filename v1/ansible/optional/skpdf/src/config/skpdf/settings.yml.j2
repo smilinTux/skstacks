@@ -16,7 +16,7 @@ security:
 {% if skpdf.SECURITY_ENABLELOGIN | default('false') | lower == 'true' %}
   initialLogin:
     username: "{{ skpdf.SECURITY_INITIAL_USERNAME | default('admin') }}"
-    password: "{{ skpdf.SECURITY_INITIAL_PASSWORD | default('changeme') }}"
+    password: "{{ skpdf.SECURITY_INITIAL_PASSWORD }}"
 {% endif %}
 {% if skpdf.OAUTH2_ENABLED | default(false) %}
   oauth2:

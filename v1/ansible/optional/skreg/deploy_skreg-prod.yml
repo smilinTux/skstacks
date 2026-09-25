@@ -1,0 +1,144 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skreg
+    env: prod
+    service_name: skreg
+    service_type: optional
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+  tasks:
+    - name: Deploying {{ app }}
+      debug:
+        msg: Running SKStacks deploy {{ app }} scripts...
+
+    - name: Ensure skreg-{{ env }} overlay network exists
+      community.docker.docker_network:
+        name: "skreg-{{ env }}"
+        driver: overlay
+        attachable: true
+        ipam_config:
+          - subnet: "172.16.62.0/24"
+        driver_options:
+          encrypted: "false"
+        scope: swarm
+        state: present
+      register: network_result
+      retries: 3
+      delay: 5
+      until: network_result is succeeded
+      ignore_errors: false
+      tags:
+        - network
+
+    - name: Create the {{ app }} directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: 0755
+      loop:
+        - /var/data/{{ app }}-{{ env }}
+        - /var/data/{{ app }}-{{ env }}/certs
+        - /var/data/{{ app }}-{{ env }}/data
+        - /var/data/config/{{ app }}-{{ env }}
+
+
+    - name: Process {{ app }} docker-compose template
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+        trim_blocks: false
+        lstrip_blocks: false
+      tags:
+        - templates
+    - name: Copy {{ app }} base src files
+      copy:
+          src: "{{ playbook_dir }}/src/{{ app }}"
+          dest: "/var/data/{{ app }}-{{ env }}/"
+          force: yes
+          backup: yes
+      tags:
+        - parentdir
+        - backup
+
+    - name: Process {{ app }} deploy script template
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/deploy"
+        owner: root
+        group: root
+        mode: '0755'
+      tags:
+        - templates
+        - deploy-script
+
+    - name: Create {{ app }} control script symlink
+      file:
+          src: /var/data/{{ app }}-{{ env }}/deploy
+          dest: /var/data/deploy_{{ app }}-{{ env }}
+          force: yes
+          owner: root
+          group: root
+          mode: 0755
+          state: link
+    - name: Create {{ app }} docker-compose.yaml symlink
+      file:
+          src: /var/data/config/{{ app }}-{{ env }}/{{ app }}.yml
+          dest: /var/data/config/{{ app }}-{{ env }}/docker-compose.yaml
+          force: yes
+          owner: root
+          group: root
+          mode: 0755
+          state: link 
+
+    - name: remove/create and start {{ app }} swarm stack
+      debug:
+        msg: Running SKStacks remove docker networks scripts - {{ app }}...
+
+
+    - name: Deploy {{ app }} swarm stack
+      shell: /bin/bash /var/data/deploy_{{ app }}-{{ env }}
+      register: shell_output
+    - debug: var=shell_output
+
+
+
+

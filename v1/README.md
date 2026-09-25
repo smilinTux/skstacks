@@ -3,7 +3,8 @@
 v1 is the Swarm framework the current production clusters run on. It is being
 published one service at a time as each is cleaned of estate values; today
 this tree holds **skgraph** (FalkorDB), **skvector** (Qdrant),
-**skpdf** (Stirling-PDF) and the shared tasks they use.
+**skpdf** (Stirling-PDF), **skmem-pg** (Postgres + pgvector + pg_search +
+AGE), **skreg** (Docker Registry v2) and the shared tasks they use.
 
 ## Instance contract
 

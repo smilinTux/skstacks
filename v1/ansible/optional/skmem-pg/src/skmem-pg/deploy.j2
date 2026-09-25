@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# skmem-pg deploy/control script (rendered). Mirrors skstacks deploy.j2 pattern.
+set -euo pipefail
+APP=skmem-pg; ENV={{ env }}
+cd "/var/data/${APP}-${ENV}"
+mkdir -p config/init && cp -f /var/data/config/${APP}-${ENV}/init/*.sql config/init/ 2>/dev/null || true
+docker stack deploy -c /var/data/config/${APP}-${ENV}/docker-compose.yml ${APP}-${ENV} --with-registry-auth
+docker stack services ${APP}-${ENV}

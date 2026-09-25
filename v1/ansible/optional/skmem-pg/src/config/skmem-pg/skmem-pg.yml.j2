@@ -1,0 +1,77 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# skmem-pg swarm stack template (rendered to /var/data/config/skmem-pg-{{ env }}/skmem-pg.yml)
+version: "3.8"
+services:
+  skmem-pg:
+    image: smilintux/skmem-pg:pg17-bm25-age
+    command: ["-c", "shared_preload_libraries=pg_search,age"]
+    environment:
+      POSTGRES_PASSWORD: "{{ skmem_pg_password }}"   # from SERVICE vault
+      POSTGRES_DB: skmemory
+    volumes:
+      - /var/data/runtime/{{ app }}-{{ env }}/postgres:/var/lib/postgresql/data
+      - /var/data/config/{{ app }}-{{ env }}/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - skmem-pg-{{ env }}
+      - cloud-public-{{ env }}
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == worker]
+      restart_policy: { condition: any }
+      resources:
+        limits: { memory: 4G }
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  # Crash-consistent pg_dump backups (mirrors sksso/authentik postgres-db-backup).
+  # Dumps -> /var/data/{{ app }}-{{ env }}/database-dump ; offsite'd by skbackup/Duplicati.
+  skmem-pg-backup:
+    image: postgres:17
+    env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}-backup.env
+    environment:
+      - PGTEMP=/dump/tmp
+    volumes:
+      - /var/data/{{ app }}-{{ env }}/database-dump:/dump
+      - /etc/localtime:/etc/localtime:ro
+    entrypoint: |
+      bash -c 'bash -s <<EOF
+      trap "break;exit" SIGHUP SIGINT SIGTERM
+      sleep 2m
+      while /bin/true; do
+        pg_dump -Fc -h skmem-pg -U $${PGUSER} -d $${PGDATABASE} > /dump/dump_`date +%d-%m-%Y"_"%H_%M_%S`.psql
+        (ls -t /dump/dump*.psql|head -n $${BACKUP_NUM_KEEP};ls /dump/dump*.psql)|sort|uniq -u|xargs rm -- {}
+        sleep $${BACKUP_FREQUENCY}
+      done
+      EOF'
+    networks:
+      - skmem-pg-{{ env }}
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - "node.role == worker"
+      restart_policy: { condition: any }
+networks:
+  skmem-pg-{{ env }}:
+    external: true
+  cloud-public-{{ env }}:
+    external: true
