@@ -1,0 +1,97 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# skmem-pg swarm deploy (prod) — adapted from optional/skgraph SOP.
+# TODO before deploy: register skmem-pg-prod overlay subnet in shared/networks (pick a free /24);
+# add skmem_pg_password to the SERVICE prod_vault; ensure image is pullable on swarm nodes.
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skmem-pg
+    env: prod
+    service_name: skmem-pg
+    service_type: optional
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+    - name: Define network variables (⚠️ TODO register subnet in shared/networks — placeholder)
+      set_fact:
+        app_networks: "{{ skmem_pg.networks | default([
+          { 'name': 'skmem-pg-prod', 'subnet': '172.16.115.0/24', 'driver': 'overlay', 'attachable': true },
+          { 'name': 'cloud-public-prod', 'subnet': '172.16.200.0/24', 'driver': 'overlay', 'attachable': true }
+        ]) }}"
+      tags: [networks, config]
+  tasks:
+    - name: Create {{ app }} directories
+      file: { path: "{{ item }}", state: directory, owner: root, group: root, mode: '0755' }
+      loop:
+        - /var/data/{{ app }}-{{ env }}
+        - /var/data/runtime/{{ app }}-{{ env }}/postgres          # -> /var/lib/postgresql/data (pgdata)
+        - /var/data/{{ app }}-{{ env }}/database-dump   # pg_dump output, archived by skbackup
+        - /var/data/config/{{ app }}-{{ env }}
+        - /var/data/config/{{ app }}-{{ env }}/init   # init SQL dir (bind :ro must pre-exist)
+    - name: Set postgres ownership on pg data + dump dirs (UID 999 so initdb/pg_dump can write)
+      file: { path: "{{ item.p }}", state: directory, owner: "999", group: "999", mode: "{{ item.m }}" }
+      loop:
+        - { p: "/var/data/runtime/{{ app }}-{{ env }}/postgres", m: "0700" }
+        - { p: "/var/data/{{ app }}-{{ env }}/database-dump",    m: "0750" }
+    - name: Install {{ app }} init SQL (runs once on a fresh volume; :ro-mounted by the stack)
+      copy: { src: "{{ playbook_dir }}/init/01-init-skmem-pg.sql", dest: "/var/data/config/{{ app }}-{{ env }}/init/01-init-skmem-pg.sql", mode: "0644" }
+      tags: [init]
+    - name: Process {{ app }} env templates
+      template: { src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}", dest: "{{ item.dest }}", mode: '0640' }
+      loop:
+        - { src: "{{ app }}.env.j2",    dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env" }
+        - { src: "{{ app }}.sh.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env" }
+        - { src: "{{ app }}-backup.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}-backup.env" }
+      tags: [templates]
+    - name: Process {{ app }} compose/stack template
+      template: { src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml", mode: '0644' }
+      tags: [compose]
+    - name: docker-compose.yml symlink
+      file: { src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml", dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml", state: link, force: yes }
+      tags: [compose]
+    - name: Process deploy script template
+      template: { src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2", dest: "/var/data/{{ app }}-{{ env }}/deploy", mode: '0755' }
+      tags: [deploy-script]
+    - name: control script symlink
+      file: { src: "/var/data/{{ app }}-{{ env }}/deploy", dest: "/var/data/deploy_{{ app }}-{{ env }}", state: link, force: yes, mode: '0755' }
+      tags: [deploy-script]
+    - name: Ensure overlay networks exist
+      include_tasks: ../../shared/tasks/create_networks.yml
+      tags: [networks]
+    - name: Deploy {{ app }} stack
+      shell: "cd /var/data/{{ app }}-{{ env }} && ./deploy"
+      register: deploy_output
+      tags: [deploy]
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags: [deploy]
