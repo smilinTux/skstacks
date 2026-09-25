@@ -3,6 +3,27 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## skstacks-v2.14.0 - 2026-09-25
+
+- v1: **skmem-pg** (Postgres 17 + pgvector + pg_search + Apache AGE) published,
+  with dev and staging playbooks authored to match prod. Its init SQL is a
+  template: set `skmem_pg_default_agent` / `skmem_pg_graph` (defaults
+  `default` / `agent_knowledge`).
+- v1: **skreg** (Docker Registry v2) published. It now deploys from one
+  selected manager like every other service (it ran on every manager at once
+  and raced itself on the shared `/var/data`).
+- v1: secrets fail closed. No secret-looking variable may fall back to a
+  literal default (new test). `skreg`'s `vault_skreg_registry_http_secret`
+  and `skpdf`'s `SECURITY_INITIAL_PASSWORD` (when login is enabled) are now
+  required.
+- v1: tests require every deploy playbook to select one manager.
+- skred: the denylist no longer reads a git worktree's `.git` pointer file
+  (it broke the pre-push hook in worktrees).
+
+Instance action: set `skmem_pg_password`, `vault_skreg_registry_http_secret`,
+and `skpdf.SECURITY_INITIAL_PASSWORD` if skpdf login is enabled; shared
+`/var/data` as for the other v1 services.
+
 ## skstacks-v2.13.0 - 2026-09-25
 
 - v1: third published v1 service, **skpdf** (Stirling-PDF), with dev and
