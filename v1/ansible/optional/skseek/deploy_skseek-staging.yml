@@ -1,0 +1,201 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# skseek: Perplexica, an AI-powered search UI answering from live search
+# results instead of just a model's training data.
+# TODO before deploy: register the skseek-<env> overlay subnet in
+# shared/networks (pick a free /24 if 172.16.190-192.0/24 collide on your
+# estate); deploy skpeek FIRST (or accept that skseek's own deploy
+# script bootstraps the skpeek-<env> network on first run) since skseek
+# reaches SearXNG through it; set any MODELS.* API keys you want enabled in
+# the vault (all default to empty/disabled, see src/config/skseek/config.toml.j2).
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+# Step 1: Select manager node with failover
+# Run on all hosts to ensure it executes even with -l limit
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+# Step 2: Deploy to selected manager
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skseek
+    env: staging
+    service_name: skseek
+    service_type: optional
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Define network variables from vault (required for idempotent deployment)
+      # ⚠️ IMPORTANT: Network subnets MUST match shared/networks registry
+      # Reference: See shared/networks for all registered network subnets.
+      # skpeek-prod's subnet must match skpeek's own deploy_skpeek-prod.yml
+      # exactly: skseek attaches to it to reach SearXNG, it does not own it.
+      set_fact:
+        app_networks: "{{ skseek_staging_networks | default([
+          { 'name': 'skseek-staging', 'subnet': '172.16.191.0/24' },
+          { 'name': 'cloud-public-staging', 'subnet': '172.16.201.0/24' },
+          { 'name': 'skpeek-staging', 'subnet': '172.16.148.0/24' }
+        ]) }}"
+      tags:
+        - networks
+
+    - name: Set skseek default variables
+      set_fact:
+        skseek: "{{ skseek_defaults | combine(skseek | default({}), recursive=True) }}"
+      vars:
+        skseek_defaults:
+          PORT: "3000"
+          SIMILARITY_MEASURE: "cosine"
+          SEARXNG_API_URL: "http://skpeek-{{ env }}_skpeek:8080"
+          NEXT_PUBLIC_API_URL: "https://skseek{{ '' if env == 'prod' else '-' + env }}.{{ cluster_name | default(skseek.CLUSTERNAME | default('cluster1')) }}.{{ domain | default(skseek.DOMAIN | default('example.com')) }}/api"
+          NEXT_PUBLIC_WS_URL: "wss://skseek{{ '' if env == 'prod' else '-' + env }}.{{ cluster_name | default(skseek.CLUSTERNAME | default('cluster1')) }}.{{ domain | default(skseek.DOMAIN | default('example.com')) }}/ws"
+          # OPENAI_API_KEY, GROQ_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY,
+          # CUSTOM_OPENAI_API_KEY/API_URL/MODEL_NAME, DEEPSEEK_API_KEY,
+          # OLLAMA_API_URL, LM_STUDIO_API_URL should be in vault if used
+      tags:
+        - always
+
+  tasks:
+    - name: Deploying {{ app }}
+      debug:
+        msg: Running SKStacks deploy {{ app }} scripts...
+
+    - name: Ensure {{ app }}-{{ env }} directories exist
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - /var/data/{{ app }}-{{ env }}
+        - /var/data/{{ app }}-{{ env }}/data
+        - /var/data/config/{{ app }}-{{ env }}
+
+    - name: Process {{ app }} environment templates
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: '{{ item.mode | default("0640") }}'
+      loop:
+        - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env" }
+        - { src: "{{ app }}.sh.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env" }
+      tags:
+        - templates
+
+    - name: Process {{ app }} Docker Compose template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags:
+        - compose
+
+    - name: Process {{ app }} config.toml template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/config.toml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/config.toml"
+        owner: root
+        group: root
+        mode: '0640'
+      tags:
+        - templates
+        - config
+
+    - name: Create {{ app }} docker-compose.yml symlink
+      file:
+        src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags:
+        - compose
+
+    - name: Process {{ app }} deploy script template
+      template:
+        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/deploy"
+        owner: root
+        group: root
+        mode: '0755'
+        force: yes
+      tags:
+        - templates
+        - deploy-script
+
+    - name: Create {{ app }} control script symlink
+      file:
+        src: /var/data/{{ app }}-{{ env }}/deploy
+        dest: /var/data/deploy_{{ app }}-{{ env }}
+        force: yes
+        owner: root
+        group: root
+        mode: '0755'
+        state: link
+        follow: no
+
+    - name: Ensure overlay networks exist from app_networks variable
+      include_tasks: ../../shared/tasks/create_networks.yml
+      tags:
+        - networks
+
+    - name: Deploy {{ app }} stack
+      shell: |
+        cd /var/data/{{ app }}-{{ env }}
+        ./deploy
+      register: deploy_output
+      tags:
+        - deploy
+
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags:
+        - deploy
+
+    - name: Post-deploy Check SKSeek service health
+      shell: docker service ls --filter "name={{ app }}-{{ env }}_skseek" --format "{{ '{{.Name}}\t{{.Replicas}}' }}"
+      register: skseek_service_info
+      failed_when: false
+      changed_when: false
+      tags:
+        - deploy
+
+    - name: Print SKSeek service status
+      debug:
+        msg: "SKSeek service status: {{ skseek_service_info.stdout | default('Service check completed') }}"
+      when: skseek_service_info.stdout is defined
+      tags:
+        - deploy

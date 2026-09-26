@@ -1,0 +1,54 @@
+version: '3.8'
+
+# RustDesk self-hosted relay: hbbs (ID/rendezvous server) + hbbr (relay
+# server). Both speak RustDesk's own binary protocol over raw TCP/UDP ports
+# (21115-21119 tcp, 21116 udp), never HTTP, so they run in network_mode:
+# host instead of an overlay network with published ports, and are never
+# routed through Traefik. Matches prod's live topology exactly (network
+# driver=host, EndpointSpec.Ports=null). Both containers bind-mount the
+# same data directory so hbbr can read the key hbbs generates on first run.
+
+services:
+  hbbs:
+    image: {{ skdesk_image | default('rustdesk/rustdesk-server:latest@sha256:10818ec05b179039c6660f4d8e74b303f0db2858bbad2b18e24992ea22d54cd6') }}
+    command: ["hbbs", "-r", "{{ skdesk.RELAY_HOST }}"]
+    env_file: /var/data/config/skdesk-{{ env }}/skdesk.env
+    network_mode: host
+    logging:
+      driver: json-file
+      options:
+        max-size: 4m
+        max-file: "1"
+    volumes:
+      - /var/data/skdesk-{{ env }}/data:/root
+    deploy:
+      mode: replicated
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+      labels:
+        - "traefik.enable=false"
+
+  hbbr:
+    image: {{ skdesk_image | default('rustdesk/rustdesk-server:latest@sha256:10818ec05b179039c6660f4d8e74b303f0db2858bbad2b18e24992ea22d54cd6') }}
+    command: ["hbbr"]
+    env_file: /var/data/config/skdesk-{{ env }}/skdesk.env
+    network_mode: host
+    logging:
+      driver: json-file
+      options:
+        max-size: 4m
+        max-file: "1"
+    volumes:
+      - /var/data/skdesk-{{ env }}/data:/root
+    deploy:
+      mode: replicated
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+      labels:
+        - "traefik.enable=false"
