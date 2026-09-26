@@ -5,7 +5,7 @@
 # Traefik HTTP routers (dynamic/routers.yml).
 # This file is managed by Ansible - do not edit manually.
 #
-# TLS: an empty `tls:` stanza (ACME disabled) tells Traefik to use its own
+# TLS: `tls: {}` (ACME disabled; a bare `tls:` is YAML null = no TLS) tells Traefik to use its own
 # default self-signed certificate; `tls: {certResolver: main}` (ACME
 # enabled) requests a real certificate via the resolver in traefik.yml.j2.
 http:
@@ -22,9 +22,11 @@ http:
 {% endif %}
       service: api@internal
       priority: 999
-      tls:
 {% if acme_on %}
+      tls:
         certResolver: main
+{% else %}
+      tls: {}
 {% endif %}
 
     dashboard-redirect-http:
@@ -44,9 +46,11 @@ http:
         - dashboard-redirect@file
       service: noop@internal
       priority: 100
-      tls:
 {% if acme_on %}
+      tls:
         certResolver: main
+{% else %}
+      tls: {}
 {% endif %}
 
     # Root domain: serve a clean error page instead of a redirect loop.
@@ -58,9 +62,11 @@ http:
       priority: 99
       middlewares:
         - default@file
-      tls:
 {% if acme_on %}
+      tls:
         certResolver: main
+{% else %}
+      tls: {}
 {% endif %}
 
     # Lowest-priority catch-alls: anything else on this domain/cluster gets
@@ -71,9 +77,11 @@ http:
         - websecure
       service: error-pages@file
       priority: 0
-      tls:
 {% if acme_on %}
+      tls:
         certResolver: main
+{% else %}
+      tls: {}
 {% endif %}
       middlewares:
         - default@file
@@ -84,9 +92,11 @@ http:
         - websecure
       service: error-pages@file
       priority: 0
-      tls:
 {% if acme_on %}
+      tls:
         certResolver: main
+{% else %}
+      tls: {}
 {% endif %}
       middlewares:
         - default@file
@@ -97,9 +107,11 @@ http:
         - websecure
       service: error-pages@file
       priority: 1
-      tls:
 {% if acme_on %}
+      tls:
         certResolver: main
+{% else %}
+      tls: {}
 {% endif %}
       middlewares:
         - default@file
