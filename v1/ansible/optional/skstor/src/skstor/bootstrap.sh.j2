@@ -42,7 +42,7 @@ if [ "${LAYOUT_VERSION:-0}" -ge 1 ]; then
     echo -e "${GREEN}Layout already applied (version ${LAYOUT_VERSION}).${NC}"
 else
     echo -e "${YELLOW}No layout assigned yet - bootstrapping single-node layout...${NC}"
-    docker exec "${CONTAINER_ID}" /garage layout assign -z dc1 -c 1 "${NODE_ID}"
+    docker exec "${CONTAINER_ID}" /garage layout assign -z dc1 -c {{ skstor.layout_capacity | default('1G') }} "${NODE_ID}"
     docker exec "${CONTAINER_ID}" /garage layout apply --version $(( ${LAYOUT_VERSION:-0} + 1 ))
     echo -e "${GREEN}Layout applied for node ${NODE_ID}.${NC}"
     echo -e "${YELLOW}No bucket/key exists yet. See this service's README.md for the${NC}"
