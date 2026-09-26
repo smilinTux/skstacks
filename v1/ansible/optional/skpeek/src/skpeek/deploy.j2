@@ -172,7 +172,7 @@ REDIS_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_redis" --format 
 
 if [[ "$REPLICAS" == "1/1" ]]; then
     echo -e "${GREEN}${STACK_NAME} SKPeek is healthy and running!${NC}"
-    echo -e "${GREEN}Web UI: https://skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.${CLUSTERNAME:-{{ skpeek.CLUSTERNAME | default('cluster1') }}}.${DOMAIN:-{{ skpeek.DOMAIN | default('example.com') }}}${NC}"
+    echo -e "${GREEN}Web UI: https://skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.${CLUSTERNAME:-{{ skpeek.CLUSTERNAME | default(cluster_name) }}}.${DOMAIN:-{{ skpeek.DOMAIN | default(domain) }}}${NC}"
     echo -e "${GREEN}Redis: ${REDIS_REPLICAS}${NC}"
 else
     echo -e "${RED}${STACK_NAME} SKPeek health check: ${REPLICAS}${NC}"

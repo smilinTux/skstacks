@@ -68,7 +68,7 @@ services:
         - "traefik.enable=true"
         - "traefik.swarm.network=cloud-public-{{ env }}"
         # === TRAEFIK: ROUTERS ===
-        - "traefik.http.routers.skboard{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skboard{% if env != 'prod' %}-{{ env }}{% endif %}.{{ cluster_name | default(skboard.CLUSTERNAME | default('cluster1')) }}.{{ domain | default(skboard.DOMAIN | default('example.com')) }}`)"
+        - "traefik.http.routers.skboard{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skboard{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skboard.CLUSTERNAME | default(cluster_name) }}.{{ skboard.DOMAIN | default(domain) }}`)"
         - "traefik.http.routers.skboard{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
         - "traefik.http.routers.skboard{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
         - "traefik.http.routers.skboard{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"

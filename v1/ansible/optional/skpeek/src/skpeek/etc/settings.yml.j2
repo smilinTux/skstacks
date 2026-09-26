@@ -86,7 +86,7 @@ server:
   # public URL of the instance, to ensure correct inbound links. Is overwritten
   # by ${SEARXNG_BASE_URL}.
   #base_url: false  # "http://example.com/location"
-  base_url: https://skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.{{ cluster_name | default(skpeek.CLUSTERNAME | default('cluster1')) }}.{{ domain | default(skpeek.DOMAIN | default('example.com')) }}/  # SKStacks SKPeek instance
+  base_url: https://skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skpeek.CLUSTERNAME | default(cluster_name) }}.{{ skpeek.DOMAIN | default(domain) }}/  # SKStacks SKPeek instance
   # rate limit the number of request on the instance, block some bots.
   # Is overwritten by ${SEARXNG_LIMITER}
   limiter: {{ enable_limiter | default(false) }}

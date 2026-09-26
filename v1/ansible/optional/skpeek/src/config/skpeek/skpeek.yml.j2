@@ -37,7 +37,7 @@ services:
         - "traefik.enable=true"
         - "traefik.swarm.network=cloud-public-{{ env }}"
         # === TRAEFIK: ROUTERS ===
-        - "traefik.http.routers.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.{{ cluster_name | default(skpeek.CLUSTERNAME | default('cluster1')) }}.{{ domain | default(skpeek.DOMAIN | default('example.com')) }}`)"
+        - "traefik.http.routers.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skpeek.CLUSTERNAME | default(cluster_name) }}.{{ skpeek.DOMAIN | default(domain) }}`)"
         - "traefik.http.routers.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
         - "traefik.http.routers.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
         - "traefik.http.routers.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"

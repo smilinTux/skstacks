@@ -164,7 +164,7 @@ REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_vikunja" --format "{% 
 
 if [[ "$REPLICAS" == "1/1" ]]; then
     echo -e "${GREEN}${STACK_NAME} SKBoard is healthy and running!${NC}"
-    echo -e "${GREEN}Web UI: https://skboard{% if env != 'prod' %}-{{ env }}{% endif %}.${CLUSTERNAME:-{{ skboard.CLUSTERNAME | default('cluster1') }}}.${DOMAIN:-{{ skboard.DOMAIN | default('example.com') }}}${NC}"
+    echo -e "${GREEN}Web UI: https://skboard{% if env != 'prod' %}-{{ env }}{% endif %}.${CLUSTERNAME:-{{ skboard.CLUSTERNAME | default(cluster_name) }}}.${DOMAIN:-{{ skboard.DOMAIN | default(domain) }}}${NC}"
 else
     echo -e "${RED}${STACK_NAME} SKBoard health check: ${REPLICAS}${NC}"
     echo -e "${YELLOW}Recent logs:${NC}"

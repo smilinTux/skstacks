@@ -53,7 +53,7 @@ services:
         - "traefik.enable=true"
         - "traefik.swarm.network=cloud-public-{{ env }}"
         # === TRAEFIK: ROUTERS ===
-        - "traefik.http.routers.sksync{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`sksync{% if env != 'prod' %}-{{ env }}{% endif %}.{{ sksync.CLUSTERNAME | default('cluster1') }}.{{ sksync.DOMAIN | default('example.com') }}`)"
+        - "traefik.http.routers.sksync{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`sksync{% if env != 'prod' %}-{{ env }}{% endif %}.{{ sksync.CLUSTERNAME | default(cluster_name) }}.{{ sksync.DOMAIN | default(domain) }}`)"
         - "traefik.http.routers.sksync{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
         - "traefik.http.routers.sksync{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
         - "traefik.http.routers.sksync{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"

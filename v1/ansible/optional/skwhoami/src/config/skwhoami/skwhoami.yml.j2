@@ -42,7 +42,7 @@ services:
       labels:
         - "traefik.enable=true"
         - "traefik.swarm.network=cloud-public-{{ env }}"
-        - "traefik.http.routers.skwhoami01{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skwhoami01{% if env != 'prod' %}-{{ env }}{% endif %}.{{ cluster_name | default(skwhoami.CLUSTERNAME | default('skstack01')) }}.{{ domain | default(skwhoami.DOMAIN | default('example.com')) }}`)"
+        - "traefik.http.routers.skwhoami01{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skwhoami01{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skwhoami.CLUSTERNAME | default(cluster_name) }}.{{ skwhoami.DOMAIN | default(domain) }}`)"
         - "traefik.http.routers.skwhoami01{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
         - "traefik.http.routers.skwhoami01{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
         - "traefik.http.routers.skwhoami01{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
@@ -67,7 +67,7 @@ services:
       labels:
         - "traefik.enable=true"
         - "traefik.swarm.network=cloud-public-{{ env }}"
-        - "traefik.http.routers.skwhoami02{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skwhoami02{% if env != 'prod' %}-{{ env }}{% endif %}.{{ cluster_name | default(skwhoami.CLUSTERNAME | default('skstack01')) }}.{{ domain | default(skwhoami.DOMAIN | default('example.com')) }}`)"
+        - "traefik.http.routers.skwhoami02{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skwhoami02{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skwhoami.CLUSTERNAME | default(cluster_name) }}.{{ skwhoami.DOMAIN | default(domain) }}`)"
         - "traefik.http.routers.skwhoami02{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
         - "traefik.http.routers.skwhoami02{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
         - "traefik.http.routers.skwhoami02{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
@@ -92,7 +92,7 @@ services:
       labels:
         - "traefik.enable=true"
         - "traefik.swarm.network=cloud-public-{{ env }}"
-        - "traefik.http.routers.skwhoami03{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skwhoami03{% if env != 'prod' %}-{{ env }}{% endif %}.{{ cluster_name | default(skwhoami.CLUSTERNAME | default('skstack01')) }}.{{ domain | default(skwhoami.DOMAIN | default('example.com')) }}`)"
+        - "traefik.http.routers.skwhoami03{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skwhoami03{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skwhoami.CLUSTERNAME | default(cluster_name) }}.{{ skwhoami.DOMAIN | default(domain) }}`)"
         - "traefik.http.routers.skwhoami03{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
         - "traefik.http.routers.skwhoami03{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
         - "traefik.http.routers.skwhoami03{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
