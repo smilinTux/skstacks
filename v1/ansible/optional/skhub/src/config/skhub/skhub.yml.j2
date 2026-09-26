@@ -190,7 +190,7 @@ services:
       retries: 5
 
   clamav:
-    image: clamav/clamav:latest
+    image: clamav/clamav@sha256:0c5c0e7f1ba77ce66324a3c20d4c49155a465a91be29dbe5e0483c41b9299137
     networks:
       - skhub-{{ env }}
     volumes:
@@ -320,7 +320,7 @@ services:
         - "traefik.http.routers.whiteboard.tls.certresolver=main"
 
   imaginary:
-    image: nextcloud/aio-imaginary:latest
+    image: nextcloud/aio-imaginary:20250325_084656
     environment:
       PORT: 9000
     networks:
@@ -342,7 +342,7 @@ services:
     command: -concurrency 50 -enable-url-source -log-level info
 {% if skhub.enable_collabora | default(false) %}
   collabora:
-    image: collabora/code:latest
+    image: collabora/code:25.04.8.2.1
     env_file: /var/data/config/skhub-{{ env }}/collabora.env
     networks:
       - skhub-{{ env }}
@@ -387,7 +387,7 @@ services:
 {% endif %}
 {% if skhub.enable_talk_hpb | default(false) %}
   talk-hpb:
-    image: ghcr.io/nextcloud-releases/aio-talk:latest
+    image: ghcr.io/nextcloud-releases/aio-talk:20260122_105751
     env_file: /var/data/config/skhub-{{ env }}/talk-hpb.env
     networks:
       - skhub-{{ env }}

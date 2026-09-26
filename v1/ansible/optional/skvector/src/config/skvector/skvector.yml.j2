@@ -22,7 +22,7 @@ version: '3.8'
 
 services:
   qdrant:
-    image: qdrant/qdrant:{{ skvector.QDRANT_VERSION | default('latest') }}
+    image: qdrant/qdrant:{{ skvector.QDRANT_VERSION | default('v1.17.0') }}
     env_file: /var/data/config/skvector-{{ env }}/skvector.env
     logging:
       driver: json-file

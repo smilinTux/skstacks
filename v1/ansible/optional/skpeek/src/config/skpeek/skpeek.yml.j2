@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   skpeek:
-    image: {{ skpeek_image | default('docker.io/searxng/searxng:latest') }}
+    image: {{ skpeek_image | default('docker.io/searxng/searxng@sha256:670bd1076097640fc25221bf92a8af7d344503ce17ba3305abedf28e3634e807') }}
     env_file: /var/data/config/skpeek-{{ env }}/skpeek.env
 
     logging:
