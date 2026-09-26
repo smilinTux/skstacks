@@ -63,9 +63,12 @@
       file: { path: "{{ item }}", state: directory, owner: root, group: root, mode: '0755' }
       loop:
         - /var/data/{{ app }}-{{ env }}
+        - /var/data/{{ app }}-{{ env }}/bookstack
         - /var/data/{{ app }}-{{ env }}/database-dump
         - /var/data/runtime/{{ app }}-{{ env }}/db
         - /var/data/config/{{ app }}-{{ env }}
+    - name: Set BookStack config directory ownership
+      file: { path: "/var/data/{{ app }}-{{ env }}/bookstack", state: directory, owner: "{{ skbook.PUID | default(1000) }}", group: "{{ skbook.PGID | default(1000) }}", mode: '0755', recurse: yes }
     - name: Process {{ app }} env templates
       template: { src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}", dest: "{{ item.dest }}", mode: '0640' }
       loop:

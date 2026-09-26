@@ -20,7 +20,13 @@ services:
     image: lscr.io/linuxserver/bookstack:{{ skbook.BOOKSTACK_VERSION | default('v26.09-ls285') }}
     env_file: /var/data/config/{{ app }}-{{ env }}/bookstack.env
     volumes:
-      - /var/data/{{ app }}-{{ env }}/config:/config
+      # BookStack's own Laravel app reads /config/.env as a literal dotenv
+      # FILE, not just process environment variables, so the rendered
+      # bookstack.env is bind-mounted there directly in addition to the
+      # env_file above (which only sets the container's own process env,
+      # used by the image's PUID/PGID/TZ init, not by the Laravel app).
+      - /var/data/{{ app }}-{{ env }}/bookstack/config:/config
+      - /var/data/config/{{ app }}-{{ env }}/bookstack.env:/config/.env
       - /etc/localtime:/etc/localtime:ro
     depends_on:
       - db
@@ -58,25 +64,32 @@ services:
       labels:
         - "traefik.enable=true"
         - "traefik.swarm.network=cloud-public-{{ env }}"
-        - "traefik.http.routers.skbook-secure.rule=Host(`skbook{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skbook.CLUSTERNAME }}.{{ skbook.DOMAIN }}`)"
-        - "traefik.http.routers.skbook-secure.entrypoints=websecure"
-        - "traefik.http.routers.skbook-secure.tls=true"
-        - "traefik.http.routers.skbook-secure.tls.certresolver=main"
-        - "traefik.http.routers.skbook-secure.service=skbook-secure"
-        - "traefik.http.services.skbook-secure.loadbalancer.server.port=80"
+        # Router/service name is "skbook" (no "-secure" suffix, unlike
+        # skhub/skdash) to match the live skbook-prod instance exactly: it
+        # has a single router, never a separate insecure variant, and
+        # nothing in the fleet references it by a "-secure" name.
+        - "traefik.http.routers.skbook{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skbook{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skbook.CLUSTERNAME }}.{{ skbook.DOMAIN }}`)"
+        - "traefik.http.routers.skbook{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
+        - "traefik.http.routers.skbook{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
+        - "traefik.http.routers.skbook{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
+        - "traefik.http.routers.skbook{% if env != 'prod' %}-{{ env }}{% endif %}.service=skbook{% if env != 'prod' %}-{{ env }}{% endif %}"
+        - "traefik.http.services.skbook{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=80"
+        - "traefik.http.services.skbook{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.scheme=http"
 {% if skbook.tls_options | default('') %}
-        - "traefik.http.routers.skbook-secure.tls.options={{ skbook.tls_options }}"
+        - "traefik.http.routers.skbook{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options={{ skbook.tls_options }}"
 {% endif %}
-{% set _skbook_secure_middlewares = (skbook.router_middlewares_pre | default([])) + (skbook.router_middlewares | default([])) %}
-{% if _skbook_secure_middlewares %}
-        - "traefik.http.routers.skbook-secure.middlewares={{ _skbook_secure_middlewares | join(',') }}"
+{% set _skbook_middlewares = (skbook.router_middlewares_pre | default([])) + (skbook.router_middlewares | default([])) %}
+{% if _skbook_middlewares %}
+        - "traefik.http.routers.skbook{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares={{ _skbook_middlewares | join(',') }}"
 {% endif %}
-        - "traefik.http.services.skbook-secure.loadbalancer.sticky.cookie=true"
-        - "traefik.http.services.skbook-secure.loadbalancer.sticky.cookie.name=skbook_session"
-        - "traefik.http.services.skbook-secure.loadbalancer.sticky.cookie.secure=true"
-        - "traefik.http.services.skbook-secure.loadbalancer.sticky.cookie.httpOnly=true"
+{% if skbook.sticky_enabled | default(false) | bool %}
+        - "traefik.http.services.skbook{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie=true"
+        - "traefik.http.services.skbook{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie.name=skbook_session"
+        - "traefik.http.services.skbook{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie.secure=true"
+        - "traefik.http.services.skbook{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie.httpOnly=true"
 {% if skbook.sticky_samesite | default('') %}
-        - "traefik.http.services.skbook-secure.loadbalancer.sticky.cookie.sameSite={{ skbook.sticky_samesite }}"
+        - "traefik.http.services.skbook{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie.sameSite={{ skbook.sticky_samesite }}"
+{% endif %}
 {% endif %}
 
   db:
@@ -92,7 +105,7 @@ services:
       - --wait_timeout=28800
       - --interactive_timeout=28800
     volumes:
-      - /var/data/runtime/{{ app }}-{{ env }}/db:/var/lib/mysql
+      - {{ app }}-{{ env }}-db:/var/lib/mysql
       - /etc/localtime:/etc/localtime:ro
     networks:
       - skbook-{{ env }}
@@ -170,3 +183,15 @@ networks:
     external: true
   cloud-public-{{ env }}:
     external: true
+
+volumes:
+  # Named volume with a local-driver bind, matching the live skbook-prod
+  # stack's Docker object exactly (docker service inspect shows Type:
+  # "volume" with these DriverConfig options, not a raw bind mount) so a
+  # from-framework redeploy attaches to the same on-disk data.
+  {{ app }}-{{ env }}-db:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/data/runtime/{{ app }}-{{ env }}/db
