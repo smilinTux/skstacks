@@ -1,0 +1,29 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [],
+  "refresh": "30s",
+  "schemaVersion": 27,
+  "style": "dark",
+  "tags": ["grafana", "monitoring"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Grafana Metrics (Placeholder - Import from Grafana.com or create custom)",
+  "uid": "grafana",
+  "version": 0,
+  "description": "This is a placeholder dashboard. To enable:\n1. Uncomment grafana job in prometheus.yml.j2\n2. Import dashboard from Grafana.com\n3. Or create custom dashboard using Grafana metrics\n4. Recommended metrics:\n   - Dashboard load times: grafana_dashboard_*\n   - Datasource queries: grafana_datasource_*"
+}
+

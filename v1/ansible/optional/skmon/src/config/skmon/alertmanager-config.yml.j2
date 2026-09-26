@@ -1,0 +1,43 @@
+global:
+  # Global configuration
+
+# The root route on which each alert arrives.
+route:
+  # The labels by which incoming alerts are grouped together.
+  group_by: {{ skmon.ALERTMANAGER_GROUP_BY | default(['alertname', 'cluster', 'service']) | to_json }}
+
+  # When a new group of alerts is created by an incoming alert, wait at least
+  # 'group_wait' to send the initial notification.
+  group_wait: {{ skmon.ALERTMANAGER_GROUP_WAIT | default('10s') }}
+
+  # When the first notification was sent, wait 'group_interval' to send a batch
+  # of new alerts that started firing for that group.
+  group_interval: {{ skmon.ALERTMANAGER_GROUP_INTERVAL | default('10s') }}
+
+  # If an alert has successfully been sent, wait 'repeat_interval' before
+  # re-sending it.
+  repeat_interval: {{ skmon.ALERTMANAGER_REPEAT_INTERVAL | default('12h') }}
+
+  # A default receiver
+  receiver: '{{ skmon.ALERTMANAGER_DEFAULT_RECEIVER | default("default-receiver") }}'
+
+# Inhibition rules allow to mute a set of alerts given that another alert is
+# firing.
+inhibit_rules:
+  # Mute any warning-level notification if the same alert is already
+  # critical.
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'cluster', 'service']
+
+# Receivers
+receivers:
+  # Default receiver - placeholder for future notification channels
+  - name: 'default-receiver'
+    # Placeholder: add notification channels here (email, slack, webhook, etc.)
+    # Example:
+    # webhook_configs:
+    #   - url: 'http://your-webhook-url'
+    #     send_resolved: true

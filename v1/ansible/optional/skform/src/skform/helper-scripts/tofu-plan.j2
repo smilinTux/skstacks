@@ -1,0 +1,36 @@
+#!/bin/bash
+# OpenTofu Plan Helper Script
+# Creates an execution plan for infrastructure changes
+
+set -e
+
+WORKSPACE_DIR="${1:-/tofu/workspaces/default}"
+STACK_NAME="skform-{{ env }}"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+echo -e "${GREEN}Creating OpenTofu execution plan...${NC}"
+
+if [ ! -d "${WORKSPACE_DIR}" ]; then
+    echo -e "${RED}Workspace directory not found: ${WORKSPACE_DIR}${NC}"
+    echo -e "${YELLOW}Run 'tofu-init' first to initialize the workspace${NC}"
+    exit 1
+fi
+
+cd "${WORKSPACE_DIR}"
+
+# Run tofu plan
+echo -e "${YELLOW}Running 'tofu plan'...${NC}"
+docker exec -i -w "${WORKSPACE_DIR}" ${STACK_NAME}_opentofu tofu plan -out=tfplan
+
+if [ $? -eq 0 ]; then
+    echo -e "${GREEN}Plan created successfully!${NC}"
+    echo -e "${YELLOW}Review the plan above, then run 'tofu-apply' to apply changes${NC}"
+else
+    echo -e "${RED}Plan creation failed${NC}"
+    exit 1
+fi

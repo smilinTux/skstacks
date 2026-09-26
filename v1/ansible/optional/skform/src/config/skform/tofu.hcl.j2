@@ -1,0 +1,34 @@
+# OpenTofu CLI Configuration
+# This file configures OpenTofu behavior
+
+# Provider plugin caching
+plugin_cache_dir = "/tofu/plugins"
+
+# Disable provider signature verification (optional, for air-gapped environments)
+# disable_checkpoint = true
+
+# Logging configuration
+# Log levels: TRACE, DEBUG, INFO, WARN, ERROR
+# log = "{{ skform.TOFU_LOG_LEVEL }}"
+
+# State backend configuration
+{% if skform.STATE_BACKEND_TYPE == "s3" and skform.SKSTOR_ENABLED %}
+# Remote state backend using SKStor (MinIO)
+# Note: Configure backend in terraform.tf files, not here
+# Example backend configuration:
+# terraform {
+#   backend "s3" {
+#     endpoint   = "https://{{ skform.SKSTOR_ENDPOINT }}"
+#     bucket     = "{{ skform.SKSTOR_BUCKET }}"
+#     region     = "{{ skform.SKSTOR_REGION }}"
+#     key        = "workspace/terraform.tfstate"
+#     skip_credentials_validation = true
+#     skip_region_validation      = true
+#     skip_metadata_api_check     = true
+#     force_path_style            = true
+#   }
+# }
+{% else %}
+# Using local state backend
+# State files stored in: {{ skform.STATE_BACKEND_PATH }}
+{% endif %}
