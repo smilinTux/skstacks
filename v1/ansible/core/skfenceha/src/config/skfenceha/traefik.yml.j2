@@ -1,0 +1,65 @@
+# Traefik static configuration for the ACME-master role (/etc/traefik/traefik.yml).
+# This file is managed by Ansible - do not edit manually.
+#
+# The ACME master is the only skfenceha role that ever performs a
+# certificate challenge; traefik-worker.yml.j2 (the routing role, run on
+# every node) reads the resulting acme.json read-only and never negotiates
+# with the CA. log:/accessLog: file paths are injected per-node at container
+# start by entrypoint.sh (see that file for why they can't live here).
+
+api:
+  dashboard: true
+  insecure: true
+
+{% if skfenceha.ACME_ENABLED | default(false) %}
+# Cloudflare DNS-01 ACME challenge. CLOUDFLARE_EMAIL is an instance var (no
+# default); the token is a required secret
+# (vault_skfenceha_cloudflare_dns_token) read from skfenceha.env.
+certificatesResolvers:
+  main:
+    acme:
+      email: "{{ skfenceha.CLOUDFLARE_EMAIL }}"
+      storage: /acme/acme.json
+      caServer: "https://acme-v02.api.letsencrypt.org/directory"
+      dnsChallenge:
+        provider: cloudflare
+        disablePropagationCheck: true
+        delayBeforeCheck: 90s
+        resolvers:
+          - "1.1.1.1:53"
+          - "1.0.0.1:53"
+      httpChallenge:
+        entryPoint: ""
+{% endif %}
+
+entryPoints:
+  websecure:
+    address: ":443"
+  metrics:
+    address: ":8082"
+
+global:
+  checknewversion: false
+  sendanonymoususage: false
+
+providers:
+  swarm:
+    endpoint: "tcp://tasks.{{ app }}-{{ env }}_socket-proxy:2375"
+    network: "cloud-socket-proxy-{{ env }}"
+    exposedByDefault: false
+    watch: true
+  file:
+    directory: "/etc/traefik/dynamic"
+    watch: true
+
+serversTransport:
+  insecureSkipVerify: true
+  forwardingTimeouts:
+    responseHeaderTimeout: 15s
+
+metrics:
+  prometheus:
+    addEntryPointsLabels: true
+    addRoutersLabels: true
+    addServicesLabels: true
+    entryPoint: metrics

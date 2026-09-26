@@ -1,0 +1,338 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# skfenceha: the HA (multi-node) Traefik reverse proxy / load balancer.
+# Adapted from core/skfence (the single-node variant); the two are not
+# interchangeable (see src/error-pages/README.md and
+# v1/ansible/core/skfence/README.md for why a fresh single-node instance
+# should use skfence instead).
+#
+# HA shape: one manager node is labeled traefik.acme.master=true and runs
+# traefik-acme (certificate renewal only, one replica). Every manager runs
+# traefik-worker in global mode (all real routing, host-mode ports so client
+# IPs are never SNATed). Workers read the ACME master's acme.json read-only;
+# they never perform a certificate challenge themselves.
+#
+# TLS has the same instance-selectable modes as skfence (see
+# src/config/skfenceha/skfenceha.env.j2 and traefik.yml.j2):
+#   - skfenceha.ACME_ENABLED: false (default) -> Traefik's own self-signed
+#     certificate. No public DNS or Cloudflare account needed.
+#   - skfenceha.ACME_ENABLED: true -> Let's Encrypt via Cloudflare DNS-01.
+#     Requires skfenceha.CLOUDFLARE_EMAIL and the vault secret
+#     vault_skfenceha_cloudflare_dns_token (no defaults; both instance vars).
+#
+# Security features beyond skfence:
+#   - skfenceha.DASHBOARD_AUTH_HASH: pre-hashed (htpasswd -nbB) dashboard
+#     basic-auth credential. Generate with src/skfenceha/create_user_password.sh.
+#   - skfenceha.WHITELIST_IPS: list of CIDRs/IPs, empty by default. When
+#     non-empty, an ipAllowList middleware is added to the default chain.
+#   - skfenceha.CROWDSEC_ENABLED: opt-in reference to an externally deployed
+#     crowdsec-bouncer@file middleware + LAPI key; this stack does not run
+#     CrowdSec itself.
+#
+# TODO before deploy: register the skfenceha-{{ env }} edge/socket-proxy
+# overlay subnets in shared/networks if these placeholders collide on your
+# estate (cloud-public-{{ env }} is intentionally shared across core
+# services; cloud-edge/cloud-socket-proxy are the shared "current edge"
+# networks, so their subnet must match whichever edge service - skfence or
+# skfenceha - is actually active). Set the skfenceha vault vars (see README.md
+# for the full reference); ensure images are pullable on swarm nodes; label
+# exactly one manager node traefik.acme.master=true before the first deploy
+# (this playbook manages that label for you, moving it to target_manager_group's
+# selected manager on every run).
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+# Step 1: select the manager that will hold the ACME-master role.
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Validate required target group
+      assert:
+        that:
+          - target_manager_group is defined
+          - target_manager_group != ''
+          - target_manager_group != 'swarm_managers'
+        fail_msg: "ERROR: 'target_manager_group' must be specified and cannot be the default 'swarm_managers'."
+
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group }}"
+
+# Step 2: deploy to the selected manager.
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skfenceha
+    env: dev
+    service_name: skfenceha
+    service_type: core
+  pre_tasks:
+    - name: Validate environment variable
+      assert:
+        that:
+          - env is defined
+          - env == 'dev'
+        fail_msg: "ERROR: 'env' variable must be set to 'dev' for this playbook."
+
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Define default network variables when not provided in vault
+      set_fact:
+        app_networks: "{{ skfenceha_dev_networks | default([
+          { 'name': 'cloud-edge-dev', 'subnet': '172.16.203.0/24', 'driver': 'overlay', 'attachable': true },
+          { 'name': 'cloud-public-dev', 'subnet': '172.16.202.0/24', 'driver': 'overlay', 'attachable': true },
+          { 'name': 'cloud-socket-proxy-dev', 'subnet': '172.16.206.0/24', 'driver': 'overlay', 'attachable': true }
+        ]) }}"
+      tags:
+        - networks
+        - config
+
+  tasks:
+    - name: Deploying {{ app }}
+      debug:
+        msg: Running SKStacks deploy {{ app }} scripts...
+
+    - name: Ensure logrotate is installed
+      apt:
+        name: logrotate
+        state: present
+        update_cache: yes
+
+    - name: Create logrotate configuration for {{ app }} logs
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/logrotate.conf.j2"
+        dest: "/etc/logrotate.d/{{ app }}-{{ env }}"
+        owner: root
+        group: root
+        mode: '0644'
+      vars:
+        log_path: "/var/data/logs/{{ app }}-{{ env }}/traefik/*/*.log"
+        retention_days: "3"
+
+    - name: Create the {{ app }} directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - "/var/data/{{ app }}-{{ env }}"
+        - "/var/data/config/{{ app }}-{{ env }}"
+        - "/var/data/config/{{ app }}-{{ env }}/dynamic"
+        - "/var/data/config/{{ app }}-{{ env }}/dynamic_acme"
+        - "/var/data/config/{{ app }}-{{ env }}/error-pages"
+        - "/var/data/runtime/{{ app }}-{{ env }}"
+        - "/var/data/runtime/{{ app }}-{{ env }}/acme"
+        - "/var/data/runtime/{{ app }}-{{ env }}/certs"
+        - "/var/data/logs/{{ app }}-{{ env }}"
+        - "/var/data/logs/{{ app }}-{{ env }}/traefik"
+
+    - name: Ensure acme.json exists and is locked down
+      file:
+        path: "/var/data/runtime/{{ app }}-{{ env }}/acme/acme.json"
+        state: touch
+        owner: root
+        group: root
+        mode: '0600'
+
+    # HA mode: exactly one manager holds the ACME-master role. Move the
+    # label to this run's selected_manager and remove it from every other
+    # manager in the target group, so a re-run after a manager change
+    # doesn't leave two nodes labeled (which would race on the ACME lock).
+    - name: Remove ACME master label from all manager nodes in this group
+      shell: |
+        for node in {{ (groups[target_manager_group] | default([])) | join(' ') }}; do
+          docker node inspect "$node" --format '{{ '{{ .Spec.Labels }}' }}' | grep -q 'traefik.acme.master' && docker node update --label-rm traefik.acme.master "$node" || true
+        done
+      register: acme_label_remove_result
+      changed_when: acme_label_remove_result.rc | default(1) == 0
+      failed_when: false
+      tags:
+        - labels
+        - ha
+
+    - name: Label the selected manager as ACME master
+      shell: docker node update --label-add traefik.acme.master=true {{ selected_manager }}
+      register: acme_label_result
+      changed_when: "'Label added' in acme_label_result.stdout or acme_label_result.rc | default(1) == 0"
+      failed_when: false
+      tags:
+        - labels
+        - ha
+
+    - name: Show HA mode info
+      debug:
+        msg: |
+          ACME master: {{ selected_manager }} (label traefik.acme.master=true)
+          Managers in {{ target_manager_group }}: {{ (groups[target_manager_group] | default([])) | join(', ') }}
+      tags:
+        - labels
+
+    - name: Deploy error-pages source files
+      copy:
+        src: "{{ playbook_dir }}/src/error-pages/{{ item }}"
+        dest: "/var/data/config/{{ app }}-{{ env }}/error-pages/{{ item }}"
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - Dockerfile
+        - server.py
+
+    - name: Copy error-pages HTML template (server.py fills it per request)
+      copy:
+        src: "{{ playbook_dir }}/src/error-pages/error.html.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/error-pages/error.html"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Build error-pages Docker image
+      community.docker.docker_image:
+        name: "{{ app }}-{{ env }}-error-pages:latest"
+        source: build
+        build:
+          path: "/var/data/config/{{ app }}-{{ env }}/error-pages"
+          dockerfile: Dockerfile
+        force_source: "{{ force_rebuild_error_pages | default(false) }}"
+
+    - name: Process {{ app }} environment templates
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: '0640'
+      loop:
+        - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env" }
+        - { src: "{{ app }}.sh.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env" }
+      tags:
+        - templates
+
+    - name: Deploy Traefik entrypoint script
+      copy:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/entrypoint.sh"
+        dest: "/var/data/config/{{ app }}-{{ env }}/entrypoint.sh"
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Deploy dynamic config (routers, services, middlewares, TLS options) to both the worker and ACME-master directories
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.1.src }}"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ item.0 }}/{{ item.1.dest }}"
+        owner: root
+        group: root
+        mode: '0644'
+      loop: "{{ ['dynamic', 'dynamic_acme'] | product(dynamic_config_files) | list }}"
+      vars:
+        dynamic_config_files:
+          - { src: "routers.yml.j2", dest: "routers.yml" }
+          - { src: "services.yml.j2", dest: "services.yml" }
+          - { src: "dynamic-middlewares.yml.j2", dest: "middlewares.yml" }
+          - { src: "dynamic-tls.yml.j2", dest: "tls.yml" }
+      tags:
+        - config
+        - dynamic
+
+    - name: Render traefik.yml (ACME-master role) from template with vault secrets
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/traefik.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/traefik.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags:
+        - config
+        - secrets
+
+    - name: Render traefik-worker.yml (routing role) from template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/traefik-worker.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/traefik-worker.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags:
+        - config
+
+    - name: Render {{ app }} Docker Compose template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags:
+        - compose
+
+    - name: Create docker-compose.yml symlink
+      file:
+        src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml"
+        force: yes
+        owner: root
+        group: root
+        state: link
+
+    - name: Process deploy script template
+      template:
+        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/deploy"
+        owner: root
+        group: root
+        mode: '0755'
+      tags:
+        - deploy-script
+
+    - name: Create {{ app }} control script symlink
+      file:
+        src: "/var/data/{{ app }}-{{ env }}/deploy"
+        dest: "/var/data/deploy_{{ app }}-{{ env }}"
+        force: yes
+        owner: root
+        group: root
+        mode: '0755'
+        state: link
+      tags:
+        - deploy-script
+
+    - name: Ensure overlay networks exist from app_networks variable
+      include_tasks: ../../shared/tasks/create_networks.yml
+      tags:
+        - networks
+
+    - name: Deploy {{ app }} stack
+      shell: |
+        cd /var/data/{{ app }}-{{ env }}
+        ./deploy
+      register: deploy_output
+      tags:
+        - deploy
+
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags:
+        - deploy

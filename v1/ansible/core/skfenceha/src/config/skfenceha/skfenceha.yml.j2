@@ -1,0 +1,289 @@
+# Docker Compose for skfenceha: the HA (multi-node) Traefik edge.
+#
+# HA mode: traefik-acme runs a single replica on the node labeled
+# traefik.acme.master=true (certificate renewal only); traefik-worker runs
+# in global mode on every manager (handles all routing, host-mode ports so
+# the real client IP reaches Traefik directly, reads acme.json read-only).
+# For a single-node instance, use skfence instead - the two are not
+# interchangeable (see v1/ansible/core/skfence/README.md).
+#
+# CrowdSec: this stack does not run a CrowdSec agent/bouncer itself.
+# skfenceha.CROWDSEC_ENABLED (default false) only wires the
+# crowdsec-bouncer@file middleware reference into the default chain; a
+# separate stack must publish that middleware config and hold the LAPI key.
+
+version: '3.9'
+
+services:
+
+  # ACME master: certificate renewal only. Exactly one replica, pinned to
+  # the labeled node, so only one instance ever performs the ACME challenge.
+  traefik-acme:
+    image: traefik:v3.6.2
+    entrypoint: /entrypoint.sh
+    environment:
+      - NODE_HOSTNAME={{ '{{.Node.Hostname}}' }}
+    env_file:
+      - /var/data/config/{{ app }}-{{ env }}/{{ app }}.env
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    ports:
+      - target: 8080
+        published: 8080
+        protocol: tcp
+        mode: host
+    deploy:
+      mode: replicated
+      replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        monitor: 30s
+        max_failure_ratio: 0.2
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: pause
+        monitor: 30s
+        max_failure_ratio: 0.2
+      placement:
+        constraints:
+          - node.role == manager
+          - node.labels.traefik.acme.master == true
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+        reservations:
+          cpus: '0.10'
+          memory: 128M
+      labels:
+        - com.skt.env={{ env }}
+        - com.skt.cluster={{ skfenceha.CLUSTERNAME | default(cluster_name) }}-{{ skfenceha.DOMAIN | default(domain) }}
+        - com.skt.app={{ app }}
+        - com.skt.role=traefik-acme
+    volumes:
+      - /var/data/runtime/{{ app }}-{{ env }}/acme:/acme
+      - /var/data/logs/{{ app }}-{{ env }}/traefik:/logs
+      - /var/data/config/{{ app }}-{{ env }}/entrypoint.sh:/entrypoint.sh:ro
+      - /var/data/config/{{ app }}-{{ env }}/dynamic_acme:/etc/traefik/dynamic:ro
+      - /var/data/config/{{ app }}-{{ env }}/traefik.yml:/etc/traefik/traefik.yml:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - cloud-edge-{{ env }}
+      - cloud-public-{{ env }}
+      - cloud-socket-proxy-{{ env }}
+
+  # Worker: handles all routing. Global mode so every manager node runs one;
+  # host-mode ports preserve the real client source IP.
+  traefik-worker:
+    image: traefik:v3.6.2
+    entrypoint: /entrypoint.sh
+    environment:
+      - TRAEFIK_WORKER_MODE=true
+      - NODE_HOSTNAME={{ '{{.Node.Hostname}}' }}
+    env_file:
+      - /var/data/config/{{ app }}-{{ env }}/{{ app }}.env
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    ports:
+      - target: 80
+        published: 80
+        protocol: tcp
+        mode: host
+      - target: 443
+        published: 443
+        protocol: tcp
+        mode: host
+      - target: 222
+        published: 222
+        protocol: tcp
+        mode: host
+      - target: 8082
+        published: 8082
+        protocol: tcp
+        mode: host
+    deploy:
+      mode: global
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        monitor: 30s
+        max_failure_ratio: 0.2
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: pause
+        monitor: 30s
+        max_failure_ratio: 0.2
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          cpus: '0.40'
+          memory: 384M
+        reservations:
+          cpus: '0.08'
+          memory: 96M
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.services.traefik-worker-api.loadbalancer.server.port=8080"
+        - "com.skt.env={{ env }}"
+        - "com.skt.cluster={{ skfenceha.CLUSTERNAME | default(cluster_name) }}-{{ skfenceha.DOMAIN | default(domain) }}"
+        - "com.skt.app={{ app }}"
+        - "com.skt.role=traefik-worker"
+    volumes:
+      - /var/data/runtime/{{ app }}-{{ env }}/acme:/acme:ro
+      - /var/data/runtime/{{ app }}-{{ env }}/certs:/certs:ro
+      - /var/data/logs/{{ app }}-{{ env }}/traefik:/logs
+      - /var/data/config/{{ app }}-{{ env }}/entrypoint.sh:/entrypoint.sh:ro
+      - /var/data/config/{{ app }}-{{ env }}/dynamic:/etc/traefik/dynamic:ro
+      - /var/data/config/{{ app }}-{{ env }}/traefik-worker.yml:/etc/traefik/traefik.yml:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - cloud-edge-{{ env }}
+      - cloud-public-{{ env }}
+      - cloud-socket-proxy-{{ env }}
+
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    deploy:
+      mode: global
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
+    environment:
+      API_VERSION: "1.44"
+      CONTAINERS: 1
+      SERVICES: 1
+      TASKS: 1
+      NODES: 1
+      NETWORKS: 1
+      CONFIGS: 1
+      SECRETS: 1
+      VOLUMES: 1
+      SWARM: 1
+      INFO: 1
+      IMAGES: 1
+      POST: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      cloud-socket-proxy-{{ env }}:
+
+  error-pages:
+    # Image is built by the deploy playbook before stack deploy (Swarm
+    # doesn't support a `build:` context in a stack file).
+    image: {{ app }}-{{ env }}-error-pages:latest
+    deploy:
+      mode: replicated
+      replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 5s
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        delay: 5s
+        failure_action: pause
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          cpus: '0.10'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.services.error-pages.loadbalancer.server.port=8080"
+    environment:
+      - PORT=8080
+      - APP_ENV={{ env }}
+      - CLUSTERNAME={{ skfenceha.CLUSTERNAME | default(cluster_name) }}
+      - DOMAIN={{ skfenceha.DOMAIN | default(domain) }}
+    networks:
+      - cloud-public-{{ env }}
+      - cloud-socket-proxy-{{ env }}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  traefik-certs-dumper:
+    # Dumps the ACME master's acme.json into PEM files other services can
+    # bind-mount (e.g. a mail server that needs its cert outside Traefik).
+    image: ldez/traefik-certs-dumper:v2.10.0
+    command:
+      - file
+      - --version
+      - v3
+      - --source=/acme/acme.json
+      - --watch
+      - --clean
+      - --domain-subdir
+      - --dest=/output
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+          - node.labels.traefik.acme.master == true
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          cpus: '0.10'
+          memory: 64M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
+    healthcheck:
+      test: ["CMD", "ls", "/output"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - /var/data/runtime/{{ app }}-{{ env }}/acme:/acme:ro
+      - /var/data/runtime/{{ app }}-{{ env }}/certs:/output
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - cloud-public-{{ env }}
+
+networks:
+  cloud-edge-{{ env }}:
+    external: true
+  cloud-public-{{ env }}:
+    external: true
+  cloud-socket-proxy-{{ env }}:
+    external: true

@@ -1,0 +1,114 @@
+# Traefik HTTP middlewares (dynamic/middlewares.yml).
+# This file is managed by Ansible - do not edit manually.
+
+http:
+  middlewares:
+{% if skfenceha.DASHBOARD_AUTH_HASH | default('') != '' %}
+    traefikAuth:
+      basicAuth:
+        users:
+          - '{{ skfenceha.DASHBOARD_AUTH_HASH }}'
+        realm: "TraefikDashboard"
+{% else %}
+    # No dashboard credentials configured (skfenceha.DASHBOARD_AUTH_HASH is
+    # empty): stub middleware so traefikAuth@file references never fail.
+    traefikAuth:
+      chain:
+        middlewares: []
+{% endif %}
+
+{% if skfenceha.WHITELIST_IPS | default([]) | length > 0 %}
+    # IP allowlist. skfenceha.WHITELIST_IPS is an instance var (list of
+    # CIDRs/IPs) with an empty default; when empty this middleware is not
+    # referenced by any router, so it costs nothing.
+    ipwhitelist:
+      ipAllowList:
+        sourceRange:
+{% for ip in skfenceha.WHITELIST_IPS %}
+          - "{{ ip }}"
+{% endfor %}
+{% endif %}
+
+    # Default middleware chain applied to most routers.
+    default:
+      chain:
+        middlewares:
+{% if skfenceha.WHITELIST_IPS | default([]) | length > 0 %}
+          - ipwhitelist@file
+{% endif %}
+{% if skfenceha.CROWDSEC_ENABLED | default(false) %}
+          # CrowdSec is opt-in: it expects an external bouncer/LAPI already
+          # reachable as crowdsec-bouncer@file (e.g. a separately deployed
+          # sksec-style stack) and its own LAPI key. Traefik extracts the
+          # real client IP automatically (host mode) or via PROXY Protocol
+          # (HA ingress mode), so the bouncer sees the real caller.
+          - crowdsec-bouncer@file
+{% endif %}
+          - rate-limit@file
+          - default-security-headers@file
+          - error-pages@file
+          - gzip@file
+
+    # Dashboard-specific chain: excludes error-pages so api@internal's own
+    # error responses are not intercepted. CrowdSec/whitelist are
+    # intentionally excluded too, so an admin locked out of the allowlist by
+    # mistake can still reach the dashboard from the loopback/VPN path an
+    # operator would use to fix it.
+    dashboard-chain:
+      chain:
+        middlewares:
+          - default-security-headers@file
+          - gzip@file
+
+    rate-limit:
+      rateLimit:
+        average: {{ skfenceha.RATE_LIMIT_AVERAGE | default(100) }}
+        burst: {{ skfenceha.RATE_LIMIT_BURST | default(50) }}
+        period: 1s
+
+    default-security-headers:
+      headers:
+        browserXssFilter: true
+        contentTypeNosniff: true
+        forceSTSHeader: true
+        stsIncludeSubdomains: true
+        stsPreload: true
+        stsSeconds: 63072000
+        customFrameOptionsValue: "DENY"
+        referrerPolicy: "strict-origin-when-cross-origin"
+        permissionsPolicy: "camera=(), microphone=(), geolocation=(), payment=(), usb=(), vr=()"
+        customResponseHeaders:
+          X-Permitted-Cross-Domain-Policies: "none"
+          X-Robots-Tag: "none"
+          Server: ""
+
+    dashboard-redirect:
+      redirectRegex:
+        regex: "^/dashboard$"
+        replacement: "/dashboard/"
+        permanent: true
+
+    error-pages:
+      errors:
+        status:
+          # 401 is excluded so WWW-Authenticate survives (needed by basic
+          # auth / git-over-HTTP style flows behind this proxy).
+          - "400"
+          - "402-599"
+        service: error-pages@file
+        query: "/error/{status}"
+
+    gzip:
+      compress:
+        includedContentTypes:
+          - "text/html"
+          - "text/css"
+          - "text/plain"
+          - "text/xml"
+          - "text/javascript"
+          - "application/javascript"
+          - "application/json"
+          - "application/xml"
+          - "application/rss+xml"
+          - "image/svg+xml"
+        minResponseBodyBytes: 1024
