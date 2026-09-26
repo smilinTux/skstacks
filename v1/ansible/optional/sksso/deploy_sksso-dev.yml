@@ -63,7 +63,7 @@
       # (included below).
       set_fact:
         app_networks: "{{ sksso_dev_networks | default([
-          { 'name': 'sksso-dev', 'subnet': '172.16.226.0/24' },
+          { 'name': 'sksso-dev', 'subnet': '172.16.106.0/24' },
           { 'name': 'cloud-public-dev', 'subnet': '172.16.202.0/24' }
         ]) }}"
       tags:

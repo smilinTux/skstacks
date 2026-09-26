@@ -63,7 +63,7 @@
       # (included below).
       set_fact:
         app_networks: "{{ sksso_staging_networks | default([
-          { 'name': 'sksso-staging', 'subnet': '172.16.227.0/24' },
+          { 'name': 'sksso-staging', 'subnet': '172.16.105.0/24' },
           { 'name': 'cloud-public-staging', 'subnet': '172.16.201.0/24' }
         ]) }}"
       tags:
