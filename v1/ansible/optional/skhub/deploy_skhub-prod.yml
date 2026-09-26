@@ -92,6 +92,7 @@
         - { path: "/var/data/config/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/runtime/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/{{ app }}-{{ env }}/html", owner: "www-data", group: "www-data", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/html/data", owner: "www-data", group: "www-data", mode: "0755" }
         - { path: "/var/data/{{ app }}-{{ env }}/custom_apps", owner: "www-data", group: "www-data", mode: "0755" }
         - { path: "/var/data/{{ app }}-{{ env }}/config", owner: "www-data", group: "www-data", mode: "0755" }
         - { path: "/var/data/{{ app }}-{{ env }}/data", owner: "www-data", group: "www-data", mode: "0755" }
