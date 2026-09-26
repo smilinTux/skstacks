@@ -1,0 +1,55 @@
+#!/bin/bash
+set -e
+
+APP="skdash"
+STACK_NAME="{{ app }}-{{ env }}"
+CONFIG_DIR="/var/data/config/${APP}-{{ env }}"
+COMPOSE_FILE="${CONFIG_DIR}/docker-compose.yml"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+echo -e "${GREEN}Deploying ${APP} stack (Dashy dashboard)...${NC}"
+
+if [ -f "${CONFIG_DIR}/${APP}.sh.env" ]; then
+    echo -e "${YELLOW}Loading environment variables...${NC}"
+    source "${CONFIG_DIR}/${APP}.sh.env"
+fi
+
+export CLUSTER_NAME DOMAIN APP_ENV
+
+if [ ! -f "${COMPOSE_FILE}" ]; then
+    echo -e "${RED}Error: Compose file not found: ${COMPOSE_FILE}${NC}"
+    exit 1
+fi
+
+echo -e "${YELLOW}Deploying stack configuration...${NC}"
+docker stack deploy \
+    -c "${COMPOSE_FILE}" \
+    --prune \
+    --with-registry-auth \
+    "${STACK_NAME}"
+
+sleep 10
+
+echo -e "${YELLOW}Forcing service update to pull latest image...${NC}"
+docker service update --force --detach=false "${STACK_NAME}_dashy" || true
+
+echo -e "${YELLOW}Waiting for the service to stabilize...${NC}"
+sleep 15
+
+echo -e "${GREEN}Service status:${NC}"
+docker service ls | grep "${STACK_NAME}"
+
+DASHY_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_dashy" --format "{{ '{{.Replicas}}' }}")
+if [[ "$DASHY_REPLICAS" == "1/1" ]]; then
+    echo -e "${GREEN}${STACK_NAME} dashy is healthy and running!${NC}"
+else
+    echo -e "${RED}${STACK_NAME} dashy health check: ${DASHY_REPLICAS}${NC}"
+    echo -e "${YELLOW}Recent logs:${NC}"
+    docker service logs --tail 20 "${STACK_NAME}_dashy"
+fi
+
+echo -e "${GREEN}Deployment complete!${NC}"
