@@ -5,12 +5,21 @@
 # Provider is the recommended sovereign adapter from the skos capability map.
 #
 # See: docs/superpowers/specs/2026-06-09-skos-capability-map.md
+#
+# STATUS: no deploy: block. capauth is NOT a validated v2 stack today. The
+# real running instance (a systemd --user unit, loopback-bound, token-gated —
+# skgateway's authz PDP delegate) is a bare process, not a container, and the
+# CapAuth server code refuses to sit on a public interface by design (it warns
+# on --host 0.0.0.0). A prior version of this file carried a fabricated
+# deploy: block (wrong port, an image nothing in the fleet actually runs) —
+# see docs/services/capauth.md for the real deployment shapes and the open
+# design question before anyone fills this back in.
 
 name: capauth
-description: "Sovereign machine-to-machine auth — PGP-based CapAuth for agent identity and secret access without OAuth."
+description: "Sovereign machine-to-machine auth — PGP-based CapAuth for agent identity, secret access, and an authz PDP, without OAuth."
 capability: "Sovereign M2M auth — PGP-based identity and secret access without OAuth"
 scope: capauth
-ha: true            # "if you need one, get two" — identity root — redundant
+ha: true            # "if you need one, get two" — identity root — redundant (target; not deployed as HA today)
 min_replicas: 3
 version: "CHANGEME_VERSION"
 platforms: [docker-swarm, bare-metal]
@@ -19,16 +28,33 @@ alternates:
   - Zitadel (OIDC M2M for human+agent hybrid)
   - SPIFFE/SPIRE (workload identity)
 
-# Secret keys this service needs (values resolved from secret backend at deploy time)
+# Secret keys this service needs (values resolved from secret backend at deploy time).
+# These are the capauth-service process's own runtime secrets (src/capauth/service/app.py),
+# not the per-agent CapAuth identity keys under ~/.capauth/ (those are provisioned separately,
+# per agent, and never flow through this descriptor).
 secrets:
-  - key: capauth_pgp_private_key
-    description: "CapAuth PGP private key (armored) for this agent/service"
-    rotation_days: 730
+  - key: capauth_admin_token
+    description: "Bearer token gating the capauth-service admin API (CAPAUTH_ADMIN_TOKEN)"
+    rotation_days: 90
     required: true
     sensitive: true
-  - key: capauth_pgp_passphrase
-    description: "Passphrase protecting the CapAuth PGP private key"
+  - key: capauth_jwt_secret
+    description: "Secret signing CapAuth-issued session JWTs (CAPAUTH_JWT_SECRET)"
+    rotation_days: 90
     required: true
+    sensitive: true
+  - key: capauth_authz_token
+    description: "Bearer token gating the /v1/authz/decide PDP endpoint (CAPAUTH_AUTHZ_TOKEN); unset = endpoint disabled/503"
+    rotation_days: 90
+    required: true
+    sensitive: true
+  - key: capauth_server_key_armor
+    description: "Optional armored PGP private key the server uses to sign challenge nonces (CAPAUTH_SERVER_KEY_ARMOR)"
+    required: false
+    sensitive: true
+  - key: capauth_server_key_passphrase
+    description: "Passphrase for capauth_server_key_armor (CAPAUTH_SERVER_KEY_PASSPHRASE)"
+    required: false
     sensitive: true
 
 # Non-sensitive config (overridden by overlay values)
@@ -37,18 +63,12 @@ config:
   DOMAIN: "${SKSTACKS_DOMAIN}"
   CLUSTER: "${SKSTACKS_CLUSTER}"
 
-# Health check (fill in real URL/path before deploy)
+# Health check (fill in real URL/path before deploy). Real self-report route today is
+# GET /capauth/v1/status — there is no /healthz route (see docs/services/capauth.md).
 healthcheck:
   url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/healthz"
   interval: 30s
   timeout: 5s
   retries: 3
 
-# Deploy block — sovereign CapAuth identity service (HA). Built image from our registry.
-deploy:
-  container: capauth
-  image: "ghcr.io/smilintux/capauth:latest"
-  ports:
-    - "8081:8081"
-  volumes:
-    - "capauth-trust:/var/lib/capauth"
+# No deploy: block — see STATUS note above and docs/services/capauth.md.
