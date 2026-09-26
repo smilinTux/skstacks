@@ -68,7 +68,12 @@ echo -e "${GREEN}Service Status:${NC}"
 docker service ls | grep "${STACK_NAME}"
 
 echo -e "${YELLOW}Checking service health...${NC}"
-WORKER_REPLICAS=$(docker service ls --filter "name=${WORKER_SVC}" --format "{{ '{{.Replicas}}' }}" 2>/dev/null || echo "0/0")
+# Poll: an update that restarts the task shows 0/1 for a while.
+for _ in $(seq 1 36); do
+    WORKER_REPLICAS=$(docker service ls --filter "name=${WORKER_SVC}" --format "{{ '{{.Replicas}}' }}" 2>/dev/null || echo "0/0")
+    echo "$WORKER_REPLICAS" | grep -qE '^([1-9][0-9]*)/\1$' && break
+    sleep 5
+done
 if echo "$WORKER_REPLICAS" | grep -qE '^([1-9][0-9]*)/\1$'; then
     echo -e "${GREEN}${APP} worker role is healthy: ${WORKER_REPLICAS}${NC}"
 else

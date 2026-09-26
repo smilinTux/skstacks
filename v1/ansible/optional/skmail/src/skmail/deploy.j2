@@ -57,7 +57,11 @@ docker service ls | grep "${STACK_NAME}" || echo "No services found"
 
 # Health check
 echo -e "${YELLOW}🏥 Checking service health...${NC}"
-REPLICAS=$(docker service ls --filter "name=${SERVICE_NAME}" --format '{% raw %}{{.Replicas}}{% endraw %}' 2>/dev/null | head -1 || echo "0/0")
+for _ in $(seq 1 36); do
+    REPLICAS=$(docker service ls --filter "name=${SERVICE_NAME}" --format '{% raw %}{{.Replicas}}{% endraw %}' 2>/dev/null | head -1 || echo "0/0")
+    [[ "${REPLICAS}" == "1/1" ]] && break
+    sleep 5
+done
 
 if [[ "${REPLICAS}" == "1/1" ]]; then
     echo -e "${GREEN}✅ SKMail is healthy and running! (${REPLICAS})${NC}"

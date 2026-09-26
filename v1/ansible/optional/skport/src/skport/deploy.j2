@@ -51,7 +51,11 @@ sleep 10
 echo -e "${GREEN}Service Status:${NC}"
 docker service ls | grep "${STACK_NAME}"
 
-REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_portainer" --format "{% raw %}{{.Replicas}}{% endraw %}")
+for _ in $(seq 1 36); do
+    REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_portainer" --format "{% raw %}{{.Replicas}}{% endraw %}")
+    [[ "$REPLICAS" == "1/1" ]] && break
+    sleep 5
+done
 if [[ "$REPLICAS" == "1/1" ]]; then
     echo -e "${GREEN}${STACK_NAME} Portainer is healthy and running!${NC}"
     echo -e "${GREEN}UI: https://skport{% if env != 'prod' %}-{{ env }}{% endif %}.${CLUSTERNAME:-skstack01}.${DOMAIN:-example.com}${NC}"

@@ -58,7 +58,11 @@ docker service ls | grep "${STACK_NAME}"
 
 # Health check
 echo -e "${YELLOW}🏥 Checking service health...${NC}"
-REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_crowdsec" --format "{{ '{{.Replicas}}' }}")
+for _ in $(seq 1 36); do
+    REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_crowdsec" --format "{{ '{{.Replicas}}' }}")
+    [[ "$REPLICAS" == "1/1" ]] && break
+    sleep 5
+done
 if [[ "$REPLICAS" == "1/1" ]]; then
     echo -e "${GREEN}✅ ${STACK_NAME} CrowdSec is healthy and running!${NC}"
 else
@@ -68,7 +72,11 @@ else
 fi
 
 # Check bouncer status
-BOUNCER_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_bouncer-traefik" --format "{{ '{{.Replicas}}' }}")
+for _ in $(seq 1 36); do
+    BOUNCER_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_bouncer-traefik" --format "{{ '{{.Replicas}}' }}")
+    [[ "$BOUNCER_REPLICAS" == "1/1" ]] && break
+    sleep 5
+done
 if [[ "$BOUNCER_REPLICAS" == "1/1" ]]; then
     echo -e "${GREEN}✅ ${STACK_NAME} Bouncer is healthy and running!${NC}"
 else

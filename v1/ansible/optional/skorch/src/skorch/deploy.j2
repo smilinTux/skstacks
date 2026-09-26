@@ -139,9 +139,13 @@ docker service ls | grep "${STACK_NAME}"
 
 # Health check
 echo -e "${YELLOW}🏥 Checking service health...${NC}"
-N8N_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_n8n" --format "{{ '{{.Replicas}}' }}")
-POSTGRES_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_postgres" --format "{{ '{{.Replicas}}' }}")
-REDIS_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_redis" --format "{{ '{{.Replicas}}' }}")
+for _ in $(seq 1 36); do
+    N8N_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_n8n" --format "{{ '{{.Replicas}}' }}")
+    POSTGRES_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_postgres" --format "{{ '{{.Replicas}}' }}")
+    REDIS_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_redis" --format "{{ '{{.Replicas}}' }}")
+    [[ "$N8N_REPLICAS" == "1/1" && "$POSTGRES_REPLICAS" == "1/1" && "$REDIS_REPLICAS" == "1/1" ]] && break
+    sleep 5
+done
 
 if [[ "$N8N_REPLICAS" == "1/1" && "$POSTGRES_REPLICAS" == "1/1" && "$REDIS_REPLICAS" == "1/1" ]]; then
     echo -e "${GREEN}✅ ${STACK_NAME} is healthy and running!${NC}"

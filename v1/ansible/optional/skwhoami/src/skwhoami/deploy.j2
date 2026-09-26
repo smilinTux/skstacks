@@ -54,7 +54,11 @@ docker service ls | grep "${STACK_NAME}"
 echo -e "${YELLOW}Checking service health...${NC}"
 HEALTHY=0
 for i in 01 02 03; do
-    REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_whoami${i}" --format "{% raw %}{{.Replicas}}{% endraw %}" 2>/dev/null || echo "0/0")
+    for _ in $(seq 1 36); do
+        REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_whoami${i}" --format "{% raw %}{{.Replicas}}{% endraw %}" 2>/dev/null || echo "0/0")
+        [[ "$REPLICAS" == "1/1" ]] && break
+        sleep 5
+    done
     if [[ "$REPLICAS" == "1/1" ]]; then
         echo -e "${GREEN}${STACK_NAME} whoami${i} is healthy: https://skwhoami${i}{% if env != 'prod' %}-{{ env }}{% endif %}.${CLUSTERNAME:-skstack01}.${DOMAIN:-example.com}${NC}"
         HEALTHY=$((HEALTHY + 1))

@@ -160,7 +160,11 @@ docker service ls | grep "${STACK_NAME}"
 
 # Health check
 echo -e "${YELLOW}Checking service health...${NC}"
-REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_qdrant" --format "{% raw %}{{.Replicas}}{% endraw %}")
+for _ in $(seq 1 36); do
+    REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_qdrant" --format "{% raw %}{{.Replicas}}{% endraw %}")
+    [[ "$REPLICAS" == "1/1" ]] && break
+    sleep 5
+done
 if [[ "$REPLICAS" == "1/1" ]]; then
     echo -e "${GREEN}${STACK_NAME} is healthy and running!${NC}"
 else
