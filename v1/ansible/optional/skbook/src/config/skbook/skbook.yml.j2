@@ -1,0 +1,172 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+version: '3.8'
+
+services:
+  bookstack:
+    image: lscr.io/linuxserver/bookstack:{{ skbook.BOOKSTACK_VERSION | default('v26.09-ls285') }}
+    env_file: /var/data/config/{{ app }}-{{ env }}/bookstack.env
+    volumes:
+      - /var/data/{{ app }}-{{ env }}/config:/config
+      - /etc/localtime:/etc/localtime:ro
+    depends_on:
+      - db
+    networks:
+      - skbook-{{ env }}
+      - cloud-public-{{ env }}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf --max-time 30 http://localhost/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      mode: replicated
+      replicas: {{ skbook.replicas | default(1) | int }}
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: {{ skbook.restart_policy_condition | default('on-failure') }}
+        delay: 10s
+        max_attempts: 5
+        window: 120s
+      placement:
+        constraints:
+          - node.role == worker
+      resources:
+        limits:
+          cpus: '{{ skbook.RESOURCES_LIMITS_CPUS | default("1.00") }}'
+          memory: {{ skbook.RESOURCES_LIMITS_MEMORY | default("2048M") }}
+        reservations:
+          cpus: '{{ skbook.RESOURCES_RESERVATIONS_CPUS | default("0.25") }}'
+          memory: {{ skbook.RESOURCES_RESERVATIONS_MEMORY | default("512M") }}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.routers.skbook-secure.rule=Host(`skbook{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skbook.CLUSTERNAME }}.{{ skbook.DOMAIN }}`)"
+        - "traefik.http.routers.skbook-secure.entrypoints=websecure"
+        - "traefik.http.routers.skbook-secure.tls=true"
+        - "traefik.http.routers.skbook-secure.tls.certresolver=main"
+        - "traefik.http.routers.skbook-secure.service=skbook-secure"
+        - "traefik.http.services.skbook-secure.loadbalancer.server.port=80"
+{% if skbook.tls_options | default('') %}
+        - "traefik.http.routers.skbook-secure.tls.options={{ skbook.tls_options }}"
+{% endif %}
+{% set _skbook_secure_middlewares = (skbook.router_middlewares_pre | default([])) + (skbook.router_middlewares | default([])) %}
+{% if _skbook_secure_middlewares %}
+        - "traefik.http.routers.skbook-secure.middlewares={{ _skbook_secure_middlewares | join(',') }}"
+{% endif %}
+        - "traefik.http.services.skbook-secure.loadbalancer.sticky.cookie=true"
+        - "traefik.http.services.skbook-secure.loadbalancer.sticky.cookie.name=skbook_session"
+        - "traefik.http.services.skbook-secure.loadbalancer.sticky.cookie.secure=true"
+        - "traefik.http.services.skbook-secure.loadbalancer.sticky.cookie.httpOnly=true"
+{% if skbook.sticky_samesite | default('') %}
+        - "traefik.http.services.skbook-secure.loadbalancer.sticky.cookie.sameSite={{ skbook.sticky_samesite }}"
+{% endif %}
+
+  db:
+    image: mariadb:10.11
+    env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}.env
+    # --tmpdir points MariaDB's scratch/sort space at a local (non-NFS) path
+    # inside the container's own overlay filesystem, not the NFS-backed
+    # /var/data tree, so MariaDB never does file locking over NFS. Only the
+    # real data directory (/var/lib/mysql) is bind-mounted, and that mount
+    # is under /var/data/runtime, a local bind on the manager, not NFS.
+    command:
+      - --tmpdir=/tmp
+      - --wait_timeout=28800
+      - --interactive_timeout=28800
+    volumes:
+      - /var/data/runtime/{{ app }}-{{ env }}/db:/var/lib/mysql
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - skbook-{{ env }}
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p\"$$MYSQL_ROOT_PASSWORD\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    deploy:
+      mode: replicated
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+      placement:
+        constraints:
+          - node.role == worker
+      resources:
+        limits:
+          cpus: '{{ skbook.DB_RESOURCES_LIMITS_CPUS | default("1.00") }}'
+          memory: {{ skbook.DB_RESOURCES_LIMITS_MEMORY | default("2048M") }}
+        reservations:
+          cpus: '{{ skbook.DB_RESOURCES_RESERVATIONS_CPUS | default("0.25") }}'
+          memory: {{ skbook.DB_RESOURCES_RESERVATIONS_MEMORY | default("256M") }}
+
+  db-backup:
+    image: mariadb:10.11
+    env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}-db-backup.env
+    volumes:
+      - /var/data/{{ app }}-{{ env }}/database-dump:/dump
+      - /etc/localtime:/etc/localtime:ro
+    entrypoint: |
+      bash -c 'bash -s <<EOF
+      trap "break;exit" SIGHUP SIGINT SIGTERM
+      echo "Starting database backup service..."
+      sleep 2m
+      while /bin/true; do
+        BACKUP_FILE="/dump/dump_\$$(date +%d-%m-%Y_%H_%M_%S).sql.gz"
+        if mariadb-dump -h db -u "\$$MYSQL_USER" -p"\$$MYSQL_PASSWORD" "\$$MYSQL_DATABASE" 2>/dev/null | gzip -c > "\$$BACKUP_FILE"; then
+          FILESIZE=\$$(stat -c%s "\$$BACKUP_FILE" 2>/dev/null || echo 0)
+          if [ "\$$FILESIZE" -le 100 ]; then
+            echo "\$$(date): WARNING - backup file too small, removing"
+            rm -f "\$$BACKUP_FILE"
+          fi
+        else
+          echo "\$$(date): ERROR - backup failed"
+          rm -f "\$$BACKUP_FILE"
+        fi
+        ls -tr /dump/dump_*.sql.gz 2>/dev/null | head -n -"\$$BACKUP_NUM_KEEP" | xargs -r rm -v
+        sleep "\$$BACKUP_FREQUENCY"
+      done
+      EOF'
+    networks:
+      - skbook-{{ env }}
+    deploy:
+      mode: replicated
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+      placement:
+        constraints:
+          - node.role == worker
+      resources:
+        limits:
+          cpus: '{{ skbook.BACKUP_RESOURCES_LIMITS_CPUS | default("0.25") }}'
+          memory: {{ skbook.BACKUP_RESOURCES_LIMITS_MEMORY | default("256M") }}
+        reservations:
+          cpus: '{{ skbook.BACKUP_RESOURCES_RESERVATIONS_CPUS | default("0.05") }}'
+          memory: {{ skbook.BACKUP_RESOURCES_RESERVATIONS_MEMORY | default("64M") }}
+
+networks:
+  skbook-{{ env }}:
+    external: true
+  cloud-public-{{ env }}:
+    external: true
