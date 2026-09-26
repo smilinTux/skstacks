@@ -1,0 +1,39 @@
+version: '3.8'
+
+networks:
+  {{ app }}-{{ env }}:
+    external: true
+  cloud-public-{{ env }}:
+    external: true
+
+services:
+  whoami:
+    image: traefik/whoami:latest
+    env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}.env
+    networks:
+      - {{ app }}-{{ env }}
+      - cloud-public-{{ env }}
+    deploy:
+      mode: replicated
+      replicas: {{ skwhoami.replicas | default(1) | int }}
+      resources:
+        limits:
+          memory: {{ skwhoami.memory_limit | default('64M') }}
+          cpus: '{{ skwhoami.cpu_limit | default("0.1") }}'
+        reservations:
+          memory: {{ skwhoami.memory_reservation | default('32M') }}
+          cpus: '{{ skwhoami.cpu_reservation | default("0.05") }}'
+      restart_policy:
+        condition: any
+        delay: 10s
+      # Traefik routing is configured via plain Docker labels (Docker/Swarm
+      # provider auto-discovery). The framework has no detect_traefik_setup.yml
+      # shared task (private prod's skwhoami imports one to pick skfence vs.
+      # skfenceha); this template does not depend on it.
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skwhoami.CLUSTERNAME | default('cluster1') }}.{{ skwhoami.DOMAIN | default('example.com') }}`)"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=80"
