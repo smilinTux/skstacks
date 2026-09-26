@@ -30,7 +30,7 @@ services:
         - "traefik.enable=true"
         - "traefik.swarm.network=cloud-public-{{ env }}"
         # === TRAEFIK: ROUTERS ===
-        - "traefik.http.routers.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.{{ cluster_name | default(skpulse.CLUSTERNAME | default('cluster1')) }}.{{ domain | default(skpulse.DOMAIN | default('example.com')) }}`)"
+        - "traefik.http.routers.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skpulse.CLUSTERNAME | default(cluster_name) }}.{{ skpulse.DOMAIN | default(domain) }}`)"
         - "traefik.http.routers.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
         - "traefik.http.routers.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
         - "traefik.http.routers.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"

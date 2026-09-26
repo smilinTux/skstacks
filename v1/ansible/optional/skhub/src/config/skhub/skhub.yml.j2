@@ -162,7 +162,7 @@ services:
       - skhub-{{ env }}
 
   redis:
-    image: redis:alpine
+    image: redis:8.4.0-alpine
     # notify-keyspace-events Ex: required for Nextcloud file locking.
     # timeout 0 / tcp-keepalive 300: avoid "Redis went away" on long uploads.
     command: redis-server --notify-keyspace-events Ex --appendonly yes --timeout 0 --tcp-keepalive 300

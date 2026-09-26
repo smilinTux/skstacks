@@ -35,7 +35,7 @@ services:
         - "traefik.enable=true"
         - "traefik.swarm.network=cloud-public-{{ env }}"
         # === TRAEFIK: ROUTERS ===
-        - "traefik.http.routers.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skorch{% if env != 'prod' %}-{{ env }}{% endif %}.{{ cluster_name | default(skorch.CLUSTERNAME | default('cluster1')) }}.{{ domain | default(skorch.DOMAIN | default('example.com')) }}`)"
+        - "traefik.http.routers.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skorch{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skorch.CLUSTERNAME | default(cluster_name) }}.{{ skorch.DOMAIN | default(domain) }}`)"
         - "traefik.http.routers.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
         - "traefik.http.routers.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
         - "traefik.http.routers.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
@@ -56,7 +56,7 @@ services:
         - "traefik.http.services.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie.sameSite=lax"
 
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg16@sha256:0a07c4114ba6d1d04effcce3385e9f5ce305eb02e56a3d35948a415a52f193ec
     env_file: /var/data/config/skorch-{{ env }}/postgres.env
     environment:
       - PGTEMP=/var/lib/postgresql/data/tmp
@@ -77,7 +77,7 @@ services:
         max_attempts: 5
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.7-alpine
     command: redis-server --dir /data --requirepass {{ skorch.REDIS_PASSWORD }}
     networks:
       - skorch-{{ env }}
@@ -90,7 +90,7 @@ services:
         max_attempts: 5
 
   postgres-backup:
-    image: prodrigestivill/postgres-backup-local:16
+    image: prodrigestivill/postgres-backup-local:16-debian-d257e5d
     env_file: /var/data/config/skorch-{{ env }}/postgres-backup.env
     environment:
       POSTGRES_HOST: postgres
