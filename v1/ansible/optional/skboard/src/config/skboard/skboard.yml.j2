@@ -1,0 +1,85 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+version: '3.8'
+
+services:
+  vikunja:
+    # Pinned: see README.md "Upgrading Vikunja" before ever bumping this.
+    image: vikunja/vikunja:{{ skboard.VIKUNJA_VERSION | default('0.24.6') }}
+    env_file: /var/data/config/skboard-{{ env }}/skboard.env
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "{{ skboard.LOG_MAX_SIZE | default('10m') }}"
+        max-file: "{{ skboard.LOG_MAX_FILES | default('3') }}"
+
+    volumes:
+      # Single bind mount: sqlite db + files/ subdir both live under here,
+      # matching the live reference deployment's single-volume layout.
+      - /var/data/skboard-{{ env }}/data:/app/vikunja
+
+    networks:
+      - cloud-public-{{ env }}
+      - skboard-{{ env }}
+
+    # No Docker-level healthcheck: the vikunja/vikunja image ships no shell
+    # and no wget/curl (verified: docker exec fails with "executable file
+    # not found in $PATH" for both), so a CMD-style test cannot run inside
+    # the container. The upstream image itself defines no HEALTHCHECK either.
+    # Swarm still detects and restarts a genuinely crashed process via the
+    # container exit code and the restart_policy below.
+
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: '{{ skboard.RESOURCES_LIMITS_CPUS | default("0.50") }}'
+          memory: {{ skboard.RESOURCES_LIMITS_MEMORY | default("512M") }}
+        reservations:
+          cpus: '{{ skboard.RESOURCES_RESERVATIONS_CPUS | default("0.10") }}'
+          memory: {{ skboard.RESOURCES_RESERVATIONS_MEMORY | default("128M") }}
+      restart_policy:
+        # Matches the live reference deployment's restart policy exactly.
+        # See README.md "Restart policy footgun" before changing this.
+        condition: {{ skboard.RESTART_POLICY_CONDITION | default('on-failure') }}
+        delay: {{ skboard.RESTART_POLICY_DELAY | default('10s') }}
+        max_attempts: {{ skboard.RESTART_POLICY_MAX_ATTEMPTS | default(3) }}
+        window: {{ skboard.RESTART_POLICY_WINDOW | default('120s') }}
+      labels:
+        # === TRAEFIK: HTTP ===
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        # === TRAEFIK: ROUTERS ===
+        - "traefik.http.routers.skboard{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skboard{% if env != 'prod' %}-{{ env }}{% endif %}.{{ cluster_name | default(skboard.CLUSTERNAME | default('cluster1')) }}.{{ domain | default(skboard.DOMAIN | default('example.com')) }}`)"
+        - "traefik.http.routers.skboard{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
+        - "traefik.http.routers.skboard{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
+        - "traefik.http.routers.skboard{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
+        - "traefik.http.routers.skboard{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
+        - "traefik.http.routers.skboard{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares=default-no-crowdsec@file"
+        - "traefik.http.routers.skboard{% if env != 'prod' %}-{{ env }}{% endif %}.service=skboard{% if env != 'prod' %}-{{ env }}{% endif %}"
+        # === TRAEFIK: SERVICES ===
+        - "traefik.http.services.skboard{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=3456"
+
+networks:
+  cloud-public-{{ env }}:
+    external: true
+  skboard-{{ env }}:
+    external: true
