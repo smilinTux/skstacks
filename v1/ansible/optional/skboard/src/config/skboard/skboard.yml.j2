@@ -28,9 +28,13 @@ services:
         max-file: "{{ skboard.LOG_MAX_FILES | default('3') }}"
 
     volumes:
-      # Single bind mount: sqlite db + files/ subdir both live under here,
-      # matching the live reference deployment's single-volume layout.
-      - /var/data/skboard-{{ env }}/data:/app/vikunja
+      # Never mount over /app/vikunja: it is the image's install dir and
+      # holds the binary (a mount there hid it: "exec /app/vikunja/vikunja:
+      # no such file", v2.19.0 rc4). The data dir keeps its single-volume
+      # layout (vikunja.db + files/), mounted at /db, with files/ also at
+      # the image's default files path, so existing data needs no moves.
+      - /var/data/skboard-{{ env }}/data:/db
+      - /var/data/skboard-{{ env }}/data/files:/app/vikunja/files
 
     networks:
       - cloud-public-{{ env }}
