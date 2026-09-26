@@ -119,7 +119,11 @@ check_service_health() {
     local EXPECTED=$2
     local SERVICE_FULL="${STACK_NAME}_${SERVICE}"
 
-    REPLICAS=$(docker service ls --filter "name=${SERVICE_FULL}" --format "{{ '{{' }}.Replicas{{ '}}' }}" 2>/dev/null || echo "0/0")
+    for _ in $(seq 1 36); do
+        REPLICAS=$(docker service ls --filter "name=${SERVICE_FULL}" --format "{{ '{{' }}.Replicas{{ '}}' }}" 2>/dev/null || echo "0/0")
+        [[ "$REPLICAS" == "${EXPECTED}/${EXPECTED}" ]] && break
+        sleep 5
+    done
     if [[ "$REPLICAS" == "${EXPECTED}/${EXPECTED}" ]]; then
         echo -e "${GREEN}  OK ${SERVICE}: ${REPLICAS}${NC}"
         return 0

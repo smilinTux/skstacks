@@ -45,7 +45,11 @@ echo -e "${GREEN}📊 Service Status:${NC}"
 docker service ls | grep "${STACK_NAME}"
 
 echo -e "${YELLOW}🏥 Checking service health...${NC}"
-REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_management" --format "{{ '{{' }}.Replicas{{ '}}' }}")
+for _ in $(seq 1 36); do
+    REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_management" --format "{{ '{{' }}.Replicas{{ '}}' }}")
+    [[ "$REPLICAS" == "1/1" ]] && break
+    sleep 5
+done
 if [[ "$REPLICAS" == "1/1" ]]; then
     echo -e "${GREEN}✅ ${STACK_NAME} is healthy and running!${NC}"
 else

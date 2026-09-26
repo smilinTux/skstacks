@@ -43,7 +43,11 @@ sleep 15
 echo -e "${GREEN}Service status:${NC}"
 docker service ls | grep "${STACK_NAME}"
 
-DASHY_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_dashy" --format "{{ '{{.Replicas}}' }}")
+for _ in $(seq 1 36); do
+    DASHY_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_dashy" --format "{{ '{{.Replicas}}' }}")
+    [[ "$DASHY_REPLICAS" == "1/1" ]] && break
+    sleep 5
+done
 if [[ "$DASHY_REPLICAS" == "1/1" ]]; then
     echo -e "${GREEN}${STACK_NAME} dashy is healthy and running!${NC}"
 else

@@ -116,7 +116,11 @@ docker service ls | grep "${STACK_NAME}"
 
 # Health check
 echo -e "${YELLOW}🏥 Checking service health...${NC}"
-REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_syncthing" --format "{{ '{{.Replicas}}' }}")
+for _ in $(seq 1 36); do
+    REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_syncthing" --format "{{ '{{.Replicas}}' }}")
+    [[ "$REPLICAS" == "1/1" ]] && break
+    sleep 5
+done
 if [[ "$REPLICAS" == "1/1" ]]; then
     echo -e "${GREEN}✅ ${STACK_NAME} is healthy and running!${NC}"
     echo -e "${GREEN}🌐 Access at: https://sksync{% if env == 'staging' %}-staging{% elif env == 'dev' %}-dev{% endif %}.${CLUSTERNAME:-cluster1}.${DOMAIN:-example.com}${NC}"

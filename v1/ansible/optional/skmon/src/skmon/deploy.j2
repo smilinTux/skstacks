@@ -63,7 +63,11 @@ docker service ls | grep "${STACK_NAME}"
 echo -e "${YELLOW}🏥 Checking service health...${NC}"
 
 # Check Loki
-LOKI_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_loki" --format "{{ '{{.Replicas}}' }}")
+for _ in $(seq 1 36); do
+    LOKI_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_loki" --format "{{ '{{.Replicas}}' }}")
+    [[ "$LOKI_REPLICAS" == "1/1" ]] && break
+    sleep 5
+done
 if [[ "$LOKI_REPLICAS" == "1/1" ]]; then
     echo -e "${GREEN}✅ Loki is healthy and running!${NC}"
 else
@@ -73,7 +77,11 @@ else
 fi
 
 # Check Grafana
-GRAFANA_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_grafana" --format "{{ '{{.Replicas}}' }}")
+for _ in $(seq 1 36); do
+    GRAFANA_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_grafana" --format "{{ '{{.Replicas}}' }}")
+    [[ "$GRAFANA_REPLICAS" == "1/1" ]] && break
+    sleep 5
+done
 if [[ "$GRAFANA_REPLICAS" == "1/1" ]]; then
     echo -e "${GREEN}✅ Grafana is healthy and running!${NC}"
 else
@@ -83,7 +91,11 @@ else
 fi
 
 # Check Prometheus
-PROM_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_prometheus" --format "{{ '{{.Replicas}}' }}")
+for _ in $(seq 1 36); do
+    PROM_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_prometheus" --format "{{ '{{.Replicas}}' }}")
+    [[ "$PROM_REPLICAS" == "1/1" ]] && break
+    sleep 5
+done
 if [[ "$PROM_REPLICAS" == "1/1" ]]; then
     echo -e "${GREEN}✅ Prometheus is healthy and running!${NC}"
 else
@@ -93,7 +105,11 @@ else
 fi
 
 # Check Alertmanager
-ALERTMANAGER_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_alertmanager" --format "{{ '{{.Replicas}}' }}")
+for _ in $(seq 1 36); do
+    ALERTMANAGER_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_alertmanager" --format "{{ '{{.Replicas}}' }}")
+    [[ "$ALERTMANAGER_REPLICAS" == "1/1" ]] && break
+    sleep 5
+done
 if [[ "$ALERTMANAGER_REPLICAS" == "1/1" ]]; then
     echo -e "${GREEN}✅ Alertmanager is healthy and running!${NC}"
 else
@@ -103,7 +119,11 @@ else
 fi
 
 # Check Jaeger
-JAEGER_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_jaeger" --format "{{ '{{.Replicas}}' }}")
+for _ in $(seq 1 36); do
+    JAEGER_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_jaeger" --format "{{ '{{.Replicas}}' }}")
+    [[ "$JAEGER_REPLICAS" == "1/1" ]] && break
+    sleep 5
+done
 if [[ "$JAEGER_REPLICAS" == "1/1" ]]; then
     echo -e "${GREEN}✅ Jaeger is healthy and running!${NC}"
 else

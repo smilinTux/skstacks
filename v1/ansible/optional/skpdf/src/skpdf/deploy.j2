@@ -136,7 +136,11 @@ docker service ls | grep "${STACK_NAME}"
 
 # Health check
 echo -e "${YELLOW}🏥 Checking service health...${NC}"
-PDF_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_stirling-pdf" --format "{{ '{{.Replicas}}' }}")
+for _ in $(seq 1 36); do
+    PDF_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_stirling-pdf" --format "{{ '{{.Replicas}}' }}")
+    [[ "$PDF_REPLICAS" == "1/1" ]] && break
+    sleep 5
+done
 
 if [[ "$PDF_REPLICAS" == "1/1" ]]; then
     echo -e "${GREEN}✅ ${STACK_NAME} is healthy and running!${NC}"

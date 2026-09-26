@@ -100,7 +100,11 @@ echo -e "${GREEN}Service status:${NC}"
 docker service ls | grep "${STACK_NAME}"
 
 echo -e "${YELLOW}Checking service health...${NC}"
-REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_server" --format "{{ '{{.Replicas}}' }}")
+for _ in $(seq 1 36); do
+    REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_server" --format "{{ '{{.Replicas}}' }}")
+    [[ "$REPLICAS" == "1/1" ]] && break
+    sleep 5
+done
 if [[ "$REPLICAS" == "1/1" ]]; then
     echo -e "${GREEN}${STACK_NAME} Authentik server is healthy and running.${NC}"
     echo -e "${GREEN}SSO URL: https://sso{% if env != 'prod' %}-{{ env }}{% endif %}.${BASE_DOMAIN}${NC}"
