@@ -1,0 +1,64 @@
+#!/bin/bash
+# SKMail DNS Records Setup Script
+# Generated from SKMail vault configuration
+# Run this script to display the DNS records that need to be configured
+
+echo "=========================================="
+echo "SKMail DNS Records for {{ skmail.DOMAIN }}"
+echo "=========================================="
+echo ""
+
+{% if skmail.DNS_RECORDS is defined %}
+{% if skmail.DNS_RECORDS.SPF is defined %}
+echo "1. SPF Record (TXT record for {{ skmail.DOMAIN }}):"
+echo "   Name: {{ skmail.DOMAIN }}"
+echo "   Type: TXT"
+echo "   Value: {{ skmail.DNS_RECORDS.SPF.value }}"
+echo ""
+{% endif %}
+
+{% if skmail.DNS_RECORDS.DMARC is defined %}
+echo "2. DMARC Record (TXT record for _dmarc.{{ skmail.DOMAIN }}):"
+echo "   Name: _dmarc.{{ skmail.DOMAIN }}"
+echo "   Type: TXT"
+echo "   Value: {{ skmail.DNS_RECORDS.DMARC.value }}"
+echo ""
+{% endif %}
+
+{% if skmail.DNS_RECORDS.DKIM is defined %}
+echo "3. DKIM Record (TXT record for mail._domainkey.{{ skmail.DOMAIN }}):"
+echo "   Name: mail._domainkey.{{ skmail.DOMAIN }}"
+echo "   Type: TXT"
+echo "   Value: {{ skmail.DNS_RECORDS.DKIM.value | default('(Generate after first startup with: docker exec skmail-prod_skmail setup config dkim)') }}"
+echo ""
+{% endif %}
+
+{% if skmail.DNS_RECORDS.A is defined %}
+echo "4. A Record (A record for mail.{{ skmail.DOMAIN }}):"
+echo "   Name: mail.{{ skmail.DOMAIN }}"
+echo "   Type: A"
+echo "   Value: {{ skmail.DNS_RECORDS.A.value }}"
+echo ""
+{% endif %}
+
+{% if skmail.DNS_RECORDS.MX is defined %}
+echo "5. MX Record (MX record for {{ skmail.DOMAIN }}):"
+echo "   Name: {{ skmail.DOMAIN }}"
+echo "   Type: MX"
+echo "   Value: {{ skmail.DNS_RECORDS.MX.value }}"
+echo "   Priority: {{ skmail.DNS_RECORDS.MX.priority | default(10) }}"
+echo ""
+{% endif %}
+{% else %}
+echo "Note: DNS_RECORDS not defined in vault. Configure manually in Cloudflare."
+echo ""
+{% endif %}
+
+echo "=========================================="
+echo "Cloudflare DNS API Configuration:"
+{% if skmail.CLOUDFLARE_DNS_API_TOKEN is defined %}
+echo "API Token: [CONFIGURED - HIDDEN FOR SECURITY]"
+{% else %}
+echo "API Token: [NOT CONFIGURED - Manual DNS setup required]"
+{% endif %}
+echo "=========================================="

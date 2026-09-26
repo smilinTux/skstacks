@@ -1,0 +1,16 @@
+#!/bin/bash
+# Add user script for docker-mailserver
+# Usage: ./add_user <email> <password>
+
+if [ "$#" -ne 2 ]; then
+    echo "Usage: $0 <email> <password>"
+    exit 1
+fi
+
+EMAIL="$1"
+PASSWORD="$2"
+
+docker exec skmail{% if env == 'prod' %}-prod{% elif env == 'staging' %}-staging{% else %}-dev{% endif %}_skmail setup email add "${EMAIL}" "${PASSWORD}"
+
+echo "User ${EMAIL} added successfully"
+
