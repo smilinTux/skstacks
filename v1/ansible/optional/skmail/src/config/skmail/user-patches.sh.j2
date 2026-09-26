@@ -1,0 +1,138 @@
+#!/bin/bash
+# User patches script for docker-mailserver
+# Fixes permissions and configurations for docker-mailserver
+#
+# SSL certificates are mounted directly from traefik-certs-dumper:
+#   /var/data/runtime/{{ fence_service_name }}-{{ env }}/certs/*.{{ skmail.DOMAIN }}/ -> /etc/dms/tls/
+#
+# Note: If certs go stale after rotation, run: docker service update --force skmail-prod_skmail
+
+echo "Running user-patches.sh..."
+
+# Wait for SSL certificates to be available (with timeout)
+CERT_WAIT_MAX=300  # 5 minutes
+CERT_WAIT_INTERVAL=10  # Check every 10 seconds
+CERT_WAIT_ELAPSED=0
+
+echo "Checking for SSL certificates at /etc/dms/tls/..."
+
+while [ $CERT_WAIT_ELAPSED -lt $CERT_WAIT_MAX ]; do
+    if [ -f "/etc/dms/tls/certificate.crt" ] && [ -f "/etc/dms/tls/privatekey.key" ]; then
+        echo "✓ SSL certificates found at /etc/dms/tls/"
+        ls -la /etc/dms/tls/
+        break
+    else
+        echo "⏳ Waiting for SSL certificates... (${CERT_WAIT_ELAPSED}s/${CERT_WAIT_MAX}s)"
+        sleep $CERT_WAIT_INTERVAL
+        CERT_WAIT_ELAPSED=$((CERT_WAIT_ELAPSED + CERT_WAIT_INTERVAL))
+    fi
+done
+
+if [ ! -f "/etc/dms/tls/certificate.crt" ] || [ ! -f "/etc/dms/tls/privatekey.key" ]; then
+    echo "⚠ WARNING: SSL certificates not found at /etc/dms/tls/ after ${CERT_WAIT_MAX}s"
+    echo "  Check that traefik-certs-dumper is running and certs are generated"
+    echo "  Expected: mail.example.com or *.example.com certificate"
+    echo "  Current contents:"
+    ls -la /etc/dms/tls/ 2>/dev/null || echo "    (directory does not exist)"
+fi
+
+# Fix ownership and permissions for amavis directory structure
+chown -R amavis:clamav /var/lib/amavis/
+find /var/lib/amavis/ -type d -exec chmod 775 {} +
+find /var/lib/amavis/ -type f -exec chmod 664 {} +
+# Ensure new directories inherit the group
+find /var/lib/amavis/ -type d -exec chmod g+s {} +
+
+# Fix Postfix mailbox ownership issues
+# Ensure strict_mailbox_ownership is set to no in Postfix main.cf
+if [ -f /etc/postfix/main.cf ]; then
+    echo "Configuring Postfix strict_mailbox_ownership=no..."
+    # Add or update strict_mailbox_ownership setting
+    if grep -q "^strict_mailbox_ownership" /etc/postfix/main.cf; then
+        sed -i 's/^strict_mailbox_ownership.*/strict_mailbox_ownership = no/' /etc/postfix/main.cf
+    else
+        echo "strict_mailbox_ownership = no" >> /etc/postfix/main.cf
+    fi
+fi
+
+# Fix mailbox permissions for system users
+# Ensure clamav user owns its mailbox if it exists
+if id clamav >/dev/null 2>&1; then
+    echo "Setting up clamav mailbox permissions..."
+    mkdir -p /var/mail
+    touch /var/mail/clamav
+    chown clamav:clamav /var/mail/clamav
+    chmod 660 /var/mail/clamav
+    echo "Fixed clamav mailbox permissions"
+fi
+
+# Ensure other system mailboxes have correct permissions
+for user in root postfix dovecot; do
+    if id "$user" >/dev/null 2>&1; then
+        echo "Setting up $user mailbox permissions..."
+        touch "/var/mail/$user" 2>/dev/null || true
+        chown "$user:$user" "/var/mail/$user" 2>/dev/null || true
+        chmod 660 "/var/mail/$user" 2>/dev/null || true
+    fi
+done
+
+# Fix Dovecot SSL configuration to use actual certificate files
+if [ -f /etc/dovecot/conf.d/10-ssl.conf ]; then
+    echo "Updating Dovecot SSL configuration..."
+    # Update SSL certificate paths to use actual files instead of symlinks
+    sed -i 's|ssl_cert = </etc/dms/tls/cert|ssl_cert = </etc/dms/tls/certificate.crt|g' /etc/dovecot/conf.d/10-ssl.conf
+    sed -i 's|ssl_key = </etc/dms/tls/key|ssl_key = </etc/dms/tls/privatekey.key|g' /etc/dovecot/conf.d/10-ssl.conf
+    echo "Updated Dovecot SSL certificate paths"
+fi
+
+{% if skmail.RELAY_HOST is defined and skmail.RELAY_HOST %}
+# =============================================================================
+# SMTP RELAY CONFIGURATION (Mailgun)
+# =============================================================================
+# Configure Postfix to relay outbound mail through Mailgun
+# This is needed because residential IPs are often blocked by Gmail/Google
+echo "Configuring SMTP relay through {{ skmail.RELAY_HOST }}..."
+
+# Add relay domain mapping
+if [ ! -f /tmp/docker-mailserver/postfix-relaymap.cf ] || ! grep -q "@{{ skmail.DOMAIN }}" /tmp/docker-mailserver/postfix-relaymap.cf; then
+    echo "@{{ skmail.DOMAIN }} [{{ skmail.RELAY_HOST }}]:{{ skmail.RELAY_PORT | default('587') }}" >> /tmp/docker-mailserver/postfix-relaymap.cf
+    echo "✓ Added relay mapping for @{{ skmail.DOMAIN }}"
+fi
+
+# Add SASL authentication credentials
+if [ ! -f /tmp/docker-mailserver/postfix-sasl-password.cf ] || ! grep -q "@{{ skmail.DOMAIN }}" /tmp/docker-mailserver/postfix-sasl-password.cf; then
+    echo "@{{ skmail.DOMAIN }} {{ skmail.RELAY_USER }}:{{ skmail.RELAY_PASSWORD }}" >> /tmp/docker-mailserver/postfix-sasl-password.cf
+    echo "[{{ skmail.RELAY_HOST }}]:{{ skmail.RELAY_PORT | default('587') }} {{ skmail.RELAY_USER }}:{{ skmail.RELAY_PASSWORD }}" >> /tmp/docker-mailserver/postfix-sasl-password.cf
+    chmod 600 /tmp/docker-mailserver/postfix-sasl-password.cf
+    echo "✓ Added SASL credentials for relay"
+fi
+
+# Ensure Postfix is configured for SASL authentication
+if [ -f /etc/postfix/main.cf ]; then
+    # Enable sender-dependent relay
+    if ! grep -q "sender_dependent_relayhost_maps" /etc/postfix/main.cf; then
+        postconf -e "sender_dependent_relayhost_maps = texthash:/etc/postfix/relayhost_map"
+    fi
+    # Enable SASL authentication
+    if ! grep -q "smtp_sasl_auth_enable" /etc/postfix/main.cf; then
+        postconf -e "smtp_sasl_auth_enable = yes"
+        postconf -e "smtp_sasl_password_maps = texthash:/etc/postfix/sasl_passwd"
+        postconf -e "smtp_sasl_security_options = noanonymous"
+        postconf -e "smtp_tls_security_level = encrypt"
+    fi
+    echo "✓ Configured Postfix SASL for relay"
+fi
+{% endif %}
+
+# Reload Postfix configuration if running
+if pgrep -x "master" >/dev/null 2>&1; then
+    echo "Reloading Postfix configuration..."
+    postfix reload 2>/dev/null || true
+fi
+
+# Reload Dovecot configuration if running
+if pgrep -x "dovecot" >/dev/null 2>&1; then
+    echo "Reloading Dovecot configuration..."
+    dovecot reload 2>/dev/null || true
+fi
+

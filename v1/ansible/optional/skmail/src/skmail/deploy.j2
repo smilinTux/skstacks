@@ -1,0 +1,75 @@
+#!/bin/bash -eu
+
+# SKMail{% if env == 'prod' %}-Prod{% elif env == 'staging' %}-Staging{% else %}-Dev{% endif %} Deployment Script
+APPNAME=skmail{% if env == 'prod' %}-prod{% elif env == 'staging' %}-staging{% else %}-dev{% endif %}
+
+STACK_NAME=skmail{% if env == 'prod' %}-prod{% elif env == 'staging' %}-staging{% else %}-dev{% endif %}
+
+CONFIG_DIR="/var/data/config/${APPNAME}"
+ENV_FILE="${CONFIG_DIR}/skmail.sh.env"
+COMPOSE_FILE="${CONFIG_DIR}/skmail.yml"
+SERVICE_NAME="${STACK_NAME}_skmail"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+echo -e "${BLUE}📧 Deploying SKMail{% if env == 'prod' %} Production{% elif env == 'staging' %} Staging{% else %} Development{% endif %} (Docker Mailserver)...${NC}"
+
+# Pre-flight checks
+if [ ! -f "${ENV_FILE}" ]; then
+    echo -e "${RED}❌ Error: Environment file not found: ${ENV_FILE}${NC}" >&2
+    exit 1
+fi
+
+if [ ! -f "${COMPOSE_FILE}" ]; then
+    echo -e "${RED}❌ Error: Compose file not found: ${COMPOSE_FILE}${NC}" >&2
+    exit 1
+fi
+
+# Source environment variables
+echo -e "${YELLOW}📦 Loading environment variables...${NC}"
+set -a
+. "${ENV_FILE}"
+set +a
+
+# Deploy stack
+echo -e "${YELLOW}🚀 Deploying stack '${STACK_NAME}'...${NC}"
+docker stack deploy -c "${COMPOSE_FILE}" "${STACK_NAME}"
+
+# Wait for services to register
+sleep 5
+
+# Force update to pull latest images
+echo -e "${YELLOW}🔄 Forcing service update...${NC}"
+docker service update --force --detach "${SERVICE_NAME}" || true
+
+# Wait for stabilization
+echo -e "${YELLOW}⏳ Waiting for service to stabilize...${NC}"
+sleep 15
+
+# Show service status
+echo -e "${GREEN}📊 Service Status:${NC}"
+docker service ls | grep "${STACK_NAME}" || echo "No services found"
+
+# Health check
+echo -e "${YELLOW}🏥 Checking service health...${NC}"
+REPLICAS=$(docker service ls --filter "name=${SERVICE_NAME}" --format '{% raw %}{{.Replicas}}{% endraw %}' 2>/dev/null | head -1 || echo "0/0")
+
+if [[ "${REPLICAS}" == "1/1" ]]; then
+    echo -e "${GREEN}✅ SKMail is healthy and running! (${REPLICAS})${NC}"
+    echo -e "${GREEN}📧 Mail Server: {{ skmail.HOSTNAME }}${NC}"
+    echo -e "${GREEN}📬 SMTP: 25, 587 (STARTTLS), 465 (SSL)${NC}"
+    echo -e "${GREEN}📥 IMAP: 993 (SSL)${NC}"
+else
+    echo -e "${RED}⚠️  SKMail health check: ${REPLICAS}${NC}"
+    echo -e "${YELLOW}📋 Recent logs:${NC}"
+    docker service logs --tail 20 "${SERVICE_NAME}" 2>/dev/null || echo "No logs available"
+    echo -e "${YELLOW}💡 Check logs with: docker service logs ${SERVICE_NAME}${NC}"
+fi
+
+echo -e "${GREEN}✨ Deployment complete!${NC}"
+

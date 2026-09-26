@@ -1,0 +1,494 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+# Step 1: Select manager node with failover
+# Run on all hosts to ensure it executes even with -l limit
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+# Step 2: Deploy to selected manager
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skmail
+    env: dev
+    service_name: skmail
+    service_type: optional
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+      vars:
+        service_name: skmail
+        env: dev
+        service_type: optional
+    
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Set safe defaults for skmail config
+      set_fact:
+        skmail_HOSTNAME: "{{ skmail.HOSTNAME | default('mail.' + skmail.DOMAIN) }}"
+        skmail_DOMAIN: "{{ skmail.DOMAIN }}"
+
+      tags:
+        - always
+
+  tasks:
+    - name: Deploying {{ app }}
+      debug:
+        msg: Running SKStacks deploy {{ app }} scripts...
+
+    - name: Detect which fence service is running (skfence, skfenceha, or holofence)
+      shell: |
+        if docker service ls --format '{{ '{{.Name}}' }}' | grep -q "^skfenceha-{{ env }}_"; then
+          echo "skfenceha"
+        elif docker service ls --format '{{ '{{.Name}}' }}' | grep -q "^skfence-{{ env }}_"; then
+          echo "skfence"
+        elif docker service ls --format '{{ '{{.Name}}' }}' | grep -q "^holofence_"; then
+          echo "holofence"
+        else
+          echo "skfenceha"  # Default to skfenceha for HA clusters
+        fi
+      register: fence_service_detection
+      changed_when: false
+      tags:
+        - always
+
+    - name: Set fence service name variable
+      set_fact:
+        fence_service_name: "{{ fence_service_detection.stdout }}"
+      tags:
+        - always
+
+    # NOTE: mail-vip label is managed by Keepalived notify script (keepalived_notify.sh)
+    # The label is automatically added to the MASTER node (with VIP) and removed from others
+    # DO NOT manually add the label here - it will conflict with Keepalived's management
+    # See: v1/ansible/core/keepalived/src/keepalived/scripts/keepalived_notify.sh
+    - name: Verify mail-vip label exists on at least one manager node
+      shell: |
+        # Check if any manager has the mail-vip label
+        HAS_LABEL=$(docker node ls --filter "role=manager" --format "{{ '{{.Hostname}}' }}" | while read node; do
+          docker node inspect "$node" --format "{{ '{{.Spec.Labels}}' }}" 2>/dev/null | grep -q "mail-vip:true" && echo "$node"
+        done | head -1)
+        if [ -z "$HAS_LABEL" ]; then
+          echo "WARNING: No manager node has mail-vip=true label!"
+          echo "Run on the VIP node: sudo /usr/local/bin/keepalived_notify.sh master"
+          exit 1
+        else
+          echo "mail-vip label found on: $HAS_LABEL"
+        fi
+      register: label_check
+      changed_when: false
+      failed_when: false
+      tags:
+        - labels
+        - deploy
+
+    - name: Display mail-vip label status
+      debug:
+        msg: "{{ label_check.stdout_lines }}"
+      when: label_check.stdout_lines is defined
+      tags:
+        - labels
+        - deploy
+
+    - name: Create the {{ app }} directories
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "/var/data/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/docker-data/dms/maildata", owner: "5000", group: "5000", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/docker-data/dms/mailstate", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/docker-data/dms/logs", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/docker-data/dms/config", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/docker-data/dms/config/clamav", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/certbot", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/config/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
+
+    - name: copy {{ app }} config src to dest
+      copy:
+        src: "{{ playbook_dir }}/src/config/{{ app }}"
+        dest: /var/data/config/
+        directory_mode: '0755'
+        force: yes
+        backup: yes
+      tags:
+        - parentdir
+        - backup
+
+    - name: Process {{ app }} environment templates
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env" }
+        - { src: "{{ app }}.sh.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env" }
+      tags:
+        - templates
+
+    - name: Find actual certificate directory (prefer mail.example.com, fallback to wildcard)
+      shell: |
+        CERTS_BASE="/var/data/runtime/{{ fence_service_name }}-{{ env }}/certs"
+        DOMAIN="{{ skmail.DOMAIN }}"
+        HOSTNAME="{{ skmail.HOSTNAME | default('mail.' + skmail.DOMAIN) }}"
+        
+        # First, try to find mail.example.com specific certificate
+        MAIL_CERT_DIR="${CERTS_BASE}/${HOSTNAME}"
+        if [ -d "$MAIL_CERT_DIR" ] && [ -f "$MAIL_CERT_DIR/certificate.crt" ]; then
+          echo "$MAIL_CERT_DIR"
+          exit 0
+        fi
+        
+        # Fallback to wildcard certificate
+        WILDCARD_DIR=$(ls -d ${CERTS_BASE}/*.${DOMAIN} 2>/dev/null | head -1)
+        if [ -n "$WILDCARD_DIR" ] && [ -f "$WILDCARD_DIR/certificate.crt" ]; then
+          echo "$WILDCARD_DIR"
+          exit 0
+        fi
+        
+        # Error if neither found
+        echo "ERROR: Certificate directory not found" >&2
+        echo "Checked: $MAIL_CERT_DIR" >&2
+        echo "Checked: ${CERTS_BASE}/*.${DOMAIN}" >&2
+        echo "Available directories:" >&2
+        ls -la ${CERTS_BASE}/ 2>&1 || echo "  (certs directory not accessible)" >&2
+        exit 1
+      register: actual_cert_dir
+      changed_when: false
+      failed_when: actual_cert_dir.rc != 0
+      tags:
+        - compose
+        - certs
+
+    - name: Set actual certificate directory path
+      set_fact:
+        actual_cert_directory: "{{ actual_cert_dir.stdout }}"
+      tags:
+        - compose
+        - certs
+
+    - name: Process {{ app }} Docker Compose template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      vars:
+        actual_cert_directory: "{{ actual_cert_directory | default('') }}"
+      tags:
+        - compose
+
+    - name: Process user-patches.sh template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/user-patches.sh.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/docker-data/dms/config/user-patches.sh"
+        owner: root
+        group: root
+        mode: '0755'
+      tags:
+        - config
+
+    - name: Process ClamAV config template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/clamav/clamd.conf.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/docker-data/dms/config/clamav/clamd.conf"
+        owner: root
+        group: root
+        mode: '0644'
+      tags:
+        - config
+
+    - name: Create docker-compose.yml symlink
+      file:
+        src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags:
+        - compose
+
+    - name: Process deploy script template
+      template:
+        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/deploy"
+        owner: root
+        group: root
+        mode: '0755'
+      tags:
+        - deploy-script
+
+    - name: Process add_user script template
+      template:
+        src: "{{ playbook_dir }}/src/{{ app }}/add_user.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/add_user"
+        owner: root
+        group: root
+        mode: '0755'
+      tags:
+        - scripts
+
+    - name: Process DNS records script template
+      template:
+        src: "{{ playbook_dir }}/src/{{ app }}/dns_records.sh.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/dns_records.sh"
+        owner: root
+        group: root
+        mode: '0755'
+      tags:
+        - scripts
+
+    - name: Create or update DNS records in Cloudflare (idempotent with solo mode)
+      community.general.cloudflare_dns:
+        zone: "{{ skmail.DOMAIN }}"
+        record: "{{ item.record | default('@') }}"
+        type: "{{ item.type }}"
+        value: "{{ item.quoted_value }}"
+        api_token: "{{ skmail.CLOUDFLARE_DNS_API_TOKEN }}"
+        state: present
+        ttl: 300
+        solo: true
+      loop:
+        - name: "{{ skmail.DNS_RECORDS.SPF.name }}"
+          type: "{{ skmail.DNS_RECORDS.SPF.type }}"
+          value: "{{ skmail.DNS_RECORDS.SPF.value }}"
+          quoted_value: "\"{{ skmail.DNS_RECORDS.SPF.value }}\""
+          record: "@"
+          skip: false
+        - name: "{{ skmail.DNS_RECORDS.DMARC.name }}"
+          type: "{{ skmail.DNS_RECORDS.DMARC.type }}"
+          value: "{{ skmail.DNS_RECORDS.DMARC.value }}"
+          quoted_value: "\"{{ skmail.DNS_RECORDS.DMARC.value }}\""
+          record: "_dmarc"
+          skip: false
+        - name: "{{ skmail.DNS_RECORDS.DKIM.name }}"
+          type: "{{ skmail.DNS_RECORDS.DKIM.type }}"
+          value: "{{ skmail.DNS_RECORDS.DKIM.value }}"
+          quoted_value: "\"{{ skmail.DNS_RECORDS.DKIM.value }}\""
+          record: "mail._domainkey"
+          skip: "{{ skmail.DNS_RECORDS.DKIM.value | default('') == '' }}"
+        - name: "{{ skmail.DNS_RECORDS.A.name }}"
+          type: "{{ skmail.DNS_RECORDS.A.type }}"
+          value: "{{ skmail.DNS_RECORDS.A.value }}"
+          quoted_value: "{{ skmail.DNS_RECORDS.A.value }}"
+          record: "mail"
+          skip: false
+      when:
+        - skmail.CLOUDFLARE_DNS_API_TOKEN is defined and skmail.CLOUDFLARE_DNS_API_TOKEN != ""
+        - not (item.skip | default(false) | bool)
+      tags:
+        - dns
+        - optional
+
+    - name: Create or update MX DNS record in Cloudflare (only if MX record exists)
+      community.general.cloudflare_dns:
+        zone: "{{ skmail.DOMAIN }}"
+        record: "@"
+        type: "{{ skmail.DNS_RECORDS.MX.type }}"
+        value: "{{ skmail.DNS_RECORDS.MX.value }}"
+        priority: "{{ skmail.DNS_RECORDS.MX.priority }}"
+        api_token: "{{ skmail.CLOUDFLARE_DNS_API_TOKEN }}"
+        state: present
+        ttl: 300
+        solo: true
+      when:
+        - skmail.CLOUDFLARE_DNS_API_TOKEN is defined and skmail.CLOUDFLARE_DNS_API_TOKEN != ""
+        - skmail.DNS_RECORDS.MX is defined
+      tags:
+        - dns
+        - optional
+
+    # Traefik routing is now configured via Docker labels (Docker provider)
+    # No file provider deployment needed - all labels in compose file per new SOP
+    # Certificates: Provided by traefik-certs-dumper (runs on skfence/skfenceha ACME master node)
+    # traefik-certs-dumper watches acme.json and outputs certificates to /var/data/runtime/{fence}-{env}/certs/{domain}/
+
+    - name: Create certificate setup script
+      template:
+        src: "{{ playbook_dir }}/src/skmail/cert_setup.sh.j2"
+        dest: "/var/data/skmail-{{ env }}/cert_setup.sh"
+        owner: root
+        group: root
+        mode: '0755'
+      tags:
+        - certs
+        - deploy
+
+    - name: Execute certificate setup script
+      shell: "/var/data/skmail-{{ env }}/cert_setup.sh"
+      register: cert_setup_result
+      tags:
+        - certs
+        - deploy
+
+    - name: Show certificate setup result
+      debug: var=cert_setup_result.stdout_lines
+      tags:
+        - certs
+        - deploy
+
+    - name: Deploy {{ app }} stack
+      shell: |
+        cd /var/data/{{ app }}-{{ env }}
+        ./deploy
+      register: deploy_output
+      tags:
+        - deploy
+
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags:
+        - deploy
+
+    - name: Generate DKIM keys for mail server
+      shell: |
+        CONTAINER=$(docker ps --filter 'name={{ app }}-{{ env }}_skmail' --format '{% raw %}{{.ID}}{% endraw %}' | head -1)
+        if [ -n "${CONTAINER}" ]; then
+          docker exec ${CONTAINER} setup config dkim keysize 2048 domain '{{ skmail.HOSTNAME }},{{ skmail.DOMAIN }}' || echo "DKIM keys may already exist"
+        else
+          echo "Container not found, skipping DKIM generation"
+        fi
+      tags:
+        - dkim
+      ignore_errors: yes
+
+    - name: Fix mail directory permissions
+      shell: |
+        CONTAINER=$(docker ps --filter 'name={{ app }}-{{ env }}_skmail' --format '{% raw %}{{.ID}}{% endraw %}' | head -1)
+        if [ -n "${CONTAINER}" ]; then
+          echo "Fixing mail directory permissions..."
+          # Set base mail directory permissions
+          docker exec ${CONTAINER} chown -R 5000:5000 /var/mail || echo "Failed to set base mail permissions"
+          # Ensure clamav mailbox has correct permissions if it exists
+          docker exec ${CONTAINER} sh -c 'if id clamav >/dev/null 2>&1; then chown clamav:clamav /var/mail/clamav 2>/dev/null || echo "ClamAV mailbox permissions may need manual fix"; fi' || echo "ClamAV user check failed"
+          # Set permissions for any other system mailboxes
+          docker exec ${CONTAINER} sh -c 'for user in root postfix dovecot; do if id $user >/dev/null 2>&1 && [ -d /var/mail/$user ]; then chown $user:$user /var/mail/$user 2>/dev/null || echo "Failed to set permissions for $user"; fi; done' || echo "System user permissions check failed"
+        else
+          echo "Container not found, skipping permission fix"
+        fi
+      tags:
+        - permissions
+        - deploy
+      ignore_errors: yes
+
+    - name: Read DKIM public key (example.com)
+      shell: |
+        CONTAINER=$(docker ps --filter 'name={{ app }}-{{ env }}_skmail' --format '{% raw %}{{.ID}}{% endraw %}' | head -1)
+        if [ -z "${CONTAINER}" ]; then
+          exit 0
+        fi
+        # Extract concatenated DKIM TXT value without surrounding quotes/parentheses
+        docker exec ${CONTAINER} sh -lc "awk -v RS= '{ gsub(/\\n/,\" \"); print }' /tmp/docker-mailserver/opendkim/keys/{{ skmail.DOMAIN }}/mail.txt | sed -n 's/.*( \\\"\\(.*\\)\\\" ).*/\\1/p' | tr -d '\"' | tr -d '\\n'"
+      register: dkim_value_root
+      changed_when: false
+      failed_when: false
+      tags:
+        - dkim
+        - dns
+
+    - name: Read DKIM public key (mail.example.com)
+      shell: |
+        CONTAINER=$(docker ps --filter 'name={{ app }}-{{ env }}_skmail' --format '{% raw %}{{.ID}}{% endraw %}' | head -1)
+        if [ -z "${CONTAINER}" ]; then
+          exit 0
+        fi
+        docker exec ${CONTAINER} sh -lc "awk -v RS= '{ gsub(/\\n/,\" \"); print }' /tmp/docker-mailserver/opendkim/keys/{{ skmail.HOSTNAME }}/mail.txt | sed -n 's/.*( \\\"\\(.*\\)\\\" ).*/\\1/p' | tr -d '\"' | tr -d '\\n'"
+      register: dkim_value_host
+      changed_when: false
+      failed_when: false
+      tags:
+        - dkim
+        - dns
+
+    - name: Update DKIM DNS (root domain) with current key
+      community.general.cloudflare_dns:
+        zone: "{{ skmail.DOMAIN }}"
+        record: "mail._domainkey"
+        type: "TXT"
+        value: "\"{{ dkim_value_root.stdout }}\""
+        api_token: "{{ skmail.CLOUDFLARE_DNS_API_TOKEN }}"
+        state: present
+        ttl: 300
+        solo: true
+      when:
+        - skmail.CLOUDFLARE_DNS_API_TOKEN is defined and skmail.CLOUDFLARE_DNS_API_TOKEN != ""
+        - dkim_value_root.stdout is defined
+        - dkim_value_root.stdout | length > 0
+      tags:
+        - dkim
+        - dns
+
+    - name: Update DKIM DNS (host subdomain) with current key
+      community.general.cloudflare_dns:
+        zone: "{{ skmail.DOMAIN }}"
+        record: "mail._domainkey.mail"
+        type: "TXT"
+        value: "\"{{ dkim_value_host.stdout }}\""
+        api_token: "{{ skmail.CLOUDFLARE_DNS_API_TOKEN }}"
+        state: present
+        ttl: 300
+        solo: true
+      when:
+        - skmail.CLOUDFLARE_DNS_API_TOKEN is defined and skmail.CLOUDFLARE_DNS_API_TOKEN != ""
+        - dkim_value_host.stdout is defined
+        - dkim_value_host.stdout | length > 0
+      tags:
+        - dkim
+        - dns
+
+    - name: Configure UFW firewall rules for mail ports
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop:
+        - '25'
+        - '587'
+        - '465'
+        - '143'
+        - '993'
+      tags:
+        - firewall
+        - mail
+        - security
+
+    - name: Reload UFW to apply new rules
+      community.general.ufw:
+        state: reloaded
+      tags:
+        - firewall
+        - mail
+        - security
+

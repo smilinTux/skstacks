@@ -1,0 +1,170 @@
+# Docker Compose for skmail (Swarm-Ready, Host Mode Single Replica)
+#
+# REPLICATED MODE HA SETUP:
+#   - Replicated mode: Single instance, Swarm handles failover
+#   - Host network mode: Ports bind directly to host (no Traefik TCP routing)
+#   - NFS shared storage: Mail data accessible from any manager
+#   - Dedicated mail.example.com certificate via Traefik ACME
+#   - NO TRAEFIK for mail ports: Mail ports exposed directly on host network
+#
+# WHY REPLICATED (not global):
+#   - Postfix uses exclusive lock files (master.lock)
+#   - Multiple instances on NFS shared storage = lock conflicts
+#   - Replicated with 1 replica = only ONE instance at a time
+#   - Swarm auto-reschedules to another manager if node fails (~10-30s failover)
+#
+# CERTIFICATE MANAGEMENT:
+#   - DMS natively supports Traefik's acme.json format (SSL_TYPE=letsencrypt)
+#   - Mount acme.json directly at /etc/letsencrypt/acme.json (read-only)
+#   - DMS auto-extracts wildcard certificate *.example.com for mail.example.com
+#   - Certificate changes trigger automatic reload (DMS monitors acme.json)
+#   - No traefik-certs-dumper needed for mail certificates
+#   - mail-web service provides HTTP endpoint for mail.example.com (status page)
+#
+# Architecture:
+#   [Internet] → Keepalived VIP → Manager with running container → DMS
+#                                           ↓
+#                                    Host Ports: 25, 587, 465, 143, 993
+#                                           ↓
+#                                    NFS (/var/data/skmail-prod/...)
+#
+#   [Internet] → Traefik → mail-web (HTTPS) → Certificate generation trigger
+
+version: '3.9'
+
+# Overlay network for mail-web service (Traefik routing)
+networks:
+  cloud-public-{{ env }}:
+    external: true
+
+services:
+  # === MAIL-WEB: Certificate Generation Trigger ===
+  # Simple web service that triggers Traefik ACME to generate mail.example.com certificate
+  # The certificate is then dumped by traefik-certs-dumper for DMS to use
+  # Also serves as a basic webmail landing page / status endpoint
+  mail-web:
+    image: traefik/whoami:latest
+    hostname: "{{ skmail.HOSTNAME | default('mail.' + skmail.DOMAIN) }}"
+    environment:
+      - WHOAMI_NAME=mail-web
+      - WHOAMI_PORT_NUMBER=80
+    networks:
+      - cloud-public-{{ env }}
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 3
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 32M
+        reservations:
+          cpus: '0.01'
+          memory: 8M
+      labels:
+        # === TRAEFIK: HTTPS ROUTING FOR MAIL STATUS PAGE ===
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        # HTTP Service
+        - "traefik.http.services.mail-web-{{ env }}.loadbalancer.server.port=80"
+        # HTTPS Router - serves mail.example.com status page (uses wildcard cert from main resolver)
+        - "traefik.http.routers.mail-web-{{ env }}.rule=Host(`{{ skmail.HOSTNAME | default('mail.' + skmail.DOMAIN) }}`)"
+        - "traefik.http.routers.mail-web-{{ env }}.entrypoints=websecure"
+        - "traefik.http.routers.mail-web-{{ env }}.tls=true"
+        - "traefik.http.routers.mail-web-{{ env }}.tls.certresolver=main"
+        - "traefik.http.routers.mail-web-{{ env }}.service=mail-web-{{ env }}"
+        - "traefik.http.routers.mail-web-{{ env }}.priority=50"
+
+  skmail:
+    image: ghcr.io/docker-mailserver/docker-mailserver:16.0.1
+    hostname: "{{ skmail.HOSTNAME | default('mail.' + skmail.DOMAIN) }}"
+    # Note: domainname is not supported in Docker Swarm Compose v3.9
+    # Domain is set via environment variables in skmail.env
+    env_file: /var/data/config/skmail-{{ env }}/skmail.env
+    healthcheck:
+      test: ["CMD-SHELL", "ss -tlnp | grep ':25' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    # HOST MODE: Ports bind directly to host network (no NAT/overlay)
+    ports:
+      - target: 25
+        published: 25
+        protocol: tcp
+        mode: host
+      - target: 587
+        published: 587
+        protocol: tcp
+        mode: host
+      - target: 465
+        published: 465
+        protocol: tcp
+        mode: host
+      - target: 143
+        published: 143
+        protocol: tcp
+        mode: host
+      - target: 993
+        published: 993
+        protocol: tcp
+        mode: host
+    volumes:
+      # === NFS DATA - DIRECT BIND (NO LOCAL DISK) ===
+      - /var/data/skmail-{{ env }}/docker-data/dms/maildata:/var/mail
+      - /var/data/skmail-{{ env }}/docker-data/dms/mailstate:/var/mail-state
+      - /var/data/skmail-{{ env }}/docker-data/dms/config:/tmp/docker-mailserver
+      - /var/data/skmail-{{ env }}/docker-data/dms/logs:/var/log/mail
+      # === TRAEFIK ACME.JSON DIRECT MOUNT ===
+      # DMS natively reads Traefik's acme.json format (SSL_TYPE=letsencrypt)
+      # DMS auto-extracts *.example.com wildcard certificate for mail.example.com
+      # File is monitored for changes - auto-reloads on certificate renewal
+      - /var/data/runtime/{{ fence_service_name }}-{{ env }}/acme/acme.json:/etc/letsencrypt/acme.json:ro
+      # Config files (read-only bind mounts)
+      - /etc/localtime:/etc/localtime:ro
+    # No overlay network - host mode
+    # networks:
+    #   - cloud-public-{{ env }}
+    deploy:
+      mode: replicated
+      replicas: 1  # Single instance - postfix requires exclusive lock files
+      placement:
+        constraints:
+          - node.role == manager  # Only managers (with NFS shared storage)
+          - node.labels.mail-vip == true  # Must run on VIP node for external access
+      update_config:
+        parallelism: 1
+        delay: 30s
+        failure_action: rollback
+        order: stop-first  # Stop old instance before starting new (lock release)
+      rollback_config:
+        parallelism: 1
+        delay: 30s
+        order: stop-first
+      restart_policy:
+        condition: any
+        delay: 10s
+        max_attempts: 5
+        window: 120s
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 3G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+      # NO TRAEFIK LABELS - Host mode direct port binding
+      labels:
+        - "traefik.enable=false"
+    cap_add:
+      - NET_ADMIN
