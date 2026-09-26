@@ -6,7 +6,7 @@ this tree holds **skgraph** (FalkorDB), **skvector** (Qdrant),
 **skpdf** (Stirling-PDF), **skmem-pg** (Postgres + pgvector + pg_search +
 AGE), **skreg** (Docker Registry v2), **skmon** (monitoring stack), **skform**
 (OpenTofu CLI container), **sksync** (Syncthing), **skpulse** (Uptime Kuma),
-**skpeek** (SearXNG), **skbook** (BookStack wiki + MariaDB) and the
+**skpeek** (SearXNG), **skbook** (BookStack wiki + MariaDB), **skbackup** (Duplicati) and the
 shared tasks they use.
 
 ## Instance contract
