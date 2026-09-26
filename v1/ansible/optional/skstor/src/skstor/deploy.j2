@@ -51,8 +51,9 @@ echo -e "${GREEN}${STACK_NAME} Garage is healthy and running.${NC}"
 
 # One-time cluster layout bootstrap. Garage refuses to serve S3 traffic on a
 # node with no assigned layout, so a brand-new instance needs this once; a
-# redeploy of an already-bootstrapped node is a no-op (its node ID already
-# shows up in `garage status`).
+# redeploy of an already-bootstrapped node is a no-op. `garage status` can't
+# tell the two apart (it lists a connected node before it has a role, and
+# truncates IDs), so this keys off the current layout version: 0 = never applied.
 CONTAINER_ID=$(docker ps -q --filter "label=com.docker.swarm.service.name=${STACK_NAME}_garage" | head -1)
 if [ -z "${CONTAINER_ID}" ]; then
     echo -e "${RED}Could not find a running garage container to bootstrap.${NC}"
@@ -60,13 +61,13 @@ if [ -z "${CONTAINER_ID}" ]; then
 fi
 
 NODE_ID=$(docker exec "${CONTAINER_ID}" /garage node id -q | cut -d@ -f1)
-if docker exec "${CONTAINER_ID}" /garage status | grep -q "${NODE_ID}"; then
-    echo -e "${GREEN}Layout already assigned for node ${NODE_ID}.${NC}"
+LAYOUT_VERSION=$(docker exec "${CONTAINER_ID}" /garage layout show | grep -oE 'Current cluster layout version: [0-9]+' | grep -oE '[0-9]+$' || true)
+if [ "${LAYOUT_VERSION:-0}" -ge 1 ]; then
+    echo -e "${GREEN}Layout already applied (version ${LAYOUT_VERSION}).${NC}"
 else
     echo -e "${YELLOW}No layout assigned yet - bootstrapping single-node layout...${NC}"
     docker exec "${CONTAINER_ID}" /garage layout assign -z dc1 -c 1 "${NODE_ID}"
-    LAYOUT_VERSION=$(docker exec "${CONTAINER_ID}" /garage layout show | grep -oE 'version [0-9]+' | head -1 | awk '{print $2}')
-    docker exec "${CONTAINER_ID}" /garage layout apply --version "${LAYOUT_VERSION:-1}"
+    docker exec "${CONTAINER_ID}" /garage layout apply --version $(( ${LAYOUT_VERSION:-0} + 1 ))
     echo -e "${GREEN}Layout applied for node ${NODE_ID}.${NC}"
     echo -e "${YELLOW}No bucket/key exists yet. See this service's README.md for the${NC}"
     echo -e "${YELLOW}one-time 'garage key create' / 'garage bucket create' / 'garage${NC}"
