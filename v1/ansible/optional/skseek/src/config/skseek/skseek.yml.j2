@@ -44,9 +44,9 @@ services:
         constraints:
           - node.role == manager
       restart_policy:
-        condition: on-failure
+        condition: any
         delay: 5s
-        max_attempts: 5
+        max_attempts: 0
       labels:
         # === TRAEFIK: HTTP ===
         - "traefik.enable=true"
