@@ -5,6 +5,7 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+- v1: **skorch** (n8n + pgvector Postgres + Redis + postgres-backup) published. Its optional gpg-signer sidecar (`skorch.enable_gpg_signer`, default `false`) is a REST API for detached PGP signing with pre-provisioned keys; image defaults to `ghcr.io/smilintux/skstacks-gpg-signer`, built by CI on `skstacks-v*` tags and `workflow_dispatch` (`.github/workflows/gpg-signer-image.yml`). No literal default for `skorch.GPG_SIGNER_API_SECRET` (required only when the sidecar is enabled); its `/import-key` endpoint is gated behind `GPG_SIGNER_ALLOW_KEY_IMPORT` (default off).
 - v1 core: **skfence** (Traefik + docker-socket-proxy + certs-dumper + error pages), the first core-tier service. `skfence.ACME_ENABLED` defaults to `false` (Traefik self-signed cert, works with no public DNS); `true` enables Let's Encrypt via Cloudflare DNS-01 with no literal secret defaults.
 - v1 core: **skha** (keepalived VRRP VIP failover). A documented exception to the single-selected-manager rule: it runs per host, marked `# skstacks: per-host` and scoped to core by a test.
 - v1: **skdash** (Dashy) with generic Traefik discovery driven by `skdash.discovery.*` instance vars, replacing the estate-specific discovery script.
