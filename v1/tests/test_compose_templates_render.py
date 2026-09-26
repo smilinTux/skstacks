@@ -20,3 +20,4 @@ def test_skform_compose_is_valid_yaml(skstor):
     svc = next(iter(doc["services"].values()))
     assert "deploy" in svc and "networks" in svc
     assert ("cloud-public-dev" in svc["networks"]) == skstor
+    assert "traefik.enable=false" in svc.get("labels", [])  # CLI only: never routed
