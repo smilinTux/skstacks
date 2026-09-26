@@ -1,0 +1,8 @@
+# Traefik HTTP services (dynamic/services.yml).
+# This file is managed by Ansible - do not edit manually.
+http:
+  services:
+    error-pages:
+      loadBalancer:
+        servers:
+          - url: "http://skfenceha-{{ env }}_error-pages:8080"

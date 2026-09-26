@@ -1,0 +1,256 @@
+# Traefik HTTP middlewares (dynamic/middlewares.yml).
+# This file is managed by Ansible - do not edit manually.
+
+http:
+  middlewares:
+{% if skfenceha.DASHBOARD_AUTH_HASH | default('') != '' %}
+    traefikAuth:
+      basicAuth:
+        users:
+          - '{{ skfenceha.DASHBOARD_AUTH_HASH }}'
+        realm: "TraefikDashboard"
+{% else %}
+    # No dashboard credentials configured (skfenceha.DASHBOARD_AUTH_HASH is
+    # empty): stub middleware so traefikAuth@file references never fail.
+    traefikAuth:
+      chain:
+        middlewares: []
+{% endif %}
+
+{% if skfenceha.WHITELIST_IPS | default([]) | length > 0 %}
+    # IP allowlist. skfenceha.WHITELIST_IPS is an instance var (list of
+    # CIDRs/IPs) with an empty default; when empty this middleware is not
+    # referenced by any router, so it costs nothing.
+    ipwhitelist:
+      ipAllowList:
+        sourceRange:
+{% for ip in skfenceha.WHITELIST_IPS %}
+          - "{{ ip }}"
+{% endfor %}
+{% endif %}
+
+    # Default middleware chain applied to most routers.
+    default:
+      chain:
+        middlewares:
+{% if skfenceha.WHITELIST_IPS | default([]) | length > 0 %}
+          - ipwhitelist@file
+{% endif %}
+{% if skfenceha.CROWDSEC_ENABLED | default(false) %}
+          # CrowdSec is opt-in: it expects an external bouncer/LAPI already
+          # reachable as crowdsec-bouncer@file (e.g. a separately deployed
+          # sksec-style stack) and its own LAPI key. Traefik extracts the
+          # real client IP automatically (host mode) or via PROXY Protocol
+          # (HA ingress mode), so the bouncer sees the real caller.
+          - crowdsec-bouncer@file
+{% endif %}
+{% if skfenceha.RATE_LIMIT_ENABLED | default(true) %}
+          - rate-limit@file
+{% endif %}
+          - default-security-headers@file
+          - error-pages@file
+          - gzip@file
+
+    # Dashboard-specific chain: excludes error-pages so api@internal's own
+    # error responses are not intercepted. CrowdSec/whitelist are
+    # intentionally excluded too, so an admin locked out of the allowlist by
+    # mistake can still reach the dashboard from the loopback/VPN path an
+    # operator would use to fix it.
+    dashboard-chain:
+      chain:
+        middlewares:
+          - default-security-headers@file
+          - gzip@file
+
+    # skfenceha.RATE_LIMIT_ENABLED (default true) gates whether default,
+    # default-no-crowdsec and default-no-error-pages reference this. The
+    # definition itself is always present (harmless, reusable by a custom
+    # chain) even when every built-in chain has it turned off.
+    rate-limit:
+      rateLimit:
+        average: {{ skfenceha.RATE_LIMIT_AVERAGE | default(100) }}
+        burst: {{ skfenceha.RATE_LIMIT_BURST | default(50) }}
+        period: 1s
+
+    default-security-headers:
+      headers:
+        browserXssFilter: true
+        contentTypeNosniff: true
+        forceSTSHeader: true
+        stsIncludeSubdomains: true
+        stsPreload: true
+        stsSeconds: 63072000
+        customFrameOptionsValue: "DENY"
+        referrerPolicy: "strict-origin-when-cross-origin"
+        permissionsPolicy: "camera=(), microphone=(), geolocation=(), payment=(), usb=(), vr=()"
+        customResponseHeaders:
+          X-Permitted-Cross-Domain-Policies: "none"
+          X-Robots-Tag: "none"
+          Server: ""
+{% if skfenceha.CORS_ALLOWED_ORIGINS | default([]) | length > 0 %}
+        # CORS for an operator-chosen set of origins (e.g. a dashboard app
+        # calling this edge's API cross-origin). Empty by default: nothing
+        # gets a CORS grant until an instance explicitly lists origins.
+        accessControlAllowMethods:
+          - "GET"
+          - "OPTIONS"
+          - "HEAD"
+        accessControlAllowHeaders:
+          - "Origin"
+          - "Content-Type"
+          - "Accept"
+          - "Authorization"
+          - "X-Requested-With"
+        accessControlAllowOriginList:
+{% for origin in skfenceha.CORS_ALLOWED_ORIGINS %}
+          - "{{ origin }}"
+{% endfor %}
+        accessControlMaxAge: 100
+        addVaryHeader: true
+{% endif %}
+
+    dashboard-redirect:
+      redirectRegex:
+        regex: "^/dashboard$"
+        replacement: "/dashboard/"
+        permanent: true
+
+    error-pages:
+      errors:
+        status:
+          # 401 is excluded so WWW-Authenticate survives (needed by basic
+          # auth / git-over-HTTP style flows behind this proxy).
+          - "400"
+          - "402-599"
+        service: error-pages@file
+        query: "/error/{status}"
+
+    # Captures 401 too - only for web-only services that don't need
+    # WWW-Authenticate to survive (see error-pages above for why the
+    # default chain excludes 401).
+    error-pages-all:
+      errors:
+        status:
+          - "400-599"
+        service: error-pages@file
+        query: "/error/{status}"
+
+    gzip:
+      compress:
+        includedContentTypes:
+          - "text/html"
+          - "text/css"
+          - "text/plain"
+          - "text/xml"
+          - "text/javascript"
+          - "application/javascript"
+          - "application/json"
+          - "application/xml"
+          - "application/rss+xml"
+          - "image/svg+xml"
+        minResponseBodyBytes: 1024
+
+    # Chains and standalone middlewares below are referenced by OTHER
+    # services' own Docker labels (optional/skgit, skport, skai, skgallery,
+    # skhub, skdash, skbook, skseek, skorch, skstream, sketh, skstor, ...),
+    # not by any router in this file. Traefik's file provider is a single
+    # global namespace, so removing these breaks whichever service labels
+    # reference them, even though skfenceha's own routers never use them.
+
+    # Bypasses CrowdSec bouncer while keeping every other default protection.
+    default-no-crowdsec:
+      chain:
+        middlewares:
+{% if skfenceha.RATE_LIMIT_ENABLED | default(true) %}
+          - rate-limit@file
+{% endif %}
+          - default-security-headers@file
+          - error-pages@file
+          - gzip@file
+
+    # Preserves raw HTTP status codes (no error-pages interception) for
+    # services like SKGit where intercepting 401/403 breaks auth flows.
+    default-no-error-pages:
+      chain:
+        middlewares:
+{% if skfenceha.RATE_LIMIT_ENABLED | default(true) %}
+          - rate-limit@file
+{% endif %}
+          - default-security-headers@file
+          - gzip@file
+
+    # SKPort (Portainer): tells it the original request was HTTPS so it
+    # doesn't redirect-loop behind this edge's TLS termination.
+    skport-headers:
+      headers:
+        customRequestHeaders:
+          X-Forwarded-Proto: "https"
+          X-Forwarded-Port: "443"
+
+    # SKAI: same as default-security-headers but allows camera/microphone
+    # for voice/video chat, and SAMEORIGIN framing instead of DENY.
+    skai-headers:
+      headers:
+        browserXssFilter: true
+        contentTypeNosniff: true
+        forceSTSHeader: true
+        stsIncludeSubdomains: true
+        stsPreload: true
+        stsSeconds: 63072000
+        customFrameOptionsValue: "SAMEORIGIN"
+        referrerPolicy: "strict-origin-when-cross-origin"
+        permissionsPolicy: "microphone=(*), camera=(*), geolocation=()"
+        customResponseHeaders:
+          Permissions-Policy: "microphone=(*), camera=(*), geolocation=()"
+
+    skai-chain:
+      chain:
+        middlewares:
+          - skai-headers@file
+          - error-pages@file
+          - gzip@file
+
+    # Disables request/response body buffering for large file transfers
+    # (photos/videos up to 20GB). Use only for trusted upload-heavy
+    # services (e.g. SKGallery).
+    large-upload-buffering:
+      buffering:
+        maxRequestBodyBytes: 21474836480
+        memRequestBodyBytes: 2097152
+        maxResponseBodyBytes: 21474836480
+        memResponseBodyBytes: 2097152
+
+    # gzip is intentionally excluded: compression during chunked uploads
+    # can cause buffering issues and ECONNRESET errors.
+    upload-chain:
+      chain:
+        middlewares:
+          - large-upload-buffering@file
+          - default-security-headers@file
+          - error-pages@file
+
+    upload-chain-no-crowdsec:
+      chain:
+        middlewares:
+          - large-upload-buffering@file
+          - default-security-headers@file
+          - error-pages@file
+
+    # Authentik SSO forward-auth. Requires an sksso service reachable as
+    # sksso-{{ env }}_server.
+    authentik:
+      forwardAuth:
+        address: "http://sksso-{{ env }}_server:9000/outpost.goauthentik.io/auth/traefik"
+        trustForwardHeader: true
+        authResponseHeaders:
+          - X-authentik-username
+          - X-authentik-groups
+          - X-authentik-email
+          - X-authentik-name
+          - X-authentik-uid
+          - X-authentik-jwt
+          - X-authentik-meta-jwks
+          - X-authentik-meta-outpost
+          - X-authentik-meta-provider
+          - X-authentik-meta-app
+          - X-authentik-meta-version

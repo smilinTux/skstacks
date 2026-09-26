@@ -1,0 +1,86 @@
+# Traefik static configuration for the worker/routing role (/etc/traefik/traefik.yml
+# on every node running traefik-worker). This file is managed by Ansible -
+# do not edit manually.
+#
+# Workers handle all real traffic (mode: global, host-mode published ports,
+# so the client's real source IP reaches Traefik directly). They read the
+# ACME master's acme.json read-only (see traefik.yml.j2) and never perform a
+# certificate challenge themselves. log:/accessLog: file paths are injected
+# per-node at container start by entrypoint.sh.
+
+api:
+  dashboard: true
+  insecure: false
+
+certificatesResolvers:
+  main:
+    acme:
+      storage: /acme/acme.json
+
+entryPoints:
+  web:
+    address: ":80"
+{% if skfenceha.TRUSTED_PROXIES | default([]) | length > 0 %}
+    forwardedHeaders:
+      trustedIPs:
+{% for ip in skfenceha.TRUSTED_PROXIES %}
+        - "{{ ip }}"
+{% endfor %}
+{% endif %}
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+  websecure:
+    address: ":443"
+{% if skfenceha.TRUSTED_PROXIES | default([]) | length > 0 %}
+    forwardedHeaders:
+      trustedIPs:
+{% for ip in skfenceha.TRUSTED_PROXIES %}
+        - "{{ ip }}"
+{% endfor %}
+{% endif %}
+  # TCP passthrough entrypoint for git-over-SSH style services behind this
+  # edge (e.g. traefik.tcp labels routing to a git service's SSH port). Port
+  # 222 avoids colliding with the host's own SSH on 22.
+  ssh:
+    address: ":222"
+  metrics:
+    address: ":8082"
+
+global:
+  checknewversion: false
+  sendanonymoususage: false
+
+providers:
+  swarm:
+    endpoint: "tcp://tasks.{{ app }}-{{ env }}_socket-proxy:2375"
+    network: "cloud-socket-proxy-{{ env }}"
+    exposedByDefault: false
+    watch: true
+  docker:
+    # Standalone-container label discovery alongside swarm (some services
+    # attach Traefik labels as plain containers, not swarm services).
+    endpoint: "tcp://tasks.{{ app }}-{{ env }}_socket-proxy:2375"
+    network: "cloud-socket-proxy-{{ env }}"
+    exposedByDefault: false
+    watch: true
+  file:
+    directory: "/etc/traefik/dynamic"
+    watch: true
+
+serversTransport:
+  insecureSkipVerify: true
+  forwardingTimeouts:
+    responseHeaderTimeout: 30s
+    dialTimeout: 10s
+    idleConnTimeout: 90s
+
+metrics:
+  prometheus:
+    addEntryPointsLabels: true
+    addRoutersLabels: true
+    addServicesLabels: true
+    entryPoint: metrics

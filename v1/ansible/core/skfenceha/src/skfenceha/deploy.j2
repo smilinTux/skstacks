@@ -1,0 +1,81 @@
+#!/bin/bash
+set -e
+
+APP="{{ app }}"
+ENV="{{ env }}"
+STACK_NAME="{{ app }}-${ENV}"
+CONFIG_DIR="/var/data/config/${APP}-${ENV}"
+COMPOSE_FILE="${CONFIG_DIR}/docker-compose.yml"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+echo -e "${GREEN}Deploying ${APP} stack (HA Traefik)...${NC}"
+
+if [ -f "${CONFIG_DIR}/${APP}.sh.env" ]; then
+    echo -e "${YELLOW}Loading environment variables...${NC}"
+    source "${CONFIG_DIR}/${APP}.sh.env"
+fi
+
+if [ ! -f "${COMPOSE_FILE}" ]; then
+    echo -e "${RED}Error: Compose file not found: ${COMPOSE_FILE}${NC}"
+    exit 1
+fi
+
+echo -e "${YELLOW}Deploying stack configuration...${NC}"
+timeout 60 docker stack deploy \
+    -c "${COMPOSE_FILE}" \
+    --prune \
+    --with-registry-auth \
+    "${STACK_NAME}" || {
+    echo -e "${YELLOW}Stack deploy timed out or had issues, but continuing...${NC}"
+}
+
+sleep 5
+
+# HA mode: two Traefik roles, each restarted with its own stop-first
+# sequence to avoid host-port conflicts (both publish in host mode).
+ACME_SVC="${STACK_NAME}_traefik-acme"
+WORKER_SVC="${STACK_NAME}_traefik-worker"
+
+echo -e "${YELLOW}Restarting traefik-acme...${NC}"
+if docker service inspect "$ACME_SVC" >/dev/null 2>&1; then
+    DESIRED=$(docker service inspect --format '{{ '{{.Spec.Mode.Replicated.Replicas}}' }}' "$ACME_SVC" 2>/dev/null || echo "1")
+    if [ -z "$DESIRED" ] || [ "$DESIRED" = "<no value>" ]; then DESIRED=1; fi
+    docker service scale "$ACME_SVC"=0 || true
+    sleep 2
+    docker service scale "$ACME_SVC"="$DESIRED" || true
+else
+    echo "Warning: $ACME_SVC not found, skipping restart"
+fi
+
+echo -e "${YELLOW}Restarting traefik-worker (global mode: force update, no scale)...${NC}"
+if docker service inspect "$WORKER_SVC" >/dev/null 2>&1; then
+    docker service update --force --detach=false "$WORKER_SVC" || true
+else
+    echo "Warning: $WORKER_SVC not found, skipping restart"
+fi
+
+docker service update --force --detach=false "${STACK_NAME}_socket-proxy" || true
+docker service update --force --detach=false "${STACK_NAME}_traefik-certs-dumper" || true
+
+echo -e "${YELLOW}Waiting for services to stabilize...${NC}"
+sleep 10
+
+echo -e "${GREEN}Service Status:${NC}"
+docker service ls | grep "${STACK_NAME}"
+
+echo -e "${YELLOW}Checking service health...${NC}"
+WORKER_REPLICAS=$(docker service ls --filter "name=${WORKER_SVC}" --format "{{ '{{.Replicas}}' }}" 2>/dev/null || echo "0/0")
+if echo "$WORKER_REPLICAS" | grep -qE '^([1-9][0-9]*)/\1$'; then
+    echo -e "${GREEN}${APP} worker role is healthy: ${WORKER_REPLICAS}${NC}"
+else
+    echo -e "${RED}${APP} worker health check: ${WORKER_REPLICAS}${NC}"
+    docker service logs --tail 20 "$WORKER_SVC" 2>/dev/null || echo "Could not retrieve logs for $WORKER_SVC"
+fi
+
+echo -e "${GREEN}Deployment complete!${NC}"
+{%- set _base_domain = skfenceha.CLUSTERNAME | default(cluster_name) ~ '.' ~ (skfenceha.DOMAIN | default(domain)) %}
+echo -e "${GREEN}Traefik Dashboard: https://skfenceha{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}/dashboard/#/${NC}"

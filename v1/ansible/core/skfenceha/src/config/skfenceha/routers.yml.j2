@@ -1,13 +1,19 @@
-{% set base_domain = skfence.DOMAIN | default(domain) %}
-{% set base_cluster = skfence.CLUSTERNAME | default(cluster_name) %}
-{% set fqdn = 'skfence' + ('-' + env if env != 'prod' else '') + '.' + base_cluster + '.' + base_domain %}
-{% set acme_on = skfence.ACME_ENABLED | default(false) %}
+{% set base_domain = skfenceha.DOMAIN | default(domain) %}
+{% set base_cluster = skfenceha.CLUSTERNAME | default(cluster_name) %}
+{% set fqdn = 'skfenceha' + ('-' + env if env != 'prod' else '') + '.' + base_cluster + '.' + base_domain %}
+{% set acme_on = skfenceha.ACME_ENABLED | default(false) %}
 # Traefik HTTP routers (dynamic/routers.yml).
 # This file is managed by Ansible - do not edit manually.
 #
-# TLS: `tls: {}` (ACME disabled; a bare `tls:` is YAML null = no TLS) tells Traefik to use its own
-# default self-signed certificate; `tls: {certResolver: main}` (ACME
-# enabled) requests a real certificate via the resolver in traefik.yml.j2.
+# TLS: `tls: {}` (ACME disabled; a bare `tls:` is YAML null = no TLS) tells
+# Traefik to use its own default self-signed certificate; `tls:
+# {certResolver: main}` (ACME enabled) requests/serves a real certificate.
+# This same rendered file is deployed to BOTH the worker role's dynamic/ dir
+# and the ACME master's dynamic_acme/ dir. The master's `main` resolver
+# performs the actual DNS-01 challenge; workers' `main` resolver has no
+# challenge config (traefik-worker.yml.j2) and only reads the already-issued
+# certificate from their read-only acme.json bind mount, so a worker never
+# attempts to obtain a certificate itself.
 http:
   routers:
     # Dashboard + API under one router so the browser only authenticates once.
@@ -17,7 +23,7 @@ http:
         - websecure
       middlewares:
         - dashboard-chain@file
-{% if skfence.DASHBOARD_AUTH_HASH | default('') != '' %}
+{% if skfenceha.DASHBOARD_AUTH_HASH | default('') != '' %}
         - traefikAuth@file
 {% endif %}
       service: api@internal
