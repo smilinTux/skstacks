@@ -48,7 +48,12 @@ docker stack deploy \
 sleep 10
 
 echo -e "${YELLOW}Checking service health...${NC}"
-REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_garage" --format "{{ '{{.Replicas}}' }}")
+# Poll: an update that restarts the task shows 0/1 for a while.
+for _ in $(seq 1 36); do
+    REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_garage" --format "{{ '{{.Replicas}}' }}")
+    [[ "$REPLICAS" == "1/1" ]] && break
+    sleep 5
+done
 if [[ "$REPLICAS" != "1/1" ]]; then
     echo -e "${RED}${STACK_NAME} Garage health check: ${REPLICAS}${NC}"
     docker service logs --tail 20 "${STACK_NAME}_garage" || true
