@@ -51,8 +51,26 @@ class _LenientUndefined(jinja2.ChainableUndefined):
 _JINJA_ENV = jinja2.Environment(undefined=_LenientUndefined)
 
 
+def _unquote(expr):
+    """Strip one matching pair of YAML quotes wrapping the whole value.
+
+    The image-line regex captures raw text after `image:`, including any
+    YAML quoting (e.g. `image: "{{ x | default('foo:1.2') }}"`). YAML
+    quoting is optional for a scalar like this, so some templates use it
+    and some don't; the regex has no YAML parser to strip it for us. Left
+    in place, the literal quote characters end up embedded in the
+    resolved image reference (`"foo:1.2"` instead of `foo:1.2`), which
+    `docker manifest inspect` rejects as an invalid reference, a false
+    canary failure unrelated to whether the image actually exists.
+    """
+    if len(expr) >= 2 and expr[0] == expr[-1] and expr[0] in ("'", '"'):
+        return expr[1:-1]
+    return expr
+
+
 def resolve_image_ref(raw_expr):
     """Render one image: value through Jinja using only its own defaults."""
+    raw_expr = _unquote(raw_expr)
     try:
         rendered = _JINJA_ENV.from_string(raw_expr).render()
     except jinja2.TemplateError:
