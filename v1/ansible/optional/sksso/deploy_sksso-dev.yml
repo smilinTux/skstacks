@@ -1,0 +1,184 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+# Step 1: Select manager node with failover
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+# Step 2: Deploy to selected manager
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: sksso
+    env: dev
+    service_name: sksso
+    service_type: optional
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Verify required SKSSO vault variables are set
+      fail:
+        msg: >-
+          sksso.postgres_user, sksso.postgres_password,
+          sksso.authentik_secret_key, sksso.CLUSTERNAME and sksso.DOMAIN are
+          required instance vars - set them in the service's vault file (see
+          README.md).
+      when: >-
+        (sksso.postgres_user | default('')) == '' or
+        (sksso.postgres_password | default('')) == '' or
+        (sksso.authentik_secret_key | default('')) == '' or
+        (sksso.CLUSTERNAME | default('')) == '' or
+        (sksso.DOMAIN | default('')) == ''
+
+    - name: Define network variables from vault (idempotent network creation)
+      # IMPORTANT: network subnets must match your instance's network
+      # registry. Networks are created idempotently by create_networks.yml
+      # (included below).
+      set_fact:
+        app_networks: "{{ sksso_dev_networks | default([
+          { 'name': 'sksso-dev', 'subnet': '172.16.106.0/24' },
+          { 'name': 'cloud-public-dev', 'subnet': '172.16.202.0/24' }
+        ]) }}"
+      tags:
+        - networks
+
+  tasks:
+    - name: Deploying {{ app }}
+      debug:
+        msg: Running SKStacks deploy {{ app }} scripts...
+
+    - name: Create the {{ app }} directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - /var/data/{{ app }}-{{ env }}
+        - /var/data/config/{{ app }}-{{ env }}
+        - /var/data/runtime/{{ app }}-{{ env }}
+        - /var/data/{{ app }}-{{ env }}/media
+        - /var/data/{{ app }}-{{ env }}/certs
+        - /var/data/{{ app }}-{{ env }}/custom-templates
+        - /var/data/{{ app }}-{{ env }}/database-dump
+        - /var/data/runtime/{{ app }}-{{ env }}/postgres
+        - /var/data/runtime/{{ app }}-{{ env }}/redis
+        - /var/data/config/{{ app }}-{{ env }}/custom
+
+    - name: Make the {{ app }} media dir writable by Authentik (uid 1000 in the image)
+      file:
+        path: /var/data/{{ app }}-{{ env }}/media
+        state: directory
+        owner: "{{ sksso.authentik_uid | default(1000) }}"
+        group: "{{ sksso.authentik_uid | default(1000) }}"
+        mode: '0755'
+
+    - name: Process {{ app }} environment templates
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: '{{ item.mode | default("0644") }}'
+      loop:
+        - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env", mode: "0644" }
+        - { src: "{{ app }}.sh.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env", mode: "0640" }
+        - { src: "{{ app }}-backup.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}-backup.env", mode: "0644" }
+      tags:
+        - templates
+
+    - name: Write the {{ app }} user_settings.py override (only when the instance sets one)
+      copy:
+        content: "{{ sksso.user_settings_py }}"
+        dest: "/var/data/config/{{ app }}-{{ env }}/custom/user_settings.py"
+        owner: root
+        group: root
+        mode: '0644'
+      when: sksso.user_settings_py | default('') | length > 0
+
+    - name: Process {{ app }} Docker Compose template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags:
+        - compose
+
+    - name: Create docker-compose.yml symlink
+      file:
+        src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags:
+        - compose
+
+    - name: Process deploy script template
+      template:
+        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/deploy"
+        owner: root
+        group: root
+        mode: '0755'
+      tags:
+        - deploy-script
+
+    - name: Ensure overlay networks exist from app_networks variable
+      include_tasks: ../../shared/tasks/create_networks.yml
+      tags:
+        - networks
+
+    - name: Deploy {{ app }} stack
+      shell: |
+        cd /var/data/{{ app }}-{{ env }}
+        ./deploy
+      register: deploy_output
+      tags:
+        - deploy
+
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags:
+        - deploy
+
+    - name: Post-deploy Check Authentik server health
+      community.docker.docker_swarm_service_info:
+        name: "{{ app }}-{{ env }}_server"
+      register: server_service
+      failed_when: false
+
+    - name: Print Authentik server status
+      debug:
+        msg: "Server service exists: {{ server_service.service.ID | default('Not found') }}"

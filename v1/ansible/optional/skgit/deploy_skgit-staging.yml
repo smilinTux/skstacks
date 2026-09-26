@@ -1,0 +1,287 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# =============================================================================
+# SKGit (Forgejo) Deployment Playbook - Staging
+# =============================================================================
+# Self-hosted Git service with CI/CD (Forgejo Actions) runners.
+# TODO before deploy: register skgit-dev overlay subnet in shared/networks
+# (172.16.230.0/24, not yet registered); add skgit vault vars (POSTGRES_PASSWORD,
+# SHARED_SECRET, SECRET_KEY, INTERNAL_TOKEN, ADMIN_EMAIL, ADMIN_PASSWORD,
+# RUNNER_REGISTRATION_TOKEN, CLUSTERNAME, DOMAIN); ensure images are pullable
+# on swarm nodes. Traefik routing uses plain Docker labels (no shared
+# detect_traefik_setup task - that task is not part of this framework).
+# =============================================================================
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+# Step 1: Select manager node with failover
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+# Step 2: Deploy to selected manager
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skgit
+    env: staging
+    service_name: skgit
+    service_type: optional
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Define default network variables when not provided in vault
+      # TODO: register subnets in shared/networks before first deploy.
+      set_fact:
+        app_networks: "{{ skgit.networks | default([
+          { 'name': 'cloud-public-staging', 'subnet': '172.16.201.0/24' },
+          { 'name': 'skgit-staging', 'subnet': '172.16.230.0/24' }
+        ]) }}"
+      tags:
+        - networks
+
+  tasks:
+    - name: Deploying {{ app }}
+      debug:
+        msg: Running SKStacks deploy {{ app }} scripts...
+
+    - name: Ensure overlay networks exist from app_networks variable
+      include_tasks: ../../shared/tasks/create_networks.yml
+      tags:
+        - networks
+
+    - name: Create the {{ app }} directories (direct bind mount structure)
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "/var/data/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
+        # === DIRECT BIND MOUNTS - NO NAMED VOLUMES ===
+        - { path: "/var/data/{{ app }}-{{ env }}/data", owner: "1000", group: "1000", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/config", owner: "1000", group: "1000", mode: "0755" }
+        - { path: "/var/data/logs/{{ app }}-{{ env }}", owner: "1000", group: "1000", mode: "0755" }
+        - { path: "/var/data/runtime/{{ app }}-{{ env }}/postgres", owner: "999", group: "999", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/database-dump", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/runtime/{{ app }}-{{ env }}/runner", owner: "1000", group: "1000", mode: "0755" }
+        - { path: "/var/data/runtime/{{ app }}-{{ env }}/docker_certs", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/runtime/{{ app }}-{{ env }}/dind-data", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/runtime/{{ app }}-{{ env }}/runner-data", owner: "1000", group: "1000", mode: "0755" }
+        - { path: "/var/data/runtime/{{ app }}-{{ env }}/sessions", owner: "1000", group: "1000", mode: "0755" }
+        - { path: "/var/data/config/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
+
+    - name: Process {{ app }} environment templates
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: '0640'
+      loop:
+        - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env" }
+        - { src: "postgres.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/postgres.env" }
+        - { src: "postgres-backup.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/postgres-backup.env" }
+        - { src: "{{ app }}-runners.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/.env" }
+        - { src: "{{ app }}-runners.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}-runners.yml" }
+        - { src: "runner-config.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/runner-config.yml" }
+      tags:
+        - templates
+
+    - name: Create {{ app }}.sh.env (always update for domain/cluster changes)
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.sh.env.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env"
+        owner: root
+        group: root
+        mode: '0640'
+      tags:
+        - templates
+
+    - name: Process {{ app }} Docker Compose template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags:
+        - compose
+
+    - name: Create docker-compose.yml symlink
+      file:
+        src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags:
+        - compose
+
+    - name: Create Forgejo app.ini configuration file
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/app.ini.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/config/app.ini"
+        owner: "1000"
+        group: "1000"
+        mode: "0644"
+      tags:
+        - config
+
+    - name: Process deploy script template
+      template:
+        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/deploy"
+        owner: root
+        group: root
+        mode: '0755'
+      tags:
+        - deploy-script
+
+    - name: Create {{ app }} control script symlink
+      file:
+        src: /var/data/{{ app }}-{{ env }}/deploy
+        dest: /var/data/deploy_{{ app }}-{{ env }}
+        force: yes
+        owner: root
+        group: root
+        mode: '0755'
+        state: link
+      tags:
+        - deploy-script
+
+    - name: Copy {{ app }} helper files
+      copy:
+        src: "{{ playbook_dir }}/src/{{ app }}/{{ item.src }}"
+        dest: "/var/data/{{ app }}-{{ env }}/{{ item.dest | default(item.src) }}"
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop:
+        - { src: "start-runners.sh", mode: "0755" }
+        - { src: "stop-runners.sh", mode: "0755" }
+      tags:
+        - scripts
+
+    - name: Check if Runner scripts exist
+      stat:
+        path: "{{ item }}"
+      register: runner_scripts
+      loop:
+        - "/var/data/{{ app }}-{{ env }}/start-runners.sh"
+        - "/var/data/{{ app }}-{{ env }}/stop-runners.sh"
+      tags:
+        - scripts
+
+    - name: Make Runner scripts executable
+      file:
+        path: "{{ item.item }}"
+        mode: '0755'
+        owner: root
+        group: root
+      loop: "{{ runner_scripts.results }}"
+      when: item.stat.exists
+      tags:
+        - scripts
+
+    - name: Deploy {{ app }} stack
+      shell: |
+        cd /var/data/{{ app }}-{{ env }}
+        ./deploy
+      register: deploy_output
+      tags:
+        - deploy
+
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags:
+        - deploy
+
+    - name: Wait for Forgejo container to start and fix permissions
+      shell: |
+        for i in {1..30}; do
+          if docker service ls --filter name={{ app }}-{{ env }}_forgejo --format '{{ '{{' }}.Replicas{{ '}}' }}' | grep -q "1/1"; then
+            break
+          fi
+          sleep 2
+        done
+
+        chown -R 1000:1000 /var/data/{{ app }}-{{ env }}/data || true
+        chown -R 1000:1000 /var/data/{{ app }}-{{ env }}/config || true
+        chmod -R 755 /var/data/{{ app }}-{{ env }}/data || true
+        chmod -R 755 /var/data/{{ app }}-{{ env }}/config || true
+
+        if [ -f /var/data/{{ app }}-{{ env }}/start-runners.sh ]; then
+          echo "Starting runners..."
+          /var/data/{{ app }}-{{ env }}/start-runners.sh
+        fi
+      environment:
+        SKGIT_DIND_NODE: "{{ skgit.DIND_NODE | default('') }}"
+      when: deploy_output.rc == 0
+      ignore_errors: yes
+      tags:
+        - post-deploy
+
+    - name: Create admin user if credentials provided (DEV/STAGING ONLY)
+      shell: |
+        for i in {1..60}; do
+          if docker exec $(docker ps -q -f name={{ app }}-{{ env }}_forgejo | head -n1) \
+            curl -sf http://localhost:3000/api/v1/version >/dev/null 2>&1; then
+            break
+          fi
+          sleep 2
+        done
+
+        ADMIN_EXISTS=$(docker exec $(docker ps -q -f name={{ app }}-{{ env }}_forgejo | head -n1) \
+          forgejo admin user list --format json 2>/dev/null | \
+          jq -r '.[] | select(.username == "{{ skgit.admin_username | default('skadmin') }}") | .username' || echo "")
+
+        if [ -z "$ADMIN_EXISTS" ]; then
+          echo "Creating admin user: {{ skgit.admin_username | default('skadmin') }}"
+          docker exec $(docker ps -q -f name={{ app }}-{{ env }}_forgejo | head -n1) \
+            forgejo admin user create \
+            --admin \
+            --username "{{ skgit.admin_username | default('skadmin') }}" \
+            --password "{{ skgit.admin_password }}" \
+            --email "{{ skgit.admin_email }}" \
+            --must-change-password false || true
+          echo "Admin user created"
+        else
+          echo "Admin user already exists, skipping creation"
+        fi
+      when:
+        - deploy_output.rc == 0
+        - skgit.admin_enabled | default(false) | bool
+        - skgit.admin_password is defined
+        - skgit.admin_email is defined
+      ignore_errors: yes
+      tags:
+        - post-deploy
+        - admin
+      no_log: true  # Don't log password in output

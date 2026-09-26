@@ -1,0 +1,108 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+version: '3.8'
+
+services:
+  dashy:
+    image: lissy93/dashy:latest
+    env_file:
+      - /var/data/config/{{ app }}-{{ env }}/{{ app }}.env
+    environment:
+      - NODE_OPTIONS=--max-old-space-size=1536
+    volumes:
+      - /var/data/{{ app }}-{{ env }}/config/config.yml:/app/user-data/conf.yml:ro
+      - /var/data/{{ app }}-{{ env }}/tmp:/tmp
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - {{ app }}-{{ env }}
+      - cloud-public-{{ env }}
+    deploy:
+      mode: replicated
+      replicas: {{ skdash.replicas | default(1) | int }}
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        monitor: 30s
+        max_failure_ratio: 0.2
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+{% set _rollback_failure_action = skdash.rollback_failure_action | default('') %}
+{% if _rollback_failure_action %}
+        failure_action: {{ _rollback_failure_action }}
+{% endif %}
+{% set _rollback_monitor = skdash.rollback_monitor | default('') %}
+{% if _rollback_monitor %}
+        monitor: {{ _rollback_monitor }}
+{% endif %}
+{% set _rollback_max_failure_ratio = skdash.rollback_max_failure_ratio | default('') %}
+{% if _rollback_max_failure_ratio != '' %}
+        max_failure_ratio: {{ _rollback_max_failure_ratio }}
+{% endif %}
+      restart_policy:
+        condition: {{ skdash.restart_policy_condition | default('on-failure') }}
+        delay: {{ skdash.restart_policy_delay | default('10s') }}
+{% set _restart_max_attempts = skdash.restart_policy_max_attempts | default(5) %}
+{% if _restart_max_attempts %}
+        max_attempts: {{ _restart_max_attempts | int }}
+{% endif %}
+{% set _restart_window = skdash.restart_policy_window | default('120s') %}
+{% if _restart_window %}
+        window: {{ _restart_window }}
+{% endif %}
+      resources:
+        limits:
+          cpus: '{{ skdash.RESOURCES_LIMITS_CPUS | default("0.5") }}'
+          memory: {{ skdash.RESOURCES_LIMITS_MEMORY | default("512M") }}
+        reservations:
+          cpus: '{{ skdash.RESOURCES_RESERVATIONS_CPUS | default("0.1") }}'
+          memory: {{ skdash.RESOURCES_RESERVATIONS_MEMORY | default("128M") }}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-secure.rule=Host(`{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skdash.CLUSTERNAME }}.{{ skdash.DOMAIN }}`)"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-secure.entrypoints=websecure"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls=true"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls.certresolver=main"
+{% if skdash.tls_options | default('') %}
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls.options={{ skdash.tls_options }}"
+{% endif %}
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-secure.service={{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}"
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=8080"
+{% set _skdash_secure_middlewares = (skdash.router_middlewares_pre | default([])) + (skdash.router_middlewares | default([])) %}
+{% if _skdash_secure_middlewares %}
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-secure.middlewares={{ _skdash_secure_middlewares | join(',') }}"
+{% endif %}
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie=true"
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie.name={{ app }}_session"
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie.secure=true"
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie.httpOnly=true"
+{% if skdash.sticky_samesite | default('') %}
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie.sameSite={{ skdash.sticky_samesite }}"
+{% endif %}
+    healthcheck:
+      test: ["CMD", "node", "/app/services/healthcheck"]
+      interval: "{{ skdash.healthcheck_interval | default('1m30s') }}"
+      timeout: "{{ skdash.healthcheck_timeout | default('60s') }}"
+      retries: {{ skdash.healthcheck_retries | default(3) | int }}
+      start_period: "{{ skdash.healthcheck_start_period | default('40s') }}"
+
+networks:
+  {{ app }}-{{ env }}:
+    external: true
+  cloud-public-{{ env }}:
+    external: true

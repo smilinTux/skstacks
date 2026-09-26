@@ -14,10 +14,18 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 ---
+# skdash: Dashy dashboard, with generic Traefik-API discovery (ON by default)
+# and a static-sections fallback. See v1/docs/skdash-discovery.md.
+# TODO before deploy: register the skdash-{{ env }} overlay subnet in
+# shared/networks (pick a free /24 if these placeholders collide on your
+# estate); set skdash.CLUSTERNAME / skdash.DOMAIN and, if discovery is on,
+# skdash.discovery.traefik_api_url / skdash.discovery.traefik_api_token in
+# your vault (see src/config/skdash/skdash.env.j2 and
+# v1/docs/skdash-discovery.md for the full var list); ensure the image is
+# pullable on swarm nodes.
 - import_playbook: ../../shared/meta/skstack-header.yml
 
 # Step 1: Select manager node with failover
-# Run on all hosts to ensure it executes even with -l limit
 - hosts: all
   gather_facts: false
   connection: local
@@ -29,14 +37,12 @@
         target_group: "{{ target_manager_group | default('swarm_managers') }}"
 
 # Step 2: Deploy to selected manager
-# UFW rules and the stack itself both run on the one selected manager only:
-# a play targeting the whole manager group races the shared /var/data storage.
 - hosts: selected_manager_group
   become: true
   vars:
-    app: sksync
+    app: skdash
     env: staging
-    service_name: sksync
+    service_name: skdash
     service_type: optional
   pre_tasks:
     - name: Select vault file based on domain and cluster
@@ -46,70 +52,35 @@
       include_vars: "{{ vault_file_path }}"
       when: vault_file_path is defined
 
-    - name: Define default network variables when not provided in vault
-      # ⚠️ IMPORTANT: Network subnets MUST match shared/networks registry
-      # Reference: See shared/networks for all registered network subnets
-      # Networks are created by create_networks.yml shared task (included below)
+    - name: Define network variables (TODO, register subnet in shared/networks, placeholder for now)
       set_fact:
-        app_networks: "{{ sksync_staging_networks | default([
-          { 'name': 'sksync-staging', 'subnet': '172.16.107.0/24' },
-          { 'name': 'cloud-public-staging', 'subnet': '172.16.201.0/24' }
+        app_networks: "{{ skdash.networks | default([
+          { 'name': 'skdash-staging', 'subnet': '172.16.143.0/24', 'driver': 'overlay', 'attachable': true },
+          { 'name': 'cloud-public-staging', 'subnet': '172.16.201.0/24', 'driver': 'overlay', 'attachable': true }
         ]) }}"
       tags:
         - networks
+        - config
 
   tasks:
     - name: Deploying {{ app }}
       debug:
         msg: Running SKStacks deploy {{ app }} scripts...
 
-    - name: Configure UFW rules for SKSync
-      community.general.ufw:
-        rule: allow
-        port: "{{ item.port }}"
-        proto: "{{ item.proto }}"
-        comment: "SKSync {{ item.service }} - {{ env }}"
-      loop:
-        - { port: "22000", proto: "tcp", service: "Syncthing Sync (TCP)" }
-        - { port: "22000", proto: "udp", service: "Syncthing Sync (UDP)" }
-      tags:
-        - firewall
-        - ufw
-
     - name: Create the {{ app }} directories
-      # Best Practice: Run as UID 1000 (jz user) - non-root for security
-      # sync-data is the main data directory where all shared folders are created
       file:
-        path: "{{ item.path }}"
+        path: "{{ item }}"
         state: directory
-        owner: "{{ item.owner }}"
-        group: "{{ item.group }}"
-        mode: "{{ item.mode }}"
+        owner: root
+        group: root
+        mode: '0755'
       loop:
-        - { path: "/var/data/{{ app }}-{{ env }}", owner: '1000', group: '1000', mode: '0755' }
-        - { path: "/var/data/{{ app }}-{{ env }}/sync-data", owner: '1000', group: '1000', mode: '0755' }
-        - { path: "/var/data/{{ app }}-{{ env }}/syncthing_config", owner: '1000', group: '1000', mode: '0755' }
-        - { path: "/var/data/config/{{ app }}-{{ env }}", owner: 'root', group: 'root', mode: '0755' }
+        - /var/data/{{ app }}-{{ env }}
+        - /var/data/{{ app }}-{{ env }}/config
+        - /var/data/{{ app }}-{{ env }}/tmp
+        - /var/data/config/{{ app }}-{{ env }}
 
-    - name: Ensure correct permissions on {{ app }} data directories (recursive fix)
-      # UID 1000 = jz user on host, syncthing user in container
-      shell: |
-        chown -R 1000:1000 "{{ item }}"
-        find "{{ item }}" -type d -exec chmod 755 {} \;
-        find "{{ item }}" -type f -exec chmod 644 {} \;
-      loop:
-        - /var/data/{{ app }}-{{ env }}/sync-data
-        - /var/data/{{ app }}-{{ env }}/syncthing_config
-      changed_when: true
-
-    - name: Check if {{ app }}.sh.env already exists on target
-      stat:
-        path: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env"
-      register: sh_env_exists
-      tags:
-        - templates
-
-    - name: Process {{ app }} environment templates (excluding .sh.env if it exists)
+    - name: Process {{ app }} environment templates
       template:
         src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
         dest: "{{ item.dest }}"
@@ -118,21 +89,26 @@
         mode: '0640'
       loop:
         - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env" }
-      when: item.src != app ~ '.sh.env.j2'
+        - { src: "{{ app }}.sh.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env" }
       tags:
         - templates
 
-    - name: Create {{ app }}.sh.env
+    - name: Generate Dashy sections from the Traefik API (falls back to static skdash.sections)
+      import_tasks: tasks/generate_config.yml
+      tags:
+        - config
+
+    - name: Process {{ app }} configuration template (config.yml)
       template:
-        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.sh.env.j2"
-        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env"
+        src: "{{ playbook_dir }}/src/config/{{ app }}/config.yml.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/config/config.yml"
         owner: root
         group: root
-        mode: '0640'
+        mode: '0644'
       tags:
-        - templates
+        - config
 
-    - name: Process {{ app }} {{ app }}.yml template
+    - name: Process {{ app }} Docker Compose template
       template:
         src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
         dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
@@ -142,28 +118,42 @@
       tags:
         - compose
 
-    - name: Create docker-compose.yml symlink
+    - name: Create {{ app }} docker-compose.yml symlink
       file:
         src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
         dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml"
         force: yes
         owner: root
         group: root
+        mode: '0644'
         state: link
       tags:
         - compose
 
-    # Traefik routing is now configured via Docker labels (Docker provider)
-    # No file provider deployment needed - all labels in compose file per new SOP
-    # Certificates: Provided by traefik-certs-dumper (runs on skfence/skfenceha ACME master node)
+    # Traefik routing is configured via Docker labels (Docker provider).
+    # No file provider deployment needed. Certificates: provided by
+    # traefik-certs-dumper on the ACME master node of your edge/ingress stack.
 
-    - name: Process deploy script template
+    - name: Process {{ app }} deploy script template
       template:
         src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
         dest: "/var/data/{{ app }}-{{ env }}/deploy"
         owner: root
         group: root
         mode: '0755'
+      tags:
+        - templates
+        - deploy-script
+
+    - name: Create {{ app }} control script symlink
+      file:
+        src: "/var/data/{{ app }}-{{ env }}/deploy"
+        dest: "/var/data/deploy_{{ app }}-{{ env }}"
+        force: yes
+        owner: root
+        group: root
+        mode: '0755'
+        state: link
       tags:
         - deploy-script
 

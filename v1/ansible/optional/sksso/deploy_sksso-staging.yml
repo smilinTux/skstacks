@@ -17,7 +17,6 @@
 - import_playbook: ../../shared/meta/skstack-header.yml
 
 # Step 1: Select manager node with failover
-# Run on all hosts to ensure it executes even with -l limit
 - hosts: all
   gather_facts: false
   connection: local
@@ -29,14 +28,12 @@
         target_group: "{{ target_manager_group | default('swarm_managers') }}"
 
 # Step 2: Deploy to selected manager
-# UFW rules and the stack itself both run on the one selected manager only:
-# a play targeting the whole manager group races the shared /var/data storage.
 - hosts: selected_manager_group
   become: true
   vars:
-    app: sksync
+    app: sksso
     env: staging
-    service_name: sksync
+    service_name: sksso
     service_type: optional
   pre_tasks:
     - name: Select vault file based on domain and cluster
@@ -46,13 +43,27 @@
       include_vars: "{{ vault_file_path }}"
       when: vault_file_path is defined
 
-    - name: Define default network variables when not provided in vault
-      # ⚠️ IMPORTANT: Network subnets MUST match shared/networks registry
-      # Reference: See shared/networks for all registered network subnets
-      # Networks are created by create_networks.yml shared task (included below)
+    - name: Verify required SKSSO vault variables are set
+      fail:
+        msg: >-
+          sksso.postgres_user, sksso.postgres_password,
+          sksso.authentik_secret_key, sksso.CLUSTERNAME and sksso.DOMAIN are
+          required instance vars - set them in the service's vault file (see
+          README.md).
+      when: >-
+        (sksso.postgres_user | default('')) == '' or
+        (sksso.postgres_password | default('')) == '' or
+        (sksso.authentik_secret_key | default('')) == '' or
+        (sksso.CLUSTERNAME | default('')) == '' or
+        (sksso.DOMAIN | default('')) == ''
+
+    - name: Define network variables from vault (idempotent network creation)
+      # IMPORTANT: network subnets must match your instance's network
+      # registry. Networks are created idempotently by create_networks.yml
+      # (included below).
       set_fact:
-        app_networks: "{{ sksync_staging_networks | default([
-          { 'name': 'sksync-staging', 'subnet': '172.16.107.0/24' },
+        app_networks: "{{ sksso_staging_networks | default([
+          { 'name': 'sksso-staging', 'subnet': '172.16.105.0/24' },
           { 'name': 'cloud-public-staging', 'subnet': '172.16.201.0/24' }
         ]) }}"
       tags:
@@ -63,76 +74,57 @@
       debug:
         msg: Running SKStacks deploy {{ app }} scripts...
 
-    - name: Configure UFW rules for SKSync
-      community.general.ufw:
-        rule: allow
-        port: "{{ item.port }}"
-        proto: "{{ item.proto }}"
-        comment: "SKSync {{ item.service }} - {{ env }}"
-      loop:
-        - { port: "22000", proto: "tcp", service: "Syncthing Sync (TCP)" }
-        - { port: "22000", proto: "udp", service: "Syncthing Sync (UDP)" }
-      tags:
-        - firewall
-        - ufw
-
     - name: Create the {{ app }} directories
-      # Best Practice: Run as UID 1000 (jz user) - non-root for security
-      # sync-data is the main data directory where all shared folders are created
       file:
-        path: "{{ item.path }}"
+        path: "{{ item }}"
         state: directory
-        owner: "{{ item.owner }}"
-        group: "{{ item.group }}"
-        mode: "{{ item.mode }}"
+        owner: root
+        group: root
+        mode: '0755'
       loop:
-        - { path: "/var/data/{{ app }}-{{ env }}", owner: '1000', group: '1000', mode: '0755' }
-        - { path: "/var/data/{{ app }}-{{ env }}/sync-data", owner: '1000', group: '1000', mode: '0755' }
-        - { path: "/var/data/{{ app }}-{{ env }}/syncthing_config", owner: '1000', group: '1000', mode: '0755' }
-        - { path: "/var/data/config/{{ app }}-{{ env }}", owner: 'root', group: 'root', mode: '0755' }
+        - /var/data/{{ app }}-{{ env }}
+        - /var/data/config/{{ app }}-{{ env }}
+        - /var/data/runtime/{{ app }}-{{ env }}
+        - /var/data/{{ app }}-{{ env }}/media
+        - /var/data/{{ app }}-{{ env }}/certs
+        - /var/data/{{ app }}-{{ env }}/custom-templates
+        - /var/data/{{ app }}-{{ env }}/database-dump
+        - /var/data/runtime/{{ app }}-{{ env }}/postgres
+        - /var/data/runtime/{{ app }}-{{ env }}/redis
+        - /var/data/config/{{ app }}-{{ env }}/custom
 
-    - name: Ensure correct permissions on {{ app }} data directories (recursive fix)
-      # UID 1000 = jz user on host, syncthing user in container
-      shell: |
-        chown -R 1000:1000 "{{ item }}"
-        find "{{ item }}" -type d -exec chmod 755 {} \;
-        find "{{ item }}" -type f -exec chmod 644 {} \;
-      loop:
-        - /var/data/{{ app }}-{{ env }}/sync-data
-        - /var/data/{{ app }}-{{ env }}/syncthing_config
-      changed_when: true
+    - name: Make the {{ app }} media dir writable by Authentik (uid 1000 in the image)
+      file:
+        path: /var/data/{{ app }}-{{ env }}/media
+        state: directory
+        owner: "{{ sksso.authentik_uid | default(1000) }}"
+        group: "{{ sksso.authentik_uid | default(1000) }}"
+        mode: '0755'
 
-    - name: Check if {{ app }}.sh.env already exists on target
-      stat:
-        path: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env"
-      register: sh_env_exists
-      tags:
-        - templates
-
-    - name: Process {{ app }} environment templates (excluding .sh.env if it exists)
+    - name: Process {{ app }} environment templates
       template:
         src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
         dest: "{{ item.dest }}"
         owner: root
         group: root
-        mode: '0640'
+        mode: '{{ item.mode | default("0644") }}'
       loop:
-        - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env" }
-      when: item.src != app ~ '.sh.env.j2'
+        - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env", mode: "0644" }
+        - { src: "{{ app }}.sh.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env", mode: "0640" }
+        - { src: "{{ app }}-backup.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}-backup.env", mode: "0644" }
       tags:
         - templates
 
-    - name: Create {{ app }}.sh.env
-      template:
-        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.sh.env.j2"
-        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env"
+    - name: Write the {{ app }} user_settings.py override (only when the instance sets one)
+      copy:
+        content: "{{ sksso.user_settings_py }}"
+        dest: "/var/data/config/{{ app }}-{{ env }}/custom/user_settings.py"
         owner: root
         group: root
-        mode: '0640'
-      tags:
-        - templates
+        mode: '0644'
+      when: sksso.user_settings_py | default('') | length > 0
 
-    - name: Process {{ app }} {{ app }}.yml template
+    - name: Process {{ app }} Docker Compose template
       template:
         src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
         dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
@@ -152,10 +144,6 @@
         state: link
       tags:
         - compose
-
-    # Traefik routing is now configured via Docker labels (Docker provider)
-    # No file provider deployment needed - all labels in compose file per new SOP
-    # Certificates: Provided by traefik-certs-dumper (runs on skfence/skfenceha ACME master node)
 
     - name: Process deploy script template
       template:
@@ -184,3 +172,13 @@
       debug: var=deploy_output.stdout_lines
       tags:
         - deploy
+
+    - name: Post-deploy Check Authentik server health
+      community.docker.docker_swarm_service_info:
+        name: "{{ app }}-{{ env }}_server"
+      register: server_service
+      failed_when: false
+
+    - name: Print Authentik server status
+      debug:
+        msg: "Server service exists: {{ server_service.service.ID | default('Not found') }}"

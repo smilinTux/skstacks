@@ -1,0 +1,254 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# skfence: single-node Traefik reverse proxy / load balancer, with a
+# docker-socket-proxy for safe Swarm API access, a traefik-certs-dumper
+# sidecar that exports the ACME certs to PEM, and a small error-pages
+# service. Adapted from optional/skmon and optional/skgraph SOP.
+#
+# TLS has two instance-selectable modes (see src/config/skfence/skfence.env.j2
+# and traefik.yml.j2):
+#   - skfence.ACME_ENABLED: false (default) -> Traefik's built-in default
+#     self-signed certificate. No public DNS or Cloudflare account needed;
+#     this is what a fresh test instance gets out of the box.
+#   - skfence.ACME_ENABLED: true -> Let's Encrypt via Cloudflare DNS-01.
+#     Requires skfence.CLOUDFLARE_EMAIL and the vault secret
+#     vault_skfence_cloudflare_dns_token (no defaults; both are instance
+#     vars set in the vault file).
+#
+# TODO before deploy: register the skfence-{{ env }} edge/socket-proxy
+# overlay subnets in shared/networks (pick free /24s if these placeholders
+# collide on your estate); set the skfence vault vars (see
+# src/config/skfence/skfence.env.j2 for the full list); ensure images are
+# pullable on swarm nodes.
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+# Step 1: Select manager node with failover
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+# Step 2: Deploy to selected manager
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skfence
+    env: prod
+    service_name: skfence
+    service_type: core
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Set NODE_HOSTNAME fact for traefik.yml template
+      set_fact:
+        NODE_HOSTNAME: "{{ inventory_hostname }}"
+
+    - name: Define default network variables when not provided in vault
+      set_fact:
+        app_networks: "{{ skfence_prod_networks | default([
+          { 'name': 'cloud-edge-prod', 'subnet': '172.16.205.0/24', 'driver': 'overlay', 'attachable': true },
+          { 'name': 'cloud-public-prod', 'subnet': '172.16.200.0/24', 'driver': 'overlay', 'attachable': true },
+          { 'name': 'cloud-socket-proxy-prod', 'subnet': '172.16.208.0/24', 'driver': 'overlay', 'attachable': true }
+        ]) }}"
+      tags:
+        - networks
+        - config
+
+  tasks:
+    - name: Deploying {{ app }}
+      debug:
+        msg: Running SKStacks deploy {{ app }} scripts...
+
+    - name: Ensure logrotate is installed
+      apt:
+        name: logrotate
+        state: present
+        update_cache: yes
+
+    - name: Create logrotate configuration for {{ app }} logs
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/logrotate.conf.j2"
+        dest: "/etc/logrotate.d/{{ app }}-{{ env }}"
+        owner: root
+        group: root
+        mode: '0644'
+      vars:
+        log_path: "/var/data/logs/{{ app }}-{{ env }}/traefik/*/*.log"
+        retention_days: "{{ '7' if env == 'prod' else '3' }}"
+
+    - name: Create the {{ app }} directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - "/var/data/{{ app }}-{{ env }}"
+        - "/var/data/config/{{ app }}-{{ env }}"
+        - "/var/data/config/{{ app }}-{{ env }}/dynamic"
+        - "/var/data/config/{{ app }}-{{ env }}/error-pages"
+        - "/var/data/runtime/{{ app }}-{{ env }}"
+        - "/var/data/runtime/{{ app }}-{{ env }}/acme"
+        - "/var/data/runtime/{{ app }}-{{ env }}/certs"
+        - "/var/data/logs/{{ app }}-{{ env }}"
+        - "/var/data/logs/{{ app }}-{{ env }}/traefik"
+
+    - name: Ensure acme.json exists and is locked down
+      file:
+        path: "/var/data/runtime/{{ app }}-{{ env }}/acme/acme.json"
+        state: touch
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Deploy error-pages source files
+      copy:
+        src: "{{ playbook_dir }}/src/error-pages/{{ item }}"
+        dest: "/var/data/config/{{ app }}-{{ env }}/error-pages/{{ item }}"
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - Dockerfile
+        - server.py
+
+    - name: Copy error-pages HTML template (server.py fills it per request)
+      copy:
+        src: "{{ playbook_dir }}/src/error-pages/error.html.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/error-pages/error.html"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Build error-pages Docker image
+      community.docker.docker_image:
+        name: "{{ app }}-{{ env }}-error-pages:latest"
+        source: build
+        build:
+          path: "/var/data/config/{{ app }}-{{ env }}/error-pages"
+          dockerfile: Dockerfile
+        force_source: "{{ force_rebuild_error_pages | default(false) }}"
+
+    - name: Process {{ app }} environment templates
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: '0640'
+      loop:
+        - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env" }
+        - { src: "{{ app }}.sh.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env" }
+      tags:
+        - templates
+
+    - name: Deploy dynamic config files
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
+        dest: "/var/data/config/{{ app }}-{{ env }}/dynamic/{{ item.dest }}"
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - { src: "dynamic-middlewares.yml.j2", dest: "middlewares.yml" }
+        - { src: "dynamic-tls.yml.j2", dest: "tls.yml" }
+        - { src: "routers.yml.j2", dest: "routers.yml" }
+        - { src: "services.yml.j2", dest: "services.yml" }
+      tags:
+        - config
+        - dynamic
+
+    - name: Render traefik.yml from template with vault secrets
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/traefik.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/traefik.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags:
+        - config
+        - secrets
+
+    - name: Render {{ app }} Docker Compose template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags:
+        - compose
+
+    - name: Create docker-compose.yml symlink
+      file:
+        src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml"
+        force: yes
+        owner: root
+        group: root
+        state: link
+
+    - name: Process deploy script template
+      template:
+        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/deploy"
+        owner: root
+        group: root
+        mode: '0755'
+      tags:
+        - deploy-script
+
+    - name: Create {{ app }} control script symlink
+      file:
+        src: "/var/data/{{ app }}-{{ env }}/deploy"
+        dest: "/var/data/deploy_{{ app }}-{{ env }}"
+        force: yes
+        owner: root
+        group: root
+        mode: '0755'
+        state: link
+      tags:
+        - deploy-script
+
+    - name: Ensure overlay networks exist from app_networks variable
+      include_tasks: ../../shared/tasks/create_networks.yml
+      tags:
+        - networks
+
+    - name: Deploy {{ app }} stack
+      shell: |
+        cd /var/data/{{ app }}-{{ env }}
+        ./deploy
+      register: deploy_output
+      tags:
+        - deploy
+
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags:
+        - deploy

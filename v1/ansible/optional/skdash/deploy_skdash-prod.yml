@@ -1,0 +1,176 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# skdash: Dashy dashboard, with generic Traefik-API discovery (ON by default)
+# and a static-sections fallback. See v1/docs/skdash-discovery.md.
+# TODO before deploy: register the skdash-{{ env }} overlay subnet in
+# shared/networks (pick a free /24 if these placeholders collide on your
+# estate); set skdash.CLUSTERNAME / skdash.DOMAIN and, if discovery is on,
+# skdash.discovery.traefik_api_url / skdash.discovery.traefik_api_token in
+# your vault (see src/config/skdash/skdash.env.j2 and
+# v1/docs/skdash-discovery.md for the full var list); ensure the image is
+# pullable on swarm nodes.
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+# Step 1: Select manager node with failover
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+# Step 2: Deploy to selected manager
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skdash
+    env: prod
+    service_name: skdash
+    service_type: optional
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Define network variables (TODO, register subnet in shared/networks, placeholder for now)
+      set_fact:
+        app_networks: "{{ skdash.networks | default([
+          { 'name': 'skdash-prod', 'subnet': '172.16.142.0/24', 'driver': 'overlay', 'attachable': true },
+          { 'name': 'cloud-public-prod', 'subnet': '172.16.200.0/24', 'driver': 'overlay', 'attachable': true }
+        ]) }}"
+      tags:
+        - networks
+        - config
+
+  tasks:
+    - name: Deploying {{ app }}
+      debug:
+        msg: Running SKStacks deploy {{ app }} scripts...
+
+    - name: Create the {{ app }} directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - /var/data/{{ app }}-{{ env }}
+        - /var/data/{{ app }}-{{ env }}/config
+        - /var/data/{{ app }}-{{ env }}/tmp
+        - /var/data/config/{{ app }}-{{ env }}
+
+    - name: Process {{ app }} environment templates
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: '0640'
+      loop:
+        - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env" }
+        - { src: "{{ app }}.sh.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env" }
+      tags:
+        - templates
+
+    - name: Generate Dashy sections from the Traefik API (falls back to static skdash.sections)
+      import_tasks: tasks/generate_config.yml
+      tags:
+        - config
+
+    - name: Process {{ app }} configuration template (config.yml)
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/config.yml.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/config/config.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags:
+        - config
+
+    - name: Process {{ app }} Docker Compose template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags:
+        - compose
+
+    - name: Create {{ app }} docker-compose.yml symlink
+      file:
+        src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml"
+        force: yes
+        owner: root
+        group: root
+        mode: '0644'
+        state: link
+      tags:
+        - compose
+
+    # Traefik routing is configured via Docker labels (Docker provider).
+    # No file provider deployment needed. Certificates: provided by
+    # traefik-certs-dumper on the ACME master node of your edge/ingress stack.
+
+    - name: Process {{ app }} deploy script template
+      template:
+        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/deploy"
+        owner: root
+        group: root
+        mode: '0755'
+      tags:
+        - templates
+        - deploy-script
+
+    - name: Create {{ app }} control script symlink
+      file:
+        src: "/var/data/{{ app }}-{{ env }}/deploy"
+        dest: "/var/data/deploy_{{ app }}-{{ env }}"
+        force: yes
+        owner: root
+        group: root
+        mode: '0755'
+        state: link
+      tags:
+        - deploy-script
+
+    - name: Ensure overlay networks exist from app_networks variable
+      include_tasks: ../../shared/tasks/create_networks.yml
+      tags:
+        - networks
+
+    - name: Deploy {{ app }} stack
+      shell: |
+        cd /var/data/{{ app }}-{{ env }}
+        ./deploy
+      register: deploy_output
+      tags:
+        - deploy
+
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags:
+        - deploy

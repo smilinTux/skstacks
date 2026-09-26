@@ -1,0 +1,32 @@
+[
+  {
+    "name": "grafana@docker",
+    "rule": "Host(`grafana.example.test`)",
+    "entryPoints": ["websecure"],
+    "status": "enabled"
+  },
+  {
+    "name": "grafana-dev@docker",
+    "rule": "Host(`grafana-dev.example.test`)",
+    "entryPoints": ["web"],
+    "status": "enabled"
+  },
+  {
+    "name": "wiki-notes@docker",
+    "rule": "Host(`wiki-notes.example.test`)",
+    "entryPoints": ["websecure"],
+    "status": "enabled"
+  },
+  {
+    "name": "traefik-dashboard@internal",
+    "rule": "Host(`traefik.example.test`)",
+    "entryPoints": ["websecure"],
+    "status": "enabled"
+  },
+  {
+    "name": "catchall-redirect@internal",
+    "rule": "PathPrefix(`/`)",
+    "entryPoints": ["web"],
+    "status": "enabled"
+  }
+]

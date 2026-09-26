@@ -1,0 +1,117 @@
+{% set base_domain = skfence.DOMAIN | default(domain) %}
+{% set base_cluster = skfence.CLUSTERNAME | default(cluster_name) %}
+{% set fqdn = 'skfence' + ('-' + env if env != 'prod' else '') + '.' + base_cluster + '.' + base_domain %}
+{% set acme_on = skfence.ACME_ENABLED | default(false) %}
+# Traefik HTTP routers (dynamic/routers.yml).
+# This file is managed by Ansible - do not edit manually.
+#
+# TLS: `tls: {}` (ACME disabled; a bare `tls:` is YAML null = no TLS) tells Traefik to use its own
+# default self-signed certificate; `tls: {certResolver: main}` (ACME
+# enabled) requests a real certificate via the resolver in traefik.yml.j2.
+http:
+  routers:
+    # Dashboard + API under one router so the browser only authenticates once.
+    dashboard:
+      rule: Host(`{{ fqdn }}`) && (PathPrefix(`/api`) || PathPrefix(`/dashboard/`))
+      entryPoints:
+        - websecure
+      middlewares:
+        - dashboard-chain@file
+{% if skfence.DASHBOARD_AUTH_HASH | default('') != '' %}
+        - traefikAuth@file
+{% endif %}
+      service: api@internal
+      priority: 999
+{% if acme_on %}
+      tls:
+        certResolver: main
+{% else %}
+      tls: {}
+{% endif %}
+
+    dashboard-redirect-http:
+      rule: Host(`{{ fqdn }}`) && Path(`/dashboard`)
+      entryPoints:
+        - web
+      middlewares:
+        - dashboard-redirect@file
+      service: noop@internal
+      priority: 100
+
+    dashboard-redirect-https:
+      rule: Host(`{{ fqdn }}`) && Path(`/dashboard`)
+      entryPoints:
+        - websecure
+      middlewares:
+        - dashboard-redirect@file
+      service: noop@internal
+      priority: 100
+{% if acme_on %}
+      tls:
+        certResolver: main
+{% else %}
+      tls: {}
+{% endif %}
+
+    # Root domain: serve a clean error page instead of a redirect loop.
+    root-https:
+      rule: Host(`{{ base_domain }}`) || Host(`www.{{ base_domain }}`)
+      entryPoints:
+        - websecure
+      service: error-pages@file
+      priority: 99
+      middlewares:
+        - default@file
+{% if acme_on %}
+      tls:
+        certResolver: main
+{% else %}
+      tls: {}
+{% endif %}
+
+    # Lowest-priority catch-alls: anything else on this domain/cluster gets
+    # a branded error page rather than Traefik's bare 404.
+    wildcard-domain:
+      rule: HostRegexp(`{subdomain:.+}.{{ base_domain }}`)
+      entryPoints:
+        - websecure
+      service: error-pages@file
+      priority: 0
+{% if acme_on %}
+      tls:
+        certResolver: main
+{% else %}
+      tls: {}
+{% endif %}
+      middlewares:
+        - default@file
+
+    wildcard-cluster:
+      rule: HostRegexp(`{subdomain:.+}.{{ base_cluster }}.{{ base_domain }}`)
+      entryPoints:
+        - websecure
+      service: error-pages@file
+      priority: 0
+{% if acme_on %}
+      tls:
+        certResolver: main
+{% else %}
+      tls: {}
+{% endif %}
+      middlewares:
+        - default@file
+
+    catch-all:
+      rule: Host(`{{ fqdn }}`)
+      entryPoints:
+        - websecure
+      service: error-pages@file
+      priority: 1
+{% if acme_on %}
+      tls:
+        certResolver: main
+{% else %}
+      tls: {}
+{% endif %}
+      middlewares:
+        - default@file
