@@ -1,0 +1,65 @@
+version: '3.8'
+
+networks:
+  cloud-public-{{ env }}:
+    external: true
+  {{ app }}-{{ env }}:
+    external: true
+
+services:
+  syncthing:
+    image: syncthing/syncthing:latest
+    env_file: /var/data/config/{{ app }}-{{ env }}/sksync.env
+    hostname: syncthing
+    user: "1000:1000"
+    networks:
+      - cloud-public-{{ env }}
+      - {{ app }}-{{ env }}
+    volumes:
+      # Syncthing home/data directory - where auto-accepted folders are created
+      # Maps to /var/syncthing inside container (Syncthing's default home)
+      # All shared folders will be created as subdirectories here
+      - /var/data/{{ app }}-{{ env }}/sync-data:/var/syncthing
+      # Syncthing config directory (separate from data for clean backups)
+      - /var/data/{{ app }}-{{ env }}/syncthing_config:/var/syncthing/config
+      # Config files (read-only bind mounts)
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      - target: 22000
+        published: 22000
+        protocol: tcp
+        mode: host
+      - target: 22000
+        published: 22000
+        protocol: udp
+        mode: host
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: []
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+      labels:
+        # === TRAEFIK: HTTP ===
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        # === TRAEFIK: ROUTERS ===
+        - "traefik.http.routers.sksync{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`sksync{% if env != 'prod' %}-{{ env }}{% endif %}.{{ sksync.CLUSTERNAME | default('cluster1') }}.{{ sksync.DOMAIN | default('example.com') }}`)"
+        - "traefik.http.routers.sksync{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
+        - "traefik.http.routers.sksync{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
+        - "traefik.http.routers.sksync{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
+        - "traefik.http.routers.sksync{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
+        - "traefik.http.routers.sksync{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares=default-security-headers@file,gzip@file"
+        - "traefik.http.routers.sksync{% if env != 'prod' %}-{{ env }}{% endif %}.service=sksync{% if env != 'prod' %}-{{ env }}{% endif %}"
+        # === TRAEFIK: SERVICES ===
+        - "traefik.http.services.sksync{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=8384"
+        - "traefik.http.services.sksync{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.scheme=http"

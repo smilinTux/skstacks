@@ -1,0 +1,224 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+# Step 1: Select manager node with failover
+# Run on all hosts to ensure it executes even with -l limit
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group }}"
+
+# Step 2: Deploy to selected manager
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skpeek
+    # 2026-08-16: was `env: "{{ env }}"` — self-referential, and `env` is
+    # defined nowhere in shared/hosts or shared/group_vars, so this playbook
+    # could only run with an extra `-e env=dev`. This is the -dev playbook,
+    # so pin it literally, matching skhub/skmail/etc.
+    env: dev
+    service_name: skpeek
+    service_type: optional
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+    
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Define network variables from vault (required for idempotent deployment)
+      # ⚠️ IMPORTANT: Network subnets MUST match shared/networks registry
+      # Reference: See shared/networks for all registered network subnets
+      # Networks are created by create_networks.yml shared task (included below)
+      set_fact:
+        app_networks: "{{ skpeek_dev_networks | default([
+          { 'name': 'skpeek-dev', 'subnet': '172.16.149.0/24' },
+          { 'name': 'cloud-public-dev', 'subnet': '172.16.202.0/24' }
+        ]) }}"
+      tags:
+        - networks
+
+  tasks:
+    - name: Deploying {{ app }}
+      debug:
+        msg: Running SKStacks deploy {{ app }} scripts...
+
+    - name: Ensure {{ app }}-{{ env }} directories exist
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - /var/data/{{ app }}-{{ env }}
+        - /var/data/config/{{ app }}-{{ env }}
+        - /var/data/{{ app }}-{{ env }}/etc
+        - /var/data/{{ app }}-{{ env }}/img
+        - /var/data/runtime/{{ app }}-{{ env }}/redis
+
+    - name: Process {{ app }} environment templates
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: '{{ item.mode | default("0644") }}'
+      loop:
+        - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env", mode: "0644" }
+        - { src: "{{ app }}.sh.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env", mode: "0640" }
+      tags:
+        - templates
+
+    - name: Process {{ app }} Docker Compose template
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags:
+        - compose
+
+    - name: Process {{ app }} configuration files
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/src/{{ app }}/etc/{{ item }}"
+        dest: "/var/data/{{ app }}-{{ env }}/etc/{{ item | basename | regex_replace('\\.j2$', '') }}"
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - settings.yml.j2
+        - uwsgi.ini.j2
+        - limiter.toml.j2
+      tags:
+        - templates
+        - config
+
+    - name: Copy {{ app }} image files to manager node
+      copy:
+        src: "{{ playbook_dir }}/src/{{ app }}/img/"
+        dest: "/var/data/{{ app }}-{{ env }}/img/"
+        owner: root
+        group: root
+        mode: '0644'
+      tags:
+        - templates
+        - images
+
+    - name: Ensure {{ app }}-{{ env }} img directory exists on all worker nodes
+      file:
+        path: "/var/data/{{ app }}-{{ env }}/img"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      delegate_to: "{{ item }}"
+      loop: "{{ groups['workers'] | default([]) }}"
+      when: groups['workers'] is defined
+      tags:
+        - templates
+        - images
+
+    - name: Copy {{ app }} image files to all worker nodes
+      copy:
+        src: "{{ playbook_dir }}/src/{{ app }}/img/skpeek.png"
+        dest: "/var/data/{{ app }}-{{ env }}/img/skpeek.png"
+        owner: root
+        group: root
+        mode: '0644'
+      delegate_to: "{{ item }}"
+      loop: "{{ groups['workers'] | default([]) }}"
+      when: groups['workers'] is defined
+      tags:
+        - templates
+        - images
+
+    - name: Process {{ app }} deploy script template
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/deploy"
+        owner: root
+        group: root
+        mode: '0755'
+        force: yes
+      tags:
+        - templates
+        - deploy-script
+
+    - name: Create {{ app }} control script symlink
+      file:
+        src: /var/data/{{ app }}-{{ env }}/deploy
+        dest: /var/data/deploy_{{ app }}-{{ env }}
+        force: yes
+        owner: root
+        group: root
+        mode: '0755'
+        state: link
+        follow: no
+
+    - name: Create {{ app }} docker-compose.yml symlink
+      file:
+        src: /var/data/config/{{ app }}-{{ env }}/{{ app }}.yml
+        dest: /var/data/config/{{ app }}-{{ env }}/docker-compose.yml
+        force: yes
+        owner: root
+        group: root
+        mode: '0644'
+        state: link
+
+    - name: Ensure overlay networks exist from app_networks variable
+      include_tasks: ../../shared/tasks/create_networks.yml
+      tags:
+        - networks
+
+    - name: Deploy {{ app }} stack
+      shell: |
+        cd /var/data/{{ app }}-{{ env }}
+        ./deploy
+      register: deploy_output
+      tags:
+        - deploy
+
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags:
+        - deploy
+
+    - name: Post-deploy Check SKPeek service health
+      shell: docker service ls --filter "name={{ app }}-{{ env }}_skpeek" --format "{{ '{{.Name}}\t{{.Replicas}}' }}"
+      register: skpeek_service_info
+      failed_when: false
+      changed_when: false
+      tags:
+        - deploy
+      
+    - name: Print SKPeek service status
+      debug:
+        msg: "SKPeek service status: {{ skpeek_service_info.stdout | default('Service check completed') }}"
+      when: skpeek_service_info.stdout is defined
+      tags:
+        - deploy
+

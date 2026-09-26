@@ -1,0 +1,105 @@
+#!/bin/bash
+set -e
+
+# SKPulse{% if env == 'prod' %}-Prod{% elif env == 'staging' %}-Staging{% else %}-Dev{% endif %} Deployment Script
+APPNAME=skpulse
+STACK_NAME=skpulse{% if env == 'prod' %}-prod{% elif env == 'staging' %}-staging{% else %}-dev{% endif %}
+
+SKPULSE_CONFIG_DIR="/var/data/config/${APPNAME}-{% if env == 'prod' %}prod{% elif env == 'staging' %}staging{% else %}dev{% endif %}"
+SKPULSE_COMPOSE_FILE="${SKPULSE_CONFIG_DIR}/skpulse.yml"
+CONFIG_DIR="${SKPULSE_CONFIG_DIR}"
+COMPOSE_FILE="${SKPULSE_COMPOSE_FILE}"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+echo -e "${GREEN}📊 Deploying ${STACK_NAME} stack (Uptime-Kuma)...${NC}"
+
+# Source environment variables (preserve CONFIG_DIR and COMPOSE_FILE)
+if [ -f "${CONFIG_DIR}/${APPNAME}.sh.env" ]; then
+    echo -e "${YELLOW}📦 Loading environment variables...${NC}"
+    set -a
+    unset CONFIG_DIR COMPOSE_FILE 2>/dev/null || true
+    . "${SKPULSE_CONFIG_DIR}/${APPNAME}.sh.env"
+    set +a
+    CONFIG_DIR="${SKPULSE_CONFIG_DIR}"
+    COMPOSE_FILE="${SKPULSE_COMPOSE_FILE}"
+fi
+
+# Check if compose file exists
+if [ ! -f "${COMPOSE_FILE}" ]; then
+    echo -e "${RED}❌ Error: Compose file not found: ${COMPOSE_FILE}${NC}"
+    exit 1
+fi
+
+# Deploy stack with prune
+echo -e "${YELLOW}📝 Deploying stack configuration...${NC}"
+echo -e "${BLUE}Stack name: ${STACK_NAME}${NC}"
+echo -e "${BLUE}Compose file: ${COMPOSE_FILE}${NC}"
+echo -e "${BLUE}Config dir: ${CONFIG_DIR}${NC}"
+
+cd "${CONFIG_DIR}"
+
+echo -e "${YELLOW}🚀 Deploying stack...${NC}"
+docker stack deploy \
+    -c "${COMPOSE_FILE}" \
+    --prune \
+    "${STACK_NAME}"
+
+# Check deployment result
+DEPLOY_EXIT_CODE=$?
+if [ $DEPLOY_EXIT_CODE -ne 0 ]; then
+    echo -e "${RED}❌ Stack deployment command failed with exit code ${DEPLOY_EXIT_CODE}${NC}"
+    exit 1
+fi
+
+# Wait a moment for stack to register
+sleep 2
+
+# Check if stack was created
+if docker stack ls | grep -q "${STACK_NAME}"; then
+    echo -e "${GREEN}✅ Stack ${STACK_NAME} deployed successfully${NC}"
+else
+    echo -e "${RED}❌ Stack ${STACK_NAME} not found after deployment${NC}"
+    echo -e "${YELLOW}📋 Current stacks:${NC}"
+    docker stack ls
+    exit 1
+fi
+
+# Wait for services to register
+sleep 10
+
+# Force update services to pull latest images
+echo -e "${YELLOW}🔄 Forcing service updates to pull latest images...${NC}"
+docker service update --force --detach=false ${STACK_NAME}_skpulse || true
+
+# Wait for services to stabilize
+echo -e "${YELLOW}⏳ Waiting for services to stabilize...${NC}"
+sleep 15
+
+# Show service status
+echo -e "${GREEN}📊 Service Status:${NC}"
+docker service ls | grep "${STACK_NAME}"
+
+# Health check
+echo -e "${YELLOW}🏥 Checking service health...${NC}"
+REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_skpulse" --format "{{ '{{.Replicas}}' }}")
+
+if [[ "$REPLICAS" == "1/1" ]]; then
+    echo -e "${GREEN}✅ ${STACK_NAME} SKPulse is healthy and running!${NC}"
+    echo -e "${GREEN}🌐 SKPulse UI: https://skpulse{% if env == 'staging' %}-staging{% elif env == 'dev' %}-dev{% endif %}.${CLUSTERNAME:-cluster1}.${DOMAIN:-example.com}${NC}"
+    echo -e "${YELLOW}💡 Tip: Use the discovery script to automatically add Traefik frontends as monitors${NC}"
+    echo -e "${YELLOW}   Run: /var/data/config/${APPNAME}-{% if env == 'prod' %}prod{% elif env == 'staging' %}staging{% else %}dev{% endif %}/discover-traefik-frontends.sh --env {% if env == 'prod' %}prod{% elif env == 'staging' %}staging{% else %}dev{% endif %}{% if env == 'prod' %}{% endif %}${NC}"
+else
+    echo -e "${RED}⚠️  ${STACK_NAME} SKPulse health check: ${REPLICAS}${NC}"
+    echo -e "${YELLOW}📋 Recent logs:${NC}"
+    docker service logs --tail 20 ${STACK_NAME}_skpulse
+fi
+
+echo -e "${GREEN}✨ Deployment complete!${NC}"
+
+
