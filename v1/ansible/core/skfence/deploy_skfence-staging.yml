@@ -137,8 +137,8 @@
         - Dockerfile
         - server.py
 
-    - name: Render error-pages HTML template
-      template:
+    - name: Copy error-pages HTML template (server.py fills it per request)
+      copy:
         src: "{{ playbook_dir }}/src/error-pages/error.html.j2"
         dest: "/var/data/config/{{ app }}-{{ env }}/error-pages/error.html"
         owner: root
