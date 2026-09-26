@@ -44,6 +44,7 @@ skmail:
 
 ```yaml
 skmail:
+  DMS_VERSION: "16.0.1"                  # default: 16.0.1 - see "Upgrading" below
   HOSTNAME: "mail.example.com"          # default: mail.<DOMAIN>
   INSTANCE: "primary"                    # default: primary
   APP_ENV: "prod"                        # default: prod
@@ -69,6 +70,23 @@ skmail:
     A:      { name: "mail",             type: A,   value: "<your WAN IP>" }
     MX:     { name: "@",                type: MX,  value: "mail.example.com", priority: 10 }
 ```
+
+## Upgrading `docker-mailserver`
+
+`skmail.DMS_VERSION` pins the exact image tag; the framework's default
+(`16.0.1`) is only what a brand-new instance gets if it never sets this key
+- it is **not** a signal that every running instance should be on it. An
+existing instance keeps whatever `DMS_VERSION` its own vault already has (or
+inherits the framework default the first time it's added, which may be a
+major-version jump from what it's actually running). Always check the
+current running image first (`docker service inspect --format
+'{{.Spec.TaskTemplate.ContainerSpec.Image}}' <stack>_skmail`) and set
+`DMS_VERSION` explicitly before ever re-running this playbook, rather than
+relying on the framework default. Read the
+[docker-mailserver release notes](https://github.com/docker-mailserver/docker-mailserver/releases)
+for every major version between what you run and what you're moving to
+before bumping across a major boundary; see `docs/runbooks/skmail.md` in an
+instance repo (or your own change log) for a per-instance upgrade record.
 
 ## DNS records an instance must create
 
