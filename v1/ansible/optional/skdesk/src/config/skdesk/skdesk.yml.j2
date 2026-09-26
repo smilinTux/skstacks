@@ -17,7 +17,7 @@ version: '3.8'
 
 services:
   hbbs:
-    image: {{ skdesk_image | default('rustdesk/rustdesk-server:latest@sha256:10818ec05b179039c6660f4d8e74b303f0db2858bbad2b18e24992ea22d54cd6') }}
+    image: rustdesk/rustdesk-server:{{ skdesk.IMAGE_TAG | default('latest@sha256:10818ec05b179039c6660f4d8e74b303f0db2858bbad2b18e24992ea22d54cd6') }}
     command: hbbs{% if skdesk.RELAY_HOSTNAME | default('') %} -r {{ skdesk.RELAY_HOSTNAME }}{% endif %}{% if skdesk.KEY | default('') %} -k {{ skdesk.KEY }}{% endif %}
 
     env_file: /var/data/config/skdesk-{{ env }}/skdesk.env
@@ -44,7 +44,7 @@ services:
         - "traefik.enable=false"
 
   hbbr:
-    image: {{ skdesk_image | default('rustdesk/rustdesk-server:latest@sha256:10818ec05b179039c6660f4d8e74b303f0db2858bbad2b18e24992ea22d54cd6') }}
+    image: rustdesk/rustdesk-server:{{ skdesk.IMAGE_TAG | default('latest@sha256:10818ec05b179039c6660f4d8e74b303f0db2858bbad2b18e24992ea22d54cd6') }}
     command: hbbr{% if skdesk.KEY | default('') %} -k {{ skdesk.KEY }}{% endif %}
 
     env_file: /var/data/config/skdesk-{{ env }}/skdesk.env

@@ -77,3 +77,14 @@ def test_relay_hostname_and_key_are_optional_cli_flags():
     full = render("prod", RELAY_HOSTNAME="skdesk.example.com", KEY="s3cr3t-not-a-real-key")
     assert full["services"]["hbbs"]["command"] == "hbbs -r skdesk.example.com -k s3cr3t-not-a-real-key"
     assert full["services"]["hbbr"]["command"] == "hbbr -k s3cr3t-not-a-real-key"
+
+
+def test_image_tag_is_overridable_per_instance():
+    """skdesk.IMAGE_TAG lets an instance pin its own tag (as the old
+    private-repo source did) instead of the framework's digest default -
+    caught by NAM's phase-4 render-proof: the prior image line read from a
+    bare, unnamespaced `skdesk_image` var with no vault wiring at all, so
+    an instance's skdesk.IMAGE_TAG was silently ignored."""
+    doc = render("prod", IMAGE_TAG="1.1.14")
+    for name in ("hbbs", "hbbr"):
+        assert doc["services"][name]["image"] == "rustdesk/rustdesk-server:1.1.14"
