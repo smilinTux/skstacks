@@ -35,4 +35,13 @@ is unconditional (always on) in skfence's own dynamic-middlewares template;
 there is no `RATE_LIMIT_ENABLED` toggle here (that knob only exists on
 skfenceha).
 
+**Dashboard/API hostname override**: both skfence and skfenceha's dashboard
++ API router (and its two redirect routers) build
+`<name>[-env].<cluster>.<domain>` by default, same as every other router in
+the file. Set `skfence.DASHBOARD_HOST` (or `skfenceha.DASHBOARD_HOST`) to a
+literal hostname to override just that router group - for an estate whose
+dashboard is reachable at a bare `<name>.<domain>` (no cluster segment)
+instead. Everything else (`catch-all`, the wildcard routers) keeps building
+the normal computed hostname regardless. Default (unset): unchanged.
+
 See `docs/v1-service-catalog.md` for the full published-service catalog.
