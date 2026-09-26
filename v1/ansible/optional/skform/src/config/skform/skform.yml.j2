@@ -17,7 +17,7 @@ version: '3.8'
 
 services:
   opentofu:
-    image: ghcr.io/opentofu/opentofu:{{ skform.TOFU_VERSION | default('latest') }}
+    image: ghcr.io/opentofu/opentofu:{{ skform.TOFU_VERSION | default('1.10.7') }}
     env_file: /var/data/config/skform-{{ env }}/skform.env
     # OpenTofu is an on-demand CLI tool, not a long-running server: keep the
     # container idle so operators can `docker exec` tofu commands into it.

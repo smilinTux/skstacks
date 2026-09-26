@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   n8n:
-    image: n8nio/n8n:latest
+    image: n8nio/n8n@sha256:cae1f28d585a99d9ce9a56f82fbfc99fc100862ffef988d73fa2048d2687b0cc
     env_file: /var/data/config/skorch-{{ env }}/skorch.env
     logging:
       driver: json-file
