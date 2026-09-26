@@ -1,13 +1,25 @@
 # SKStacks v1 (Docker Swarm + Ansible)
 
 v1 is the Swarm framework the current production clusters run on. It is being
-published one service at a time as each is cleaned of estate values; today
-this tree holds **skgraph** (FalkorDB), **skvector** (Qdrant),
-**skpdf** (Stirling-PDF), **skmem-pg** (Postgres + pgvector + pg_search +
-AGE), **skreg** (Docker Registry v2), **skmon** (monitoring stack), **skform**
-(OpenTofu CLI container), **sksync** (Syncthing), **skpulse** (Uptime Kuma),
-**skpeek** (SearXNG), **skbook** (BookStack wiki + MariaDB), **skbackup** (Duplicati) and the
-shared tasks they use.
+published one service at a time as each is cleaned of estate values.
+
+**Full service catalog**: [`docs/v1-service-catalog.md`](../docs/v1-service-catalog.md)
+covers every published service (what it is, dependencies, exposed
+ports/hostnames, storage, required vault vars, opt-in flags, deploy command,
+health check and gotchas). This README only covers the framework-wide
+instance contract.
+
+## Published services
+
+- **Core** (`v1/ansible/core/`, one per cluster): skfence, skfenceha (HA
+  alternative to skfence), skha, sksec.
+- **Optional** (`v1/ansible/optional/`, deploy the ones you want): skboard,
+  skbook, skdash, skdesk, skform, skgallery, skgit, skgraph, skhub, skmail,
+  skmem-pg, skmesh, skmon, skorch, skpdf, skpeek, skport, skpulse, skreg,
+  skseek, sksso, skstor, sksync, skvector, skwhoami, skbackup.
+
+See the catalog for the tier table and per-service detail; this list is kept
+in sync with it.
 
 ## Instance contract
 
