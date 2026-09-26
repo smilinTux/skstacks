@@ -1,16 +1,54 @@
 #!/bin/bash
-# Add user script for docker-mailserver
-# Usage: ./add_user <email> <password>
+# Add a mail account to docker-mailserver.
+#
+# Usage: ./add_user <email>
+#   The password is read from stdin (prompted when stdin is a terminal), so
+#   it never appears in argv or shell history on this host, e.g.
+#     ./add_user user@example.com
+#     printf '%s\n' "$PASS" | ./add_user user@example.com
+#
+# Must run on the Swarm node hosting the running skmail task: `docker exec`
+# only reaches containers on the local daemon, and the Swarm SERVICE name is
+# not a container name (task containers are named <service>.<slot>.<id>).
+# Find the node with:
+#   docker service ps skmail-{{ env }}_skmail --filter desired-state=running
+#
+# Inside the container, DMS's own `setup email add` passes the password to
+# doveadm on argv; that is upstream behaviour and outside this script.
+set -euo pipefail
 
-if [ "$#" -ne 2 ]; then
-    echo "Usage: $0 <email> <password>"
+SERVICE_NAME=skmail-{{ env }}_skmail
+
+if [ "$#" -ne 1 ]; then
+    echo "Usage: $0 <email>   (password on stdin)" >&2
     exit 1
 fi
 
 EMAIL="$1"
-PASSWORD="$2"
 
-docker exec skmail{% if env == 'prod' %}-prod{% elif env == 'staging' %}-staging{% else %}-dev{% endif %}_skmail setup email add "${EMAIL}" "${PASSWORD}"
+CONTAINER=$(docker ps --filter "name=${SERVICE_NAME}." --format '{% raw %}{{.ID}} {{.Names}}{% endraw %}' \
+    | awk -v p="${SERVICE_NAME}." 'index($2, p) == 1 { print $1; exit }')
+if [ -z "${CONTAINER}" ]; then
+    echo "No running ${SERVICE_NAME} task container on this node ($(hostname))." >&2
+    echo "Run this script on the node hosting the task:" >&2
+    docker service ps "${SERVICE_NAME}" --filter desired-state=running \
+        --format '{% raw %}  {{.Name}} on {{.Node}} ({{.CurrentState}}){% endraw %}' >&2 2>/dev/null || true
+    exit 1
+fi
+
+if [ -t 0 ]; then
+    read -r -s -p "Password for ${EMAIL}: " PASSWORD
+    echo
+else
+    IFS= read -r PASSWORD || true
+fi
+if [ -z "${PASSWORD}" ]; then
+    echo "Password must not be empty" >&2
+    exit 1
+fi
+
+# `setup email add` without a password argument prompts for it and a
+# confirmation on stdin, so feed it twice.
+printf '%s\n%s\n' "${PASSWORD}" "${PASSWORD}" | docker exec -i "${CONTAINER}" setup email add "${EMAIL}"
 
 echo "User ${EMAIL} added successfully"
-

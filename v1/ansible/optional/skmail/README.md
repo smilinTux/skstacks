@@ -76,6 +76,34 @@ skmail:
     MX:     { name: "@",                type: MX,  value: "mail.example.com", priority: 10 }
 ```
 
+## First mail account (fresh install)
+
+docker-mailserver refuses to start without at least one mail account ("You
+need at least one mail account to start Dovecot"), and `add_user` needs a
+running container, so a brand-new instance must be given its first account
+by the deploy itself. Set both keys, first install only:
+
+```yaml
+skmail:
+  BOOTSTRAP_ACCOUNT: "postmaster@example.com"
+  BOOTSTRAP_PASSWORD: "<first account password>"
+```
+
+When both are set and `/var/data/skmail-<env>/docker-data/dms/config/postfix-accounts.cf`
+does not exist yet, the playbook hashes the password on the target with
+`openssl passwd -6 -stdin` (the password goes over stdin, never argv; the
+tasks are `no_log`) and writes that file with the single line
+`<account>|{SHA512-CRYPT}<hash>` (root:root, 0640; DMS reads it as root at
+startup). If the file already exists it is never read or overwritten, so the
+keys are inert on existing instances and can be removed from the vault once
+the instance is up. Change the password afterwards with DMS's own
+`setup email update`.
+
+Further accounts: run `/var/data/skmail-<env>/add_user <email>` **on the node
+hosting the running `skmail-<env>_skmail` task** (`docker service ps
+skmail-<env>_skmail`); `docker exec` only reaches local containers. The
+password is read from stdin (prompted on a terminal).
+
 ## Upgrading `docker-mailserver`
 
 `skmail.DMS_VERSION` pins the exact image tag; the framework's default

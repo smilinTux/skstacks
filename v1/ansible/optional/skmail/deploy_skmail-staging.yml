@@ -406,6 +406,50 @@
         - certs
         - deploy
 
+    # docker-mailserver refuses to start with no mail account ("You need at
+    # least one mail account to start Dovecot"), and add_user needs a running
+    # container, so a fresh instance can never come up on its own. First
+    # install only: when BOTH skmail.BOOTSTRAP_ACCOUNT and
+    # skmail.BOOTSTRAP_PASSWORD are set and the DMS account database
+    # (config dir, mounted at /tmp/docker-mailserver) does not exist yet,
+    # write it with one SHA512-CRYPT account. An existing postfix-accounts.cf
+    # is never read or overwritten. The password only travels on stdin to
+    # openssl on the target and every task that sees it is no_log.
+    # DMS reads this file as root at startup and generates its own dovecot
+    # userdb from it, so root:root 0640 is sufficient.
+    - name: Bootstrap first {{ app }} mail account (first install only)
+      when:
+        - (skmail.BOOTSTRAP_ACCOUNT | default('')) | length > 0
+        - (skmail.BOOTSTRAP_PASSWORD | default('')) | length > 0
+      tags:
+        - deploy
+        - bootstrap
+      block:
+        - name: Check for an existing {{ app }} account database
+          stat:
+            path: "/var/data/{{ app }}-{{ env }}/docker-data/dms/config/postfix-accounts.cf"
+          register: skmail_accounts_db
+
+        - name: Hash the {{ app }} bootstrap account password
+          command: openssl passwd -6 -stdin
+          args:
+            stdin: "{{ skmail.BOOTSTRAP_PASSWORD }}"
+          register: skmail_bootstrap_hash
+          changed_when: false
+          no_log: true
+          when: not skmail_accounts_db.stat.exists
+
+        - name: Write the {{ app }} bootstrap account database
+          copy:
+            dest: "/var/data/{{ app }}-{{ env }}/docker-data/dms/config/postfix-accounts.cf"
+            content: "{{ skmail.BOOTSTRAP_ACCOUNT }}|{SHA512-CRYPT}{{ skmail_bootstrap_hash.stdout }}\n"
+            owner: root
+            group: root
+            mode: "0640"
+            force: false
+          no_log: true
+          when: not skmail_accounts_db.stat.exists
+
     - name: Deploy {{ app }} stack
       shell: |
         cd /var/data/{{ app }}-{{ env }}
