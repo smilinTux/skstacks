@@ -3,7 +3,7 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
-## Unreleased (v2.18.0)
+## skstacks-v2.18.0 - 2026-09-26
 
 - v1: **skstor** meta/data now bind-mount onto `/var/data/skstor-<env>/{meta,data}`, the shared filesystem every other v1 service already requires, instead of a named Docker volume that stranded data on whichever manager the replicas=1 Garage service last ran on. `garage.toml.j2` gains `skstor.db_engine` (default `sqlite`, was a hardcoded `lmdb`; Garage's own docs call LMDB "prone to database corruption after an unclean shutdown", which a Swarm reschedule is), and `skstor.meta_dir`/`skstor.data_dir` (default the bind-mount paths above; override to a node-local path plus a placement constraint to trade shared storage for LMDB's speed).
 - v1: **skhub** gains `skhub.storage_backend: skstor` as a one-line shortcut for S3 against this cluster's own in-cluster skstor Garage service (host/port/region default to the in-cluster service, only `skhub.s3_bucket_name`/`s3_access_key`/`s3_secret_key` are required), and joins the `skstor-<env>` overlay network only when that backend is selected. Default remains `local` (NFS-backed `/var/data/skhub-<env>/data`, unchanged); the existing free-form `skhub.storage_backend: s3` mode is unchanged.
