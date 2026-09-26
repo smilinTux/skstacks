@@ -44,6 +44,22 @@
       include_vars: "{{ vault_file_path }}"
       when: vault_file_path is defined
 
+    - name: Verify required SKForm vault variables are set
+      fail:
+        msg: >-
+          skform.CLUSTERNAME, skform.DOMAIN, skform.APP_ENV,
+          skform.TOFU_LOG_LEVEL, skform.STATE_BACKEND_TYPE and
+          skform.STATE_BACKEND_PATH are required instance vars - set them in
+          the service's vault file. There is no framework default: they
+          are estate-specific by nature.
+      when: >-
+        (skform.CLUSTERNAME | default('')) == '' or
+        (skform.DOMAIN | default('')) == '' or
+        (skform.APP_ENV | default('')) == '' or
+        (skform.TOFU_LOG_LEVEL | default('')) == '' or
+        (skform.STATE_BACKEND_TYPE | default('')) == '' or
+        (skform.STATE_BACKEND_PATH | default('')) == ''
+
     - name: Define network variables from vault (idempotent network creation)
       # Networks are created idempotently by:
       #   1. create_networks.yml shared task (Ansible pre-deployment)
