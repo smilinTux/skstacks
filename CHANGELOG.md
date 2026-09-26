@@ -3,7 +3,7 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
-## Unreleased
+## skstacks-v2.17.0 - 2026-09-26
 
 - v1 core: **skfence** (Traefik + docker-socket-proxy + certs-dumper + error pages), the first core-tier service. `skfence.ACME_ENABLED` defaults to `false` (Traefik self-signed cert, works with no public DNS); `true` enables Let's Encrypt via Cloudflare DNS-01 with no literal secret defaults.
 - v1 core: **skha** (keepalived VRRP VIP failover). A documented exception to the single-selected-manager rule: it runs per host, marked `# skstacks: per-host` and scoped to core by a test.
