@@ -55,6 +55,12 @@ skha:
                                            # ACME master)
     - name: mail
       ports: [25, 587, 465, 143, 993]
+      container_pattern: mail-worker
+      require: true   # optional, default false: FAIL (not skip) when the
+                       # container is absent. Use when a check's container is
+                       # expected to always be present on this node, so the
+                       # VIP fails over if it dies instead of the check
+                       # silently passing.
     - name: sksync
       ports: [22000]
 ```
