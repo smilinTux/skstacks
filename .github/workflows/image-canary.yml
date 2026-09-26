@@ -1,0 +1,22 @@
+# Weekly canary: every container image a published v1 service references
+# must still be anonymously pullable. Catches a registry that silently
+# stopped serving an image (MinIO's quay repo was deleted, Docker Hub went
+# auth-only) or a name that never existed, before it breaks every instance
+# built from the framework.
+name: image availability canary
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # weekly, Monday 06:00 UTC
+  workflow_dispatch: {}
+  pull_request:
+    paths: ['v1/**']
+
+jobs:
+  check-images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install jinja2
+      - run: bash v1/scripts/check_images.sh
