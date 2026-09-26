@@ -1,0 +1,37 @@
+# Traefik TLS options (dynamic/tls.yml). No certificates here; those are
+# managed by ACME (or Traefik's own default self-signed cert) and read from
+# /acme/acme.json.
+# This file is managed by Ansible - do not edit manually.
+
+tls:
+  options:
+    # traefik.http.routers.myrouter.tls.options=default@file
+    default:
+      minVersion: VersionTLS12
+      cipherSuites:
+        - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305
+        - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305
+
+    # traefik.http.routers.myrouter.tls.options=modern@file
+    modern:
+      minVersion: VersionTLS13
+      sniStrict: true
+
+    # traefik.http.routers.myrouter.tls.options=intermediate@file
+    intermediate:
+      cipherSuites:
+        - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305
+        - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305
+      minVersion: VersionTLS12
+      sniStrict: true
+
+# Generated per Mozilla TLS Configuration Guidelines:
+# https://ssl-config.mozilla.org/

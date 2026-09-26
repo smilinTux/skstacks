@@ -1,0 +1,14 @@
+# Traefik HTTP services (dynamic/services.yml).
+# This file is managed by Ansible - do not edit manually.
+http:
+  services:
+    error-pages:
+      loadBalancer:
+        servers:
+          - url: "http://skfence-{{ env }}_error-pages:8080"
+    # Catch-all no-op service: always 404s so the error-pages middleware
+    # renders a real page instead of Traefik's bare 404.
+    catch-all-noop:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:0"

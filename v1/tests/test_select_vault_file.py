@@ -18,9 +18,9 @@ PROBE = """
 """
 
 
-def _vault_path(tmp_path, *extra):
-    svc = V1 / "ansible" / "optional" / "zzprobe"
-    svc.mkdir()
+def _vault_path(tmp_path, *extra, tier="optional"):
+    svc = V1 / "ansible" / tier / "zzprobe"
+    svc.mkdir(parents=True)
     try:
         (svc / "probe.yml").write_text(PROBE)
         inv = tmp_path / "inv.ini"
@@ -55,3 +55,16 @@ def test_vault_dir_prefers_the_domain_cluster_file_when_present(tmp_path):
 
 def test_empty_vault_dir_falls_back_to_the_default(tmp_path):
     assert _vault_path(tmp_path, "-e", "skstacks_vault_dir=") == str(V1 / "ansible/optional/group_vars/dev/zzprobe-dev_vault.yml")
+
+
+def test_core_tier_resolves_under_core_group_vars(tmp_path):
+    """A core-tier service (e.g. skfence) must map to core/group_vars, not
+    optional/group_vars, purely from its playbook_dir living under
+    ansible/core/."""
+    assert _vault_path(tmp_path, tier="core") == str(V1 / "ansible/core/group_vars/dev/zzprobe-dev_vault.yml")
+
+
+def test_core_tier_vault_dir_moves_the_lookup_into_the_instance(tmp_path):
+    inst = tmp_path / "inst"
+    got = _vault_path(tmp_path, "-e", f"skstacks_vault_dir={inst}", tier="core")
+    assert got == f"{inst}/core/group_vars/dev/zzprobe-dev_vault.yml"
