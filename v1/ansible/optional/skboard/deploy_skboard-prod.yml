@@ -77,6 +77,7 @@
       loop:
         - /var/data/{{ app }}-{{ env }}
         - /var/data/{{ app }}-{{ env }}/data
+        - /var/data/{{ app }}-{{ env }}/data/files
         - /var/data/config/{{ app }}-{{ env }}
 
     - name: Set data directory ownership
