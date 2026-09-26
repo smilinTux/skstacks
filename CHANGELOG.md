@@ -7,6 +7,9 @@ Each entry says what an instance must do, if anything.
 
 - v1: **sksync** (Syncthing), **skpulse** (Uptime Kuma) and **skpeek**
   (SearXNG + valkey) published.
+- tofu libvirt-cluster: `registry_mirrors` writes Docker's daemon.json (e.g.
+  `mirror.gcr.io`), so test clusters behind one public IP stop hitting Docker
+  Hub's anonymous pull limit.
 - sksync configures its firewall from the one selected manager (it ran on
   every manager); skpeek's SearXNG `secret_key` is required (`skpeek.SECRET_KEY`,
   it had a literal default).

@@ -10,6 +10,12 @@ users:
     ssh_authorized_keys:
       - ${ssh_public_key}
 ssh_pwauth: false
+%{ if daemon_json != "" ~}
+write_files:
+  - path: /etc/docker/daemon.json
+    permissions: "0644"
+    content: '${daemon_json}'
+%{ endif ~}
 package_update: true
 packages:
   - linux-generic-hwe-24.04

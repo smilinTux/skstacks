@@ -69,3 +69,8 @@ variable "pool_dir" {
   type        = string
   default     = "/var/lib/libvirt/images"
 }
+variable "registry_mirrors" {
+  description = "Docker registry mirrors written to /etc/docker/daemon.json (e.g. [\"https://mirror.gcr.io\"] to avoid Docker Hub anonymous rate limits). Empty = none."
+  type        = list(string)
+  default     = []
+}
