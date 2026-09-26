@@ -74,7 +74,7 @@ services:
       labels:
         - "traefik.enable=true"
         - "traefik.swarm.network=cloud-public-{{ env }}"
-        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-secure.rule=Host(`{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skdash.CLUSTERNAME }}.{{ skdash.DOMAIN }}`)"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-secure.rule=Host(`{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skdash.CLUSTERNAME | default(cluster_name) }}.{{ skdash.DOMAIN | default(domain) }}`)"
         - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-secure.entrypoints=websecure"
         - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls=true"
         - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls.certresolver=main"

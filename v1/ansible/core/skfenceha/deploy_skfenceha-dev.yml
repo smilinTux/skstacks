@@ -48,7 +48,7 @@
 # estate (cloud-public-{{ env }} is intentionally shared across core
 # services; cloud-edge/cloud-socket-proxy are the shared "current edge"
 # networks, so their subnet must match whichever edge service - skfence or
-# skfenceha - is actually active). Set the skfenceha vault vars (see README.md
+# skfenceha - is actually active). Set the skfenceha vault vars (see v1/ansible/core/skfence/README.md
 # for the full reference); ensure images are pullable on swarm nodes; label
 # exactly one manager node traefik.acme.master=true before the first deploy
 # (this playbook manages that label for you, moving it to target_manager_group's
