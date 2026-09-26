@@ -78,3 +78,23 @@ def test_cross_service_middlewares_present():
                  "large-upload-buffering", "upload-chain",
                  "upload-chain-no-crowdsec", "error-pages-all"):
         assert name in mw, f"missing cross-service middleware: {name}"
+
+
+def test_rate_limit_enabled_by_default():
+    # Framework default (true) is fine for a fresh instance; skstack01-prod
+    # sets this false in its vault because its live config has never had
+    # rate limiting (see docs/runbooks/skfenceha.md).
+    mw = render()
+    assert "rate-limit@file" in mw["default"]["chain"]["middlewares"]
+    assert "rate-limit@file" in mw["default-no-crowdsec"]["chain"]["middlewares"]
+    assert "rate-limit@file" in mw["default-no-error-pages"]["chain"]["middlewares"]
+
+
+def test_rate_limit_disabled_via_flag():
+    mw = render(RATE_LIMIT_ENABLED=False)
+    assert "rate-limit@file" not in mw["default"]["chain"]["middlewares"]
+    assert "rate-limit@file" not in mw["default-no-crowdsec"]["chain"]["middlewares"]
+    assert "rate-limit@file" not in mw["default-no-error-pages"]["chain"]["middlewares"]
+    # The middleware definition itself still exists (harmless, reusable by
+    # a future custom chain), only the built-in chains stop referencing it.
+    assert "rate-limit" in mw

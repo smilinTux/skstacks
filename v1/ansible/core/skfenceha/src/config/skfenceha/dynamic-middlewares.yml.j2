@@ -44,7 +44,9 @@ http:
           # (HA ingress mode), so the bouncer sees the real caller.
           - crowdsec-bouncer@file
 {% endif %}
+{% if skfenceha.RATE_LIMIT_ENABLED | default(true) %}
           - rate-limit@file
+{% endif %}
           - default-security-headers@file
           - error-pages@file
           - gzip@file
@@ -60,6 +62,10 @@ http:
           - default-security-headers@file
           - gzip@file
 
+    # skfenceha.RATE_LIMIT_ENABLED (default true) gates whether default,
+    # default-no-crowdsec and default-no-error-pages reference this. The
+    # definition itself is always present (harmless, reusable by a custom
+    # chain) even when every built-in chain has it turned off.
     rate-limit:
       rateLimit:
         average: {{ skfenceha.RATE_LIMIT_AVERAGE | default(100) }}
@@ -155,7 +161,9 @@ http:
     default-no-crowdsec:
       chain:
         middlewares:
+{% if skfenceha.RATE_LIMIT_ENABLED | default(true) %}
           - rate-limit@file
+{% endif %}
           - default-security-headers@file
           - error-pages@file
           - gzip@file
@@ -165,7 +173,9 @@ http:
     default-no-error-pages:
       chain:
         middlewares:
+{% if skfenceha.RATE_LIMIT_ENABLED | default(true) %}
           - rate-limit@file
+{% endif %}
           - default-security-headers@file
           - gzip@file
 
