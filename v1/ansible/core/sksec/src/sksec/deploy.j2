@@ -1,0 +1,85 @@
+#!/bin/bash
+set -e
+
+# SKSec{% if env == 'prod' %}-Prod{% elif env == 'staging' %}-Staging{% else %}-Dev{% endif %} Deployment Script
+APP="sksec"
+ENV="{% if env == 'prod' %}prod{% elif env == 'staging' %}staging{% else %}dev{% endif %}"
+STACK_NAME="${APP}-${ENV}"
+CONFIG_DIR="/var/data/config/${APP}-${ENV}"
+COMPOSE_FILE="${CONFIG_DIR}/docker-compose.yml"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+echo -e "${GREEN}🚀 Deploying ${STACK_NAME} stack (CrowdSec Security)...${NC}"
+
+# Source environment variables
+if [ -f "${CONFIG_DIR}/${APP}.sh.env" ]; then
+    echo -e "${YELLOW}📦 Loading environment variables...${NC}"
+    source "${CONFIG_DIR}/${APP}.sh.env"
+fi
+
+# Export environment for docker
+export CLUSTER_NAME DOMAIN INSTANCE APP_ENV
+
+# Check if compose file exists
+if [ ! -f "${COMPOSE_FILE}" ]; then
+    echo -e "${RED}❌ Error: Compose file not found: ${COMPOSE_FILE}${NC}"
+    exit 1
+fi
+
+# Deploy stack with prune and registry auth
+echo -e "${YELLOW}📝 Deploying stack configuration...${NC}"
+docker stack deploy \
+    -c "${COMPOSE_FILE}" \
+    --prune \
+    --with-registry-auth \
+    "${STACK_NAME}"
+
+# Wait a moment for services to register
+sleep 5
+
+# Force update services to pull latest images
+echo -e "${YELLOW}🔄 Forcing service updates to pull latest images...${NC}"
+docker service update --force --detach=false ${STACK_NAME}_crowdsec || true
+docker service update --force --detach=false ${STACK_NAME}_bouncer-traefik || true
+
+# Wait for services to stabilize
+echo -e "${YELLOW}⏳ Waiting for services to stabilize...${NC}"
+sleep 10
+
+# Show service status
+echo -e "${GREEN}📊 Service Status:${NC}"
+docker service ls | grep "${STACK_NAME}"
+
+# Health check
+echo -e "${YELLOW}🏥 Checking service health...${NC}"
+REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_crowdsec" --format "{{ '{{.Replicas}}' }}")
+if [[ "$REPLICAS" == "1/1" ]]; then
+    echo -e "${GREEN}✅ ${STACK_NAME} CrowdSec is healthy and running!${NC}"
+else
+    echo -e "${RED}⚠️  ${STACK_NAME} CrowdSec health check: ${REPLICAS}${NC}"
+    echo -e "${YELLOW}📋 Recent logs:${NC}"
+    docker service logs --tail 20 ${STACK_NAME}_crowdsec
+fi
+
+# Check bouncer status
+BOUNCER_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_bouncer-traefik" --format "{{ '{{.Replicas}}' }}")
+if [[ "$BOUNCER_REPLICAS" == "1/1" ]]; then
+    echo -e "${GREEN}✅ ${STACK_NAME} Bouncer is healthy and running!${NC}"
+else
+    echo -e "${RED}⚠️  ${STACK_NAME} Bouncer health check: ${BOUNCER_REPLICAS}${NC}"
+    echo -e "${YELLOW}📋 Recent logs:${NC}"
+    docker service logs --tail 20 ${STACK_NAME}_bouncer-traefik
+fi
+
+echo -e "${GREEN}✨ Deployment complete!${NC}"
+echo -e "${GREEN}🛡️  CrowdSec Security Stack deployed successfully${NC}"
+echo -e "${YELLOW}📋 Useful commands:${NC}"
+echo -e "  - View decisions: docker exec \$(docker ps -q -f name=${STACK_NAME}_crowdsec | head -n1) cscli decisions list"
+echo -e "  - View metrics: docker exec \$(docker ps -q -f name=${STACK_NAME}_crowdsec | head -n1) cscli metrics"
+echo -e "  - Remove ban: docker exec \$(docker ps -q -f name=${STACK_NAME}_crowdsec | head -n1) cscli decisions delete --ip <ip>"

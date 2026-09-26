@@ -1,0 +1,89 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# detect_traefik_setup.yml
+# Shared task to detect which Traefik setup is deployed (skfence or skfenceha)
+# and set appropriate variables for dynamic config paths
+#
+# Usage:
+#   - name: Detect Traefik setup
+#     ansible.builtin.include_tasks: ../../shared/tasks/detect_traefik_setup.yml
+#
+# Variables set:
+#   - traefik_service_name: "skfence" or "skfenceha"
+#   - traefik_dynamic_config_path: Full path to dynamic/optional directory
+#   - traefik_config_base: Base path for Traefik config (/var/data/config/{service}-{env})
+
+- name: Detect which Traefik service is running (skfence or skfenceha)
+  shell: |
+    if docker service ls --format '{{ '{{.Name}}' }}' | grep -q "^skfenceha-{{ env }}_"; then
+      echo "skfenceha"
+    elif docker service ls --format '{{ '{{.Name}}' }}' | grep -q "^skfence-{{ env }}_"; then
+      echo "skfence"
+    else
+      # Fallback: Check for config directories
+      if [ -d "/var/data/config/skfenceha-{{ env }}/dynamic" ]; then
+        echo "skfenceha"
+      elif [ -d "/var/data/config/skfence-{{ env }}/dynamic" ]; then
+        echo "skfence"
+      else
+        # Default to skfenceha for HA clusters, skfence for single-node
+        # This can be overridden by setting traefik_service_name in vault
+        echo "{{ traefik_service_name | default('skfenceha') }}"
+      fi
+    fi
+  register: traefik_detection
+  changed_when: false
+  failed_when: false
+  tags:
+    - always
+    - traefik
+    - config
+
+- name: Set Traefik service name variable
+  set_fact:
+    traefik_service_name: "{{ traefik_service_name | default(traefik_detection.stdout) }}"
+  tags:
+    - always
+    - traefik
+    - config
+
+- name: Set Traefik dynamic config base path
+  set_fact:
+    traefik_config_base: "/var/data/config/{{ traefik_service_name }}-{{ env }}"
+  tags:
+    - always
+    - traefik
+    - config
+
+- name: Set Traefik dynamic config path for optional services
+  set_fact:
+    traefik_dynamic_config_path: "/var/data/config/{{ traefik_service_name }}-{{ env }}/dynamic/optional"
+  tags:
+    - always
+    - traefik
+    - config
+
+- name: Display detected Traefik setup
+  debug:
+    msg:
+      - "Detected Traefik service: {{ traefik_service_name }}"
+      - "Config base path: {{ traefik_config_base }}"
+      - "Dynamic config path: {{ traefik_dynamic_config_path }}"
+  tags:
+    - always
+    - traefik
+    - config
+    - debug

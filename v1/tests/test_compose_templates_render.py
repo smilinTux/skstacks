@@ -25,3 +25,33 @@ def test_skform_compose_is_valid_yaml(skstor):
     # is `tofu`, so idling needs the entrypoint replaced, not the command
     assert svc["image"].startswith("ghcr.io/opentofu/opentofu:")
     assert svc.get("entrypoint") == ["sleep", "infinity"]
+
+SKMESH = ANSIBLE / "optional/skmesh/src/config/skmesh/skmesh.yml.j2"
+
+_SKMESH_BASE_VARS = {
+    "CLUSTERNAME": "demo",
+    "DOMAIN": "example.com",
+    "SSO_HOST_IP": "10.0.0.5",
+    "POSTGRES_PASSWORD": "x",
+    "TURN_SECRET": "y",
+}
+
+
+def test_skmesh_dashboard_defaults_to_the_upstream_digest_pin():
+    env = jinja2.Environment(undefined=jinja2.ChainableUndefined, trim_blocks=True)
+    out = env.from_string(SKMESH.read_text()).render(env="prod", skmesh=dict(_SKMESH_BASE_VARS))
+    doc = yaml.safe_load(out)
+    image = doc["services"]["dashboard"]["image"]
+    assert image.startswith("netbirdio/dashboard@sha256:")
+
+
+def test_skmesh_dashboard_image_is_overridable_per_instance():
+    """NAM runs a private, unpublished ghcr.io/smilintux/skmesh fork as its
+    dashboard. The framework default must not silently swap that out from
+    under an instance that depends on it - DASHBOARD_IMAGE lets an instance
+    vault pin its own image (including a private one) instead."""
+    env = jinja2.Environment(undefined=jinja2.ChainableUndefined, trim_blocks=True)
+    custom = dict(_SKMESH_BASE_VARS, DASHBOARD_IMAGE="ghcr.io/smilintux/skmesh:latest")
+    out = env.from_string(SKMESH.read_text()).render(env="prod", skmesh=custom)
+    doc = yaml.safe_load(out)
+    assert doc["services"]["dashboard"]["image"] == "ghcr.io/smilintux/skmesh:latest"

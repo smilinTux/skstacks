@@ -1,0 +1,39 @@
+# Traefik Dynamic Configuration for SKSec (CrowdSec)
+# This file is deployed to /var/data/config/{{ traefik_service_name | default('skfence') }}-{{ env }}/dynamic/sksec.yml
+# Traefik automatically loads this file from the dynamic directory (flat structure)
+# Uses detected traefik_service_name (skfence or skfenceha) - auto-detected during deployment
+#
+# SKSec provides CrowdSec security monitoring and the Traefik bouncer middleware
+# This middleware is applied globally via the default middleware chain
+
+http:
+  middlewares:
+    crowdsec-bouncer:
+      forwardAuth:
+        address: http://sksec{% if env == 'prod' %}-prod{% elif env == 'staging' %}-staging{% else %}-dev{% endif %}_bouncer-traefik:8080/api/v1/forwardAuth
+        trustForwardHeader: true
+        authResponseHeaders:
+          - X-Crowdsec-Status
+        authRequestHeaders:
+          - X-Forwarded-Method
+          - X-Forwarded-Uri
+          - X-Forwarded-Proto
+          - X-Real-Ip
+          - X-Forwarded-For
+
+  # Global CrowdSec Protection
+  # The crowdsec-bouncer middleware is included in the default middleware chain
+  # This means all routers using default@file will automatically be protected
+  # 
+  # To exclude specific routers from CrowdSec protection, use a custom middleware chain:
+  #   middlewares:
+  #     - default-security-headers@file
+  #     - gzip@file
+  #     # Note: crowdsec-bouncer@file is NOT included
+  #
+  # To use CrowdSec on specific routers only, add it explicitly:
+  #   middlewares:
+  #     - crowdsec-bouncer@file
+  #     - default-security-headers@file
+  #     - gzip@file
+
