@@ -1,0 +1,222 @@
+# Docker Compose for skfence (single-node Docker Swarm only)
+#
+# Single service set:
+#   - traefik: ACME/TLS termination + routing (single replica; only one
+#     instance may hold the ACME lease)
+#   - socket-proxy: restricts Docker API access for Traefik's Swarm provider
+#   - traefik-certs-dumper: exports the ACME certs to PEM for other services
+#   - error-pages: small branded error page backend
+#
+# Required environment variables (see skfence.env.j2):
+#   - skfence.ACME_ENABLED / CLOUDFLARE_EMAIL / vault_skfence_cloudflare_dns_token
+#     (only when ACME_ENABLED is true; otherwise Traefik's own self-signed
+#     certificate is used)
+#   - skfence.DASHBOARD_AUTH_HASH (htpasswd string; empty disables dashboard auth)
+#
+# For multi-node HA, this framework does not (yet) publish an HA variant.
+
+version: '3.9'
+
+services:
+
+  traefik:
+    image: traefik:v3.6.2
+    user: "0:986"  # root user with the docker group (gid varies per host)
+    env_file:
+      - /var/data/config/skfence-{{ env }}/skfence.env
+    command:
+      - --configFile=/etc/traefik/traefik.yml
+      - --api.dashboard=true
+      - --api.insecure=false
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    # mode: host bypasses the Swarm routing mesh so Traefik sees the real
+    # client IP (single-node: no mesh load balancing needed anyway).
+    ports:
+      - target: 80
+        published: 80
+        protocol: tcp
+        mode: host
+      - target: 443
+        published: 443
+        protocol: tcp
+        mode: host
+      - target: 8082
+        published: 8082
+        protocol: tcp
+        mode: host
+    deploy:
+      mode: replicated
+      replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        monitor: 30s
+        max_failure_ratio: 0.2
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: pause
+        monitor: 30s
+        max_failure_ratio: 0.2
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          cpus: '0.60'
+          memory: 768M
+        reservations:
+          cpus: '0.20'
+          memory: 256M
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.services.traefik.loadbalancer.server.port=0"
+        - "com.skt.env={{ env }}"
+        - "com.skt.app=skfence"
+        - "com.skt.role=traefik"
+    volumes:
+      - /var/data/runtime/skfence-{{ env }}/acme:/acme
+      - /var/data/logs/skfence-{{ env }}/traefik:/var/log/traefik
+      - /var/data/config/skfence-{{ env }}/dynamic:/etc/traefik/dynamic:ro
+      - /var/data/config/skfence-{{ env }}/traefik.yml:/etc/traefik/traefik.yml:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - cloud-edge-{{ env }}
+      - cloud-public-{{ env }}
+      - cloud-socket-proxy-{{ env }}
+
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    deploy:
+      mode: global
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
+    environment:
+      API_VERSION: 1.44
+      CONTAINERS: 1
+      SERVICES: 1
+      TASKS: 1
+      NODES: 1
+      NETWORKS: 1
+      CONFIGS: 1
+      SECRETS: 1
+      VOLUMES: 1
+      SWARM: 1
+      INFO: 1
+      IMAGES: 1
+      POST: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - cloud-socket-proxy-{{ env }}
+
+  error-pages:
+    # Built locally by the playbook (Swarm stacks can't build in-line).
+    image: skfence-{{ env }}-error-pages:latest
+    deploy:
+      mode: replicated
+      replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 5s
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        delay: 5s
+        failure_action: pause
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          cpus: '0.10'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    environment:
+      - PORT=8080
+      - APP_ENV={{ env }}
+    networks:
+      - cloud-public-{{ env }}
+
+  traefik-certs-dumper:
+    # v2.10.0 with --version v3 supports Traefik v3's acme.json layout.
+    image: ldez/traefik-certs-dumper:v2.10.0
+    command:
+      - file
+      - --version
+      - v3
+      - --source=/acme/acme.json
+      - --watch
+      - --clean
+      - --domain-subdir
+      - --dest=/output
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          cpus: '0.10'
+          memory: 64M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
+      update_config:
+        parallelism: 1
+        delay: 5s
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        delay: 5s
+        failure_action: pause
+    healthcheck:
+      test: ["CMD", "ls", "/output"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - /var/data/runtime/skfence-{{ env }}/acme:/acme:ro
+      - /var/data/runtime/skfence-{{ env }}/certs:/output
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - cloud-public-{{ env }}
+
+# All three networks are external and created idempotently by the
+# create_networks.yml shared task from the app_networks variable.
+# cloud-public-{{ env }} is the shared ingress network other SKStacks
+# services attach to so Traefik's Swarm provider can route to them.
+networks:
+  cloud-edge-{{ env }}:
+    external: true
+  cloud-public-{{ env }}:
+    external: true
+  cloud-socket-proxy-{{ env }}:
+    external: true
