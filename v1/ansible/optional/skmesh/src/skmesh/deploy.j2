@@ -1,0 +1,62 @@
+#!/bin/bash
+set -e
+
+APP="skmesh"
+ENV="{{ env }}"
+STACK_NAME="${APP}-${ENV}"
+CONFIG_DIR="/var/data/config/${APP}-${ENV}"
+COMPOSE_FILE="${CONFIG_DIR}/docker-compose.yml"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+echo -e "${GREEN}🚀 Deploying ${STACK_NAME} stack (Netbird Mesh)...${NC}"
+
+if [ -f "${CONFIG_DIR}/${APP}.sh.env" ]; then
+    echo -e "${YELLOW}📦 Loading environment variables...${NC}"
+    source "${CONFIG_DIR}/${APP}.sh.env"
+fi
+
+export CLUSTER_NAME DOMAIN INSTANCE APP_ENV
+
+if [ ! -f "${COMPOSE_FILE}" ]; then
+    echo -e "${RED}❌ Error: Compose file not found: ${COMPOSE_FILE}${NC}"
+    exit 1
+fi
+
+echo -e "${YELLOW}📝 Deploying stack configuration...${NC}"
+docker stack deploy \
+    -c "${COMPOSE_FILE}" \
+    --prune \
+    --with-registry-auth \
+    "${STACK_NAME}"
+
+sleep 5
+
+echo -e "${YELLOW}🔄 Forcing service updates to pull latest images...${NC}"
+docker service update --force --detach=false ${STACK_NAME}_management || true
+
+sleep 10
+
+echo -e "${GREEN}📊 Service Status:${NC}"
+docker service ls | grep "${STACK_NAME}"
+
+echo -e "${YELLOW}🏥 Checking service health...${NC}"
+REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_management" --format "{{ '{{' }}.Replicas{{ '}}' }}")
+if [[ "$REPLICAS" == "1/1" ]]; then
+    echo -e "${GREEN}✅ ${STACK_NAME} is healthy and running!${NC}"
+else
+    echo -e "${RED}❌ Service health check failed${NC}"
+    exit 1
+fi
+
+
+
+
+
+
+
+

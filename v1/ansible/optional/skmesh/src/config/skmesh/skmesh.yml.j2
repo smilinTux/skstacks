@@ -1,0 +1,212 @@
+{%- if skmesh.CLOUDFLARED | default(false) -%}
+  {%- set _base_domain = skmesh.DOMAIN -%}
+{%- else -%}
+  {%- set _base_domain = skmesh.CLUSTERNAME ~ '.' ~ skmesh.DOMAIN -%}
+{%- endif -%}
+version: "3.9"
+
+x-logging: &logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+networks:
+  skmesh-{{ env }}:
+    external: true
+  cloud-public-{{ env }}:
+    external: true
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    env_file: /var/data/config/skmesh-{{ env }}/postgres.env
+    environment:
+      - PGTEMP=/var/lib/postgresql/data/tmp
+    volumes:
+      - /var/data/runtime/skmesh-{{ env }}/postgres:/var/lib/postgresql/data
+    networks:
+      - skmesh-{{ env }}
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    logging: *logging
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U netbird']
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  postgres-db-backup:
+    image: postgres:16
+    env_file: /var/data/config/skmesh-{{ env }}/postgres-backup.env
+    environment:
+      - PGTEMP=/dump/tmp
+    volumes:
+      - /var/data/skmesh-{{ env }}/database-dump:/dump
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - skmesh-{{ env }}
+    entrypoint: |
+      bash -c 'bash -s <<EOF
+      trap "break;exit" SIGHUP SIGINT SIGTERM
+      sleep 2m
+      while /bin/true; do
+        pg_dumpall -h postgres -U $${PGUSER} | gzip -c > /dump/dump_`date +%d-%m-%Y"_"%H_%M_%S`.sql.gz
+        ls -tr /dump/dump_*.sql.gz | head -n -"$${BACKUP_NUM_KEEP}" | xargs -r rm
+        sleep $${BACKUP_FREQUENCY}
+      done
+      EOF'
+    depends_on:
+      - postgres
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+    logging: *logging
+
+  management:
+    image: netbirdio/management:0.79.0
+    container_name: skmesh-management
+    env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
+    extra_hosts:
+      - "sso.{{ _base_domain }}:{{ skmesh.SSO_HOST_IP }}"
+    networks:
+      - skmesh-{{ env }}
+      - cloud-public-{{ env }}
+    environment:
+      - NETBIRD_STORE_ENGINE=postgres
+      - NETBIRD_STORE_DSN=postgres://netbird:{{ skmesh.POSTGRES_PASSWORD }}@postgres:5432/netbird
+    volumes:
+      - /var/data/config/skmesh-{{ env }}/management.json:/etc/netbird/management.json:ro
+      - /var/data/skmesh-{{ env }}/management:/var/lib/netbird
+    command:
+      - "--log-file=console"
+      - "--log-level=info"
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.skmesh-mgmt-api.rule=Host(`skmesh{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && PathPrefix(`/api`)"
+        - "traefik.http.routers.skmesh-mgmt-api.entrypoints=websecure"
+        - "traefik.http.routers.skmesh-mgmt-api.tls.certresolver=main"
+        - "traefik.http.routers.skmesh-mgmt-api.service=skmesh-mgmt-api-svc"
+        - "traefik.http.services.skmesh-mgmt-api-svc.loadbalancer.server.port=80"
+        - "traefik.http.services.skmesh-mgmt-api-svc.loadbalancer.server.scheme=http"
+        - "traefik.http.routers.skmesh-mgmt-grpc.rule=Host(`skmesh{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && PathPrefix(`/management`)"
+        - "traefik.http.routers.skmesh-mgmt-grpc.entrypoints=websecure"
+        - "traefik.http.routers.skmesh-mgmt-grpc.tls.certresolver=main"
+        - "traefik.http.routers.skmesh-mgmt-grpc.service=skmesh-mgmt-grpc-svc"
+        - "traefik.http.services.skmesh-mgmt-grpc-svc.loadbalancer.server.port=33073"
+        - "traefik.http.services.skmesh-mgmt-grpc-svc.loadbalancer.server.scheme=h2c"
+        - "traefik.docker.network=cloud-public-{{ env }}"
+    logging: *logging
+    ports:
+      - "33073:33073/tcp"
+      - "33073:33073/udp"
+    depends_on:
+      - postgres
+
+  signal:
+    image: netbirdio/signal:0.79.0
+    container_name: skmesh-signal
+    env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
+    networks:
+      - skmesh-{{ env }}
+      - cloud-public-{{ env }}
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.skmesh-signal.rule=Host(`skmesh{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && PathPrefix(`/signalexchange.SignalExchange`)"
+        - "traefik.http.routers.skmesh-signal.entrypoints=websecure"
+        - "traefik.http.routers.skmesh-signal.tls.certresolver=main"
+        - "traefik.http.routers.skmesh-signal.service=skmesh-signal-svc"
+        - "traefik.http.services.skmesh-signal-svc.loadbalancer.server.port=10000"
+        - "traefik.http.services.skmesh-signal-svc.loadbalancer.server.scheme=h2c"
+        - "traefik.docker.network=cloud-public-{{ env }}"
+    logging: *logging
+    ports:
+      - "10000:10000/tcp"
+    depends_on:
+      - management
+
+  relay:
+    image: netbirdio/relay:0.79.0
+    env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
+    networks:
+      - skmesh-{{ env }}
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+    logging: *logging
+    depends_on:
+      - management
+
+  dashboard:
+    # Upstream public netbird dashboard, pinned by digest: netbirdio/dashboard
+    # publishes no semver release tags (only "main" and per-commit "sha-*"
+    # tags), so a digest is the only reproducible pin available. This
+    # replaces the private, unpublished ghcr.io/smilintux/skmesh branded
+    # fork, which is not pullable outside smilinTux's own registry auth
+    # and therefore cannot ship in the public framework.
+    image: netbirdio/dashboard@sha256:ffb9fb785589ac4a523c1bd7a6ecb035478922fdad01e84368fb36818ca8f7b0
+    container_name: skmesh-dashboard
+    env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
+    networks:
+      - skmesh-{{ env }}
+      - cloud-public-{{ env }}
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.skmesh-dash.rule=Host(`skmesh{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && !PathPrefix(`/api`) && !PathPrefix(`/management`) && !PathPrefix(`/signalexchange.SignalExchange`)"
+        - "traefik.http.routers.skmesh-dash.entrypoints=websecure"
+        - "traefik.http.routers.skmesh-dash.tls.certresolver=main"
+        - "traefik.http.services.skmesh-dash.loadbalancer.server.port=80"
+    logging: *logging
+    depends_on:
+      - management
+
+{% if skmesh.DEPLOY_COTURN | default(false) %}
+  coturn:
+    image: coturn/coturn:4.18.0-trixie
+    container_name: skmesh-coturn
+    network_mode: host
+    command:
+      - -n
+      - --log-file=stdout
+      - --min-port=49152
+      - --max-port=65535
+      - --realm=turn.{{ _base_domain }}
+      - --static-auth-secret={{ skmesh.TURN_SECRET }}
+    env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
+    deploy:
+      mode: global
+      placement:
+        constraints:
+          - node.role == manager
+    logging: *logging
+{% endif %}

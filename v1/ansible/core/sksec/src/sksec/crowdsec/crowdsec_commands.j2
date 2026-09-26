@@ -1,0 +1,29 @@
+# Crowdsec commands (templated)
+
+### manually install collections
+
+docker exec  $(docker ps -q -f name=sksec-{{ sksec.APP_ENV }}_crowdsec | head -n1) cscli collections install crowdsecurity/traefik
+
+### update hubs
+
+docker exec  $(docker ps -q -f name=sksec-{{ sksec.APP_ENV }}_crowdsec | head -n1) cscli hub update
+
+### add bouncer (save api key somewhere)
+
+docker exec  $(docker ps -q -f name=sksec-{{ sksec.APP_ENV }}_crowdsec | head -n1) cscli bouncers add bouncer-traefik
+
+### ban ip
+
+docker exec  $(docker ps -q -f name=sksec-{{ sksec.APP_ENV }}_crowdsec | head -n1) cscli decisions add --ip 203.0.113.10
+
+### unban ip
+
+docker exec  $(docker ps -q -f name=sksec-{{ sksec.APP_ENV }}_crowdsec | head -n1) cscli decisions delete --ip 203.0.113.10
+
+### see metrics
+
+docker exec  $(docker ps -q -f name=sksec-{{ sksec.APP_ENV }}_crowdsec | head -n1) crowdsec cscli metrics
+
+### see bans
+
+docker exec  $(docker ps -q -f name=sksec-{{ sksec.APP_ENV }}_crowdsec | head -n1) cscli decisions list

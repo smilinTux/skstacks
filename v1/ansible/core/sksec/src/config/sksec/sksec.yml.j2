@@ -1,0 +1,141 @@
+{%- set env_suffix = '-prod' if env == 'prod' else ('-staging' if env == 'staging' else '-dev') -%}
+# Docker Compose for sksec (CrowdSec Security) - Single & Multi-Node HA Support
+#
+# UNIFIED CONFIGURATION: Works seamlessly for both single-node and multi-node clusters
+# Traefik service auto-detection: Automatically detects skfence or skfenceha during deployment
+#
+# Single-Node Mode:
+#   - CrowdSec runs on any manager node (handles database + log analysis)
+#   - Reads Traefik logs from: /var/data/logs/{traefik_service_name}-{env}/traefik/
+#   - traefik_service_name is auto-detected (skfence or skfenceha)
+#
+# Multi-Node HA Mode:
+#   - CrowdSec pinned to ACME master node (exclusive database write access)
+#   - Reads Traefik logs from: /var/data/logs/{traefik_service_name}-{env}/traefik/acme-node/ (ACME master logs)
+#   - traefik_service_name is auto-detected (skfence or skfenceha)
+#   - Set TRAEFIK_HA_MODE=true in vault to enable HA mode
+#
+# Required environment variables (see sksec.env):
+#   - TRAEFIK_HA_MODE (optional, defaults to false/auto-detect)
+#   - CROWDSEC_BOUNCER_API_KEY
+#   - Other CrowdSec configuration variables
+
+version: '3.8'
+
+networks:
+  sksec{{ env_suffix }}:
+    external: true
+  cloud-public{{ env_suffix }}:
+    external: true
+
+services:
+  # CrowdSec Service - Security event analysis and threat detection
+  # In HA mode: Pinned to ACME master node (exclusive database write access)
+  # In single-node: Runs on any manager node
+  crowdsec:
+    image: crowdsecurity/crowdsec:v1.6.11
+    env_file: /var/data/config/sksec{{ env_suffix }}/sksec.env
+    logging:
+      driver: json-file
+      options:
+        max-size: "{{ sksec.LOG_MAX_SIZE }}"
+        max-file: "{{ sksec.LOG_MAX_FILES }}"
+    volumes:
+      # === NFS DATA - DIRECT BIND (NO NAMED VOLUME) ===
+      # CrowdSec needs to write hub data, collections, parsers during initialization
+      # acquis.yaml is copied into this directory during deployment
+      - /var/data/runtime/sksec{{ env_suffix }}/crowdsec-config:/etc/crowdsec/
+      - /var/data/runtime/sksec{{ env_suffix }}/crowdsec-db:/var/lib/crowdsec/data/
+      # Traefik logs (Node-aware: Mount parent directories to enable wildcard patterns)
+      # CrowdSec acquis.yaml uses wildcard patterns to read from all node-specific directories
+      # Uses detected traefik_service_name (skfence or skfenceha) - auto-detected during deployment
+{% if (traefik_service_name | default('skfence')) == 'skfenceha' or (sksec.TRAEFIK_HA_MODE | default(false) | bool) %}
+      # HA mode (skfenceha): Mount acme-node and worker-base directories
+      # ACME master logs: /var/data/logs/skfenceha-{env}/traefik/acme-node/ → /var/log/traefik/acme-node/
+      - /var/data/logs/{{ traefik_service_name | default('skfence') }}{{ env_suffix }}/traefik/acme-node:/var/log/traefik/acme-node:ro
+      # Worker logs: /var/data/logs/skfenceha-{env}/traefik/worker-base/ → /var/log/traefik/worker-base/
+      - /var/data/logs/{{ traefik_service_name | default('skfence') }}{{ env_suffix }}/traefik/worker-base:/var/log/traefik/worker-base:ro
+{% else %}
+      # Single-node mode (skfence): Mount traefik log directory directly
+      # skfence logs: /var/data/logs/skfence-{env}/traefik/{NODE_HOSTNAME}/access.log
+      # Mounted as: /var/log/traefik/{NODE_HOSTNAME}/access.log
+      - /var/data/logs/{{ traefik_service_name | default('skfence') }}{{ env_suffix }}/traefik:/var/log/traefik:ro
+{% endif %}
+    depends_on:
+      - bouncer-traefik
+    networks:
+      - sksec{{ env_suffix }}
+      - cloud-public{{ env_suffix }}
+    deploy:
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 120s
+      mode: replicated
+      replicas: 1
+      placement:
+        # In HA mode: Pin to ACME master node (exclusive database write access)
+        # In single-node: Runs on any node
+{% if sksec.TRAEFIK_HA_MODE | default(false) | bool %}
+        constraints:
+          - node.labels.traefik.acme.master == true
+{% endif %}
+        preferences:
+          - spread: node.labels.zone
+      resources:
+        limits:
+          cpus: '{{ sksec.CROWDSEC_CPU_LIMIT }}'
+          memory: {{ sksec.CROWDSEC_MEMORY_LIMIT }}
+        reservations:
+          cpus: '{{ sksec.CROWDSEC_CPU_RESERVATION }}'
+          memory: {{ sksec.CROWDSEC_MEMORY_RESERVATION }}
+    healthcheck:
+      test: ["CMD", "cscli", "metrics", "--output", "json"]
+      interval: {{ sksec.HEALTH_CHECK_INTERVAL }}
+      timeout: {{ sksec.HEALTH_CHECK_TIMEOUT }}
+      retries: {{ sksec.HEALTH_CHECK_RETRIES }}
+      start_period: {{ sksec.HEALTH_CHECK_START_PERIOD }}
+
+  bouncer-traefik:
+    image: docker.io/fbonalair/traefik-crowdsec-bouncer:0.5.0
+    env_file: /var/data/config/sksec{{ env_suffix }}/sksec.env
+    logging:
+      driver: json-file
+      options:
+        max-size: "{{ sksec.LOG_MAX_SIZE }}"
+        max-file: "{{ sksec.LOG_MAX_FILES }}"
+    networks:
+      - sksec{{ env_suffix }}
+      - cloud-public{{ env_suffix }}
+    deploy:
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 120s
+      mode: replicated
+      replicas: 1
+      placement:
+        preferences:
+          - spread: node.labels.zone
+      resources:
+        limits:
+          cpus: '{{ sksec.BOUNCER_CPU_LIMIT }}'
+          memory: {{ sksec.BOUNCER_MEMORY_LIMIT }}
+        reservations:
+          cpus: '{{ sksec.BOUNCER_CPU_RESERVATION }}'
+          memory: {{ sksec.BOUNCER_MEMORY_RESERVATION }}
+    # Note: Bouncer healthcheck disabled due to API limitations
+    # Consider implementing custom health check if needed
+
+# No named volumes - all mounts are direct bind mounts
+# Simpler, faster, zero-config

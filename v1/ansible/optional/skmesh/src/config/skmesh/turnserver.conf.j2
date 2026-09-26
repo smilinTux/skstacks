@@ -1,0 +1,26 @@
+{%- if skmesh.CLOUDFLARED | default(false) -%}
+  {%- set _base_domain = skmesh.DOMAIN -%}
+{%- else -%}
+  {%- set _base_domain = skmesh.CLUSTERNAME ~ '.' ~ skmesh.DOMAIN -%}
+{%- endif -%}
+listening-port=3478
+tls-listening-port=5349
+realm={{ skmesh.TURN_REALM | default('turn.' + _base_domain) }}
+server-name={{ skmesh.TURN_SERVER_NAME | default(inventory_hostname) }}
+external-ip={{ skmesh.COTURN_EXTERNAL_IP }}
+
+min-port={{ skmesh.TURN_MIN_PORT | default(49152) }}
+max-port={{ skmesh.TURN_MAX_PORT | default(65535) }}
+
+lt-cred-mech
+use-auth-secret
+static-auth-secret={{ skmesh.TURN_SECRET }}
+
+fingerprint
+verbose
+log-file=stdout
+
+no-multicast-peers
+no-cli
+no-tlsv1
+no-tlsv1_1
