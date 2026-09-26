@@ -1,0 +1,71 @@
+version: '3.8'
+
+# skseek: Perplexica, an AI-powered search UI that answers from live search
+# results (via SearXNG/skpeek as its backend) instead of just a model's
+# training data. Depends on skpeek being deployed on the same instance;
+# reaches it as skpeek-{{ env }}_skpeek over the shared skpeek-{{ env }}
+# overlay network rather than a public URL.
+
+services:
+  skseek:
+    image: {{ skseek_image | default('itzcrazykns1337/perplexica:latest@sha256:343d2a02858cc3c15bb35bf94b3249923f4eb5de16eb80d266eddfef6d84951d') }}
+    env_file: /var/data/config/skseek-{{ env }}/skseek.env
+    logging:
+      driver: json-file
+      options:
+        max-size: 4m
+        max-file: "1"
+
+    volumes:
+      - /var/data/skseek-{{ env }}/data:/home/perplexica/data:rw
+      - /var/data/config/skseek-{{ env }}/config.toml:/home/perplexica/config.toml:ro
+
+    networks:
+      - cloud-public-{{ env }}
+      - skseek-{{ env }}
+      - skpeek-{{ env }}
+
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:{{ skseek.PORT | default('3000') }}/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    deploy:
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          memory: {{ skseek.MEMORY_LIMIT | default('2G') }}
+        reservations:
+          memory: {{ skseek.MEMORY_RESERVATION | default('512M') }}
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 0
+      labels:
+        # === TRAEFIK: HTTP ===
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        # === TRAEFIK: ROUTERS ===
+        - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skseek{% if env != 'prod' %}-{{ env }}{% endif %}.{{ cluster_name | default(skseek.CLUSTERNAME | default('cluster1')) }}.{{ domain | default(skseek.DOMAIN | default('example.com')) }}`)"
+        - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
+        - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
+        - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
+        - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
+        - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares=default-no-crowdsec@file"
+        - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}.service=skseek{% if env != 'prod' %}-{{ env }}{% endif %}"
+        # === TRAEFIK: SERVICES ===
+        - "traefik.http.services.skseek{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port={{ skseek.PORT | default('3000') }}"
+
+networks:
+  cloud-public-{{ env }}:
+    external: true
+  skseek-{{ env }}:
+    external: true
+  skpeek-{{ env }}:
+    external: true

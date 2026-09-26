@@ -1,0 +1,80 @@
+#!/bin/bash
+set -e
+
+APP="skdesk"
+ENV="{{ env }}"
+STACK_NAME="${APP}-${ENV}"
+CONFIG_DIR="/var/data/config/${APP}-${ENV}"
+COMPOSE_FILE="${CONFIG_DIR}/docker-compose.yml"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+echo -e "${GREEN}Deploying ${STACK_NAME} stack (RustDesk Server hbbs+hbbr)...${NC}"
+
+if [ -f "${CONFIG_DIR}/${APP}.sh.env" ]; then
+    echo -e "${YELLOW}Loading shell env...${NC}"
+    set -a
+    source "${CONFIG_DIR}/${APP}.sh.env"
+    set +a
+fi
+
+if [ ! -f "${COMPOSE_FILE}" ]; then
+    echo -e "${RED}Error: Compose file not found: ${COMPOSE_FILE}${NC}"
+    exit 1
+fi
+
+# RustDesk uses host networking (see skdesk.yml.j2) - verify the pinned node
+# is the one we're running on.
+PINNED="${PLACEMENT_HOSTNAME:-unknown}"
+HERE="$(hostname)"
+if [ "$PINNED" != "unknown" ] && [ "$PINNED" != "$HERE" ]; then
+    echo -e "${YELLOW}Note: this manager is ${HERE} but the service is pinned to ${PINNED}.${NC}"
+    echo -e "${YELLOW}Swarm will schedule on ${PINNED}; this is expected when deploying from a different manager.${NC}"
+fi
+
+echo -e "${YELLOW}Deploying stack...${NC}"
+docker stack deploy \
+    -c "${COMPOSE_FILE}" \
+    --prune \
+    --with-registry-auth \
+    "${STACK_NAME}"
+
+sleep 5
+
+echo -e "${GREEN}Service Status:${NC}"
+docker service ls | grep "${STACK_NAME}" || echo "  (no services yet)"
+
+echo -e "${YELLOW}Waiting for hbbs replica to be ready...${NC}"
+for i in {1..30}; do
+    REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_hbbs" --format "{{ '{{' }}.Replicas{{ '}}' }}")
+    if [[ "$REPLICAS" == "1/1" ]]; then
+        echo -e "${GREEN}${STACK_NAME}_hbbs is healthy and running on ${PINNED}${NC}"
+        break
+    fi
+    sleep 2
+done
+
+REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_hbbs" --format "{{ '{{' }}.Replicas{{ '}}' }}")
+if [[ "$REPLICAS" != "1/1" ]]; then
+    echo -e "${RED}Service health check failed (hbbs replicas: ${REPLICAS})${NC}"
+    echo -e "${YELLOW}Diagnose with: docker service ps ${STACK_NAME}_hbbs --no-trunc${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}Public key (clients pin this; share with users):${NC}"
+PUBKEY_FILE="/var/data/${STACK_NAME}/data/id_ed25519.pub"
+# hbbs writes the keypair on first start - wait briefly for it to exist
+for i in {1..15}; do
+    [ -s "${PUBKEY_FILE}" ] && break
+    sleep 1
+done
+if [ -s "${PUBKEY_FILE}" ]; then
+    echo "  $(cat "${PUBKEY_FILE}")"
+else
+    echo -e "${YELLOW}  (pubkey not yet present at ${PUBKEY_FILE} - will appear after hbbs writes it)${NC}"
+fi
+
+echo -e "${GREEN}Done.${NC}"

@@ -1,0 +1,76 @@
+version: '3.8'
+
+# RustDesk self-hosted relay: hbbs (ID/rendezvous server) + hbbr (relay
+# server). Both speak RustDesk's own binary protocol over raw TCP/UDP ports
+# (21115-21119 tcp, 21116 udp), never HTTP, so they are never routed through
+# Traefik and attach to the pre-existing external "host" network instead of
+# an overlay network: `network_mode: host` is compose-only and is silently
+# unsupported by `docker stack deploy` (swarm mode), so the only way to bind
+# a swarm service to host networking is `networks: - host-net` pointed at
+# the engine's built-in network literally named "host". Host networking
+# means the scheduler cannot be left to pick any manager, so both services
+# carry a `node.hostname ==` placement constraint pinning them to
+# skdesk.PLACEMENT_HOSTNAME (required, no default: this is per-instance
+# identity, not something a public template can guess). Both containers
+# bind-mount the same data directory so hbbr can read the key hbbs
+# generates on first run.
+
+services:
+  hbbs:
+    image: {{ skdesk_image | default('rustdesk/rustdesk-server:latest@sha256:10818ec05b179039c6660f4d8e74b303f0db2858bbad2b18e24992ea22d54cd6') }}
+    command: hbbs{% if skdesk.RELAY_HOSTNAME | default('') %} -r {{ skdesk.RELAY_HOSTNAME }}{% endif %}{% if skdesk.KEY | default('') %} -k {{ skdesk.KEY }}{% endif %}
+
+    env_file: /var/data/config/skdesk-{{ env }}/skdesk.env
+    volumes:
+      - /var/data/skdesk-{{ env }}/data:/root
+    networks:
+      - host-net
+    logging:
+      driver: json-file
+      options:
+        max-size: 4m
+        max-file: "1"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - "node.hostname == {{ skdesk.PLACEMENT_HOSTNAME }}"
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 0
+      labels:
+        - "traefik.enable=false"
+
+  hbbr:
+    image: {{ skdesk_image | default('rustdesk/rustdesk-server:latest@sha256:10818ec05b179039c6660f4d8e74b303f0db2858bbad2b18e24992ea22d54cd6') }}
+    command: hbbr{% if skdesk.KEY | default('') %} -k {{ skdesk.KEY }}{% endif %}
+
+    env_file: /var/data/config/skdesk-{{ env }}/skdesk.env
+    volumes:
+      - /var/data/skdesk-{{ env }}/data:/root
+    networks:
+      - host-net
+    logging:
+      driver: json-file
+      options:
+        max-size: 4m
+        max-file: "1"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - "node.hostname == {{ skdesk.PLACEMENT_HOSTNAME }}"
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 0
+      labels:
+        - "traefik.enable=false"
+
+networks:
+  host-net:
+    external: true
+    name: "host"
