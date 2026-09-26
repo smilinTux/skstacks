@@ -43,7 +43,7 @@ services:
   # The certificate is then dumped by traefik-certs-dumper for DMS to use
   # Also serves as a basic webmail landing page / status endpoint
   mail-web:
-    image: traefik/whoami:latest
+    image: traefik/whoami:v1.12.0
     hostname: "{{ skmail.HOSTNAME | default('mail.' + skmail.DOMAIN) }}"
     environment:
       - WHOAMI_NAME=mail-web
