@@ -965,25 +965,62 @@ and destination-URL conventions.
 
 ---
 
+## Vault variable naming convention
+
+**Going forward**: a new service namespaces every vault var as the dotted
+`<svc>.<KEY>` (e.g. `skpeek.REDIS_VERSION`), the pattern the large majority
+of the 30 services above already use. A network override is the one
+exception: use the flat, per-env `<svc>_<env>_networks`
+(`skpeek_prod_networks`), not a single `<svc>.networks` shared across all
+three envs - see the legacy exceptions below for why a shared var is a
+footgun.
+
+Nothing existing is renamed by this note: instances already depend on the
+vars as they're spelled today, and a silent rename would break every one of
+them on their next deploy. This is guidance for new services and new vars
+on existing services only.
+
+**Legacy exceptions** (existing vars, kept as-is):
+
+- **Flat instead of dotted**: skreg's `vault_skreg_registry_http_secret` /
+  `vault_skreg_registry_http_addr`; skpeek's `redis_image`, `skpeek_image`,
+  `uwsgi_workers`, `uwsgi_threads`, `enable_limiter`; skpulse's
+  `skpulse_image`; skseek's `skseek_image`; skha's `skha_priority` /
+  `skha_state`.
+- **Flat by necessity, not choice**: skmem-pg's `skmem_pg_*` vars (a Jinja
+  attribute name can't contain a hyphen, so `skmem-pg.KEY` isn't
+  representable - `skmem_pg.KEY` is the closest dotted equivalent and is
+  what its network override actually uses, inconsistently with its own
+  other flat `skmem_pg_*` vars).
+- **Network override uses a single `<svc>.networks` for all three envs**
+  instead of the flat per-env form: skbackup, skboard, skbook, skdash,
+  skform, skgallery, skgit, skhub, skmem-pg, skmon, skstor. skgraph and
+  skvector are split - dotted `<svc>.networks` in prod, flat
+  `<svc>_dev_networks` / `<svc>_staging_networks` in dev/staging - which
+  means copying one env's vault snippet to another silently gets the wrong
+  (framework-default) subnet instead of the one you meant to override.
+
 ## Inconsistencies found while researching this catalog
 
 These are documentation/config drift found while reading every service's
 README, playbooks and templates. Nothing below was changed as part of this
 catalog; flagging for a follow-up cleanup pass.
 
-**Fail-open vs. fail-closed `CLUSTERNAME`/`DOMAIN`.** Most services
-(skfence, skfenceha, skgit, skgraph, skhub, skmail, skmon, skpdf, skstor,
-sksso) render `CLUSTERNAME`/`DOMAIN` with no framework default, so a missing
-vault key is a hard, deploy-stopping error. skport, skpulse, skwhoami,
-sksync, and skorch/skpeek instead fall back to placeholder values
-(placeholder cluster/domain names baked into the template). A forgotten
-vault entry there deploys successfully onto a wrong hostname instead of
-failing. skdash and skgallery sit in between: they reference their own
-`CLUSTERNAME`/`DOMAIN` directly (fail closed) but, unlike most services, do
-not fall back to the inventory-level `cluster_name`/`domain` the way
-skfence/skfenceha/skform/skdesk/skboard/skbook do.
+**Fail-open vs. fail-closed `CLUSTERNAME`/`DOMAIN`.** *Fixed for the
+placeholder-fallback services in the v1 consistency pass*: skboard, skdesk,
+skorch, skpeek, skport, skpulse, skseek, sksync and skwhoami now fail closed
+the same way skfence/skfenceha/sksec always did (`<svc>.KEY | default(cluster_name)`,
+no literal placeholder), guarded by `test_hostname_fails_closed.py`. Still
+open: skdash and skgallery reference their own `CLUSTERNAME`/`DOMAIN`
+directly (fail closed) but, unlike most services, do not fall back to the
+inventory-level `cluster_name`/`domain` the way skfence/skfenceha/skform/
+skdesk/skboard/skbook do - not a fail-open bug, just a missing convenience,
+left as-is.
 
-**Vault variable naming convention breaks in three places.** Nearly every
+**Vault variable naming convention breaks in three places.** *Not renamed
+(instances depend on the existing spelling); documented going forward in
+"Vault variable naming convention" above, which also lists these as legacy
+exceptions.* Nearly every
 service namespaces vault vars as `<svc>.<KEY>`. skreg instead uses a flat
 `vault_skreg_registry_http_secret`. skmem-pg uses flat `skmem_pg_*` vars
 (unavoidable. `skmem-pg`'s hyphen can't be a Jinja attribute name), but its
@@ -993,36 +1030,34 @@ effectively dead. skpeek's and skorch's image/tuning vars (`skpeek_image`,
 `redis_image`, `uwsgi_workers`) are flat rather than namespaced like every
 comparable knob elsewhere.
 
-**Network-override variable naming is inconsistent across services.**
-skhub/skmon use a single dotted `<svc>.networks` var across all three envs.
+**Network-override variable naming is inconsistent across services.** *Not
+renamed; see "Vault variable naming convention" above for the going-forward
+standard (flat, per-env).* skhub/skmon use a single dotted `<svc>.networks` var across all three envs.
 skgraph uses `skgraph.networks` in prod but flat `skgraph_dev_networks`/
 `skgraph_staging_networks` in dev/staging. skorch and skpeek use flat
 `<svc>_<env>_networks` in all three envs. An operator copying one service's
 vault pattern to another will silently get the wrong (default) subnet.
 
 **Deploy-command style diverges from `v1/README.md`'s own documented
-pattern** in two service READMEs: skport and skwhoami show
-`ansible-playbook -e env=prod -i v1/ansible/shared/hosts ...` (a different
-inventory path, no `target_manager_group`, no per-instance vault-file
-naming) instead of the framework convention every other README follows.
-skstor's README has no deploy-command example at all. This catalog uses the
-framework's documented convention consistently for all 30 services above.
+pattern.** *Fixed in the v1 consistency pass*: skport's and skwhoami's
+READMEs now use the framework convention (`envs/<env>/inventory.ini` +
+`target_manager_group`), and skstor's README has a deploy-command example.
+This catalog already used the framework's convention consistently for all
+30 services above.
 
 **`target_manager_group` has no default in three playbooks**
 (skport, skpulse, skwhoami). It must always be passed explicitly with
 `-e target_manager_group=...`, unlike the majority which default to
 `swarm_managers`.
 
-**Image pinning strategy is inconsistent.** Most services pin a
-vault-overridable version var. skreg uses the floating `registry:2` tag with
-no digest and no override at all. sksync hardcodes `syncthing/syncthing:2.0.13`
-directly in its compose template with no vault-overridable var whatsoever.
-skhub's `redis:alpine` is also a floating tag in practice, even though the
-CHANGELOG's v2.19.0 entry claims "all remaining floating `:latest` image
-refs ... are now pinned". The test that claim references
-(`test_no_latest_images.py`) only rejects the literal strings
-`latest`/`lts`/`stable`/`release`/`edge`/`main`, so `:alpine` passes the gate
-while still being a moving tag.
+**Image pinning strategy is inconsistent.** *Fixed in the v1 consistency
+pass*: `test_no_latest_images.py` now also rejects variant-only tags
+(`redis:alpine`) and major-only tags (`registry:2`, `postgres:16`) unless
+digest-pinned, and every image it now catches is pinned - to the exact
+version matching skstack01 prod's running digest where prod runs that
+image, otherwise to the current stable release. sksync's image is now an
+instance-overridable var (`sksync.SYNCTHING_VERSION`) like every other
+service.
 
 **skform breaks the framework's fail-closed convention.** Every other
 service with genuinely required vars guards them with an explicit
@@ -1032,28 +1067,26 @@ required-looking vars (`TOFU_VERSION`, `STATE_BACKEND_TYPE`,
 An incomplete vault renders blank/undefined values into `skform.env` rather
 than stopping the deploy before it starts.
 
-**skfence's rate-limiting default is misdescribed.** The v2.19.0 CHANGELOG
-entry says "`skfenceha.RATE_LIMIT_ENABLED` defaults to `true` (skfence
-itself defaults it off)". skfence's own dynamic-middlewares template has no
-`RATE_LIMIT_ENABLED` toggle at all. Rate limiting is unconditionally on
-there. skfence isn't defaulting it off; it simply never gained the on/off
-knob skfenceha introduced.
+**skfence's rate-limiting default is misdescribed.** *Fixed in the v1
+consistency pass*: the CHANGELOG entry now says skfence has no such toggle
+at all (rate limiting is unconditional there), rather than implying it
+defaults off.
 
-**skgallery's telemetry default contradicts its own inline comment.** The
-template comments "OPTIONAL: Disable telemetry (default: true for privacy)"
-directly above a line whose actual rendered default is `'all'`. Full
-telemetry enabled by default, the opposite of what the comment implies.
+**skgallery's telemetry default contradicts its own inline comment.**
+*Fixed in the v1 consistency pass*: per upstream Immich,
+`IMMICH_TELEMETRY_INCLUDE` only selects which categories Immich's own local
+metrics endpoint exposes (gated by `IMMICH_METRICS`, off by default) - it is
+not phone-home telemetry, so there was no privacy default to fix. The
+comment now describes what the var actually does; the default (`'all'`,
+upstream's own default) is unchanged.
 
-**A nonexistent README is cited by name.** Both skfence's and skfenceha's
-deploy-playbook headers point to `v1/ansible/core/skfence/README.md` as the
-place documenting why the two services aren't interchangeable; that file
-does not exist (only each service's `src/error-pages/README.md`, which
-documents the shared error-pages sidecar, not the service itself).
+**A nonexistent README is cited by name.** *Fixed in the v1 consistency
+pass*: `v1/ansible/core/skfence/README.md` now exists (short, mirrors this
+catalog's skfence section).
 
-**skbackup's CHANGELOG entry mislabels its own tier.** The `## Unreleased
-(v2.19.0)` entry reads "v1 core: **skbackup** ... published", but the
-service lives at `v1/ansible/optional/skbackup/`, not under `core/`. This
-catalog lists it correctly as optional.
+**skbackup's CHANGELOG entry mislabels its own tier.** *Fixed in the v1
+consistency pass*: the entry now reads "v1 optional". This catalog already
+listed it correctly.
 
 **skgit's admin-bootstrap task is mislabeled.** Its task name/comment says
 "(DEV/STAGING ONLY)" but the identical task (gated only by
@@ -1067,8 +1100,7 @@ differently-named network-override facts (`skvector_dev_networks`/
 a `- config` tag prod's compose-template task carries. A residue of an
 earlier pass that brought dev/staging only partway to prod parity.
 
-**The top-level `README.md` is stale relative to this catalog.** It still
-states "*(v1 is private)* Frozen" under the version table, which no longer
-reflects reality now that 30 v1 services are published and actively
-developed on `integration/*` branches. Not changed here (out of scope for
-this catalog), but worth a follow-up correction.
+**The top-level `README.md` is stale relative to this catalog.** *Fixed in
+the v1 consistency pass*: it now points at v1/'s README and this catalog
+instead of calling v1 private and frozen, and links the framework/instance
+submodule model.
