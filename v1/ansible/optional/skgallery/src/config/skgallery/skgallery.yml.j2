@@ -170,7 +170,7 @@ services:
   # Redis - In-memory Cache and Message Queue
   # ===========================================================================
   redis:
-    image: redis:{{ skgallery.REDIS_VERSION | default('7-alpine') }}
+    image: redis:{{ skgallery.REDIS_VERSION | default('7.4.9-alpine') }}
     command: redis-server --appendonly yes --maxmemory {{ skgallery.REDIS_MAXMEMORY | default('128mb') }} --maxmemory-policy noeviction
     volumes:
       - /var/data/skgallery-{{ env }}/redis-data:/data
@@ -265,7 +265,7 @@ services:
   # ===========================================================================
   # Automated daily backups with retention policy
   postgres-db-backup:
-    image: postgres:{{ skgallery.POSTGRES_BACKUP_VERSION | default('14') }}
+    image: postgres:{{ skgallery.POSTGRES_BACKUP_VERSION | default('14.23@sha256:a209aced4fa19381231fae4d9a4c5816f7691294f13572f8bddc082ba32e1c7c') }}
     env_file: /var/data/config/skgallery-{{ env }}/skgallery-backup.env
     environment:
       - PGTEMP=/dump/tmp

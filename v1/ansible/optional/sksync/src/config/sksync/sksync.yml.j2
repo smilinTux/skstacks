@@ -8,7 +8,7 @@ networks:
 
 services:
   syncthing:
-    image: syncthing/syncthing:2.0.13
+    image: syncthing/syncthing:{{ sksync.SYNCTHING_VERSION | default('2.0.13') }}
     env_file: /var/data/config/{{ app }}-{{ env }}/sksync.env
     hostname: syncthing
     user: "1000:1000"
