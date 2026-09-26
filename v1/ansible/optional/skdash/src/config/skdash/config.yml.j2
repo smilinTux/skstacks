@@ -1,0 +1,54 @@
+pageInfo:
+  title: {{ skdash.page_title | default('SKStacks - Dashboard') }}
+  navLinks: []
+  description: {{ skdash.page_description | default('Self-hosted dashboard for SKStacks services') }}
+  footerText: {{ skdash.footer_text | default('Powered by SKStacks') }}
+appConfig:
+  theme: {{ skdash.theme | default('one-dark') }}
+  layout: {{ skdash.layout | default('auto') }}
+  iconSize: {{ skdash.icon_size | default('medium') }}
+  language: {{ skdash.language | default('en') }}
+  statusCheckInterval: 60
+
+# The items below are a generic placeholder. Instances provide their own
+# dashboard links via the `skdash.sections` vault variable; this default
+# renders a working, non-empty board out of the box.
+sections:
+{% for section in skdash.sections | default([{'name': 'Example', 'items': [{'title': 'Example Service', 'description': 'Replace with your own dashboard links via skdash.sections', 'url': 'https://example.com'}]}]) %}
+  - name: {{ section.name }}
+{% if section.icon is defined %}
+    icon: {{ section.icon }}
+{% endif %}
+    displayData:
+      sortBy: {{ section.displayData.sortBy | default('default') if section.displayData is defined else 'default' }}
+      rows: {{ section.displayData.rows | default(1) if section.displayData is defined else 1 }}
+      cols: {{ section.displayData.cols | default(1) if section.displayData is defined else 1 }}
+      collapsed: {{ section.displayData.collapsed | default(false) if section.displayData is defined else false }}
+      hideForGuests: {{ section.displayData.hideForGuests | default(false) if section.displayData is defined else false }}
+    items:
+{% for item in section['items'] | list %}
+      - title: {{ item.title }}
+{% if item.description is defined %}
+        description: {{ item.description }}
+{% endif %}
+{% if item.icon_name is defined %}
+        icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/{{ item.icon_name }}.svg
+{% elif item.icon is defined %}
+        icon: {{ item.icon }}
+{% else %}
+        icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/default.svg
+{% endif %}
+{% if item.url is defined %}
+        url: {{ item.url }}
+{% endif %}
+{% if item.target is defined %}
+        target: {{ item.target }}
+{% endif %}
+{% if item.statusCheck is defined %}
+        statusCheck: {{ item.statusCheck }}
+{% endif %}
+{% if item.id is defined %}
+        id: {{ item.id }}
+{% endif %}
+{% endfor %}
+{% endfor %}

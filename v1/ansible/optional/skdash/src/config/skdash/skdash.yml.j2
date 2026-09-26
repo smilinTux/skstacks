@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  dashy:
+    image: lissy93/dashy:latest
+    env_file:
+      - /var/data/config/{{ app }}-{{ env }}/{{ app }}.env
+    environment:
+      - TMPDIR=/tmp
+      - NODE_OPTIONS=--max-old-space-size=1536
+    volumes:
+      - /var/data/{{ app }}-{{ env }}/config/config.yml:/app/user-data/conf.yml
+      - /var/data/{{ app }}-{{ env }}/tmp:/tmp
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - {{ app }}-{{ env }}
+      - cloud-public-{{ env }}
+    healthcheck:
+      test: ['CMD', 'node', '/app/services/healthcheck']
+      interval: "{{ skdash.healthcheck_interval | default('1m30s') }}"
+      timeout: "{{ skdash.healthcheck_timeout | default('60s') }}"
+      retries: {{ skdash.healthcheck_retries | default(3) | int }}
+      start_period: "{{ skdash.healthcheck_start_period | default('40s') }}"
+    deploy:
+      mode: replicated
+      replicas: {{ skdash.replicas | default(1) | int }}
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        monitor: 30s
+        max_failure_ratio: 0.2
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: pause
+        monitor: 30s
+        max_failure_ratio: 0.2
+      resources:
+        reservations:
+          memory: {{ skdash.memory_reservation | default('512M') }}
+          cpus: '{{ skdash.cpu_reservation | default("0.25") }}'
+        limits:
+          memory: {{ skdash.memory_limit | default('2G') }}
+          cpus: '{{ skdash.cpu_limit | default("0.5") }}'
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skdash.CLUSTERNAME | default('cluster1') }}.{{ skdash.DOMAIN | default('example.com') }}`)"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.service={{ app }}-{{ env }}-dashy"
+        - "traefik.http.services.{{ app }}-{{ env }}-dashy.loadbalancer.server.port=8080"
+        - "traefik.http.services.{{ app }}-{{ env }}-dashy.loadbalancer.sticky=true"
+        - "traefik.http.services.{{ app }}-{{ env }}-dashy.loadbalancer.sticky.cookie=true"
+        - "traefik.http.services.{{ app }}-{{ env }}-dashy.loadbalancer.sticky.cookie.name={{ app }}_session"
+        - "traefik.http.services.{{ app }}-{{ env }}-dashy.loadbalancer.sticky.cookie.secure=true"
+        - "traefik.http.services.{{ app }}-{{ env }}-dashy.loadbalancer.sticky.cookie.httpOnly=true"
+        - "traefik.http.services.{{ app }}-{{ env }}-dashy.loadbalancer.sticky.cookie.sameSite=strict"
+
+networks:
+  {{ app }}-{{ env }}:
+    external: true
+  cloud-public-{{ env }}:
+    external: true
