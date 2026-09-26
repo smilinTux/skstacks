@@ -1,0 +1,68 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+version: '3.8'
+
+services:
+  opentofu:
+    image: opentofu/opentofu:{{ skform.TOFU_VERSION | default('latest') }}
+    env_file: /var/data/config/skform-{{ env }}/skform.env
+    # OpenTofu is an on-demand CLI tool, not a long-running server: keep the
+    # container idle so operators can `docker exec` tofu commands into it.
+    command: ["sleep", "infinity"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "{{ skform.LOG_MAX_SIZE | default('10m') }}"
+        max-file: "{{ skform.LOG_MAX_FILES | default('3') }}"
+    volumes:
+      - /var/data/skform-{{ env }}/state:/tofu/state
+      - /var/data/skform-{{ env }}/workspaces:/tofu/workspaces
+      - /var/data/skform-{{ env }}/plugins:/tofu/plugins
+      - /var/data/skform-{{ env }}/scripts:/tofu/scripts
+      - /var/data/config/skform-{{ env }}/tofu.hcl:/etc/tofu.hcl:ro
+    networks:
+      - skform-{{ env }}
+      {% if skform.SKSTOR_ENABLED %}
+      - cloud-public-{{ env }}
+      {% endif %}
+    deploy:
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 120s
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          cpus: '{{ skform.RESOURCES_LIMITS_CPUS | default("1.00") }}'
+          memory: {{ skform.RESOURCES_LIMITS_MEMORY | default("512M") }}
+        reservations:
+          cpus: '{{ skform.RESOURCES_RESERVATIONS_CPUS | default("0.25") }}'
+          memory: {{ skform.RESOURCES_RESERVATIONS_MEMORY | default("256M") }}
+      # CLI tool only - no web UI, no Traefik routing needed
+
+networks:
+  skform-{{ env }}:
+    external: true
+  {% if skform.SKSTOR_ENABLED %}
+  cloud-public-{{ env }}:
+    external: true
+  {% endif %}
