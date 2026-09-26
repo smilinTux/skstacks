@@ -64,6 +64,7 @@
       loop:
         - /var/data/{{ app }}-{{ env }}
         - /var/data/{{ app }}-{{ env }}/bookstack
+        - /var/data/{{ app }}-{{ env }}/bookstack/config
         - /var/data/{{ app }}-{{ env }}/database-dump
         - /var/data/runtime/{{ app }}-{{ env }}/db
         - /var/data/config/{{ app }}-{{ env }}
