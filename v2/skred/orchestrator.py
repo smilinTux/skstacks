@@ -45,7 +45,13 @@ def suppress_known(findings, baseline: set) -> list:
     """Drop findings whose fingerprint is already accepted debt."""
     if not baseline:
         return list(findings)
-    return [f for f in findings if getattr(f, "fingerprint", None) not in baseline]
+
+    def known(fp):
+        # `*:file:rule:line` matches that exact finding in any commit: a
+        # release squash re-adds a baselined fixture under a new sha.
+        return fp in baseline or (bool(fp) and "*:" + fp.split(":", 1)[-1] in baseline)
+
+    return [f for f in findings if not known(getattr(f, "fingerprint", None))]
 
 @dataclass
 class ScanReport:
