@@ -102,9 +102,9 @@ docker stack deploy \
 sleep 5
 
 echo -e "${YELLOW}Updating services with new configuration...${NC}"
-docker service update --force --detach=false ${STACK_NAME}_forgejo || true
-docker service update --force --detach=false ${STACK_NAME}_postgres || true
-docker service update --force --detach=false ${STACK_NAME}_db-backup || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_forgejo || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_postgres || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_db-backup || true
 
 echo -e "${YELLOW}Waiting for services to stabilize...${NC}"
 sleep 10

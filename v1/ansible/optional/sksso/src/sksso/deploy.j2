@@ -90,8 +90,8 @@ docker stack deploy -c "${COMPOSE_FILE}" "${STACK_NAME}"
 sleep 10
 
 echo -e "${YELLOW}Forcing service updates to pull latest images...${NC}"
-docker service update --force --detach=false ${STACK_NAME}_server || true
-docker service update --force --detach=false ${STACK_NAME}_worker || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_server || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_worker || true
 
 echo -e "${YELLOW}Waiting for services to stabilize...${NC}"
 sleep 15

@@ -101,7 +101,7 @@ docker stack deploy \
 sleep 5
 
 echo -e "${YELLOW}Forcing service update...${NC}"
-docker service update --force --detach=false ${STACK_NAME}_skseek || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_skseek || true
 
 echo -e "${YELLOW}Waiting for service to stabilize...${NC}"
 sleep 10

@@ -42,14 +42,14 @@ sleep 10
 
 # Force update services to pull latest images
 echo -e "${YELLOW}🔄 Forcing service updates to pull latest images...${NC}"
-docker service update --force --detach=false ${STACK_NAME}_prometheus || true
-docker service update --force --detach=false ${STACK_NAME}_grafana || true
-docker service update --force --detach=false ${STACK_NAME}_loki || true
-docker service update --force --detach=false ${STACK_NAME}_promtail || true
-docker service update --force --detach=false ${STACK_NAME}_node-exporter || true
-docker service update --force --detach=false ${STACK_NAME}_cadvisor || true
-docker service update --force --detach=false ${STACK_NAME}_alertmanager || true
-docker service update --force --detach=false ${STACK_NAME}_jaeger || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_prometheus || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_grafana || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_loki || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_promtail || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_node-exporter || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_cadvisor || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_alertmanager || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_jaeger || true
 
 # Wait for services to stabilize
 echo -e "${YELLOW}⏳ Waiting for services to stabilize...${NC}"

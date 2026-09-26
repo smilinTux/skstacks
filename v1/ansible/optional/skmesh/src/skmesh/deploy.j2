@@ -37,7 +37,7 @@ docker stack deploy \
 sleep 5
 
 echo -e "${YELLOW}🔄 Forcing service updates to pull latest images...${NC}"
-docker service update --force --detach=false ${STACK_NAME}_management || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_management || true
 
 sleep 10
 
