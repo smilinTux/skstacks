@@ -37,7 +37,7 @@ def test_user_settings_file_mounted_when_set():
 def test_every_mounted_var_data_dir_is_created():
     created = set()
     pb = (SKSSO / "deploy_sksso-dev.yml").read_text()
-    for m in re.finditer(r"- (/var/data/[^\s\"']+)", pb):
+    for m in re.finditer(r"^\s+- (/var/data/.+?)\s*$", pb, re.M):
         created.add(m.group(1).replace("{{ app }}", "sksso").replace("{{ env }}", "dev"))
     for name, svc in render(user_settings_py="x = 1\n").items():
         for v in svc.get("volumes", []):
