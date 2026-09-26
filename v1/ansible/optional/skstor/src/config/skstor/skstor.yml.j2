@@ -1,0 +1,65 @@
+version: '3.8'
+
+networks:
+  {{ app }}-{{ env }}:
+    external: true
+  cloud-public-{{ env }}:
+    external: true
+
+services:
+  minio:
+    image: quay.io/minio/minio:{{ skstor.minio_image_tag | default('RELEASE.2025-04-22T22-12-26Z') }}
+    env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}.env
+    volumes:
+      - {{ app }}-{{ env }}-data:/data
+    command:
+      - server
+      - /data
+      - --address
+      - ":9000"
+      - --console-address
+      - ":9001"
+    networks:
+      - cloud-public-{{ env }}
+      - {{ app }}-{{ env }}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          cpus: '{{ skstor.cpu_limit | default("0.25") }}'
+          memory: {{ skstor.memory_limit | default("512M") }}
+        reservations:
+          cpus: '{{ skstor.cpu_reservation | default("0.1") }}'
+          memory: {{ skstor.memory_reservation | default("256M") }}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-console.rule=Host(`{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-console.{{ skstor.CLUSTERNAME | default('cluster1') }}.{{ skstor.DOMAIN | default('example.com') }}`)"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-console.entrypoints=websecure"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-console.tls=true"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-console.service={{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-console"
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-console.loadbalancer.server.port=9001"
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-console.loadbalancer.sticky=true"
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-console.loadbalancer.sticky.cookie=true"
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-console.loadbalancer.sticky.cookie.name={{ app }}_console_session"
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-console.loadbalancer.sticky.cookie.secure=true"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skstor.CLUSTERNAME | default('cluster1') }}.{{ skstor.DOMAIN | default('example.com') }}`)"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.service={{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}"
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=9000"
+
+volumes:
+  {{ app }}-{{ env }}-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/data/{{ app }}-{{ env }}/data
