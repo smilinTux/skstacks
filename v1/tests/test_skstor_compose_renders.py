@@ -68,3 +68,13 @@ def test_meta_and_data_are_bind_mounts_on_the_shared_filesystem():
 def test_no_named_volumes_top_level_block():
     doc = render("prod")
     assert "volumes" not in doc  # no top-level named-volume declarations
+
+
+def test_garage_has_an_underscore_free_alias():
+    """Docker service names contain '_' (skstor-dev_garage), which S3 clients
+    (aws-cli, SDKs) reject as an invalid hostname. Garage gets a hyphenated
+    alias on the skstor network that consumers (e.g. skhub) use instead."""
+    for env_name in ("dev", "staging", "prod"):
+        nets = render(env_name)["services"]["garage"]["networks"]
+        assert isinstance(nets, dict), nets
+        assert f"skstor-{env_name}-garage" in nets[f"skstor-{env_name}"]["aliases"]

@@ -44,8 +44,11 @@ services:
       - /var/data/skstor-{{ env }}/meta:/var/lib/garage/meta
       - /var/data/skstor-{{ env }}/data:/var/lib/garage/data
     networks:
-      - cloud-public-{{ env }}
-      - skstor-{{ env }}
+      cloud-public-{{ env }}: {}
+      skstor-{{ env }}:
+        # underscore-free name for S3 clients (skstor-{{ env }}_garage is rejected as a hostname)
+        aliases:
+          - skstor-{{ env }}-garage
     healthcheck:
       test: ["CMD", "/garage", "status"]
       interval: 30s

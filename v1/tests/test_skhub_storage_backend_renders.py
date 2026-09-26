@@ -76,7 +76,7 @@ def test_skstor_mode_compose_joins_the_in_cluster_network(env_name):
 
 def test_skstor_mode_env_points_at_the_in_cluster_garage():
     text = render_env(storage_backend="skstor", s3_access_key="k", s3_secret_key="s")
-    assert "OBJECTSTORE_S3_HOST=skstor-prod_garage" in text
+    assert "OBJECTSTORE_S3_HOST=skstor-prod-garage" in text
     assert "OBJECTSTORE_S3_PORT=3900" in text
     assert "OBJECTSTORE_S3_SSL=false" in text
     assert "OBJECTSTORE_S3_USEPATH_STYLE=true" in text
