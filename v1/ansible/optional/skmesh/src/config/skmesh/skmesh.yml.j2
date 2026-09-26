@@ -163,13 +163,14 @@ services:
       - management
 
   dashboard:
-    # Upstream public netbird dashboard, pinned by digest: netbirdio/dashboard
-    # publishes no semver release tags (only "main" and per-commit "sha-*"
-    # tags), so a digest is the only reproducible pin available. This
-    # replaces the private, unpublished ghcr.io/smilintux/skmesh branded
-    # fork, which is not pullable outside smilinTux's own registry auth
-    # and therefore cannot ship in the public framework.
-    image: netbirdio/dashboard@sha256:ffb9fb785589ac4a523c1bd7a6ecb035478922fdad01e84368fb36818ca8f7b0
+    # DASHBOARD_IMAGE lets an instance pin its own dashboard image instead
+    # of the framework default, e.g. a private branded fork it already
+    # depends on (that image is not published here - see README). Default:
+    # upstream public netbird dashboard, pinned by digest since
+    # netbirdio/dashboard publishes no semver release tags (only "main"
+    # and per-commit "sha-*" tags), so a digest is the only reproducible
+    # pin available as a framework default.
+    image: {{ skmesh.DASHBOARD_IMAGE | default('netbirdio/dashboard@sha256:ffb9fb785589ac4a523c1bd7a6ecb035478922fdad01e84368fb36818ca8f7b0') }}
     container_name: skmesh-dashboard
     env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
     networks:

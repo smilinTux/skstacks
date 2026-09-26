@@ -7,13 +7,20 @@ prod-only (no dev/staging variant is provided upstream).
 
 ## Dashboard image
 
-The upstream `netbirdio/dashboard` image publishes no semver release tags,
-only `main` and per-commit `sha-*` tags, so this stack pins it by digest
-(see `src/config/skmesh/skmesh.yml.j2`) rather than a moving `main`/`latest`
-tag. This replaces the private, unpublished `ghcr.io/smilintux/skmesh`
-branded fork used internally, which is not pullable outside its owner's
-registry auth and so cannot ship in the public framework. Functionally this
-is the stock netbird dashboard UI; only the container image differs.
+`skmesh.DASHBOARD_IMAGE` (optional) lets an instance pin its own dashboard
+image instead of the framework default. This exists because an instance
+already running a private, branded dashboard fork (for example
+`ghcr.io/smilintux/skmesh`) would otherwise have that image silently
+swapped out from under it on the next deploy from this framework - the
+default is deliberately not the only option.
+
+Default (unset): the upstream `netbirdio/dashboard` image, pinned by
+digest (see `src/config/skmesh/skmesh.yml.j2`), since that image publishes
+no semver release tags, only `main` and per-commit `sha-*` tags - a digest
+is the only reproducible pin available as a framework default. This is not
+pullable from a private fork's own registry, so an instance that depends
+on one (see "Instance notes" below) must set `DASHBOARD_IMAGE` explicitly;
+this framework does not ship or publish that fork's image.
 
 ## SSO integration
 
@@ -58,6 +65,7 @@ skmesh:
   # optional
   CLOUDFLARED: false             # true: BASE_DOMAIN = DOMAIN (no cluster prefix)
   DEPLOY_COTURN: false           # true to bundle coturn in this stack
+  DASHBOARD_IMAGE: ""            # pin your own dashboard image; default: upstream netbirdio/dashboard (see "Dashboard image" above)
   TURN_MAX_PORT: "65535"
   TURN_MIN_PORT: "49152"
   TURN_REALM: "skmesh."
