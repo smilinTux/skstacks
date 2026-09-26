@@ -260,7 +260,7 @@
       tags:
         - post-deploy
 
-    - name: Create admin user if credentials provided (DEV/STAGING ONLY)
+    - name: Create admin user if credentials provided (opt-in via skgit.admin_enabled)
       shell: |
         for i in {1..60}; do
           if docker exec $(docker ps -q -f name={{ app }}-{{ env }}_forgejo | head -n1) \
