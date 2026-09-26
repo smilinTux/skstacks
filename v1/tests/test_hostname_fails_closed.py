@@ -74,3 +74,87 @@ def test_host_rule_fails_closed_with_no_override_and_no_inventory_fallback(path,
         f"raise - and none of its env playbooks assert those vars are set "
         f"before deploying:\n{line}"
     )
+
+
+# --- skdash / skgallery: CLUSTERNAME/DOMAIN must fall back to inventory vars ---
+# PR #40 aligned most services on `<svc>.KEY | default(cluster_name)` /
+# `<svc>.KEY | default(domain)` so a deploy with only the inventory host vars
+# set (no per-service override) still resolves a real hostname instead of
+# depending on a hard failure. skdash and skgallery were left out of that
+# pass: every templated use of their CLUSTERNAME/DOMAIN values referenced the
+# service dict directly, with no fallback to cluster_name/domain.
+
+_FALLBACK_TARGETS = {
+    "optional/skdash/src/config/skdash/skdash.yml.j2",
+    "optional/skdash/src/config/skdash/skdash.env.j2",
+    "optional/skdash/src/config/skdash/skdash.sh.env.j2",
+    "optional/skdash/src/config/skdash/config.yml.j2",
+    "optional/skgallery/src/config/skgallery/skgallery.sh.env.j2",
+    "optional/skgallery/src/config/skgallery/skgallery.env.j2",
+    "optional/skgallery/src/config/skgallery/skgallery.yml.j2",
+    "optional/skgallery/src/skgallery/deploy.j2",
+}
+
+
+def _iter_unguarded_cluster_domain_refs():
+    """Yield (relpath, lineno, line, service) for every non-comment line in
+    the target files that reads `<service>.CLUSTERNAME` or `<service>.DOMAIN`
+    without a `| default(cluster_name)` / `| default(domain)` fallback."""
+    for relpath in sorted(_FALLBACK_TARGETS):
+        path = ANSIBLE / relpath
+        service = pathlib.Path(relpath).parts[1]
+        unguarded_cluster = re.compile(rf"{service}\.CLUSTERNAME(?!\s*\|\s*default\(cluster_name\))")
+        unguarded_domain = re.compile(rf"{service}\.DOMAIN(?!\s*\|\s*default\(domain\))")
+        for lineno, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue  # informational comment headers are exempt repo-wide
+            if unguarded_cluster.search(line) or unguarded_domain.search(line):
+                yield relpath, lineno, line.strip(), service
+
+
+UNGUARDED_CLUSTER_DOMAIN_REFS = list(_iter_unguarded_cluster_domain_refs())
+
+
+@pytest.mark.parametrize(
+    "relpath,lineno,line,service",
+    UNGUARDED_CLUSTER_DOMAIN_REFS,
+    ids=[f"{r}:{n}" for r, n, _, _ in UNGUARDED_CLUSTER_DOMAIN_REFS],
+)
+def test_skdash_and_skgallery_cluster_domain_use_inventory_fallback(relpath, lineno, line, service):
+    pytest.fail(
+        f"{relpath}:{lineno} reads {service}.CLUSTERNAME/DOMAIN without a "
+        f"`| default(cluster_name)` / `| default(domain)` fallback, unlike the "
+        f"other services aligned in PR #40:\n{line}"
+    )
+
+
+@pytest.mark.parametrize("relpath", sorted(_FALLBACK_TARGETS), ids=sorted(_FALLBACK_TARGETS))
+def test_skdash_and_skgallery_fallback_lines_actually_render_from_inventory_vars(relpath):
+    """A `| default(cluster_name)` fallback is only real if the line still
+    renders when the service override is absent and only the inventory host
+    vars are supplied - otherwise it's decorative and the deploy still fails
+    at the same undefined variable it claims to guard against."""
+    path = ANSIBLE / relpath
+    service = pathlib.Path(relpath).parts[1]
+    env = jinja2.Environment(undefined=jinja2.StrictUndefined, trim_blocks=True)
+    context = {
+        "env": "prod",
+        "app": service,
+        "cluster_name": "cluster1",
+        "domain": "example.com",
+        "item": {"url": "https://example.com"},
+        service: {},
+    }
+    for lineno, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
+        if f"{service}.CLUSTERNAME" not in line and f"{service}.DOMAIN" not in line:
+            continue
+        if line.strip().startswith("#"):
+            continue
+        try:
+            env.from_string(line).render(**context)
+        except jinja2.exceptions.UndefinedError as exc:
+            pytest.fail(
+                f"{relpath}:{lineno} still raises with only cluster_name/domain "
+                f"set (no {service} override):\n{line}\n{exc}"
+            )

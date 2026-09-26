@@ -141,7 +141,7 @@ check_service_health "database" "1" || ALL_HEALTHY=false
 echo ""
 if [ "$ALL_HEALTHY" = true ]; then
     echo -e "${GREEN}Deployment successful.${NC}"
-    echo -e "${GREEN}Access SKGallery at: https://skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skgallery.CLUSTERNAME }}.{{ skgallery.DOMAIN }}${NC}"
+    echo -e "${GREEN}Access SKGallery at: https://skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skgallery.CLUSTERNAME | default(cluster_name) }}.{{ skgallery.DOMAIN | default(domain) }}${NC}"
 else
     echo -e "${YELLOW}Deployment complete with warnings. Some services may still be starting up.${NC}"
     echo -e "${YELLOW}Monitor with: docker service ls | grep ${STACK_NAME}${NC}"
