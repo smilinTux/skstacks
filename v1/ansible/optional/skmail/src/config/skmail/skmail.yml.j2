@@ -48,7 +48,7 @@ services:
   # The certificate is then dumped by traefik-certs-dumper for DMS to use
   # Also serves as a basic webmail landing page / status endpoint
   mail-web:
-    image: traefik/whoami:v1.12.0
+    image: "{{ skmail.MAIL_WEB_IMAGE | default('traefik/whoami:v1.12.0') }}"
     hostname: "{{ skmail.HOSTNAME | default('mail.' + skmail.DOMAIN) }}"
     environment:
       - WHOAMI_NAME=mail-web
@@ -59,8 +59,9 @@ services:
       mode: replicated
       replicas: 1
       placement:
-        constraints:
-          - node.role == manager
+        # skmail.MAIL_WEB_PLACEMENT_CONSTRAINTS (list); default keeps the
+        # manager pin. Does not affect the DMS service's own placement.
+        constraints: {{ (skmail.MAIL_WEB_PLACEMENT_CONSTRAINTS | default(['node.role == manager'])) | tojson }}
       update_config:
         parallelism: 1
         delay: 10s
@@ -89,6 +90,15 @@ services:
         - "traefik.http.routers.mail-web-{{ env }}.tls.certresolver=main"
         - "traefik.http.routers.mail-web-{{ env }}.service=mail-web-{{ env }}"
         - "traefik.http.routers.mail-web-{{ env }}.priority=50"
+{# skmail.TLS_DOMAINS: list of "domain" strings or {main, sans: [...]} maps #}
+{% for _tls_domain in skmail.TLS_DOMAINS | default([]) %}
+{% set _tls_main = _tls_domain.main if _tls_domain is mapping else _tls_domain %}
+{% set _tls_sans = (_tls_domain.sans if _tls_domain is mapping else none) or [] %}
+        - "traefik.http.routers.mail-web-{{ env }}.tls.domains[{{ loop.index0 }}].main={{ _tls_main }}"
+{% if _tls_sans %}
+        - "traefik.http.routers.mail-web-{{ env }}.tls.domains[{{ loop.index0 }}].sans={{ _tls_sans | join(',') }}"
+{% endif %}
+{% endfor %}
 
   skmail:
     image: "ghcr.io/docker-mailserver/docker-mailserver:{{ skmail.DMS_VERSION | default('16.0.1') }}"
@@ -170,13 +180,24 @@ services:
         delay: 10s
         max_attempts: 5
         window: 120s
+      # skmail.RESOURCES_* (skdash's naming); defaults are the historical
+      # values. An empty reservation value is omitted; both empty drops the
+      # reservations block entirely.
+{% set _res_cpus = skmail.RESOURCES_RESERVATIONS_CPUS | default('0.5') %}
+{% set _res_mem = skmail.RESOURCES_RESERVATIONS_MEMORY | default('1G') %}
       resources:
         limits:
-          cpus: '1.5'
-          memory: 3G
+          cpus: '{{ skmail.RESOURCES_LIMITS_CPUS | default("1.5") }}'
+          memory: {{ skmail.RESOURCES_LIMITS_MEMORY | default("3G") }}
+{% if _res_cpus or _res_mem %}
         reservations:
-          cpus: '0.5'
-          memory: 1G
+{% if _res_cpus %}
+          cpus: '{{ _res_cpus }}'
+{% endif %}
+{% if _res_mem %}
+          memory: {{ _res_mem }}
+{% endif %}
+{% endif %}
       # NO TRAEFIK LABELS - Host mode direct port binding
       labels:
         - "traefik.enable=false"
