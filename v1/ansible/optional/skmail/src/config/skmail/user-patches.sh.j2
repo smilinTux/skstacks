@@ -9,6 +9,10 @@
 
 echo "Running user-patches.sh..."
 
+# /etc/dms/tls is the traefik-certs-dumper bind used by SSL_TYPE=manual only;
+# letsencrypt/self-signed certs are managed by docker-mailserver itself, and
+# waiting here outlasted the healthcheck (container killed as unhealthy).
+{% if (skmail.SSL_TYPE | default('letsencrypt')) == 'manual' %}
 # Wait for SSL certificates to be available (with timeout)
 CERT_WAIT_MAX=300  # 5 minutes
 CERT_WAIT_INTERVAL=10  # Check every 10 seconds
@@ -35,6 +39,7 @@ if [ ! -f "/etc/dms/tls/certificate.crt" ] || [ ! -f "/etc/dms/tls/privatekey.ke
     echo "  Current contents:"
     ls -la /etc/dms/tls/ 2>/dev/null || echo "    (directory does not exist)"
 fi
+{% endif %}
 
 # Fix ownership and permissions for amavis directory structure
 chown -R amavis:clamav /var/lib/amavis/
@@ -76,6 +81,7 @@ for user in root postfix dovecot; do
     fi
 done
 
+{% if (skmail.SSL_TYPE | default('letsencrypt')) == 'manual' %}
 # Fix Dovecot SSL configuration to use actual certificate files
 if [ -f /etc/dovecot/conf.d/10-ssl.conf ]; then
     echo "Updating Dovecot SSL configuration..."
@@ -84,6 +90,7 @@ if [ -f /etc/dovecot/conf.d/10-ssl.conf ]; then
     sed -i 's|ssl_key = </etc/dms/tls/key|ssl_key = </etc/dms/tls/privatekey.key|g' /etc/dovecot/conf.d/10-ssl.conf
     echo "Updated Dovecot SSL certificate paths"
 fi
+{% endif %}
 
 {% if skmail.RELAY_HOST is defined and skmail.RELAY_HOST %}
 # =============================================================================
