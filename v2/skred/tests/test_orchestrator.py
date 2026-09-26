@@ -91,3 +91,20 @@ def test_load_baseline_ignores_comments_and_blanks(tmp_path):
     f = tmp_path / "b.txt"
     f.write_text("# a comment\n\nabc:1\n  def:2  \n", encoding="utf-8")
     assert load_baseline(str(f)) == {"abc:1", "def:2"}
+
+
+def test_any_commit_entry_suppresses_same_finding_in_every_commit():
+    """A release squash re-adds a baselined fixture under a NEW commit sha; a
+    `*:file:rule:line` entry must keep matching it without re-baselining."""
+    base = {"*:t/test_signer.py:generic-api-key:44"}
+    kept = suppress_known([_f("abbebd1:t/test_signer.py:generic-api-key:44"),
+                           _f("d8118b1:t/test_signer.py:generic-api-key:44")], base)
+    assert kept == []
+
+
+def test_any_commit_entry_does_not_cover_other_lines_files_or_rules():
+    base = {"*:t/test_signer.py:generic-api-key:44"}
+    new = [_f("c1:t/test_signer.py:generic-api-key:45"),
+           _f("c1:t/other.py:generic-api-key:44"),
+           _f("c1:t/test_signer.py:aws-access-token:44")]
+    assert suppress_known(new, base) == new
