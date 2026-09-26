@@ -33,6 +33,8 @@ services:
         delay: 10s
       mode: replicated
       replicas: 1
+      placement:
+        constraints: {{ (skpdf.placement_constraints | default([])) | tojson }}
       resources:
         limits:
           memory: {{ skpdf.MEMORY_LIMIT | default('2G') }}

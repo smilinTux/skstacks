@@ -21,6 +21,8 @@ services:
       - skorch-{{ env }}
       - cloud-public-{{ env }}
     deploy:
+      placement:
+        constraints: {{ (skorch_cfg.placement_constraints | default([])) | tojson }}
       update_config:
         parallelism: 1
         delay: 10s
@@ -71,6 +73,8 @@ services:
       timeout: 5s
       retries: 10
     deploy:
+      placement:
+        constraints: {{ (skorch_cfg.placement_constraints | default([])) | tojson }}
       restart_policy:
         condition: on-failure
         delay: 5s
@@ -85,6 +89,8 @@ services:
       - /var/data/runtime/skorch-{{ env }}/redis:/data
       - /var/data/config/skorch-{{ env }}/redis.conf:/usr/local/etc/redis/redis.conf:ro
     deploy:
+      placement:
+        constraints: {{ (skorch_cfg.placement_constraints | default([])) | tojson }}
       restart_policy:
         condition: on-failure
         delay: 5s
@@ -109,6 +115,8 @@ services:
     depends_on:
       - postgres
     deploy:
+      placement:
+        constraints: {{ (skorch_cfg.placement_constraints | default([])) | tojson }}
       restart_policy:
         condition: on-failure
 
@@ -140,6 +148,8 @@ services:
       start_period: 10s
       retries: 3
     deploy:
+      placement:
+        constraints: {{ (skorch_cfg.placement_constraints | default([])) | tojson }}
       restart_policy:
         condition: on-failure
         delay: 5s
