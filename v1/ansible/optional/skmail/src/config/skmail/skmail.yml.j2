@@ -13,12 +13,17 @@
 #   - Replicated with 1 replica = only ONE instance at a time
 #   - Swarm auto-reschedules to another manager if node fails (~10-30s failover)
 #
-# CERTIFICATE MANAGEMENT:
-#   - DMS natively supports Traefik's acme.json format (SSL_TYPE=letsencrypt)
-#   - Mount acme.json directly at /etc/letsencrypt/acme.json (read-only)
-#   - DMS auto-extracts wildcard certificate *.example.com for mail.example.com
-#   - Certificate changes trigger automatic reload (DMS monitors acme.json)
-#   - No traefik-certs-dumper needed for mail certificates
+# CERTIFICATE MANAGEMENT (skmail.SSL_TYPE, default letsencrypt):
+#   - letsencrypt (default): DMS natively supports Traefik's acme.json format.
+#     Mount acme.json directly at /etc/letsencrypt/acme.json (read-only); DMS
+#     auto-extracts wildcard certificate *.example.com for mail.example.com
+#     and reloads automatically on renewal. No traefik-certs-dumper needed.
+#   - manual: skmail.SSL_CERT_PATH/SSL_KEY_PATH (host paths) are bind-mounted
+#     read-only for an instance bringing its own certificate.
+#   - self-signed: for an instance without ACME (a test instance); the deploy
+#     playbook generates <FQDN>-key.pem/-cert.pem and demoCA/cacert.pem with
+#     openssl under docker-data/dms/config/ssl/ if absent (already covered by
+#     the config volume mount below).
 #   - mail-web service provides HTTP endpoint for mail.example.com (status page)
 #
 # Architecture:
@@ -125,11 +130,20 @@ services:
       - /var/data/skmail-{{ env }}/docker-data/dms/mailstate:/var/mail-state
       - /var/data/skmail-{{ env }}/docker-data/dms/config:/tmp/docker-mailserver
       - /var/data/skmail-{{ env }}/docker-data/dms/logs:/var/log/mail
+{% if (skmail.SSL_TYPE | default('letsencrypt')) == 'letsencrypt' %}
       # === TRAEFIK ACME.JSON DIRECT MOUNT ===
       # DMS natively reads Traefik's acme.json format (SSL_TYPE=letsencrypt)
       # DMS auto-extracts *.example.com wildcard certificate for mail.example.com
       # File is monitored for changes - auto-reloads on certificate renewal
       - /var/data/runtime/{{ fence_service_name }}-{{ env }}/acme/acme.json:/etc/letsencrypt/acme.json:ro
+{% elif (skmail.SSL_TYPE | default('letsencrypt')) == 'manual' %}
+      # === MANUAL TLS CERT/KEY MOUNT (skmail.SSL_TYPE=manual) ===
+      # Host paths from skmail.SSL_CERT_PATH / skmail.SSL_KEY_PATH, mounted
+      # read-only at the fixed internal paths skmail.env's SSL_CERT_PATH/
+      # SSL_KEY_PATH point at
+      - {{ skmail.SSL_CERT_PATH }}:/etc/skmail-tls/cert.pem:ro
+      - {{ skmail.SSL_KEY_PATH }}:/etc/skmail-tls/key.pem:ro
+{% endif %}
       # Config files (read-only bind mounts)
       - /etc/localtime:/etc/localtime:ro
     # No overlay network - host mode

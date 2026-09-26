@@ -52,6 +52,11 @@ skmail:
   ENABLE_CLAMAV: "1"                     # default: 1
   ENABLE_FAIL2BAN: "1"                   # default: 1
 
+  # SSL_TYPE: default: letsencrypt - see "Certificates" below for manual/self-signed
+  SSL_TYPE: "letsencrypt"
+  SSL_CERT_PATH: "/srv/tls/mail.example.com/fullchain.pem"  # only for SSL_TYPE: manual
+  SSL_KEY_PATH: "/srv/tls/mail.example.com/privkey.pem"     # only for SSL_TYPE: manual
+
   # Outbound relay (skip this block to send directly from this host's IP;
   # most residential/dynamic IPs get blocked or spam-foldered by major
   # providers without a relay with established sender reputation)
@@ -108,14 +113,30 @@ playbook manages.
 
 ## Certificates
 
-`skmail` does not run its own ACME client. It expects a TLS certificate for
-`HOSTNAME` (or a wildcard covering it) to already be extracted from
-Traefik's `acme.json` onto shared storage at
-`/var/data/runtime/<fence-service>-<env>/certs/`, where `<fence-service>` is
-whichever of `skfence` / `skfenceha` / `holofence` this instance runs (the
-playbook auto-detects it). The `mail-web` sidecar's only job is to give
-Traefik an HTTP route to `HOSTNAME` so it issues that certificate in the
-first place.
+`skmail.SSL_TYPE` (default `letsencrypt`) selects how `docker-mailserver`
+gets its SMTP/IMAP TLS certificate; see the upstream
+[SSL_TYPE docs](https://docker-mailserver.github.io/docker-mailserver/latest/config/security/ssl/)
+for the full reference on every value below.
+
+- **`letsencrypt`** (default, unchanged behaviour): `skmail` does not run its
+  own ACME client. It expects a TLS certificate for `HOSTNAME` (or a wildcard
+  covering it) to already be extracted from Traefik's `acme.json` onto shared
+  storage at `/var/data/runtime/<fence-service>-<env>/certs/`, where
+  `<fence-service>` is whichever of `skfence` / `skfenceha` / `holofence` this
+  instance runs (the playbook auto-detects it and preflight-checks the dumped
+  files before deploying). The `mail-web` sidecar's only job is to give
+  Traefik an HTTP route to `HOSTNAME` so it issues that certificate in the
+  first place.
+- **`manual`**: for an instance bringing its own certificate. Set
+  `skmail.SSL_CERT_PATH` / `skmail.SSL_KEY_PATH` to the certificate/key's host
+  paths (PEM encoded); the playbook mounts them read-only into the container.
+  The Traefik-acme preflight above is skipped entirely for this type.
+- **`self-signed`**: for an instance without ACME at all (e.g. a test
+  instance). The deploy playbook generates a self-signed CA and a leaf
+  certificate for `HOSTNAME` with `openssl`, idempotently, directly into the
+  already-mounted `docker-data/dms/config/ssl/` directory (skipped once the
+  files exist) - no vault keys needed beyond `SSL_TYPE: self-signed` itself.
+  The Traefik-acme preflight above is skipped for this type too.
 
 ## Estate data
 
