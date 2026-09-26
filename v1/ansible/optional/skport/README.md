@@ -56,11 +56,11 @@ password) for the other environments.
 skport:
   CLUSTERNAME: "skstack01"
   DOMAIN: "example.com"
-  portainer_version: "lts"   # Portainer CE LTS tag; never :latest
+  portainer_version: "2.45.1"   # exact Portainer CE LTS release; never a moving tag
   TZ: "America/New_York"
 ```
 
-`portainer_version` defaults to `lts`, the Portainer CE long-term-support
+`portainer_version` defaults to `2.45.1`, the Portainer CE long-term-support release the `lts` tag pointed at on 2026-09-26 (bump deliberately), the
 tag, so a fresh deploy never pulls a moving `:latest` image.
 
 ## Networks
