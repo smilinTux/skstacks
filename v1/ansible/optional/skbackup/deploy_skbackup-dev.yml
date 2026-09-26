@@ -105,9 +105,10 @@
         state: present
 
     - name: Install Docker SDK for Python (required for docker_swarm_service_info)
-      pip:
-        name: docker
+      apt:
+        name: python3-docker
         state: present
+        update_cache: true
 
     - name: Create the {{ app }} directories
       file:
