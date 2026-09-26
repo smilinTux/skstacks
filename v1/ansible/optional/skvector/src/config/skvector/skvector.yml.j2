@@ -53,6 +53,8 @@ services:
         window: 120s
       mode: replicated
       replicas: 1
+      placement:
+        constraints: {{ (skvector.placement_constraints | default([])) | tojson }}
       resources:
         limits:
           # Optimized for large document ingestion from SKAid

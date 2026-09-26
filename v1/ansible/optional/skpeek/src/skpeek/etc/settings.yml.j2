@@ -1,8 +1,8 @@
 general:
   # Debug mode, only for development. Is overwritten by ${SEARXNG_DEBUG}
-  debug: false
+  debug: {{ skpeek.DEBUG | default(false) | tojson }}
   # displayed name
-  instance_name: "{{ instance_name | default('SKPeek') }}"
+  instance_name: "{{ skpeek.INSTANCE_NAME | default(instance_name | default('SKPeek')) }}"
   # For example: https://example.com/privacy
   privacypolicy_url: false
   # use true to use your own donation page written in searx/info/en/donate.md
@@ -131,7 +131,7 @@ ui:
   # infinite_scroll: When true, automatically loads the next page when scrolling to bottom of the current page.
   infinite_scroll: false
   # ui theme
-  default_theme: simple
+  default_theme: {{ skpeek.THEME | default('simple') }}
   # center the results ?
   center_alignment: false
   # URL prefix of the internet archive, don't forget trailing slash (if needed).

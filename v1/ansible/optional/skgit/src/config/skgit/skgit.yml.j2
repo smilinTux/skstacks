@@ -48,6 +48,8 @@ services:
     deploy:
       mode: replicated
       replicas: 1
+      placement:
+        constraints: {{ (skgit.placement_constraints | default([])) | tojson }}
       resources:
         limits:
           cpus: '${CPU_LIMIT}'
@@ -116,6 +118,8 @@ services:
     deploy:
       mode: replicated
       replicas: 1
+      placement:
+        constraints: {{ (skgit.placement_constraints | default([])) | tojson }}
       resources:
         limits:
           cpus: '0.5'
@@ -137,6 +141,9 @@ services:
       - PGTEMP=/dump/tmp
     networks:
       - skgit-{{ env }}
+    deploy:
+      placement:
+        constraints: {{ (skgit.placement_constraints | default([])) | tojson }}
     volumes:
       # === NFS DATA - DIRECT BIND (NO NAMED VOLUME) ===
       - /var/data/skgit-{{ env }}/database-dump:/dump

@@ -241,6 +241,19 @@ services:
   traefik-certs-dumper:
     # Dumps the ACME master's acme.json into PEM files other services can
     # bind-mount (e.g. a mail server that needs its cert outside Traefik).
+    #
+    # Live-parity note (skstack01, 2026-09): prod also runs a second
+    # traefik-certs-dumper-mail service dumping a separate acme-mail.json
+    # into this same output dir. Left instance-only, not modeled here:
+    # acme-mail.json comes from a second ACME resolver the framework does
+    # not define at all (only one certresolver, "main", exists in this
+    # template), and nothing on prod actually mounts that dumper's output
+    # (skmail reads the shared acme.json directly, verified via
+    # `docker service inspect skmail-prod_skmail`). Adding a generic
+    # extra-dumper hook here without also modeling the second resolver
+    # would not reproduce real parity, only a component of it, so this is
+    # an instance-only addition on top of the framework rather than a
+    # framework hook.
     image: ldez/traefik-certs-dumper:v2.10.0
     command:
       - file

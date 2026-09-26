@@ -19,9 +19,16 @@ services:
       # Syncthing home/data directory - where auto-accepted folders are created
       # Maps to /var/syncthing inside container (Syncthing's default home)
       # All shared folders will be created as subdirectories here
-      - /var/data/{{ app }}-{{ env }}/sync-data:/var/syncthing
+      - /var/data/{{ app }}-{{ env }}/sync-data:{{ sksync.SYNC_DATA_MOUNT | default('/var/syncthing') }}
       # Syncthing config directory (separate from data for clean backups)
       - /var/data/{{ app }}-{{ env }}/syncthing_config:/var/syncthing/config
+      # Optional third data mount, matching the upstream Syncthing image's
+      # split of a container home (SYNC_DATA_MOUNT) from its state dir
+      # (STDATADIR). Unset by default; set both vars to express an instance
+      # that already runs with that split without moving any data.
+{% if sksync.SYNC_DATA_EXTRA_MOUNT is defined %}
+      - /var/data/{{ app }}-{{ env }}/syncthing_data:{{ sksync.SYNC_DATA_EXTRA_MOUNT }}
+{% endif %}
       # Config files (read-only bind mounts)
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
@@ -38,7 +45,7 @@ services:
       mode: replicated
       replicas: 1
       placement:
-        constraints: []
+        constraints: {{ (sksync.placement_constraints | default([])) | tojson }}
       restart_policy:
         condition: on-failure
       resources:
