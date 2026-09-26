@@ -186,6 +186,7 @@
       register: actual_cert_dir
       changed_when: false
       failed_when: actual_cert_dir.rc != 0
+      when: (skmail.SSL_TYPE | default('letsencrypt')) == 'letsencrypt'
       tags:
         - compose
         - certs
@@ -193,6 +194,45 @@
     - name: Set actual certificate directory path
       set_fact:
         actual_cert_directory: "{{ actual_cert_dir.stdout }}"
+      when: (skmail.SSL_TYPE | default('letsencrypt')) == 'letsencrypt'
+      tags:
+        - compose
+        - certs
+
+    # skmail.SSL_TYPE=self-signed: docker-mailserver reads <FQDN>-key.pem,
+    # <FQDN>-cert.pem and demoCA/cacert.pem from /tmp/docker-mailserver/ssl/
+    # (see https://docker-mailserver.github.io/docker-mailserver/latest/config/security/ssl/#self-signed-certificates).
+    # That directory is the already-mounted docker-data/dms/config, so
+    # generating the files here (idempotent - skipped once present) is all
+    # an instance without ACME needs; no extra mount or preflight required.
+    - name: Generate self-signed certificate for skmail (idempotent)
+      shell: |
+        set -e
+        SSL_DIR="/var/data/{{ app }}-{{ env }}/docker-data/dms/config/ssl"
+        FQDN="{{ skmail.HOSTNAME | default('mail.' + skmail.DOMAIN) }}"
+        mkdir -p "${SSL_DIR}/demoCA"
+        if [ ! -f "${SSL_DIR}/demoCA/cacert.pem" ]; then
+          openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+            -keyout "${SSL_DIR}/demoCA/cakey.pem" \
+            -out "${SSL_DIR}/demoCA/cacert.pem" \
+            -subj "/CN=skmail-${FQDN}-selfsigned-ca"
+        fi
+        if [ ! -f "${SSL_DIR}/${FQDN}-cert.pem" ] || [ ! -f "${SSL_DIR}/${FQDN}-key.pem" ]; then
+          openssl req -newkey rsa:2048 -sha256 -nodes \
+            -keyout "${SSL_DIR}/${FQDN}-key.pem" \
+            -out "${SSL_DIR}/${FQDN}.csr" \
+            -subj "/CN=${FQDN}"
+          openssl x509 -req -in "${SSL_DIR}/${FQDN}.csr" \
+            -CA "${SSL_DIR}/demoCA/cacert.pem" -CAkey "${SSL_DIR}/demoCA/cakey.pem" \
+            -CAcreateserial -days 3650 -sha256 \
+            -out "${SSL_DIR}/${FQDN}-cert.pem"
+          rm -f "${SSL_DIR}/${FQDN}.csr"
+        fi
+        chmod 600 "${SSL_DIR}/${FQDN}-key.pem" "${SSL_DIR}/demoCA/cakey.pem"
+      args:
+        executable: /bin/bash
+        creates: "/var/data/{{ app }}-{{ env }}/docker-data/dms/config/ssl/{{ skmail.HOSTNAME | default('mail.' + skmail.DOMAIN) }}-cert.pem"
+      when: (skmail.SSL_TYPE | default('letsencrypt')) == 'self-signed'
       tags:
         - compose
         - certs
@@ -335,6 +375,10 @@
     # Certificates: Provided by traefik-certs-dumper (runs on skfence/skfenceha ACME master node)
     # traefik-certs-dumper watches acme.json and outputs certificates to /var/data/runtime/{fence}-{env}/certs/{domain}/
 
+    # This preflight (and the script it runs) verifies the Traefik-dumped
+    # certificate files under /var/data/runtime/<fence>-<env>/certs/, which
+    # only exist for skmail.SSL_TYPE=letsencrypt; manual and self-signed
+    # provide their own certificate material by other means (see above).
     - name: Create certificate setup script
       template:
         src: "{{ playbook_dir }}/src/skmail/cert_setup.sh.j2"
@@ -342,6 +386,7 @@
         owner: root
         group: root
         mode: '0755'
+      when: (skmail.SSL_TYPE | default('letsencrypt')) == 'letsencrypt'
       tags:
         - certs
         - deploy
@@ -349,12 +394,14 @@
     - name: Execute certificate setup script
       shell: "/var/data/skmail-{{ env }}/cert_setup.sh"
       register: cert_setup_result
+      when: (skmail.SSL_TYPE | default('letsencrypt')) == 'letsencrypt'
       tags:
         - certs
         - deploy
 
     - name: Show certificate setup result
       debug: var=cert_setup_result.stdout_lines
+      when: (skmail.SSL_TYPE | default('letsencrypt')) == 'letsencrypt'
       tags:
         - certs
         - deploy
