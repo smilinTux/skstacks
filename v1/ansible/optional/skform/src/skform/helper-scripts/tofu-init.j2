@@ -1,0 +1,57 @@
+#!/bin/bash
+# OpenTofu Init Helper Script
+# Initializes OpenTofu workspace with backend configuration
+
+set -e
+
+WORKSPACE_DIR="${1:-/tofu/workspaces/default}"
+STACK_NAME="skform-{{ env }}"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+echo -e "${GREEN}Initializing OpenTofu workspace...${NC}"
+
+if [ ! -d "${WORKSPACE_DIR}" ]; then
+    echo -e "${YELLOW}Creating workspace directory: ${WORKSPACE_DIR}${NC}"
+    mkdir -p "${WORKSPACE_DIR}"
+fi
+
+cd "${WORKSPACE_DIR}"
+
+# Check if terraform.tf or main.tf exists
+if [ ! -f "terraform.tf" ] && [ ! -f "main.tf" ]; then
+    echo -e "${YELLOW}No OpenTofu configuration files found. Creating example terraform.tf...${NC}"
+    cat > terraform.tf << 'EOF'
+terraform {
+  required_version = ">= 1.6.0"
+
+  required_providers {
+    # Add your providers here
+    # Example:
+    # aws = {
+    #   source  = "hashicorp/aws"
+    #   version = "~> 5.0"
+    # }
+  }
+}
+
+# Add your infrastructure code here
+EOF
+    echo -e "${GREEN}Created example terraform.tf${NC}"
+fi
+
+# Initialize OpenTofu
+echo -e "${YELLOW}Running 'tofu init'...${NC}"
+docker exec -i ${STACK_NAME}_opentofu tofu init
+
+if [ $? -eq 0 ]; then
+    echo -e "${GREEN}OpenTofu workspace initialized successfully!${NC}"
+    echo -e "${GREEN}Workspace: ${WORKSPACE_DIR}${NC}"
+else
+    echo -e "${RED}Failed to initialize OpenTofu workspace${NC}"
+    exit 1
+fi
