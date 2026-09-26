@@ -1,0 +1,177 @@
+# SKGit Runner Stack with Docker-in-Docker
+# ==========================================
+# Based on official Forgejo documentation:
+# https://forgejo.org/docs/latest/admin/actions/docker-access/
+#
+# This configuration uses Docker-in-Docker (DIND) to provide isolated Docker
+# access to CI/CD workflows. It runs as a plain `docker compose` stack on a
+# single designated node (see src/skgit/start-runners.sh), NOT as a swarm
+# service, because DinD needs --privileged and local (non-NFS) storage.
+#
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+# License: AGPL-3.0
+
+version: '3.8'
+
+services:
+  # =============================================================================
+  # Docker-in-Docker (DIND) Service
+  # Provides an isolated Docker daemon for runner job containers.
+  # =============================================================================
+  dind:
+    image: docker:27-dind
+    container_name: skgit-{{ env }}-dind
+    hostname: skgit-{{ env }}-dind
+    privileged: true
+    restart: unless-stopped
+    # Explicit DNS servers to avoid systemd-resolved issues
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+      - 8.8.4.4
+    dns_opt:
+      - timeout:2
+      - attempts:3
+    command:
+      - dockerd
+      - -H
+      - tcp://0.0.0.0:2375
+      - --tls=false
+    environment:
+      # Disable TLS for internal communication
+      DOCKER_TLS_CERTDIR: ""
+    volumes:
+      # Persist Docker data (images, containers, volumes)
+      - dind-data:/var/lib/docker
+    tmpfs:
+      # Use tmpfs for better performance on containerd socket
+      - /run
+    networks:
+      - skgit-runners-{{ env }}
+    healthcheck:
+      test: ["CMD-SHELL", "DOCKER_HOST=tcp://localhost:2375 docker info"]
+      interval: 30s
+      timeout: 30s
+      retries: 5
+      start_period: 60s
+
+  # =============================================================================
+  # Forgejo Runner Service
+  # Executes CI/CD workflows from SKGit
+  # =============================================================================
+  forgejo-runner:
+    image: code.forgejo.org/forgejo/runner:{{ skgit.RUNNER_VERSION | default('11.1.2') }}
+    container_name: skgit-{{ env }}-runner
+    hostname: skgit-{{ env }}-runner
+    restart: unless-stopped
+    depends_on:
+      dind:
+        condition: service_healthy
+    user: "1000:1000"
+    # DNS servers for the runner to resolve external hosts (e.g., code.forgejo.org)
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    dns_opt:
+      - timeout:2
+      - attempts:3
+    environment:
+      # Connection to DIND for Docker operations
+      DOCKER_HOST: tcp://skgit-{{ env }}-dind:2375
+      DOCKER_BUILDKIT: "1"
+      # Runner registration (only used if .runner doesn't exist)
+      INSTANCE_URL: ${INSTANCE_URL}
+      RUNNER_REGISTRATION_TOKEN: ${RUNNER_REGISTRATION_TOKEN}
+      RUNNER_NAME: ${RUNNER_NAME}
+    volumes:
+      # Runner data directory
+      - /var/data/runtime/skgit-{{ env }}/runner-data:/data
+      # Runner configuration
+      - /var/data/config/skgit-{{ env }}/runner-config.yml:/data/config.yaml:ro
+    networks:
+      - skgit-runners-{{ env }}
+    command: >
+      sh -c '
+        echo "=== SKGit Runner Startup ===";
+        echo "INSTANCE_URL=$$INSTANCE_URL";
+        echo "RUNNER_NAME=$$RUNNER_NAME";
+        echo "DOCKER_HOST=$$DOCKER_HOST";
+
+        echo "Waiting for DIND to be ready...";
+        for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+          if nc -z skgit-{{ env }}-dind 2375 2>/dev/null; then
+            echo "DIND is ready (TCP 2375 accessible)";
+            break;
+          fi;
+          echo "Waiting for DIND... (attempt $$i/20)";
+          sleep 3;
+        done;
+
+        if [ ! -f /data/.runner ]; then
+          echo "Registering runner...";
+          forgejo-runner register \
+            --instance $$INSTANCE_URL \
+            --token $$RUNNER_REGISTRATION_TOKEN \
+            --name "$$RUNNER_NAME" \
+            --labels "docker:docker://catthehacker/ubuntu:act-latest,docker-cli:docker://docker:27-cli,node-20:docker://catthehacker/ubuntu:act-latest,ubuntu-latest:docker://catthehacker/ubuntu:act-latest,ubuntu-22.04:docker://catthehacker/ubuntu:act-22.04" \
+            --no-interactive;
+          echo "Runner registered";
+        else
+          echo "Runner already registered (.runner file exists)";
+        fi;
+
+        echo "Starting Forgejo Runner daemon...";
+        exec forgejo-runner daemon --config /data/config.yaml
+      '
+    healthcheck:
+      test: ["CMD-SHELL", "forgejo-runner --version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # =============================================================================
+  # DIND Cleanup Service
+  # Runs periodic cleanup to prevent the root FS from filling up with images.
+  # =============================================================================
+  dind-cleanup:
+    image: docker:27-cli
+    container_name: skgit-{{ env }}-dind-cleanup
+    restart: unless-stopped
+    depends_on:
+      dind:
+        condition: service_healthy
+    environment:
+      DOCKER_HOST: tcp://skgit-{{ env }}-dind:2375
+    networks:
+      - skgit-runners-{{ env }}
+    # Run cleanup every 2 hours: remove stopped containers, dangling images,
+    # unused images older than 24h, and build cache older than 12h.
+    # NOTE: more frequent cleanup is needed because dind-data must use local
+    # storage (root FS), not NFS.
+    command: >
+      sh -c '
+        echo "=== DIND Cleanup Service Started ===";
+        while true; do
+          echo "[$(date)] Running Docker cleanup...";
+          docker container prune -f --filter "until=12h" 2>/dev/null || true;
+          docker image prune -f 2>/dev/null || true;
+          docker image prune -a -f --filter "until=24h" 2>/dev/null || true;
+          docker builder prune -f --filter "until=12h" 2>/dev/null || true;
+          echo "[$(date)] Docker disk usage:";
+          docker system df 2>/dev/null || true;
+          echo "[$(date)] Cleanup complete. Sleeping 2 hours...";
+          sleep 7200;
+        done
+      '
+
+networks:
+  skgit-runners-{{ env }}:
+    driver: bridge
+
+volumes:
+  dind-data:
+    # IMPORTANT: Must use LOCAL storage - NFS doesn't support overlay2.
+    # Docker's overlay2 storage driver requires kernel-level operations not
+    # available on NFS. The cleanup service above prevents disk fill.
+    driver: local
