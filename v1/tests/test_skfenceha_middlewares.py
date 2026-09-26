@@ -54,3 +54,27 @@ def test_dashboard_auth_basic_auth_when_hash_set():
 def test_rate_limit_defaults_and_override():
     assert render()["rate-limit"]["rateLimit"]["average"] == 100
     assert render(RATE_LIMIT_AVERAGE=25)["rate-limit"]["rateLimit"]["average"] == 25
+
+
+def test_cors_absent_by_default():
+    mw = render()
+    assert "accessControlAllowOriginList" not in mw["default-security-headers"]["headers"]
+
+
+def test_cors_renders_when_origins_set():
+    mw = render(CORS_ALLOWED_ORIGINS=["https://skdash.example.com"])
+    headers = mw["default-security-headers"]["headers"]
+    assert headers["accessControlAllowOriginList"] == ["https://skdash.example.com"]
+
+
+def test_cross_service_middlewares_present():
+    # These are not used by any router in this file - other services
+    # (skgit, skport, skai, skgallery, ...) reference them by name via
+    # their own Docker labels through Traefik's shared file-provider
+    # namespace. Losing one silently breaks whichever service used it.
+    mw = render()
+    for name in ("authentik", "default-no-crowdsec", "default-no-error-pages",
+                 "skport-headers", "skai-headers", "skai-chain",
+                 "large-upload-buffering", "upload-chain",
+                 "upload-chain-no-crowdsec", "error-pages-all"):
+        assert name in mw, f"missing cross-service middleware: {name}"
