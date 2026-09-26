@@ -120,9 +120,9 @@ docker stack deploy \
 sleep 5
 
 echo -e "${YELLOW}Forcing service updates...${NC}"
-docker service update --force --detach=false ${STACK_NAME}_bookstack || true
-docker service update --force --detach=false ${STACK_NAME}_db || true
-docker service update --force --detach=false ${STACK_NAME}_db-backup || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_bookstack || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_db || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_db-backup || true
 
 echo -e "${YELLOW}Waiting for services to stabilize...${NC}"
 sleep 10

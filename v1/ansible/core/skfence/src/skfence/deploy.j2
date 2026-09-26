@@ -49,8 +49,8 @@ else
     echo "Warning: Traefik service $TRAEFIK_SVC not found, skipping restart"
 fi
 
-docker service update --force --detach=false "${STACK_NAME}_socket-proxy" || true
-docker service update --force --detach=false "${STACK_NAME}_traefik-certs-dumper" || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false "${STACK_NAME}_socket-proxy" || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false "${STACK_NAME}_traefik-certs-dumper" || true
 
 echo -e "${YELLOW}Waiting for services to stabilize...${NC}"
 sleep 10
