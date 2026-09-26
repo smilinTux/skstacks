@@ -35,9 +35,9 @@ services:
       - /var/data/config/skform-{{ env }}/tofu.hcl:/etc/tofu.hcl:ro
     networks:
       - skform-{{ env }}
-      {% if skform.SKSTOR_ENABLED %}
+{% if skform.SKSTOR_ENABLED %}
       - cloud-public-{{ env }}
-      {% endif %}
+{% endif %}
     deploy:
       update_config:
         parallelism: 1
@@ -62,7 +62,7 @@ services:
 networks:
   skform-{{ env }}:
     external: true
-  {% if skform.SKSTOR_ENABLED %}
+{% if skform.SKSTOR_ENABLED %}
   cloud-public-{{ env }}:
     external: true
-  {% endif %}
+{% endif %}
