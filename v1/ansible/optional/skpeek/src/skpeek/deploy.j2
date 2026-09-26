@@ -154,8 +154,8 @@ sleep 5
 
 # Force update services
 echo -e "${YELLOW}Forcing service updates to pull latest images...${NC}"
-docker service update --force --detach=false ${STACK_NAME}_skpeek || true
-docker service update --force --detach=false ${STACK_NAME}_redis || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_skpeek || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_redis || true
 
 # Wait for stabilization
 echo -e "${YELLOW}Waiting for services to stabilize...${NC}"

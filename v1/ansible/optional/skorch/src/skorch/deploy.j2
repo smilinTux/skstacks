@@ -124,10 +124,10 @@ sleep 5
 
 # Force update services
 echo -e "${YELLOW}🔄 Forcing service updates...${NC}"
-docker service update --force --detach=false ${STACK_NAME}_n8n || true
-docker service update --force --detach=false ${STACK_NAME}_postgres || true
-docker service update --force --detach=false ${STACK_NAME}_redis || true
-docker service update --force --detach=false ${STACK_NAME}_postgres-backup || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_n8n || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_postgres || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_redis || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_postgres-backup || true
 
 # Wait for stabilization
 echo -e "${YELLOW}⏳ Waiting for services to stabilize...${NC}"

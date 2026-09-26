@@ -91,7 +91,7 @@ for SERVICE in immich-server immich-machine-learning redis database; do
     SERVICE_FULL="${STACK_NAME}_${SERVICE}"
     if docker service ls --format "{{ '{{' }}.Name{{ '}}' }}" | grep -q "^${SERVICE_FULL}$"; then
         echo -e "${BLUE}  -> Updating ${SERVICE}...${NC}"
-        docker service update --force --detach=false ${SERVICE_FULL} 2>/dev/null || true
+        timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${SERVICE_FULL} 2>/dev/null || true
     fi
 done
 

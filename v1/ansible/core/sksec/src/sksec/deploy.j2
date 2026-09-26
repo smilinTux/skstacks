@@ -45,8 +45,8 @@ sleep 5
 
 # Force update services to pull latest images
 echo -e "${YELLOW}🔄 Forcing service updates to pull latest images...${NC}"
-docker service update --force --detach=false ${STACK_NAME}_crowdsec || true
-docker service update --force --detach=false ${STACK_NAME}_bouncer-traefik || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_crowdsec || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_bouncer-traefik || true
 
 # Wait for services to stabilize
 echo -e "${YELLOW}⏳ Waiting for services to stabilize...${NC}"

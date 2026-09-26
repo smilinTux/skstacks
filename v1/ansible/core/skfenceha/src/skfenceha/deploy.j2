@@ -53,13 +53,13 @@ fi
 
 echo -e "${YELLOW}Restarting traefik-worker (global mode: force update, no scale)...${NC}"
 if docker service inspect "$WORKER_SVC" >/dev/null 2>&1; then
-    docker service update --force --detach=false "$WORKER_SVC" || true
+    timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false "$WORKER_SVC" || true
 else
     echo "Warning: $WORKER_SVC not found, skipping restart"
 fi
 
-docker service update --force --detach=false "${STACK_NAME}_socket-proxy" || true
-docker service update --force --detach=false "${STACK_NAME}_traefik-certs-dumper" || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false "${STACK_NAME}_socket-proxy" || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false "${STACK_NAME}_traefik-certs-dumper" || true
 
 echo -e "${YELLOW}Waiting for services to stabilize...${NC}"
 sleep 10
