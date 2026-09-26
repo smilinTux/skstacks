@@ -10,11 +10,35 @@ users:
     ssh_authorized_keys:
       - ${ssh_public_key}
 ssh_pwauth: false
-%{ if daemon_json != "" ~}
+%{ if daemon_json != "" || disable_auto_updates ~}
 write_files:
+%{ if daemon_json != "" ~}
   - path: /etc/docker/daemon.json
     permissions: "0644"
     content: '${daemon_json}'
+%{ endif ~}
+%{ if disable_auto_updates ~}
+  - path: /etc/apt/apt.conf.d/99-skstacks-no-periodic
+    permissions: "0644"
+    content: |
+      APT::Periodic::Enable "0";
+      APT::Periodic::Update-Package-Lists "0";
+      APT::Periodic::Unattended-Upgrade "0";
+      APT::Periodic::Download-Upgradeable-Packages "0";
+      APT::Periodic::AutocleanInterval "0";
+  - path: /etc/apt/apt.conf.d/99-skstacks-no-auto-reboot
+    permissions: "0644"
+    content: |
+      Unattended-Upgrade::Automatic-Reboot "false";
+  - path: /etc/needrestart/conf.d/99-skstacks-no-auto-restart.conf
+    permissions: "0644"
+    content: |
+      $nrconf{restart} = 'l';
+  - path: /etc/default/motd-news
+    permissions: "0644"
+    content: |
+      ENABLED=0
+%{ endif ~}
 %{ endif ~}
 package_update: true
 packages:
@@ -24,6 +48,17 @@ packages:
   - ca-certificates
   - curl
 runcmd:
+%{ if disable_auto_updates ~}
+  # Neutralize background update/reboot paths first: runcmd (config stage)
+  # always finishes before the packages list above installs the HWE kernel
+  # (final stage), so this can't race that install or reboot the VM out
+  # from under a short-lived test cluster.
+  - systemctl disable --now apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-daily-upgrade.service unattended-upgrades.service || true
+  - systemctl mask apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-daily-upgrade.service unattended-upgrades.service || true
+  - systemctl disable --now motd-news.timer || true
+  - systemctl mask motd-news.timer || true
+  - sh -c 'command -v snap >/dev/null 2>&1 && snap refresh --hold=skstacks-ephemeral || true'
+%{ endif ~}
   - install -m 0755 -d /etc/apt/keyrings
   - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
   - chmod a+r /etc/apt/keyrings/docker.asc
