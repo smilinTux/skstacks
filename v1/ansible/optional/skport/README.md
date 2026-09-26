@@ -41,14 +41,14 @@ gives it cluster-wide visibility without an agent on every node.
 ## Deployment
 
 ```bash
-ansible-playbook -e env=prod \
-  -i v1/ansible/shared/hosts \
-  v1/ansible/optional/skport/deploy_skport-prod.yml \
-  --vault-password-file "$HOME/.vault_pass_env/.prod_vault_pass"
+ansible-playbook -i envs/prod/inventory.ini \
+  framework/v1/ansible/optional/skport/deploy_skport-prod.yml \
+  -e target_manager_group=swarm_managers \
+  --vault-password-file ~/.vault_pass_env/.<instance>_prod_vault_pass
 ```
 
 Swap `prod` for `staging` or `dev` (and the matching playbook/vault
-password) for the other environments.
+password/inventory) for the other environments.
 
 ## Configuration (vault)
 

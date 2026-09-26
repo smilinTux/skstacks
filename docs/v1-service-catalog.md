@@ -105,8 +105,8 @@ its own container healthcheck.
 Run skfenceha instead on a multi-manager cluster that needs HA. Rate limiting
 is unconditional (always on) in skfence's own dynamic-middlewares template;
 there is no `RATE_LIMIT_ENABLED` toggle here (that knob only exists on
-skfenceha). No service README exists yet, though skfenceha's own comments
-reference one.
+skfenceha). See `v1/ansible/core/skfence/README.md` for the quick reference
+skfenceha's own comments point at.
 
 ### skfenceha
 

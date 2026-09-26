@@ -26,6 +26,18 @@ node), `skstor.GARAGE_S3_REGION` (default `garage`), `skstor.CPU_LIMIT`,
 `skstor.meta_dir` / `skstor.data_dir` (default the bind-mount paths Garage
 sees inside the container, `/var/lib/garage/meta` and `/var/lib/garage/data`).
 
+## Deployment
+
+```bash
+ansible-playbook -i envs/prod/inventory.ini \
+  framework/v1/ansible/optional/skstor/deploy_skstor-prod.yml \
+  -e target_manager_group=swarm_managers \
+  --vault-password-file ~/.vault_pass_env/.<instance>_prod_vault_pass
+```
+
+Swap `prod` for `staging` or `dev` (and the matching playbook/vault
+password/inventory) for the other environments.
+
 ## Storage layout
 
 Metadata and data bind-mount onto `/var/data/skstor-<env>/{meta,data}` on
