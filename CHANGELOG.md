@@ -3,6 +3,13 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased
+
+- v1: **skhub** router now supports `skhub.router_middlewares` (list, default `[]`, appended after the framework's own `skhub,skhub-dav` middlewares on the `skhub-secure` router) and `skhub.tls_options` (string, default unset -> no label).
+- v1: **skdash** router gets the same `skdash.router_middlewares` (default `[]`) and `skdash.tls_options` (default unset) hooks on its secure router. Its compose template also gains `restart_policy` (`on-failure`, 10s delay, 5 attempts) and `rollback_config` (parallelism 1, 10s delay), resource limits/reservations moved to `skdash.RESOURCES_LIMITS_CPUS`/`RESOURCES_LIMITS_MEMORY`/`RESOURCES_RESERVATIONS_CPUS`/`RESOURCES_RESERVATIONS_MEMORY` (defaults unchanged: 0.5/512M limits, 0.1/128M reservations), and a sticky-cookie `sameSite` hook via `skdash.sticky_samesite` (default unset -> no label, current framework behavior).
+
+Instance action: none required; all new hooks default to current framework behavior. Set the new vars only where an instance needs a middleware, TLS options, resource sizing or cookie policy the defaults do not already provide.
+
 ## skstacks-v2.16.0 - 2026-09-26
 
 - v1: **sksync** (Syncthing), **skpulse** (Uptime Kuma) and **skpeek**

@@ -38,13 +38,21 @@ services:
         failure_action: rollback
         monitor: 30s
         max_failure_ratio: 0.2
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 120s
       resources:
         limits:
-          cpus: '{{ skdash.cpu_limit | default("0.5") }}'
-          memory: {{ skdash.memory_limit | default("512M") }}
+          cpus: '{{ skdash.RESOURCES_LIMITS_CPUS | default("0.5") }}'
+          memory: {{ skdash.RESOURCES_LIMITS_MEMORY | default("512M") }}
         reservations:
-          cpus: '{{ skdash.cpu_reservation | default("0.1") }}'
-          memory: {{ skdash.memory_reservation | default("128M") }}
+          cpus: '{{ skdash.RESOURCES_RESERVATIONS_CPUS | default("0.1") }}'
+          memory: {{ skdash.RESOURCES_RESERVATIONS_MEMORY | default("128M") }}
       labels:
         - "traefik.enable=true"
         - "traefik.swarm.network=cloud-public-{{ env }}"
@@ -52,12 +60,22 @@ services:
         - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-secure.entrypoints=websecure"
         - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls=true"
         - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls.certresolver=main"
+{% if skdash.tls_options | default('') %}
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls.options={{ skdash.tls_options }}"
+{% endif %}
         - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-secure.service={{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}"
         - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=8080"
+{% set _skdash_secure_middlewares = (skdash.router_middlewares | default([])) %}
+{% if _skdash_secure_middlewares %}
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-secure.middlewares={{ _skdash_secure_middlewares | join(',') }}"
+{% endif %}
         - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie=true"
         - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie.name={{ app }}_session"
         - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie.secure=true"
         - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie.httpOnly=true"
+{% if skdash.sticky_samesite | default('') %}
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie.sameSite={{ skdash.sticky_samesite }}"
+{% endif %}
     healthcheck:
       test: ["CMD", "node", "/app/services/healthcheck"]
       interval: "{{ skdash.healthcheck_interval | default('1m30s') }}"
