@@ -73,3 +73,35 @@ def test_sksync_still_defaults_to_no_constraint_and_is_now_settable():
         placement_constraints=["node.role == worker"],
     )
     assert constraints_of(svcs2["syncthing"]) == ["node.role == worker"]
+
+
+SKHUB_COMPOSE = ANSIBLE / "optional/skhub/src/config/skhub/skhub.yml.j2"
+# every optional service switched on, so collabora and talk-hpb are covered too
+SKHUB_ALL_ON = {"CLUSTERNAME": "c1", "DOMAIN": "example.com",
+                "enable_collabora": True, "enable_talk_hpb": True}
+
+
+def _render_skhub(**extra):
+    from jsonschema import Draft202012Validator
+    import json
+
+    env = jinja2.Environment(undefined=jinja2.ChainableUndefined, trim_blocks=True)
+    out = env.from_string(SKHUB_COMPOSE.read_text()).render(env="prod", skhub=dict(SKHUB_ALL_ON, **extra))
+    doc = yaml.safe_load(out)
+    schema = json.loads((pathlib.Path(__file__).resolve().parent / "data" / "compose-spec.json").read_text())
+    errors = [e.message for e in Draft202012Validator(schema).iter_errors(doc)]
+    assert not errors, errors
+    return doc["services"]
+
+
+def test_skhub_every_service_defaults_to_no_constraint():
+    svcs = _render_skhub()
+    assert {"collabora", "talk-hpb", "nextcloud", "db", "redis"} <= set(svcs)
+    for name, svc in svcs.items():
+        assert constraints_of(svc) == [], name
+
+
+def test_skhub_every_service_can_pin_worker_to_match_live():
+    svcs = _render_skhub(placement_constraints=["node.role == worker"])
+    for name, svc in svcs.items():
+        assert constraints_of(svc) == ["node.role == worker"], name
