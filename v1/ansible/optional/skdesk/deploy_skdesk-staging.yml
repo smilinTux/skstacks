@@ -15,11 +15,11 @@
 
 ---
 # skdesk: self-hosted RustDesk relay server (hbbs + hbbr).
-# TODO before deploy: set skdesk.RELAY_HOST if the default
-# skdesk.<cluster>.<domain> hostname isn't right for your estate, and open
-# the RustDesk ports on whichever node runs this stack: 21115-21117/tcp,
-# 21116/udp, 21118-21119/tcp. network_mode: host means these bind directly
-# on the host, not through an overlay network or Traefik.
+# TODO before deploy: set skdesk.PLACEMENT_HOSTNAME (REQUIRED, no default -
+# host networking means this service must be pinned to one real node
+# hostname, which a public template cannot guess) and optionally
+# skdesk.RELAY_HOSTNAME. The play below opens the RustDesk ports on that
+# node via UFW: 21115-21117/tcp, 21116/udp, 21118-21119/tcp.
 - import_playbook: ../../shared/meta/skstack-header.yml
 
 # Step 1: Select manager node with failover
@@ -51,16 +51,19 @@
       when: vault_file_path is defined
 
     - name: Set skdesk default variables
-      # network_mode: host means hbbs/hbbr publish no overlay network, so
-      # unlike every other v1 service there is no app_networks fact here
-      # and nothing for this service to add to test_unique_subnets.py.
+      # hbbs/hbbr attach to the host network (see skdesk.yml.j2), so unlike
+      # every other v1 service there is no app_networks fact here and
+      # nothing for this service to add to test_unique_subnets.py.
+      # skdesk.PLACEMENT_HOSTNAME has NO default here on purpose: it is
+      # per-instance node identity, not something safe to guess.
       set_fact:
         skdesk: "{{ skdesk_defaults | combine(skdesk | default({}), recursive=True) }}"
       vars:
         skdesk_defaults:
-          RELAY_HOST: "skdesk.{{ cluster_name | default(skdesk.CLUSTERNAME | default('cluster1')) }}.{{ domain | default(skdesk.DOMAIN | default('example.com')) }}"
           ENCRYPTED_ONLY: "1"
           TZ: "Etc/UTC"
+          # RELAY_HOSTNAME, KEY, SERIAL, RENDEZVOUS_SERVERS are all optional
+          # and should be in vault if used (see skdesk.yml.j2 / skdesk.env.j2)
       tags:
         - always
 
@@ -137,6 +140,23 @@
         mode: '0755'
         state: link
         follow: no
+
+    - name: Open UFW for RustDesk hbbs/hbbr ports on the pinned node (idempotent)
+      ufw:
+        rule: allow
+        port: "{{ item.port }}"
+        proto: "{{ item.proto }}"
+        comment: "{{ app }}-{{ env }} (RustDesk)"
+      loop:
+        - { port: "21115", proto: "tcp" }   # hbbs NAT type test
+        - { port: "21116", proto: "tcp" }   # hbbs ID server (TCP punch)
+        - { port: "21116", proto: "udp" }   # hbbs ID server (UDP heartbeat)
+        - { port: "21117", proto: "tcp" }   # hbbr relay
+        - { port: "21118", proto: "tcp" }   # hbbs web client (optional)
+        - { port: "21119", proto: "tcp" }   # hbbr web client relay (optional)
+      delegate_to: "{{ skdesk.PLACEMENT_HOSTNAME }}"
+      tags:
+        - ufw
 
     - name: Deploy {{ app }} stack
       shell: |

@@ -49,7 +49,7 @@ def test_image_is_pinned_by_digest():
 def test_data_is_a_shared_bind_mount_not_a_named_volume():
     doc = render("prod")
     volumes = doc["services"]["skseek"]["volumes"]
-    assert "/var/data/skseek-prod/data:/home/perplexica/data" in volumes
+    assert "/var/data/skseek-prod/data:/home/perplexica/data:rw" in volumes
     assert "volumes" not in doc
 
 

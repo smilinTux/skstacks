@@ -1,8 +1,13 @@
 """skdesk (RustDesk hbbs/hbbr) speaks its own binary relay protocol over raw
-TCP/UDP ports (21115-21119 tcp, 21116 udp), never HTTP, so it cannot go
-through Traefik or a published-port overlay network the way every other v1
-service does. It runs in network_mode: host instead, matching prod's live
-topology exactly (network driver=host, EndpointSpec.Ports=null)."""
+TCP/UDP ports (21115-21119 tcp, 21116 udp), never HTTP, so it is never
+routed through Traefik. `network_mode: host` is compose-only and silently
+unsupported by `docker stack deploy` (swarm mode); the only way to bind a
+swarm service to host networking is `networks: - host-net` pointed at the
+engine's built-in network literally named "host" (confirmed against prod's
+own working template - this framework's first draft used network_mode and
+would not actually have deployed). Host networking also means the container
+must be pinned to one real node via a `node.hostname ==` placement
+constraint, since the scheduler cannot be left to pick any manager."""
 import pathlib
 
 import jinja2
@@ -13,15 +18,11 @@ ANSIBLE = pathlib.Path(__file__).resolve().parents[1] / "ansible"
 SKDESK = ANSIBLE / "optional/skdesk/src/config/skdesk/skdesk.yml.j2"
 
 
-def render(env_name):
+def render(env_name, **skdesk_overrides):
+    skdesk = {"PLACEMENT_HOSTNAME": "swarm-manager-1"}
+    skdesk.update(skdesk_overrides)
     tpl_env = jinja2.Environment(undefined=jinja2.ChainableUndefined, trim_blocks=True)  # ansible's template default
-    out = tpl_env.from_string(SKDESK.read_text()).render(
-        app="skdesk",
-        env=env_name,
-        cluster_name="cluster1",
-        domain="example.com",
-        skdesk={"RELAY_HOST": f"skdesk.cluster1.example.com"},
-    )
+    out = tpl_env.from_string(SKDESK.read_text()).render(app="skdesk", env=env_name, skdesk=skdesk)
     return yaml.safe_load(out)
 
 
@@ -30,9 +31,17 @@ def test_compose_is_valid_yaml_for_every_env(env_name):
     doc = render(env_name)
     for name in ("hbbs", "hbbr"):
         svc = doc["services"][name]
-        assert svc["network_mode"] == "host"
-        assert "networks" not in svc
+        assert "network_mode" not in svc  # unsupported by docker stack deploy
+        assert svc["networks"] == ["host-net"]
         assert "deploy" in svc
+    assert doc["networks"]["host-net"] == {"external": True, "name": "host"}
+
+
+def test_pinned_to_a_real_node_via_placement_constraint():
+    doc = render("prod", PLACEMENT_HOSTNAME="swarm-manager-1")
+    for name in ("hbbs", "hbbr"):
+        constraints = doc["services"][name]["deploy"]["placement"]["constraints"]
+        assert "node.hostname == swarm-manager-1" in constraints
 
 
 def test_never_routed_through_traefik():
@@ -58,9 +67,13 @@ def test_image_is_pinned_by_digest():
         assert "@sha256:" in image
 
 
-def test_hbbr_takes_no_relay_host_argument():
-    # -r <relay-host> only makes sense for hbbs (the ID/rendezvous server);
-    # hbbr is the relay itself and takes no arguments.
-    doc = render("prod")
-    assert doc["services"]["hbbs"]["command"][:2] == ["hbbs", "-r"]
-    assert doc["services"]["hbbr"]["command"] == ["hbbr"]
+def test_relay_hostname_and_key_are_optional_cli_flags():
+    # hbbr never takes -r (it is the relay itself, not the ID server); both
+    # take -k only when a pre-shared key is set.
+    bare = render("prod")
+    assert bare["services"]["hbbs"]["command"] == "hbbs"
+    assert bare["services"]["hbbr"]["command"] == "hbbr"
+
+    full = render("prod", RELAY_HOSTNAME="skdesk.example.com", KEY="s3cr3t-not-a-real-key")
+    assert full["services"]["hbbs"]["command"] == "hbbs -r skdesk.example.com -k s3cr3t-not-a-real-key"
+    assert full["services"]["hbbr"]["command"] == "hbbr -k s3cr3t-not-a-real-key"
