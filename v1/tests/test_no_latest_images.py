@@ -38,7 +38,7 @@ def _is_pinned(image):
     if "@sha256:" in image:
         return True
     tag = image.rsplit(":", 1)[-1]
-    if tag in ("latest", "<unresolved>"):
+    if tag in ("latest", "lts", "stable", "release", "edge", "main", "<unresolved>"):
         return False
     return True
 
