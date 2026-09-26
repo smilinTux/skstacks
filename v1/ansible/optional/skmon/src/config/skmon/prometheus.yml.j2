@@ -154,3 +154,8 @@ scrape_configs:
     bearer_token: '{{ target.bearer_token }}'
 {% endif %}
 {% endfor %}
+  # Full scrape_config entries (DNS service discovery, relabelling, ...),
+  # rendered as given: set skmon.EXTRA_SCRAPE_CONFIGS to a list of them.
+{% if skmon.EXTRA_SCRAPE_CONFIGS | default([]) %}
+  {{ skmon.EXTRA_SCRAPE_CONFIGS | to_nice_yaml(indent=2) | indent(2) }}
+{% endif %}
