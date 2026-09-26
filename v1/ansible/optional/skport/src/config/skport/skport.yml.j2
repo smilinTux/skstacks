@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   portainer:
-    image: portainer/portainer-ce:{{ skport.portainer_version | default('lts') }}
+    image: portainer/portainer-ce:{{ skport.portainer_version | default('2.45.1') }}
     env_file:
       - /var/data/config/skport-{{ env }}/skport.env
     volumes:
