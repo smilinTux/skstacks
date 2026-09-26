@@ -121,3 +121,33 @@ def test_db_username_and_password_use_laravel_key_names():
     assert "DB_PASSWORD=pass" in out
     assert "DB_USER=" not in out
     assert "DB_PASS=" not in out
+
+
+def test_cache_driver_rendered_when_set():
+    out = render(CACHE_DRIVER="redis")
+    assert "CACHE_DRIVER=redis" in out
+
+
+def test_cache_driver_absent_when_unset():
+    out = render()
+    assert "CACHE_DRIVER=" not in out
+
+
+def test_session_driver_rendered_when_set():
+    out = render(SESSION_DRIVER="database")
+    assert "SESSION_DRIVER=database" in out
+
+
+def test_session_driver_absent_when_unset():
+    out = render()
+    assert "SESSION_DRIVER=" not in out
+
+
+def test_storage_type_rendered_when_set():
+    out = render(STORAGE_TYPE="s3")
+    assert "STORAGE_TYPE=s3" in out
+
+
+def test_storage_type_absent_when_unset():
+    out = render()
+    assert "STORAGE_TYPE=" not in out
