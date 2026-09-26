@@ -26,7 +26,7 @@
     - name: Select manager node from manager group
       import_tasks: ../../shared/tasks/select_manager_node.yml
       vars:
-        target_group: "{{ target_manager_group }}"
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
 
 # Step 2: Deploy to selected manager
 - hosts: selected_manager_group
