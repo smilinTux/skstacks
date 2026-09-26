@@ -61,7 +61,7 @@ REPLICAS=$(docker service ls --filter "name=${SERVICE_NAME}" --format '{% raw %}
 
 if [[ "${REPLICAS}" == "1/1" ]]; then
     echo -e "${GREEN}✅ SKMail is healthy and running! (${REPLICAS})${NC}"
-    echo -e "${GREEN}📧 Mail Server: {{ skmail.HOSTNAME | default('mail.' + skmail.DOMAIN) }}${NC}"
+    echo -e "${GREEN}📧 Mail Server: {{ skmail.HOSTNAME | default('mail.' ~ skmail.DOMAIN) }}${NC}"
     echo -e "${GREEN}📬 SMTP: 25, 587 (STARTTLS), 465 (SSL)${NC}"
     echo -e "${GREEN}📥 IMAP: 993 (SSL)${NC}"
 else

@@ -423,7 +423,7 @@
       shell: |
         CONTAINER=$(docker ps --filter 'name={{ app }}-{{ env }}_skmail' --format '{% raw %}{{.ID}}{% endraw %}' | head -1)
         if [ -n "${CONTAINER}" ]; then
-          docker exec ${CONTAINER} setup config dkim keysize 2048 domain '{{ skmail.HOSTNAME }},{{ skmail.DOMAIN }}' || echo "DKIM keys may already exist"
+          docker exec ${CONTAINER} setup config dkim keysize 2048 domain '{{ skmail.HOSTNAME | default('mail.' ~ skmail.DOMAIN) }},{{ skmail.DOMAIN }}' || echo "DKIM keys may already exist"
         else
           echo "Container not found, skipping DKIM generation"
         fi
@@ -471,7 +471,7 @@
         if [ -z "${CONTAINER}" ]; then
           exit 0
         fi
-        docker exec ${CONTAINER} sh -lc "awk -v RS= '{ gsub(/\\n/,\" \"); print }' /tmp/docker-mailserver/opendkim/keys/{{ skmail.HOSTNAME }}/mail.txt | sed -n 's/.*( \\\"\\(.*\\)\\\" ).*/\\1/p' | tr -d '\"' | tr -d '\\n'"
+        docker exec ${CONTAINER} sh -lc "awk -v RS= '{ gsub(/\\n/,\" \"); print }' /tmp/docker-mailserver/opendkim/keys/{{ skmail.HOSTNAME | default('mail.' ~ skmail.DOMAIN) }}/mail.txt | sed -n 's/.*( \\\"\\(.*\\)\\\" ).*/\\1/p' | tr -d '\"' | tr -d '\\n'"
       register: dkim_value_host
       changed_when: false
       failed_when: false
