@@ -1,0 +1,221 @@
+version: '3.8'
+
+networks:
+  {{ app }}-{{ env }}:
+    external: true
+  cloud-public-{{ env }}:
+    external: true
+
+services:
+  postgres:
+    image: postgres:16.2
+    env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}.env
+    environment:
+      - PGTEMP=/var/lib/postgresql/data/tmp
+    deploy:
+      mode: replicated
+      replicas: {{ sksso.postgres_replicas | default(1) }}
+      placement:
+{% if sksso.placement_use_worker_constraint | default(true) %}
+        constraints:
+          - "node.role == worker"
+{% endif %}
+      resources:
+        reservations:
+          memory: 256M
+          cpus: '.25'
+        limits:
+          memory: 2G
+          cpus: '1.0'
+      restart_policy:
+        condition: any
+        delay: 10s
+    volumes:
+      - /var/data/runtime/{{ app }}-{{ env }}/postgres:/var/lib/postgresql/data
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - {{ app }}-{{ env }}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  postgres-db-backup:
+    image: postgres:16.2
+    env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}-backup.env
+    environment:
+      - PGTEMP=/dump/tmp
+    volumes:
+      - /var/data/{{ app }}-{{ env }}/database-dump:/dump
+      - /etc/localtime:/etc/localtime:ro
+    entrypoint: |
+      bash -c 'bash -s <<EOF
+      trap "break;exit" SIGHUP SIGINT SIGTERM
+      sleep 2m
+      while /bin/true; do
+        pg_dump -Fc -h postgres -U $${PGUSER} -d $${PGDATABASE} > /dump/dump_`date +%d-%m-%Y"_"%H_%M_%S`.psql
+        (ls -t /dump/dump*.psql|head -n $${BACKUP_NUM_KEEP};ls /dump/dump*.psql)|sort|uniq -u|xargs rm -- {}
+        sleep $${BACKUP_FREQUENCY}
+      done
+      EOF'
+    deploy:
+      mode: replicated
+      replicas: {{ sksso.backup_replicas | default(1) }}
+      placement:
+{% if sksso.placement_use_worker_constraint | default(true) %}
+        constraints:
+          - "node.role == worker"
+{% endif %}
+      resources:
+        reservations:
+          memory: 64M
+          cpus: '.05'
+        limits:
+          memory: 256M
+          cpus: '.05'
+      restart_policy:
+        condition: any
+        delay: 10s
+    networks:
+      - {{ app }}-{{ env }}
+
+  redis:
+    image: docker.io/library/redis:7.2.4
+    env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}.env
+    command: redis-server --dir /data --save 60 1 --loglevel warning
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      mode: replicated
+      replicas: {{ sksso.redis_replicas | default(1) }}
+      placement:
+{% if sksso.placement_use_worker_constraint | default(true) %}
+        constraints:
+          - "node.role == worker"
+{% endif %}
+      resources:
+        reservations:
+          memory: 64M
+          cpus: '.05'
+        limits:
+          memory: 256M
+          cpus: '1.0'
+      restart_policy:
+        condition: any
+        delay: 10s
+    volumes:
+      - /var/data/runtime/{{ app }}-{{ env }}/redis:/data
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - {{ app }}-{{ env }}
+
+  server:
+    image: ghcr.io/goauthentik/server:{{ sksso.authentik_version | default('2024.4.2') }}
+    env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}.env
+    command: server
+    deploy:
+      mode: replicated
+      replicas: {{ sksso.server_replicas | default(1) }}
+      placement:
+{% if sksso.placement_use_worker_constraint | default(true) %}
+        constraints:
+          - "node.role == worker"
+{% endif %}
+{% if sksso.placement_exclude_nodes is defined %}
+{% for node in sksso.placement_exclude_nodes %}
+          - "node.hostname != {{ node }}"
+{% endfor %}
+{% endif %}
+      resources:
+        reservations:
+          memory: 512M
+          cpus: '.5'
+        limits:
+          memory: 2G
+          cpus: '2.0'
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.rule=Host(`sso{% if env != 'prod' %}-{{ env }}{% endif %}.${BASE_DOMAIN}`)"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.priority=5"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.entrypoints=websecure"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.tls=true"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.tls.certresolver=main"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.tls.options=intermediate@file"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.service={{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server"
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.loadbalancer.server.scheme=http"
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.loadbalancer.server.port=9000"
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.loadbalancer.sticky=true"
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.loadbalancer.sticky.cookie=true"
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.loadbalancer.sticky.cookie.name=authentik-session"
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.loadbalancer.sticky.cookie.secure=true"
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.loadbalancer.sticky.cookie.httpOnly=true"
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.loadbalancer.sticky.cookie.sameSite=strict"
+        # Avoids cross-origin POST CSRF issues (Django rejects a cross-origin
+        # POST that carries cookies)
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-http.loadbalancer.server.scheme=http"
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-http.loadbalancer.server.port=9000"
+    volumes:
+      - /var/data/{{ app }}-{{ env }}/media:/media
+      - /var/data/{{ app }}-{{ env }}/data:/data
+      - /var/data/{{ app }}-{{ env }}/custom-templates:/templates
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - cloud-public-{{ env }}
+      - {{ app }}-{{ env }}
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:9000/-/health/live/').read()\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+
+  worker:
+    image: ghcr.io/goauthentik/server:{{ sksso.authentik_version | default('2024.4.2') }}
+    env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}.env
+    command: worker
+    deploy:
+      mode: replicated
+      replicas: {{ sksso.worker_replicas | default(1) }}
+      placement:
+{% if sksso.placement_use_worker_constraint | default(true) %}
+        constraints:
+          - "node.role == worker"
+{% endif %}
+{% if sksso.placement_exclude_nodes is defined %}
+{% for node in sksso.placement_exclude_nodes %}
+          - "node.hostname != {{ node }}"
+{% endfor %}
+{% endif %}
+      resources:
+        reservations:
+          memory: 256M
+          cpus: '.25'
+        limits:
+          memory: 1G
+          cpus: '1.0'
+      restart_policy:
+        condition: any
+        delay: 10s
+    networks:
+      - {{ app }}-{{ env }}
+    volumes:
+      - /var/data/{{ app }}-{{ env }}/media:/media
+      - /var/data/{{ app }}-{{ env }}/certs:/certs
+      - /var/data/{{ app }}-{{ env }}/custom-templates:/templates
+      - /etc/localtime:/etc/localtime:ro
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import os; procs = [p for p in os.listdir('/proc') if p.isdigit()]; cmdlines = [open(f'/proc/{p}/cmdline').read() for p in procs if os.path.exists(f'/proc/{p}/cmdline')]; celery = [c for c in cmdlines if 'celery' in c and 'worker' in c]; exit(0 if celery else 1)\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s

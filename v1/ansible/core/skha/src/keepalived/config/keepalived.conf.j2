@@ -1,0 +1,81 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# Global configuration
+global_defs {
+    router_id {{ inventory_hostname | upper }}_SKHA
+    enable_script_security
+    script_user root
+    enable_snmp_checker
+}
+
+{% for check in app_health_checks %}
+# Health check script for {{ check.name }}
+vrrp_script chk_{{ check.name }} {
+    script "/usr/local/bin/skha_check_{{ check.name }}.sh"
+    interval {{ check.interval | default(5) }}
+    weight {{ check.weight | default(-10) }}
+    fall {{ check.fall | default(2) }}
+    rise {{ check.rise | default(2) }}
+    timeout {{ check.timeout | default(5) }}
+}
+
+{% endfor %}
+# VRRP instance for the HA VIP.
+# CRITICAL: the ACME master node must ALWAYS own the VIP so certificate
+# renewal keeps working. ACME master: state MASTER, priority 150, no health
+# checks (VIP never moves off it). Worker nodes: state BACKUP, lower
+# priority, WITH health checks.
+vrrp_instance VI_1 {
+{% if acme_master_node | default(false) | bool %}
+    # ACME master node - always owns the VIP
+    state MASTER
+    priority 150
+{% else %}
+    # Worker node - backup with health checks
+    state {{ skha_state | default('BACKUP') }}
+    priority {{ skha_priority | default(100) }}
+{% endif %}
+    interface {{ skha.interface | default(primary_interface) }}
+    virtual_router_id {{ skha.virtual_router_id | default(51) }}
+    advert_int {{ skha.advert_interval | default(1) }}
+    nopreempt
+    authentication {
+        auth_type PASS
+        auth_pass {{ skha.auth_pass }}
+    }
+    # Unicast (not multicast) VRRP: works reliably on cloud/VPS networks.
+    unicast_src_ip {{ ansible_facts['default_ipv4']['address'] }}
+    unicast_peer {
+{% for peer in skha_peers | default([]) %}
+        {{ peer }}
+{% endfor %}
+    }
+{% if not (acme_master_node | default(false) | bool) %}
+    # Track health check scripts (workers only - the ACME master's VIP is
+    # locked and never evaluates health).
+    track_script {
+{% for check in app_health_checks %}
+        chk_{{ check.name }}
+{% endfor %}
+    }
+{% endif %}
+    virtual_ipaddress {
+        {{ skha.vip }}
+    }
+    notify_master "/usr/local/bin/skha_notify.sh master"
+    notify_backup "/usr/local/bin/skha_notify.sh backup"
+    notify_fault "/usr/local/bin/skha_notify.sh fault"
+}

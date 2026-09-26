@@ -1,0 +1,296 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# skstacks: per-host - keepalived VRRP identity (priority, VRRP state,
+# unicast peers, network interface) is per-node, not shared /var/data state.
+# Every manager in target_manager_group must run this play so each node gets
+# its own keepalived config; a single selected manager would only configure
+# VRRP on one of the nodes that need it. See
+# ../../../tests/test_single_manager_deploy.py for the framework's default
+# single-manager rule and this documented exemption for host-level core
+# services.
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+- name: Deploy SKHA (keepalived VRRP VIP failover)
+  hosts: "{{ target_manager_group }}"
+  become: true
+  vars:
+    app: skha
+    env: prod
+    service_name: skha
+    service_type: core
+  pre_tasks:
+    - name: Verify target_manager_group is defined
+      fail:
+        msg: "You must provide the manager group via -e target_manager_group=<group_name>. Example: -e target_manager_group=<instance>-managers"
+      when: target_manager_group is not defined
+
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Verify required SKHA vault variables are set
+      fail:
+        msg: >-
+          skha.vip and skha.auth_pass are required instance vars - set them
+          in the service's vault file (see README.md). There is no framework
+          default: a floating VIP and a VRRP password are estate-specific by
+          nature.
+      when: >-
+        (skha.vip | default('')) == '' or
+        (skha.auth_pass | default('')) == ''
+
+    - name: Define health check list (instance override, generic default)
+      set_fact:
+        app_health_checks: "{{ skha.health_checks | default([
+          { 'name': 'traefik', 'ports': [80, 443], 'container_pattern': 'traefik-worker' }
+        ]) }}"
+      tags:
+        - config
+
+  tasks:
+    - name: Deploying {{ app }}
+      debug:
+        msg: Running SKStacks deploy {{ app }} scripts...
+
+    - name: Gather Ansible facts
+      ansible.builtin.setup:
+        gather_subset:
+          - network
+
+    - name: Set primary interface fact
+      set_fact:
+        primary_interface: "{{ skha.interface | default(ansible_facts['default_ipv4']['interface']) }}"
+
+    - name: Get current cluster manager nodes (filter to only nodes in this play)
+      set_fact:
+        current_cluster_managers: "{{ ansible_play_hosts | select('match', '.*') | list }}"
+      run_once: true
+      delegate_to: localhost
+      connection: local
+
+    - name: Get all swarm manager nodes IPs for unicast (current cluster only)
+      set_fact:
+        all_manager_ips: >-
+          {{
+            current_cluster_managers |
+            map('extract', hostvars, 'ansible_default_ipv4') |
+            select('defined') |
+            map(attribute='address') |
+            select('defined') |
+            list
+          }}
+      run_once: true
+      delegate_to: localhost
+      connection: local
+
+    - name: Get current node IP
+      set_fact:
+        current_node_ip: "{{ ansible_facts['default_ipv4']['address'] }}"
+
+    - name: Build unicast peer list (exclude current node)
+      set_fact:
+        skha_peers: >-
+          {{
+            all_manager_ips | default([]) |
+            reject('equalto', current_node_ip) | list
+          }}
+
+    - name: Check if this node is the ACME master (has the ACME-master label)
+      shell: >-
+        docker node inspect {{ inventory_hostname }} --format '{{ '{{ .Spec.Labels }}' }}'
+        | grep -q '{{ skha.acme_master_label | default("traefik.acme.master") }}:true'
+        && echo "true" || echo "false"
+      register: acme_master_check
+      changed_when: false
+      failed_when: false
+      delegate_to: "{{ inventory_hostname }}"
+
+    - name: Set acme_master_node fact
+      set_fact:
+        acme_master_node: "{{ acme_master_check.stdout | default('false') == 'true' }}"
+      when: acme_master_check is defined
+
+    - name: Set default acme_master_node to false if not defined
+      set_fact:
+        acme_master_node: false
+      when: acme_master_node is not defined
+
+    - name: Check all manager nodes for the ACME-master label (to identify ACME master for worker index calculation)
+      shell: >-
+        docker node inspect {{ item }} --format '{{ '{{ .Spec.Labels }}' }}'
+        | grep -q '{{ skha.acme_master_label | default("traefik.acme.master") }}:true'
+        && echo "{{ item }}" || echo ""
+      register: acme_check_results
+      changed_when: false
+      failed_when: false
+      loop: "{{ current_cluster_managers | sort }}"
+      delegate_to: "{{ item }}"
+      run_once: true
+
+    - name: Extract ACME master node name from check results
+      set_fact:
+        acme_master_node_name: "{{ item.stdout }}"
+      loop: "{{ acme_check_results.results | default([]) }}"
+      when: >
+        acme_master_node_name is not defined and
+        item.stdout | default('') != ''
+      run_once: true
+      delegate_to: localhost
+      connection: local
+
+    - name: Build worker nodes list (exclude ACME master from index calculation)
+      set_fact:
+        worker_nodes: >-
+          {{
+            current_cluster_managers | sort |
+            reject('equalto', acme_master_node_name | default('')) | list
+          }}
+      run_once: true
+      delegate_to: localhost
+      connection: local
+      when: acme_master_node_name is defined
+
+    - name: Build worker nodes list (fallback - use all managers if ACME master not found)
+      set_fact:
+        worker_nodes: "{{ current_cluster_managers | sort }}"
+      run_once: true
+      delegate_to: localhost
+      connection: local
+      when: acme_master_node_name is not defined
+
+    - name: Calculate node index in sorted worker nodes list (excludes ACME master)
+      set_fact:
+        worker_node_index: "{{ loop_index0 }}"
+      loop: "{{ worker_nodes | default(current_cluster_managers | sort) }}"
+      when: item == inventory_hostname and not (acme_master_node | default(false) | bool)
+      loop_control:
+        label: "{{ item }} (worker index {{ loop_index0 }})"
+        index_var: loop_index0
+
+    - name: Set default worker node index if not found
+      set_fact:
+        worker_node_index: 0
+      when: worker_node_index is not defined and not (acme_master_node | default(false) | bool)
+
+    - name: Set SKHA priority (150 for ACME master, otherwise decreasing for workers based on worker index)
+      set_fact:
+        skha_priority: >-
+          {{
+            150 if (acme_master_node | default(false) | bool)
+            else ((skha.worker_base_priority | default(80) | int) - (worker_node_index | default(0) | int * 10))
+          }}
+
+    - name: Set SKHA state (MASTER for ACME master node, BACKUP for workers)
+      set_fact:
+        skha_state: >-
+          {{
+            'MASTER' if (acme_master_node | default(false) | bool)
+            else 'BACKUP'
+          }}
+
+    - name: Debug SKHA configuration
+      debug:
+        msg: >-
+          Node: {{ inventory_hostname }},
+          IP: {{ current_node_ip }},
+          ACME Master: {{ acme_master_node | default(false) }},
+          Priority: {{ skha_priority | default(100) }},
+          State: {{ skha_state | default('BACKUP') }},
+          Peers: {{ skha_peers | default([]) }},
+          Interface: {{ primary_interface }},
+          Health checks: {{ app_health_checks | map(attribute='name') | list }}
+
+    - name: Install keepalived
+      ansible.builtin.apt:
+        name: keepalived
+        state: present
+        update_cache: yes
+
+    - name: Configure UFW firewall rule for VIP (allow all traffic to the HA virtual IP)
+      community.general.ufw:
+        rule: allow
+        direction: in
+        interface: "{{ primary_interface }}"
+        to_ip: "{{ skha.vip }}"
+        comment: "Allow all traffic to HA Virtual IP"
+      when: skha.vip is defined
+
+    - name: Ensure /usr/local/bin exists
+      ansible.builtin.file:
+        path: /usr/local/bin
+        state: directory
+        mode: '0755'
+
+    - name: Deploy health check scripts
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/src/keepalived/scripts/skha_check.sh.j2"
+        dest: "/usr/local/bin/skha_check_{{ item.name }}.sh"
+        owner: root
+        group: root
+        mode: '0755'
+      loop: "{{ app_health_checks }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Deploy notification script
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/src/keepalived/scripts/skha_notify.sh"
+        dest: /usr/local/bin/skha_notify.sh
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Ensure keepalived log directory exists
+      ansible.builtin.file:
+        path: /var/log
+        state: directory
+        mode: '0755'
+
+    - name: Template keepalived config
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/src/keepalived/config/keepalived.conf.j2"
+        dest: /etc/keepalived/keepalived.conf
+        owner: root
+        group: root
+        mode: '0644'
+      notify: restart keepalived
+
+    - name: Enable and start keepalived
+      ansible.builtin.service:
+        name: keepalived
+        state: started
+        enabled: yes
+
+    - name: Ensure keepalived is running
+      ansible.builtin.command:
+        cmd: systemctl status keepalived
+      register: skha_status
+      changed_when: false
+      failed_when: false
+
+    - name: Display SKHA status
+      debug:
+        msg: "{{ skha_status.stdout_lines | default(['Status check completed']) }}"
+
+  handlers:
+    - name: restart keepalived
+      ansible.builtin.service:
+        name: keepalived
+        state: restarted
