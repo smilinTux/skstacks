@@ -36,7 +36,7 @@ services:
         - "traefik.http.routers.skhub-secure.tls.certresolver=main"
         - "traefik.http.routers.skhub-secure.service=skhub-secure"
         - "traefik.http.services.skhub-secure.loadbalancer.server.port=80"
-{% set _skhub_secure_middlewares = ['skhub', 'skhub-dav'] + (skhub.router_middlewares | default([])) %}
+{% set _skhub_secure_middlewares = (skhub.router_middlewares_pre | default([])) + ['skhub', 'skhub-dav'] + (skhub.router_middlewares | default([])) %}
         - "traefik.http.routers.skhub-secure.middlewares={{ _skhub_secure_middlewares | join(',') }}"
 {% if skhub.tls_options | default('') %}
         - "traefik.http.routers.skhub-secure.tls.options={{ skhub.tls_options }}"

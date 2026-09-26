@@ -7,8 +7,10 @@ Each entry says what an instance must do, if anything.
 
 - v1: **skhub** router now supports `skhub.router_middlewares` (list, default `[]`, appended after the framework's own `skhub,skhub-dav` middlewares on the `skhub-secure` router) and `skhub.tls_options` (string, default unset -> no label).
 - v1: **skdash** router gets the same `skdash.router_middlewares` (default `[]`) and `skdash.tls_options` (default unset) hooks on its secure router. Its compose template also gains `restart_policy` (`on-failure`, 10s delay, 5 attempts) and `rollback_config` (parallelism 1, 10s delay), resource limits/reservations moved to `skdash.RESOURCES_LIMITS_CPUS`/`RESOURCES_LIMITS_MEMORY`/`RESOURCES_RESERVATIONS_CPUS`/`RESOURCES_RESERVATIONS_MEMORY` (defaults unchanged: 0.5/512M limits, 0.1/128M reservations), and a sticky-cookie `sameSite` hook via `skdash.sticky_samesite` (default unset -> no label, current framework behavior).
+- v1: **skhub** and **skdash** both gain `router_middlewares_pre` (list, default `[]`), prepended before the built-in middlewares on the secure router; `router_middlewares` keeps appending after them. Needed for middleware chains where order matters (e.g. a request-buffering middleware that must run before the app's own headers/rewrite middlewares).
+- v1: **skdash** `restart_policy` and `rollback_config` gain more instance-overridable fields: `skdash.restart_policy_condition` (default `on-failure`), `skdash.restart_policy_max_attempts` and `skdash.restart_policy_window` (defaults `5`/`120s`, set to an empty string to omit the key entirely), and opt-in `skdash.rollback_failure_action` / `skdash.rollback_monitor` / `skdash.rollback_max_failure_ratio` (all unset by default, matching current framework behavior of no extra rollback fields).
 
-Instance action: none required; all new hooks default to current framework behavior. Set the new vars only where an instance needs a middleware, TLS options, resource sizing or cookie policy the defaults do not already provide.
+Instance action: none required; all new hooks default to current framework behavior. Set the new vars only where an instance needs a middleware, TLS options, resource sizing, cookie policy, or restart/rollback semantics the defaults do not already provide.
 
 ## skstacks-v2.16.0 - 2026-09-26
 

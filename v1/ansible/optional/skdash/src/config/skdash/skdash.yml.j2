@@ -41,11 +41,29 @@ services:
       rollback_config:
         parallelism: 1
         delay: 10s
+{% set _rollback_failure_action = skdash.rollback_failure_action | default('') %}
+{% if _rollback_failure_action %}
+        failure_action: {{ _rollback_failure_action }}
+{% endif %}
+{% set _rollback_monitor = skdash.rollback_monitor | default('') %}
+{% if _rollback_monitor %}
+        monitor: {{ _rollback_monitor }}
+{% endif %}
+{% set _rollback_max_failure_ratio = skdash.rollback_max_failure_ratio | default('') %}
+{% if _rollback_max_failure_ratio != '' %}
+        max_failure_ratio: {{ _rollback_max_failure_ratio }}
+{% endif %}
       restart_policy:
-        condition: on-failure
-        delay: 10s
-        max_attempts: 5
-        window: 120s
+        condition: {{ skdash.restart_policy_condition | default('on-failure') }}
+        delay: {{ skdash.restart_policy_delay | default('10s') }}
+{% set _restart_max_attempts = skdash.restart_policy_max_attempts | default(5) %}
+{% if _restart_max_attempts %}
+        max_attempts: {{ _restart_max_attempts | int }}
+{% endif %}
+{% set _restart_window = skdash.restart_policy_window | default('120s') %}
+{% if _restart_window %}
+        window: {{ _restart_window }}
+{% endif %}
       resources:
         limits:
           cpus: '{{ skdash.RESOURCES_LIMITS_CPUS | default("0.5") }}'
@@ -65,7 +83,7 @@ services:
 {% endif %}
         - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-secure.service={{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}"
         - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=8080"
-{% set _skdash_secure_middlewares = (skdash.router_middlewares | default([])) %}
+{% set _skdash_secure_middlewares = (skdash.router_middlewares_pre | default([])) + (skdash.router_middlewares | default([])) %}
 {% if _skdash_secure_middlewares %}
         - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-secure.middlewares={{ _skdash_secure_middlewares | join(',') }}"
 {% endif %}

@@ -60,6 +60,18 @@ def test_skhub_tls_options_label_set_when_configured():
     assert "traefik.http.routers.skhub-secure.tls.options=generic-tls@file" in labels
 
 
+def test_skhub_router_middlewares_pre_prepended_before_builtins():
+    doc = _skhub_doc(router_middlewares_pre=["upload-buffering@file"])
+    labels = doc["services"]["nextcloud"]["deploy"]["labels"]
+    assert "traefik.http.routers.skhub-secure.middlewares=upload-buffering@file,skhub,skhub-dav" in labels
+
+
+def test_skhub_router_middlewares_pre_and_post_combine_in_order():
+    doc = _skhub_doc(router_middlewares_pre=["pre@file"], router_middlewares=["post@file"])
+    labels = doc["services"]["nextcloud"]["deploy"]["labels"]
+    assert "traefik.http.routers.skhub-secure.middlewares=pre@file,skhub,skhub-dav,post@file" in labels
+
+
 # --- skdash-secure router -----------------------------------------------
 
 def test_skdash_default_router_has_no_middlewares_or_tls_options():
@@ -80,6 +92,18 @@ def test_skdash_tls_options_label_set_when_configured():
     doc = _skdash_doc(tls_options="generic-tls@file")
     labels = doc["services"]["dashy"]["deploy"]["labels"]
     assert "traefik.http.routers.skdash-secure.tls.options=generic-tls@file" in labels
+
+
+def test_skdash_router_middlewares_pre_prepended_before_post():
+    doc = _skdash_doc(router_middlewares_pre=["crowdsec@file"], router_middlewares=["extra@file"])
+    labels = doc["services"]["dashy"]["deploy"]["labels"]
+    assert "traefik.http.routers.skdash-secure.middlewares=crowdsec@file,extra@file" in labels
+
+
+def test_skdash_router_middlewares_pre_alone_sets_label():
+    doc = _skdash_doc(router_middlewares_pre=["crowdsec@file"])
+    labels = doc["services"]["dashy"]["deploy"]["labels"]
+    assert "traefik.http.routers.skdash-secure.middlewares=crowdsec@file" in labels
 
 
 def test_skdash_sticky_samesite_set_when_configured():
@@ -118,6 +142,46 @@ def test_skdash_has_restart_policy_and_rollback_config():
     deploy = doc["services"]["dashy"]["deploy"]
     assert deploy["restart_policy"]["condition"] == "on-failure"
     assert deploy["rollback_config"]["parallelism"] == 1
+
+
+def test_skdash_default_restart_policy_has_max_attempts_and_window():
+    doc = _skdash_doc()
+    rp = doc["services"]["dashy"]["deploy"]["restart_policy"]
+    assert rp["max_attempts"] == 5
+    assert rp["window"] == "120s"
+
+
+def test_skdash_restart_policy_condition_overridable():
+    doc = _skdash_doc(restart_policy_condition="any")
+    rp = doc["services"]["dashy"]["deploy"]["restart_policy"]
+    assert rp["condition"] == "any"
+
+
+def test_skdash_restart_policy_max_attempts_and_window_omittable():
+    doc = _skdash_doc(restart_policy_max_attempts="", restart_policy_window="")
+    rp = doc["services"]["dashy"]["deploy"]["restart_policy"]
+    assert "max_attempts" not in rp
+    assert "window" not in rp
+
+
+def test_skdash_default_rollback_config_has_no_extra_fields():
+    doc = _skdash_doc()
+    rb = doc["services"]["dashy"]["deploy"]["rollback_config"]
+    assert "failure_action" not in rb
+    assert "monitor" not in rb
+    assert "max_failure_ratio" not in rb
+
+
+def test_skdash_rollback_config_extra_fields_opt_in():
+    doc = _skdash_doc(
+        rollback_failure_action="pause",
+        rollback_monitor="30s",
+        rollback_max_failure_ratio=0.2,
+    )
+    rb = doc["services"]["dashy"]["deploy"]["rollback_config"]
+    assert rb["failure_action"] == "pause"
+    assert rb["monitor"] == "30s"
+    assert rb["max_failure_ratio"] == 0.2
 
 
 # --- both templates keep rendering valid, well-formed compose YAML ------
