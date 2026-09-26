@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  skpeek:
+    image: {{ skpeek_image | default('docker.io/searxng/searxng:latest') }}
+    env_file: /var/data/config/skpeek-{{ env }}/skpeek.env
+
+    logging:
+      driver: json-file
+      options:
+        max-size: 4m
+        max-file: "1"
+
+    volumes:
+      - /var/data/skpeek-{{ env }}/etc:/etc/searxng:rw
+      - /var/data/skpeek-{{ env }}/img/skpeek.png:/usr/local/searxng/searx/static/themes/simple/img/searxng.png:rw
+
+    networks:
+      - cloud-public-{{ env }}
+      - skpeek-{{ env }}
+
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        # === TRAEFIK: HTTP ===
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        # === TRAEFIK: ROUTERS ===
+        - "traefik.http.routers.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.{{ cluster_name | default(skpeek.CLUSTERNAME | default('cluster1')) }}.{{ domain | default(skpeek.DOMAIN | default('example.com')) }}`)"
+        - "traefik.http.routers.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
+        - "traefik.http.routers.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
+        - "traefik.http.routers.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
+        - "traefik.http.routers.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
+        - "traefik.http.routers.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares=default-no-crowdsec@file"
+        - "traefik.http.routers.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.service=skpeek{% if env != 'prod' %}-{{ env }}{% endif %}"
+        # === TRAEFIK: SERVICES ===
+        - "traefik.http.services.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=8080"
+
+  redis:
+    image: {{ redis_image | default('docker.io/valkey/valkey:8-alpine') }}
+    command: valkey-server --save 30 1 --loglevel warning
+    logging:
+      driver: json-file
+      options:
+        max-size: 4m
+        max-file: "1"
+
+    networks:
+      - skpeek-{{ env }}
+    volumes:
+      - /var/data/runtime/skpeek-{{ env }}/redis:/data
+
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+networks:
+  cloud-public-{{ env }}:
+    external: true
+  skpeek-{{ env }}:
+    external: true
+

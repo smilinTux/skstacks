@@ -75,6 +75,7 @@ resource "libvirt_cloudinit_disk" "node" {
     admin_user     = var.admin_user
     ssh_public_key = var.ssh_public_key
     k3d            = each.value.worker && var.worker_k3d
+    daemon_json    = length(var.registry_mirrors) > 0 ? jsonencode({ "registry-mirrors" = var.registry_mirrors }) : ""
   })
   network_config = yamlencode({
     version = 2

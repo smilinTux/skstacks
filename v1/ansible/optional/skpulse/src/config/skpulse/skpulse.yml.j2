@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  skpulse:
+    image: {{ skpulse_image | default('louislam/uptime-kuma:latest') }}
+    env_file:
+      - /var/data/config/skpulse-{{ env }}/skpulse.env
+
+    logging:
+      driver: json-file
+      options:
+        max-size: 4m
+        max-file: "1"
+
+    volumes:
+      - /var/data/skpulse-{{ env }}/uptime-kuma:/app/data
+
+    networks:
+      - cloud-public-{{ env }}
+      - skpulse-{{ env }}
+
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      labels:
+        # === TRAEFIK: HTTP ===
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        # === TRAEFIK: ROUTERS ===
+        - "traefik.http.routers.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.{{ cluster_name | default(skpulse.CLUSTERNAME | default('cluster1')) }}.{{ domain | default(skpulse.DOMAIN | default('example.com')) }}`)"
+        - "traefik.http.routers.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
+        - "traefik.http.routers.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
+        - "traefik.http.routers.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
+        - "traefik.http.routers.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
+        - "traefik.http.routers.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares=default-no-crowdsec@file"
+        - "traefik.http.routers.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.service=skpulse{% if env != 'prod' %}-{{ env }}{% endif %}"
+        # === TRAEFIK: SERVICES ===
+        - "traefik.http.services.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=3001"
+        # === STICKY SESSIONS: Required for stateful web app ===
+        - "traefik.http.services.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.loadBalancer.sticky=true"
+        - "traefik.http.services.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.loadBalancer.sticky.cookie=true"
+        - "traefik.http.services.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.loadBalancer.sticky.cookie.name=skpulse_session"
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
+networks:
+  cloud-public-{{ env }}:
+    external: true
+  skpulse-{{ env }}:
+    external: true
+

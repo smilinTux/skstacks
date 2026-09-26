@@ -3,6 +3,21 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## skstacks-v2.16.0 - 2026-09-26
+
+- v1: **sksync** (Syncthing), **skpulse** (Uptime Kuma) and **skpeek**
+  (SearXNG + valkey) published.
+- tofu libvirt-cluster: `registry_mirrors` writes Docker's daemon.json (e.g.
+  `mirror.gcr.io`), so test clusters behind one public IP stop hitting Docker
+  Hub's anonymous pull limit.
+- sksync configures its firewall from the one selected manager (it ran on
+  every manager); skpeek's SearXNG `secret_key` is required (`skpeek.SECRET_KEY`,
+  it had a literal default).
+
+Instance action: set `sksync.*` (incl. SYNCWALLET, ENCRYPTION_TOKEN, UUID),
+`skpulse.*` and `skpeek.SECRET_KEY`; shared `/var/data` as for the other v1
+services.
+
 ## skstacks-v2.15.0 - 2026-09-26
 
 - v1: **skmon** (Prometheus, Grafana, Loki, Promtail, cAdvisor, node-exporter,

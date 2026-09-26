@@ -29,3 +29,22 @@ run "worker_count_zero" {
     error_message = "no workers expected"
   }
 }
+
+run "registry_mirrors_written_to_daemon_json" {
+  command = plan
+  variables {
+    registry_mirrors = ["https://mirror.example.test"]
+  }
+  assert {
+    condition     = strcontains(libvirt_cloudinit_disk.node["t06-mgr-1"].user_data, "\"registry-mirrors\":[\"https://mirror.example.test\"]")
+    error_message = "daemon.json registry-mirrors missing"
+  }
+}
+
+run "no_mirrors_by_default" {
+  command = plan
+  assert {
+    condition     = !strcontains(libvirt_cloudinit_disk.node["t06-mgr-1"].user_data, "registry-mirrors")
+    error_message = "mirrors must be opt-in"
+  }
+}
