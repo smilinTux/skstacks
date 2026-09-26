@@ -174,8 +174,20 @@
         - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env" }
         - { src: "postgres.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/postgres.env" }
         - { src: "postgres-backup.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/postgres-backup.env" }
-        - { src: "redis.conf.j2", dest: "/var/data/config/{{ app }}-{{ env }}/redis.conf" }
       when: item.src != "{{ app }}.sh.env.j2"
+      tags:
+        - templates
+
+    # redis.conf carries the redis password (kept off argv). The redis image
+    # drops to uid 999 before exec'ing redis-server, so root:root 0640 is
+    # unreadable to it (exit 1, service 0/1): own it 999, still 0640.
+    - name: Render redis.conf readable by the redis user only
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/redis.conf.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/redis.conf"
+        owner: "999"
+        group: "999"
+        mode: '0640'
       tags:
         - templates
 
