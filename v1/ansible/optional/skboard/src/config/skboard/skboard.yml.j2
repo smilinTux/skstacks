@@ -36,12 +36,12 @@ services:
       - cloud-public-{{ env }}
       - skboard-{{ env }}
 
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3456/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
+    # No Docker-level healthcheck: the vikunja/vikunja image ships no shell
+    # and no wget/curl (verified: docker exec fails with "executable file
+    # not found in $PATH" for both), so a CMD-style test cannot run inside
+    # the container. The upstream image itself defines no HEALTHCHECK either.
+    # Swarm still detects and restarts a genuinely crashed process via the
+    # container exit code and the restart_policy below.
 
     deploy:
       mode: replicated
