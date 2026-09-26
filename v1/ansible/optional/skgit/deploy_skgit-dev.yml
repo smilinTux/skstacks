@@ -241,6 +241,8 @@
           echo "Starting runners..."
           /var/data/{{ app }}-{{ env }}/start-runners.sh
         fi
+      environment:
+        SKGIT_DIND_NODE: "{{ skgit.DIND_NODE | default('') }}"
       when: deploy_output.rc == 0
       ignore_errors: yes
       tags:
