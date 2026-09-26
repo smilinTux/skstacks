@@ -91,6 +91,7 @@
         - /var/data/{{ app }}-{{ env }}/database-dump
         - /var/data/runtime/{{ app }}-{{ env }}/postgres
         - /var/data/runtime/{{ app }}-{{ env }}/redis
+        - /var/data/config/{{ app }}-{{ env }}/custom
 
     - name: Process {{ app }} environment templates
       template:
@@ -105,6 +106,15 @@
         - { src: "{{ app }}-backup.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}-backup.env", mode: "0644" }
       tags:
         - templates
+
+    - name: Write the {{ app }} user_settings.py override (only when the instance sets one)
+      copy:
+        content: "{{ sksso.user_settings_py }}"
+        dest: "/var/data/config/{{ app }}-{{ env }}/custom/user_settings.py"
+        owner: root
+        group: root
+        mode: '0644'
+      when: sksso.user_settings_py | default('') | length > 0
 
     - name: Process {{ app }} Docker Compose template
       template:
