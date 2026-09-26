@@ -21,3 +21,7 @@ def test_skform_compose_is_valid_yaml(skstor):
     assert "deploy" in svc and "networks" in svc
     assert ("cloud-public-dev" in svc["networks"]) == skstor
     assert "traefik.enable=false" in svc.get("labels", [])  # CLI only: never routed
+    # the official image lives on ghcr (Docker Hub has none) and its entrypoint
+    # is `tofu`, so idling needs the entrypoint replaced, not the command
+    assert svc["image"].startswith("ghcr.io/opentofu/opentofu:")
+    assert svc.get("entrypoint") == ["sleep", "infinity"]
