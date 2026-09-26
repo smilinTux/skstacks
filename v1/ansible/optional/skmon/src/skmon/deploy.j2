@@ -2,8 +2,8 @@
 set -e
 
 APP="skmon"
-STACK_NAME="{{ app }}{% if env == 'prod' %}-prod{% endif %}"
-CONFIG_DIR="/var/data/config/${APP}{% if env == 'prod' %}-prod{% endif %}"
+STACK_NAME="{{ app }}-{{ env }}"
+CONFIG_DIR="/var/data/config/${APP}-{{ env }}"
 COMPOSE_FILE="${CONFIG_DIR}/docker-compose.yml"
 
 # Colors for output
