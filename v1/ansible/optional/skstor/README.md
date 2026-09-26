@@ -103,3 +103,5 @@ that skips the public hostname and reaches this service directly over the
   the decision doc) rather than relying on Garage for that guarantee.
 - Root credentials are gone; each consumer gets its own scoped key (see
   bootstrap above) instead of reusing one MinIO root user/password.
+
+`skstor.layout_capacity` (default `1G`): capacity passed to `garage layout assign` for the single node. Garage v2 rejects values under 1K; with one node it is only a relative weight.

@@ -26,7 +26,9 @@ esac
 
 
 def bootstrap_block():
-    text = BOOTSTRAP.read_text()
+    import jinja2
+    text = jinja2.Environment(undefined=jinja2.ChainableUndefined).from_string(
+        BOOTSTRAP.read_text()).render(env="dev", app="skstor", skstor={})
     start = text.index("CONTAINER_ID=")
     return 'GREEN=""; YELLOW=""; RED=""; NC=""; STACK_NAME=skstor-dev\n' + text[start:]
 
@@ -44,7 +46,7 @@ def run(tmp_path, layout_version):
 
 def test_fresh_node_is_assigned_and_applied_at_version_1(tmp_path):
     calls = run(tmp_path, 0)
-    assert f"layout assign -z dc1 -c 1 {NODE}" in calls
+    assert f"layout assign -z dc1 -c 1G {NODE}" in calls
     assert "layout apply --version 1" in calls
 
 
