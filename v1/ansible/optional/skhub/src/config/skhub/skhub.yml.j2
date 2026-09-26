@@ -1,0 +1,425 @@
+{%- if skhub.CLOUDFLARED | default(false) -%}
+  {%- set _base_domain = skhub.DOMAIN -%}
+{%- else -%}
+  {%- set _base_domain = skhub.CLUSTERNAME ~ '.' ~ skhub.DOMAIN -%}
+{%- endif -%}
+version: "3.7"
+
+services:
+  nextcloud:
+    image: nextcloud:31.0.14
+    env_file: /var/data/config/skhub-{{ env }}/skhub.env
+    networks:
+      - skhub-{{ env }}
+      - cloud-public-{{ env }}
+    depends_on:
+      - db
+      - redis
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+      mode: replicated
+      resources:
+        reservations:
+          memory: 512M
+        limits:
+          memory: 2G
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.routers.skhub-secure.rule=Host(`{{ skhub.SKHUB_HOSTNAME | default('skhub' + ('-staging' if env == 'staging' else '-dev' if env == 'dev' else '') + '.' + _base_domain) }}`)"
+        - "traefik.http.routers.skhub-secure.priority=5"
+        - "traefik.http.routers.skhub-secure.entrypoints=websecure"
+        - "traefik.http.routers.skhub-secure.tls=true"
+        - "traefik.http.routers.skhub-secure.tls.certresolver=main"
+        - "traefik.http.routers.skhub-secure.service=skhub-secure"
+        - "traefik.http.services.skhub-secure.loadbalancer.server.port=80"
+        - "traefik.http.routers.skhub-secure.middlewares=skhub,skhub-dav"
+        # STICKY SESSIONS: required for a stateful web app (Nextcloud) behind
+        # more than one Traefik instance.
+        - "traefik.http.services.skhub-secure.loadbalancer.sticky=true"
+        - "traefik.http.services.skhub-secure.loadbalancer.sticky.cookie=true"
+        - "traefik.http.services.skhub-secure.loadbalancer.sticky.cookie.name=skhub_session"
+        - "traefik.http.services.skhub-secure.loadbalancer.sticky.cookie.secure=true"
+        - "traefik.http.services.skhub-secure.loadbalancer.sticky.cookie.httpOnly=true"
+        - "traefik.http.services.skhub-secure.loadbalancer.sticky.cookie.sameSite=strict"
+        - "traefik.http.middlewares.skhub.headers.customFrameOptionsValue=SAMEORIGIN"
+        - "traefik.http.middlewares.skhub.headers.framedeny=true"
+        - "traefik.http.middlewares.skhub.headers.sslredirect=true"
+        - "traefik.http.middlewares.skhub.headers.STSIncludeSubdomains=true"
+        - "traefik.http.middlewares.skhub.headers.STSPreload=true"
+        - "traefik.http.middlewares.skhub.headers.browserXSSFilter=true"
+        - "traefik.http.middlewares.skhub.headers.contentTypeNosniff=true"
+        - "traefik.http.middlewares.skhub.headers.STSSeconds=315360000"
+        - "traefik.http.middlewares.skhub.headers.forceSTSHeader=true"
+        - "traefik.http.middlewares.skhub.headers.sslProxyHeaders.X-Forwarded-Proto=https"
+        # WebDAV auto-discovery: /.well-known/ca(l|rd)dav -> /remote.php/dav/
+        - "traefik.http.middlewares.skhub-dav.replacepathregex.regex=^/.well-known/ca(l|rd)dav"
+        - "traefik.http.middlewares.skhub-dav.replacepathregex.replacement=/remote.php/dav/"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf --max-time 60 http://localhost/status.php || exit 1"]
+      interval: 120s
+      timeout: 90s
+      retries: 3
+      start_period: 300s
+    volumes:
+      - /var/data/skhub-{{ env }}/html:/var/www/html
+      - /var/data/skhub-{{ env }}/custom_apps:/var/www/html/custom_apps
+      - /var/data/skhub-{{ env }}/config:/var/www/html/config
+      - /var/data/skhub-{{ env }}/data:/var/www/html/data
+      - /var/data/skhub-{{ env }}/themes:/var/www/html/themes
+      - /var/data/skhub-{{ env }}/app-hooks/pre-installation:/docker-entrypoint-hooks.d/pre-installation
+      - /var/data/skhub-{{ env }}/app-hooks/post-installation:/docker-entrypoint-hooks.d/post-installation
+      - /var/data/skhub-{{ env }}/app-hooks/pre-upgrade:/docker-entrypoint-hooks.d/pre-upgrade
+      - /var/data/skhub-{{ env }}/app-hooks/post-upgrade:/docker-entrypoint-hooks.d/post-upgrade
+      - /var/data/skhub-{{ env }}/app-hooks/before-starting:/docker-entrypoint-hooks.d/before-starting
+      - /var/data/config/skhub-{{ env }}/php-opcache.ini:/usr/local/etc/php/conf.d/zz-opcache-custom.ini:ro
+      - /var/data/config/skhub-{{ env }}/php-timeouts.ini:/usr/local/etc/php/conf.d/zz-timeouts-custom.ini:ro
+      - /var/data/config/skhub-{{ env }}/apache-timeout.conf:/etc/apache2/conf-enabled/timeout-custom.conf:ro
+      - /etc/localtime:/etc/localtime:ro
+
+  db:
+    image: mariadb:10.11.7
+    env_file: /var/data/config/skhub-{{ env }}/skhub.env
+    command:
+      - --wait_timeout=28800
+      - --interactive_timeout=28800
+      - --max_connections=500
+    networks:
+      - skhub-{{ env }}
+    volumes:
+      - /var/data/runtime/skhub-{{ env }}/db:/var/lib/mysql
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+      mode: replicated
+      resources:
+        reservations:
+          memory: 256M
+          cpus: '.25'
+        limits:
+          memory: 2G
+          cpus: '1.0'
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p\"$$MYSQL_ROOT_PASSWORD\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  db-backup:
+    image: mariadb:10.11.7
+    env_file: /var/data/config/skhub-{{ env }}/skhub-db-backup.env
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+      mode: replicated
+      resources:
+        reservations:
+          memory: 64M
+          cpus: '.05'
+        limits:
+          memory: 256M
+          cpus: '.25'
+    volumes:
+      - /var/data/skhub-{{ env }}/database-dump:/dump
+      - /etc/localtime:/etc/localtime:ro
+    entrypoint: |
+      bash -c 'bash -s <<EOF
+      trap "break;exit" SIGHUP SIGINT SIGTERM
+      echo "Starting database backup service..."
+      sleep 2m
+      while /bin/true; do
+        BACKUP_FILE="/dump/dump_\$$(date +%d-%m-%Y_%H_%M_%S).sql.gz"
+        if mariadb-dump -h skhub-{{ env }}_db -u "\$$MYSQL_USER" --all-databases 2>/dev/null | gzip -c > "\$$BACKUP_FILE"; then
+          FILESIZE=\$$(stat -c%s "\$$BACKUP_FILE" 2>/dev/null || echo 0)
+          if [ "\$$FILESIZE" -le 100 ]; then
+            echo "\$$(date): WARNING - backup file too small, removing"
+            rm -f "\$$BACKUP_FILE"
+          fi
+        else
+          echo "\$$(date): ERROR - backup failed"
+          rm -f "\$$BACKUP_FILE"
+        fi
+        ls -tr /dump/dump_*.sql.gz 2>/dev/null | head -n -"\$$BACKUP_NUM_KEEP" | xargs -r rm -v
+        sleep "\$$BACKUP_FREQUENCY"
+      done
+      EOF'
+    networks:
+      - skhub-{{ env }}
+
+  redis:
+    image: redis:alpine
+    # notify-keyspace-events Ex: required for Nextcloud file locking.
+    # timeout 0 / tcp-keepalive 300: avoid "Redis went away" on long uploads.
+    command: redis-server --notify-keyspace-events Ex --appendonly yes --timeout 0 --tcp-keepalive 300
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+      mode: replicated
+      resources:
+        reservations:
+          memory: 64M
+          cpus: '.05'
+        limits:
+          memory: 256M
+          cpus: '1.0'
+    networks:
+      - skhub-{{ env }}
+    volumes:
+      - /var/data/runtime/skhub-{{ env }}/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  clamav:
+    image: clamav/clamav:latest
+    networks:
+      - skhub-{{ env }}
+    volumes:
+      - /var/data/runtime/skhub-{{ env }}/clamav:/var/lib/clamav
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+      mode: replicated
+      resources:
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+        limits:
+          memory: 2G
+          cpus: '1.0'
+    healthcheck:
+      test: ["CMD", "clamdscan", "--ping", "3"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 120s
+
+  cron:
+    image: nextcloud:31.0.14
+    # Healthcheck probes crond itself (PID 1 is `busybox crond`), NOT log
+    # freshness: at a sane loglevel a quiet instance leaves the log untouched
+    # for long stretches, so a log-mtime check flaps the container.
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q crond /proc/1/cmdline"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+      mode: replicated
+      resources:
+        reservations:
+          memory: 256M
+        limits:
+          memory: 1G
+    networks:
+      - skhub-{{ env }}
+    volumes:
+      - /var/data/skhub-{{ env }}/html:/var/www/html
+      - /var/data/skhub-{{ env }}/custom_apps:/var/www/html/custom_apps
+      - /var/data/skhub-{{ env }}/config:/var/www/html/config
+      - /var/data/skhub-{{ env }}/data:/var/www/html/data
+      - /var/data/skhub-{{ env }}/themes:/var/www/html/themes
+    # Do NOT set `user: www-data` here: /cron.sh runs `busybox crond`, which
+    # must start as root so it can drop privileges to www-data per crontab
+    # entry, or every tick fails with "can't set groups: Operation not
+    # permitted" and core/lastcron silently stops advancing.
+    entrypoint: /cron.sh
+    depends_on:
+      - db
+      - redis
+
+  notify_push:
+    image: nextcloud:31.0.14
+    user: www-data
+    entrypoint: /var/www/html/custom_apps/notify_push/bin/x86_64/notify_push /var/www/html/config/config.php
+    env_file: /var/data/config/skhub-{{ env }}/notify_push.env
+    environment:
+      - NEXTCLOUD_URL=http://nextcloud
+    networks:
+      - skhub-{{ env }}
+      - cloud-public-{{ env }}
+    depends_on:
+      - nextcloud
+      - redis
+    volumes:
+      - /var/data/skhub-{{ env }}/custom_apps:/var/www/html/custom_apps:ro
+      - /var/data/skhub-{{ env }}/config:/var/www/html/config:ro
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+      mode: replicated
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.middlewares.skhub-push-rewrite.replacepathregex.regex=^/push(/ws)?$$"
+        - "traefik.http.middlewares.skhub-push-rewrite.replacepathregex.replacement=/ws"
+        - "traefik.http.routers.skhub-push-secure.rule=Host(`{{ skhub.SKHUB_HOSTNAME | default('skhub' + ('-staging' if env == 'staging' else '-dev' if env == 'dev' else '') + '.' + _base_domain) }}`) && PathPrefix(`/push`)"
+        - "traefik.http.routers.skhub-push-secure.priority=15"
+        - "traefik.http.routers.skhub-push-secure.entrypoints=websecure"
+        - "traefik.http.routers.skhub-push-secure.tls=true"
+        - "traefik.http.routers.skhub-push-secure.tls.certresolver=main"
+        - "traefik.http.routers.skhub-push-secure.service=skhub-push-svc"
+        - "traefik.http.routers.skhub-push-secure.middlewares=skhub-push-rewrite"
+        - "traefik.http.services.skhub-push-svc.loadbalancer.server.port=7867"
+
+  whiteboard:
+    image: ghcr.io/nextcloud-releases/whiteboard:stable
+    env_file: /var/data/config/skhub-{{ env }}/whiteboard.env
+    networks:
+      - skhub-{{ env }}
+      - cloud-public-{{ env }}
+    depends_on:
+      - redis
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+      resources:
+        reservations:
+          memory: 128M
+        limits:
+          memory: 256M
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.services.whiteboard.loadbalancer.server.port=3002"
+        - "traefik.http.middlewares.strip-whiteboard.stripprefix.prefixes=/whiteboard"
+        - "traefik.http.routers.whiteboard.rule=Host(`{{ skhub.SKHUB_HOSTNAME | default('skhub' + ('-staging' if env == 'staging' else '-dev' if env == 'dev' else '') + '.' + _base_domain) }}`) && PathPrefix(`/whiteboard`)"
+        - "traefik.http.routers.whiteboard.middlewares=strip-whiteboard"
+        - "traefik.http.routers.whiteboard.entrypoints=websecure"
+        - "traefik.http.routers.whiteboard.service=whiteboard"
+        - "traefik.http.routers.whiteboard.tls=true"
+        - "traefik.http.routers.whiteboard.tls.certresolver=main"
+
+  imaginary:
+    image: nextcloud/aio-imaginary:latest
+    environment:
+      PORT: 9000
+    networks:
+      - skhub-{{ env }}
+    depends_on:
+      - nextcloud
+    volumes:
+      - /var/data/skhub-{{ env }}/html/data:/data
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+      mode: replicated
+    cap_add:
+      - SYS_NICE
+    tmpfs:
+      - /tmp
+    command: -concurrency 50 -enable-url-source -log-level info
+{% if skhub.enable_collabora | default(false) %}
+  collabora:
+    image: collabora/code:latest
+    env_file: /var/data/config/skhub-{{ env }}/collabora.env
+    networks:
+      - skhub-{{ env }}
+      - cloud-public-{{ env }}
+    cap_add:
+      - MKNOD
+      - SYS_ADMIN
+    security_opt:
+      - seccomp:unconfined
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+      mode: replicated
+      resources:
+        reservations:
+          memory: 500M
+        limits:
+          memory: 768M
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.routers.collabora-secure.rule=Host(`{{ skhub.COLLABORA_HOSTNAME | default('collabora.' + _base_domain) }}`)"
+        - "traefik.http.routers.collabora-secure.entrypoints=websecure"
+        - "traefik.http.routers.collabora-secure.tls=true"
+        - "traefik.http.routers.collabora-secure.tls.certresolver=main"
+        - "traefik.http.routers.collabora-secure.service=collabora-secure"
+        - "traefik.http.services.collabora-secure.loadbalancer.server.port=9980"
+        - "traefik.http.routers.collabora-ws.rule=Host(`{{ skhub.COLLABORA_HOSTNAME | default('collabora.' + _base_domain) }}`) && PathPrefix(`/cool/ws`)"
+        - "traefik.http.routers.collabora-ws.entrypoints=websecure"
+        - "traefik.http.routers.collabora-ws.tls=true"
+        - "traefik.http.routers.collabora-ws.tls.certresolver=main"
+        - "traefik.http.routers.collabora-ws.service=collabora-ws"
+        - "traefik.http.services.collabora-ws.loadbalancer.server.port=9980"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9980/hosting/discovery"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+{% endif %}
+{% if skhub.enable_talk_hpb | default(false) %}
+  talk-hpb:
+    image: ghcr.io/nextcloud-releases/aio-talk:latest
+    env_file: /var/data/config/skhub-{{ env }}/talk-hpb.env
+    networks:
+      - skhub-{{ env }}
+      - cloud-public-{{ env }}
+    ports:
+      - "3478:3478/tcp"
+      - "3478:3478/udp"
+    cap_add:
+      - NET_ADMIN
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+      mode: replicated
+      resources:
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+        limits:
+          memory: 1G
+          cpus: '1.0'
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.middlewares.strip-signaling.stripprefix.prefixes=/standalone-signaling"
+        - "traefik.http.routers.talk-hpb-secure.rule=Host(`{{ skhub.SKHUB_HOSTNAME | default('skhub' + ('-staging' if env == 'staging' else '-dev' if env == 'dev' else '') + '.' + _base_domain) }}`) && PathPrefix(`/standalone-signaling`)"
+        - "traefik.http.routers.talk-hpb-secure.priority=10"
+        - "traefik.http.routers.talk-hpb-secure.entrypoints=websecure"
+        - "traefik.http.routers.talk-hpb-secure.tls=true"
+        - "traefik.http.routers.talk-hpb-secure.tls.certresolver=main"
+        - "traefik.http.routers.talk-hpb-secure.middlewares=strip-signaling"
+        - "traefik.http.routers.talk-hpb-secure.service=talk-hpb-svc"
+        - "traefik.http.services.talk-hpb-svc.loadbalancer.server.port=8081"
+        - "traefik.http.services.talk-hpb-svc.loadbalancer.server.scheme=http"
+{% endif %}
+
+networks:
+  cloud-public-{{ env }}:
+    external: true
+  skhub-{{ env }}:
+    external: true
