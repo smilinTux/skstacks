@@ -18,7 +18,7 @@ services:
 
     volumes:
       - /var/data/skseek-{{ env }}/data:/home/perplexica/data:rw
-      - /var/data/config/skseek-{{ env }}/config.toml:/home/perplexica/config.toml:ro
+      - {{ skseek.CONFIG_TOML_PATH | default('/var/data/config/skseek-' ~ env ~ '/config.toml') }}:/home/perplexica/config.toml:ro
 
     networks:
       - cloud-public-{{ env }}

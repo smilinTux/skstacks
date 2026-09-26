@@ -122,10 +122,18 @@
       tags:
         - compose
 
+    - name: Ensure {{ app }} config.toml parent directory exists (CONFIG_TOML_PATH parity hook)
+      file:
+        path: "{{ (skseek.CONFIG_TOML_PATH | default('/var/data/config/' ~ app ~ '-' ~ env ~ '/config.toml')) | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
     - name: Process {{ app }} config.toml template
       template:
         src: "{{ playbook_dir }}/src/config/{{ app }}/config.toml.j2"
-        dest: "/var/data/config/{{ app }}-{{ env }}/config.toml"
+        dest: "{{ skseek.CONFIG_TOML_PATH | default('/var/data/config/' ~ app ~ '-' ~ env ~ '/config.toml') }}"
         owner: root
         group: root
         mode: '0640'
