@@ -1,0 +1,7 @@
+<?php
+$CONFIG = [
+  'trusted_proxies' => {{ (skhub.notify_push_trusted_proxies | default(['172.16.200.0/24', '172.16.201.0/24', '172.16.202.0/24'])) | to_json }},
+  'forwarded_for_headers' => {{ (skhub.notify_push_forwarded_for_headers | default(['HTTP_X_FORWARDED_FOR'])) | to_json }},
+  'overwritehost' => '{{ skhub.SKHUB_HOSTNAME | default('skhub' + ('-staging' if env == 'staging' else '-dev' if env == 'dev' else '') + '.' + (skhub.DOMAIN if skhub.CLOUDFLARED | default(false) else skhub.CLUSTERNAME ~ '.' ~ skhub.DOMAIN)) }}',
+  'overwriteprotocol' => 'https',
+];

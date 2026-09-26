@@ -1,0 +1,565 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# skhub: Nextcloud (Files, Talk, optional Collabora/Talk-HPB, ClamAV).
+# TODO before deploy: register the skhub-dev overlay subnet in
+# shared/networks (pick a free /24 if 172.16.118.0/24 collides on your
+# estate); set the skhub vault vars (see this service's README.md for the
+# full list); ensure images are pullable on swarm nodes. Collabora and Talk
+# HPB are OFF by default (skhub.enable_collabora / skhub.enable_talk_hpb):
+# both need a real, publicly resolvable hostname and TLS certificate to
+# work, so an instance without public DNS can still run core Nextcloud.
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+# Step 1: Select manager node with failover
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+# Step 2: Deploy to selected manager
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skhub
+    env: dev
+    service_name: skhub
+    service_type: optional
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Define network variables
+      # Networks are created idempotently by the create_networks.yml shared
+      # task below. Reference: See shared/networks for all registered
+      # network subnets.
+      set_fact:
+        app_networks: "{{ skhub.networks | default([
+          { 'name': 'skhub-dev', 'subnet': '172.16.118.0/24', 'driver': 'overlay', 'attachable': true },
+          { 'name': 'cloud-public-dev', 'subnet': '172.16.202.0/24', 'driver': 'overlay', 'attachable': true }
+        ]) }}"
+      tags:
+        - networks
+        - config
+
+  tasks:
+    - name: Deploying {{ app }}
+      debug:
+        msg: Running SKStacks deploy {{ app }} scripts...
+
+    - name: Ensure python3-pip is installed
+      apt:
+        name: python3-pip
+        state: present
+
+    - name: Install Docker SDK for Python (required for docker_swarm_service_info)
+      pip:
+        name: docker
+        state: present
+
+    - name: Create the {{ app }} directories
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "/var/data/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/config/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/runtime/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/html", owner: "www-data", group: "www-data", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/custom_apps", owner: "www-data", group: "www-data", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/config", owner: "www-data", group: "www-data", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/data", owner: "www-data", group: "www-data", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/themes", owner: "www-data", group: "www-data", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/app-hooks/pre-installation", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/app-hooks/post-installation", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/app-hooks/pre-upgrade", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/app-hooks/post-upgrade", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/app-hooks/before-starting", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/database-dump", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/runtime/{{ app }}-{{ env }}/db", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/runtime/{{ app }}-{{ env }}/clamav", owner: "root", group: "root", mode: "0755" }
+
+    - name: Create Redis data directory with correct ownership (Redis runs as root in container)
+      file:
+        path: /var/data/runtime/{{ app }}-{{ env }}/redis
+        state: directory
+        owner: root
+        group: root
+        mode: '0777'
+      # Redis runs as root in the container by default and needs a
+      # world-writable directory to fork background-save children even if
+      # existing files are owned by a different uid.
+
+    - name: Copy {{ app }} config files except templates
+      copy:
+        src: "{{ item }}"
+        dest: /var/data/config/{{ app }}-{{ env }}/
+        owner: root
+        group: root
+        mode: '0644'
+      with_fileglob:
+        - "src/config/{{ app }}/*"
+      when: "'.j2' not in item and '.env' not in item"
+      tags:
+        - config
+
+    - name: Copy {{ app }} base src files (excluding templates)
+      copy:
+        src: "{{ playbook_dir }}/src/{{ app }}"
+        dest: "/var/data/{{ app }}-{{ env }}/"
+        force: yes
+        backup: yes
+      tags:
+        - parentdir
+        - backup
+
+    - name: Process {{ app }} environment templates
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop:
+        - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env", mode: "0640" }
+        - { src: "{{ app }}.sh.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env", mode: "0640" }
+        - { src: "whiteboard.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/whiteboard.env", mode: "0640" }
+        - { src: "notify_push.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/notify_push.env", mode: "0640" }
+        - { src: "collabora.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/collabora.env", mode: "0640" }
+        - { src: "talk-hpb.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/talk-hpb.env", mode: "0640" }
+        - { src: "{{ app }}-db-backup.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}-db-backup.env", mode: "0640" }
+      tags:
+        - templates
+
+    - name: Process {{ app }} Docker Compose template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags:
+        - compose
+
+    - name: Create docker-compose.yml symlink
+      file:
+        src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags:
+        - compose
+
+    - name: Template Nextcloud push notification config
+      template:
+        src: "{{ playbook_dir }}/templates/notify-push.config.php.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/config/notify-push.config.php"
+        owner: www-data
+        group: www-data
+        mode: '0640'
+      tags:
+        - templates
+
+    - name: Template Apache timeout configuration
+      template:
+        src: "{{ playbook_dir }}/templates/apache-timeout.conf.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/apache-timeout.conf"
+        owner: root
+        group: root
+        mode: '0644'
+      tags:
+        - templates
+        - config
+
+    # Traefik routing is configured entirely via Docker labels (Docker
+    # provider); there is no shared detect_traefik_setup.yml task in this
+    # framework yet, so this service follows the same plain label pattern
+    # as optional/skmon and optional/skgraph.
+    - name: Process {{ app }} deploy script template
+      template:
+        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/deploy"
+        owner: root
+        group: root
+        mode: '0755'
+      tags:
+        - templates
+        - deploy-script
+
+    - name: Create {{ app }} control script symlink
+      file:
+        src: /var/data/{{ app }}-{{ env }}/deploy
+        dest: /var/data/deploy_{{ app }}-{{ env }}
+        force: yes
+        owner: root
+        group: root
+        mode: '0755'
+        state: link
+
+    - name: Ensure overlay networks exist from app_networks variable
+      include_tasks: ../../shared/tasks/create_networks.yml
+      tags:
+        - networks
+
+    - name: Deploy {{ app }} stack
+      shell: |
+        cd /var/data/{{ app }}-{{ env }}
+        timeout 600 ./deploy || (echo "Deploy script timed out or failed" >&2 && exit 1)
+      register: deploy_output
+      tags:
+        - deploy
+
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags:
+        - deploy
+
+    - name: Post-deploy Check Nextcloud service health
+      community.docker.docker_swarm_service_info:
+        name: "{{ app }}-{{ env }}_nextcloud"
+      register: nextcloud_service
+      ignore_errors: yes
+      tags:
+        - post-deploy
+
+    - name: Get Nextcloud container ID (any running container)
+      shell: |
+        SERVICE_NAME="{{ app }}-{{ env }}_nextcloud"
+        TASK_ID=$(docker service ps ${SERVICE_NAME} --no-trunc --filter "desired-state=running" -q 2>/dev/null | head -1)
+        if [ -n "$TASK_ID" ]; then
+          CONTAINER_ID=$(docker ps -q --filter "label=com.docker.swarm.task.id=${TASK_ID}" | head -1)
+        fi
+        if [ -z "$CONTAINER_ID" ]; then
+          CONTAINER_ID=$(docker ps -q --filter "ancestor=nextcloud:31.0.14" | head -1)
+        fi
+        if [ -n "$CONTAINER_ID" ]; then
+          echo "$CONTAINER_ID"
+        else
+          echo "No Nextcloud container found" >&2
+          exit 1
+        fi
+      register: nextcloud_container
+      changed_when: false
+      ignore_errors: yes
+      tags:
+        - post-deploy
+
+    - name: Configure Redis in Nextcloud config.php (must be before memcache.local is set)
+      shell: |
+        CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+        if [ -n "$CONTAINER_ID" ]; then
+          docker exec "$CONTAINER_ID" php -r "
+            \$config_file = '/var/www/html/config/config.php';
+            \$config = include \$config_file;
+            \$target_redis = array('host' => '{{ app }}-{{ env }}_redis', 'password' => '', 'port' => 6379, 'timeout' => 0.0, 'read_timeout' => 0.0);
+            if (!isset(\$config['redis']) || \$config['redis'] !== \$target_redis) {
+              \$config['redis'] = \$target_redis;
+              file_put_contents(\$config_file, '<?php\n\$CONFIG = ' . var_export(\$config, true) . ';\n');
+              echo 'Redis configuration updated\n';
+            } else {
+              echo 'Redis already configured correctly\n';
+            }
+          "
+        fi
+      register: redis_config_result
+      changed_when: "'updated' in redis_config_result.stdout"
+      when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      ignore_errors: yes
+      tags:
+        - post-deploy
+        - redis
+
+    - name: Wait for Redis to be available
+      shell: |
+        CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+        for i in $(seq 1 30); do
+          if docker exec "$CONTAINER_ID" php -r "try { \$r = new Redis(); \$r->connect('redis', 6379); \$r->ping(); exit(0); } catch (Exception \$e) { exit(1); }" 2>/dev/null; then
+            exit 0
+          fi
+          sleep 2
+        done
+        echo "Redis not ready after 60s" >&2
+        exit 1
+      register: redis_wait
+      changed_when: false
+      timeout: 70
+      when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      ignore_errors: yes
+      tags:
+        - post-deploy
+
+    - name: Install and enable notify_push app
+      shell: |
+        CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+        docker exec "$CONTAINER_ID" php occ app:install notify_push 2>&1 || true
+        docker exec "$CONTAINER_ID" php occ app:enable notify_push 2>&1
+      register: notify_push_enable
+      changed_when: "'enabled' in notify_push_enable.stdout"
+      when: >-
+        nextcloud_container is defined and nextcloud_container.stdout is defined
+        and (nextcloud_container.stdout | trim | length > 0)
+        and (redis_wait is not defined or redis_wait.rc | default(0) == 0)
+      ignore_errors: yes
+      tags:
+        - post-deploy
+
+    - name: Setup and verify notify_push push service binary
+      shell: |
+        CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+        docker exec "$CONTAINER_ID" php occ notify_push:setup "https://skhub.{{ skhub.CLUSTERNAME }}.{{ skhub.DOMAIN }}/push" 2>&1 || true
+        BIN=/var/www/html/custom_apps/notify_push/bin/x86_64/notify_push
+        for i in $(seq 1 30); do
+          docker exec "$CONTAINER_ID" test -f "$BIN" 2>/dev/null && break
+          sleep 2
+        done
+        if ! docker exec "$CONTAINER_ID" test -f "$BIN" 2>/dev/null; then
+          echo "Binary missing, downloading manually..." >&2
+          docker exec "$CONTAINER_ID" mkdir -p "$(dirname "$BIN")"
+          docker exec "$CONTAINER_ID" sh -c "curl -sL -o $BIN https://github.com/nextcloud/notify_push/releases/latest/download/notify_push-x86_64-unknown-linux-musl"
+          docker exec "$CONTAINER_ID" chmod +x "$BIN"
+          docker exec "$CONTAINER_ID" chown www-data:www-data "$BIN"
+        fi
+        docker exec "$CONTAINER_ID" test -f "$BIN"
+      register: notify_push_binary
+      changed_when: false
+      when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      ignore_errors: yes
+      tags:
+        - post-deploy
+
+    - name: Configure notify_push endpoint in Nextcloud
+      shell: |
+        CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+        docker exec "$CONTAINER_ID" php occ config:app:set notify_push base_endpoint --value="https://skhub.{{ skhub.CLUSTERNAME }}.{{ skhub.DOMAIN }}/push" 2>&1 || true
+      when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      ignore_errors: yes
+      tags:
+        - post-deploy
+
+    - name: Ensure database host is set correctly (fixes connection issues)
+      shell: |
+        CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+        docker exec "$CONTAINER_ID" php occ config:system:set dbhost --value="db" 2>&1
+      when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      ignore_errors: yes
+      tags:
+        - post-deploy
+        - database
+
+    - name: Configure whiteboard integration in Nextcloud
+      shell: |
+        CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+        docker exec "$CONTAINER_ID" php occ config:app:set whiteboard collabBackendUrl --value="wss://skhub.{{ skhub.CLUSTERNAME }}.{{ skhub.DOMAIN }}/whiteboard" 2>&1 || true
+        docker exec "$CONTAINER_ID" php occ config:app:set whiteboard jwt_secret_key --value="{{ skhub.whiteboard_jwt_secret }}" 2>&1 || true
+      when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      ignore_errors: yes
+      no_log: true
+      tags:
+        - post-deploy
+        - whiteboard
+
+    - name: Install and enable Collabora (richdocuments) app
+      shell: |
+        CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+        docker exec "$CONTAINER_ID" php occ app:install richdocuments 2>&1 || true
+        docker exec "$CONTAINER_ID" php occ app:enable richdocuments 2>&1
+      register: richdocuments_enable
+      changed_when: "'enabled' in richdocuments_enable.stdout"
+      when: >-
+        (skhub.enable_collabora | default(false))
+        and nextcloud_container is defined and nextcloud_container.stdout is defined
+        and (nextcloud_container.stdout | trim | length > 0)
+      ignore_errors: yes
+      tags:
+        - post-deploy
+        - collabora
+
+    - name: Configure Collabora WOPI URL in Nextcloud
+      shell: |
+        CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+        docker exec "$CONTAINER_ID" php occ config:app:set richdocuments wopi_url --value="https://collabora.{{ skhub.CLUSTERNAME }}.{{ skhub.DOMAIN }}" 2>&1 || true
+      when: >-
+        (skhub.enable_collabora | default(false))
+        and nextcloud_container is defined and nextcloud_container.stdout is defined
+        and (nextcloud_container.stdout | trim | length > 0)
+      ignore_errors: yes
+      tags:
+        - post-deploy
+        - collabora
+
+    - name: Install and enable Talk (spreed) app
+      shell: |
+        CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+        docker exec "$CONTAINER_ID" php occ app:install spreed 2>&1 || true
+        docker exec "$CONTAINER_ID" php occ app:enable spreed 2>&1
+      register: spreed_enable
+      changed_when: "'enabled' in spreed_enable.stdout"
+      when: >-
+        (skhub.enable_talk_hpb | default(false))
+        and nextcloud_container is defined and nextcloud_container.stdout is defined
+        and (nextcloud_container.stdout | trim | length > 0)
+      ignore_errors: yes
+      tags:
+        - post-deploy
+        - talk
+
+    - name: Configure Talk signaling and TURN servers in Nextcloud
+      shell: |
+        CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+        docker exec "$CONTAINER_ID" php occ config:app:set spreed signaling_servers --value='{"servers":[{"server":"https://skhub.{{ skhub.CLUSTERNAME }}.{{ skhub.DOMAIN }}/standalone-signaling/","verify":true}],"secret":"{{ skhub.signaling_secret }}"}' 2>&1 || true
+        docker exec "$CONTAINER_ID" php occ config:app:set spreed turn_servers --value='[{"schemes":"turn,turns","server":"skhub.{{ skhub.CLUSTERNAME }}.{{ skhub.DOMAIN }}:3478","secret":"{{ skhub.turn_secret }}","protocols":"udp,tcp"}]' 2>&1 || true
+      when: >-
+        (skhub.enable_talk_hpb | default(false))
+        and nextcloud_container is defined and nextcloud_container.stdout is defined
+        and (nextcloud_container.stdout | trim | length > 0)
+      ignore_errors: yes
+      no_log: true
+      tags:
+        - post-deploy
+        - talk
+
+    - name: Install and enable recognize app
+      shell: |
+        CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+        docker exec "$CONTAINER_ID" php occ app:install recognize 2>&1 || true
+        docker exec "$CONTAINER_ID" php occ app:enable recognize 2>&1
+      register: recognize_enable
+      changed_when: "'enabled' in recognize_enable.stdout"
+      when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      ignore_errors: yes
+      tags:
+        - post-deploy
+        - recognize
+
+    - name: Download Recognize ML models
+      shell: |
+        CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+        docker exec "$CONTAINER_ID" php occ recognize:download-models 2>&1 || true
+      register: recognize_models
+      changed_when: "'Downloading' in recognize_models.stdout"
+      when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      ignore_errors: yes
+      tags:
+        - post-deploy
+        - recognize
+
+    - name: Configure ClamAV antivirus host in Nextcloud
+      shell: |
+        CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+        docker exec "$CONTAINER_ID" php occ config:app:set files_antivirus av_host --value="{{ app }}-{{ env }}_clamav" 2>&1 || true
+        docker exec "$CONTAINER_ID" php occ config:app:set files_antivirus av_port --value="3310" 2>&1 || true
+        docker exec "$CONTAINER_ID" php occ config:app:set files_antivirus av_mode --value="daemon" 2>&1 || true
+      when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      ignore_errors: yes
+      tags:
+        - post-deploy
+
+    - name: Add missing database indices
+      shell: |
+        CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+        docker exec "$CONTAINER_ID" php occ db:add-missing-indices 2>&1 || true
+      register: db_indices
+      changed_when: "'No missing indices' not in db_indices.stdout"
+      when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      ignore_errors: yes
+      tags:
+        - post-deploy
+        - maintenance
+
+    - name: Run expensive maintenance repairs (mimetype migrations)
+      shell: |
+        CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+        docker exec "$CONTAINER_ID" php occ maintenance:repair --include-expensive 2>&1 || true
+      register: maintenance_repair
+      changed_when: "'Nothing to repair' not in maintenance_repair.stdout"
+      when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      ignore_errors: yes
+      tags:
+        - post-deploy
+        - maintenance
+
+    - name: Configure maintenance window start time
+      shell: |
+        CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+        docker exec "$CONTAINER_ID" php occ config:system:set maintenance_window_start --value="2" --type="integer" 2>&1
+      when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      ignore_errors: yes
+      tags:
+        - post-deploy
+        - maintenance
+
+    - name: Configure database transactional file locking with Redis
+      shell: |
+        CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+        docker exec "$CONTAINER_ID" php occ config:system:set memcache.locking --value="\\OC\\Memcache\\Redis" 2>&1
+      when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      ignore_errors: yes
+      tags:
+        - post-deploy
+        - maintenance
+        - redis
+
+    - name: Configure chunked upload max size for large file uploads
+      shell: |
+        CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+        docker exec "$CONTAINER_ID" php occ config:system:set files.chunked_upload.max_size --value="10737418240" --type="integer" 2>&1
+      when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      ignore_errors: yes
+      tags:
+        - post-deploy
+        - maintenance
+
+    - name: Verify default phone region is set
+      shell: |
+        CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+        CURRENT=$(docker exec "$CONTAINER_ID" php occ config:system:get default_phone_region 2>/dev/null || echo "")
+        [ -n "$CURRENT" ] || docker exec "$CONTAINER_ID" php occ config:system:set default_phone_region --value="{{ skhub.default_phone_region | default('US') }}" 2>&1
+      when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      ignore_errors: yes
+      tags:
+        - post-deploy
+        - maintenance
+
+    # 2026-08-15: nextcloud.log had grown to 303G apparent / 24G on disk on
+    # skstack01 because loglevel was 0 (DEBUG) and log_rotate_size was unset
+    # (Nextcloud never rotates unless this is non-zero). Enforce sane values
+    # on every deploy. NOTE: loglevel 2 also means the log goes quiet, so a
+    # healthcheck must NOT key off log freshness (see the cron service in
+    # skhub.yml.j2, which probes crond directly instead).
+    - name: Enforce Nextcloud logging level and log rotation
+      shell: |
+        CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+        docker exec "$CONTAINER_ID" php occ config:system:set loglevel --value="2" --type="integer" 2>&1
+        docker exec "$CONTAINER_ID" php occ config:system:set log_rotate_size --value="104857600" --type="integer" 2>&1
+      when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      ignore_errors: yes
+      tags:
+        - post-deploy
+        - maintenance
