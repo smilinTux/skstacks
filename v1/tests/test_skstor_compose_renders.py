@@ -51,3 +51,20 @@ def test_rpc_secret_has_no_literal_default():
     assert "rpc_secret" not in text  # the compose template itself never
     # needs the RPC secret; garage.toml.j2 is the one file that renders it,
     # and it must come from the vault with no default (asserted elsewhere).
+
+
+def test_meta_and_data_are_bind_mounts_on_the_shared_filesystem():
+    # Chef's requirement: skstor stores on /var/data/skstor-<env>, the same
+    # shared (NFS) filesystem every other service binds onto, matching this
+    # estate's production deploy -- not a node-local named Docker volume
+    # that would strand data on whichever manager this replicas=1 service
+    # last ran on.
+    doc = render("prod")
+    volumes = doc["services"]["garage"]["volumes"]
+    assert "/var/data/skstor-prod/meta:/var/lib/garage/meta" in volumes
+    assert "/var/data/skstor-prod/data:/var/lib/garage/data" in volumes
+
+
+def test_no_named_volumes_top_level_block():
+    doc = render("prod")
+    assert "volumes" not in doc  # no top-level named-volume declarations

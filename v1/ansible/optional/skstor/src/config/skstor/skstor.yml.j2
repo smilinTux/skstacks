@@ -21,6 +21,13 @@ version: '3.8'
 # MinIO (MinIO's images and repo are gone -- verified 2026-09-25) and this
 # service's README.md for the one-time layout/key/bucket bootstrap Garage
 # needs before it will serve S3 traffic.
+#
+# meta/data are bind mounts onto /var/data/skstor-{{ env }}, the shared
+# NFS filesystem every other service on this estate stores under (matching
+# prod), NOT named Docker volumes: a named local-driver volume is
+# host-local, so if Swarm ever reschedules this replicas=1 service onto a
+# different manager, a named volume would silently start it on an empty
+# volume on the new host instead of the data on shared storage.
 
 networks:
   skstor-{{ env }}:
@@ -34,8 +41,8 @@ services:
     env_file: /var/data/config/skstor-{{ env }}/skstor.env
     volumes:
       - /var/data/config/skstor-{{ env }}/garage.toml:/etc/garage.toml:ro
-      - skstor-{{ env }}-meta:/var/lib/garage/meta
-      - skstor-{{ env }}-data:/var/lib/garage/data
+      - /var/data/skstor-{{ env }}/meta:/var/lib/garage/meta
+      - /var/data/skstor-{{ env }}/data:/var/lib/garage/data
     networks:
       - cloud-public-{{ env }}
       - skstor-{{ env }}
@@ -68,17 +75,3 @@ services:
         - "traefik.http.routers.skstor{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares=default-no-crowdsec@file"
         - "traefik.http.routers.skstor{% if env != 'prod' %}-{{ env }}{% endif %}.service=skstor{% if env != 'prod' %}-{{ env }}{% endif %}"
         - "traefik.http.services.skstor{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=3900"
-
-volumes:
-  skstor-{{ env }}-meta:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: /var/data/skstor-{{ env }}/meta
-  skstor-{{ env }}-data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: /var/data/skstor-{{ env }}/data

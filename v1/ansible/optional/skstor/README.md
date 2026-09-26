@@ -21,7 +21,32 @@ node), `skstor.GARAGE_S3_REGION` (default `garage`), `skstor.CPU_LIMIT`,
 `skstor.MEMORY_LIMIT`, `skstor.CPU_RESERVATION`, `skstor.MEMORY_RESERVATION`,
 `skstor.TZ`, `skstor.RUST_LOG`, `skstor.INSTANCE`, `skstor.APP_ENV`,
 `skstor.CLOUDFLARED`, `skstor.networks` (overrides the registered
-`skstor-<env>` / `cloud-public-<env>` overlay networks).
+`skstor-<env>` / `cloud-public-<env>` overlay networks),
+`skstor.db_engine` (default `sqlite`; see "Storage layout" below),
+`skstor.meta_dir` / `skstor.data_dir` (default the bind-mount paths Garage
+sees inside the container, `/var/lib/garage/meta` and `/var/lib/garage/data`).
+
+## Storage layout
+
+Metadata and data bind-mount onto `/var/data/skstor-<env>/{meta,data}` on
+this instance's shared filesystem (NFS, matching every other v1 service and
+this framework's own `/var/data` requirement) -- not a named Docker volume,
+which would be host-local and strand data on whichever manager this
+replicas=1 service last ran on after a Swarm reschedule.
+
+`skstor.db_engine` defaults to `sqlite`, not Garage's own default
+`lmdb`. Per Garage's docs
+(<https://garagehq.deuxfleurs.fr/documentation/reference-manual/configuration/#db_engine>),
+LMDB "is prone to database corruption after an unclean shutdown (e.g. a
+process kill or a power outage)", while "Sqlite ... does not have the
+issues listed above for LMDB" (slower, but this is a single-writer instance,
+not a high-throughput cluster). A Swarm reschedule of this service is
+exactly the kind of unclean shutdown LMDB warns about, and LMDB's
+memory-mapped storage is a well-known bad combination with network
+filesystems generally. Set `skstor.db_engine: lmdb` and point
+`skstor.meta_dir` at a node-local bind mount (plus a Swarm placement
+constraint pinning this service to that node) if you want LMDB's speed and
+accept losing failover-transparency for metadata.
 
 ## One-time bootstrap (per instance, after the first deploy)
 
@@ -47,6 +72,11 @@ vault (e.g. `skhub.s3_access_key` / `skhub.s3_secret_key`), pointed at
 `https://skstor[-env].<cluster>.<domain>` (port 443 via Traefik, path-style
 addressing). See `docs/decisions/skstor-backend.md` for the full consumer
 migration list (skhub, skform, skblock/skfile).
+
+skhub specifically has a one-line shortcut (`skhub.storage_backend: skstor`)
+that skips the public hostname and reaches this service directly over the
+`skstor-<env>` overlay network instead -- see
+`../skhub/README.md` for the exact vault keys.
 
 ## What changed vs. the old MinIO skstor
 

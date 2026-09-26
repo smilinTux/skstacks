@@ -12,6 +12,9 @@ services:
     networks:
       - skhub-{{ env }}
       - cloud-public-{{ env }}
+{% if skhub.storage_backend is defined and skhub.storage_backend == "skstor" %}
+      - skstor-{{ env }}
+{% endif %}
     depends_on:
       - db
       - redis
@@ -427,3 +430,11 @@ networks:
     external: true
   skhub-{{ env }}:
     external: true
+{% if skhub.storage_backend is defined and skhub.storage_backend == "skstor" %}
+  # Joins skstor's own overlay network (registered attachable by skstor's
+  # deploy) to reach the in-cluster Garage S3 endpoint directly, without
+  # round-tripping through the public Traefik hostname. skstor must already
+  # be deployed -- this network is external here, not created by this stack.
+  skstor-{{ env }}:
+    external: true
+{% endif %}
