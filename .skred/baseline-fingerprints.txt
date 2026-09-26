@@ -1,0 +1,3 @@
+# Accepted known findings for the skred gate (fingerprints only: commit:file:rule:line).
+# test_signer.py:44 is a fake API secret in the gpg-signer unit-test fixture, not a real credential.
+abbebd122b19006884a27719c964bf7abd02ff27:v1/ansible/optional/skorch/src/gpg-signer/tests/test_signer.py:generic-api-key:44
