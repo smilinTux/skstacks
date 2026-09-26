@@ -90,16 +90,16 @@ services:
       resources:
         limits:
           cpus: '{{ sksec.CROWDSEC_CPU_LIMIT }}'
-          memory: {{ sksec.CROWDSEC_MEMORY_LIMIT }}
+          memory: {{ sksec.CROWDSEC_MEMORY_LIMIT | default('512M') }}
         reservations:
           cpus: '{{ sksec.CROWDSEC_CPU_RESERVATION }}'
-          memory: {{ sksec.CROWDSEC_MEMORY_RESERVATION }}
+          memory: {{ sksec.CROWDSEC_MEMORY_RESERVATION | default('128M') }}
     healthcheck:
       test: ["CMD", "cscli", "metrics", "--output", "json"]
-      interval: {{ sksec.HEALTH_CHECK_INTERVAL }}
-      timeout: {{ sksec.HEALTH_CHECK_TIMEOUT }}
-      retries: {{ sksec.HEALTH_CHECK_RETRIES }}
-      start_period: {{ sksec.HEALTH_CHECK_START_PERIOD }}
+      interval: {{ sksec.HEALTH_CHECK_INTERVAL | default('30s') }}
+      timeout: {{ sksec.HEALTH_CHECK_TIMEOUT | default('5s') }}
+      retries: {{ sksec.HEALTH_CHECK_RETRIES | default('3') }}
+      start_period: {{ sksec.HEALTH_CHECK_START_PERIOD | default('10s') }}
 
   bouncer-traefik:
     image: docker.io/fbonalair/traefik-crowdsec-bouncer:0.5.0
@@ -130,10 +130,10 @@ services:
       resources:
         limits:
           cpus: '{{ sksec.BOUNCER_CPU_LIMIT }}'
-          memory: {{ sksec.BOUNCER_MEMORY_LIMIT }}
+          memory: {{ sksec.BOUNCER_MEMORY_LIMIT | default('256M') }}
         reservations:
           cpus: '{{ sksec.BOUNCER_CPU_RESERVATION }}'
-          memory: {{ sksec.BOUNCER_MEMORY_RESERVATION }}
+          memory: {{ sksec.BOUNCER_MEMORY_RESERVATION | default('64M') }}
     # Note: Bouncer healthcheck disabled due to API limitations
     # Consider implementing custom health check if needed
 
