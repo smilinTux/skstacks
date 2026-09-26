@@ -1,0 +1,185 @@
+{%- set _base_domain = skgit.CLUSTERNAME ~ '.' ~ skgit.DOMAIN -%}
+version: '3.8'
+
+networks:
+  cloud-public-{{ env }}:
+    external: true
+  skgit-{{ env }}:
+    external: true
+
+services:
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:{{ skgit.FORGEJO_VERSION | default('15.0.9') }}
+    user: "1000:1000"
+    working_dir: /data
+    entrypoint: /usr/local/bin/forgejo
+    command: web
+    env_file: /var/data/config/skgit-{{ env }}/skgit.env
+    environment:
+      # === SERVER CONFIGURATION ===
+      - FORGEJO__server__ROOT_URL=https://{{ skgit.SUBDOMAIN_PREFIX | default('git') }}{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}/
+      - FORGEJO__server__PROTOCOL=http
+
+      # === SECURITY & PROXY ===
+      # Trust headers from Traefik so Forgejo knows it's HTTPS
+      # 10.0.0.0/8 is the internal Swarm network range
+      - FORGEJO__security__REVERSE_PROXY_LIMIT=1
+      - FORGEJO__security__REVERSE_PROXY_TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+
+      # === SESSION CONFIGURATION ===
+      # Use file-based sessions for persistence across restarts (prevents ERR_NETWORK_CHANGED)
+      # File sessions survive container restarts, unlike memory sessions
+      - FORGEJO__session__PROVIDER=file
+      - FORGEJO__session__COOKIE_SECURE=true
+      - FORGEJO__session__COOKIE_SAMESITE=lax
+    networks:
+      - skgit-{{ env }}
+      - cloud-public-{{ env }}
+    volumes:
+      # === NFS DATA - DIRECT BIND (NO NAMED VOLUME) ===
+      - /var/data/skgit-{{ env }}/data:/data
+      - /var/data/skgit-{{ env }}/config:/data/gitea/conf
+      - /var/data/logs/skgit-{{ env }}:/data/log
+      # Session files directory for file-based sessions (persistent across restarts)
+      - /var/data/runtime/skgit-{{ env }}/sessions:/data/gitea/sessions
+    # Traefik routing configured via Docker labels (Docker provider).
+    # No file provider needed - Traefik auto-discovers services via Docker Swarm provider.
+    # SSH (port 22) is exposed via a Traefik TCP router on port 222.
+    deploy:
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          cpus: '${CPU_LIMIT}'
+          memory: 4g
+        reservations:
+          cpus: '${CPU_RESERVATION}'
+          memory: 2g
+      labels:
+        # === TRAEFIK: HTTP ===
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        # Main web router
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`{{ skgit.SUBDOMAIN_PREFIX | default('skgit') }}{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`)"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares=default-no-crowdsec@file"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.service=skgit{% if env != 'prod' %}-{{ env }}{% endif %}"
+        # === CONTAINER REGISTRY ROUTER (no middleware interference) ===
+        # Dedicated route for /v2/ container registry API - higher priority to match before main router
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-registry.rule=Host(`{{ skgit.SUBDOMAIN_PREFIX | default('skgit') }}{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && PathPrefix(`/v2`)"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-registry.entrypoints=websecure"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-registry.tls=true"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-registry.tls.certresolver=main"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-registry.tls.options=intermediate@file"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-registry.priority=100"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-registry.service=skgit{% if env != 'prod' %}-{{ env }}{% endif %}"
+        # Service configuration
+        - "traefik.http.services.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=3000"
+        # === STICKY SESSIONS: Required to prevent ERR_NETWORK_CHANGED errors ===
+        # Even with replicas: 1, multiple Traefik workers can cause requests to be routed
+        # through different workers, leading to connection state issues.
+        # Sticky sessions ensure all requests from the same client use the same Traefik worker.
+        - "traefik.http.services.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky=true"
+        - "traefik.http.services.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie=true"
+        - "traefik.http.services.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie.name=skgit_session"
+        - "traefik.http.services.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie.secure=true"
+        - "traefik.http.services.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie.httpOnly=true"
+        - "traefik.http.services.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie.sameSite=lax"
+        # === TRAEFIK: TCP (SSH) ===
+        - "traefik.tcp.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-ssh.rule=HostSNI(`*`)"
+        - "traefik.tcp.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-ssh.entrypoints=ssh"
+        - "traefik.tcp.services.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-ssh.loadbalancer.server.port=222"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-H", "User-Agent: Health-Check", "http://localhost:3000/"]
+      interval: 60s   # Longer interval to reduce load
+      timeout: 30s    # More generous timeout for Git operations
+      retries: 2      # Fewer retries to prevent premature restarts
+      start_period: 300s  # Longer start period for Forgejo initialization
+      # Git operations can be slow, so the health check needs to be patient.
+    # Note: depends_on doesn't work in Docker Swarm mode.
+    # Forgejo retries the database connection instead (configured in app.ini).
+    # start_period gives postgres time to become ready.
+
+  postgres:
+    image: postgres:16
+    env_file: /var/data/config/skgit-{{ env }}/postgres.env
+    environment:
+      - PGTEMP=/var/lib/postgresql/data/tmp
+    networks:
+      - skgit-{{ env }}
+    volumes:
+      # === NFS DATA - DIRECT BIND (NO NAMED VOLUME) ===
+      - /var/data/runtime/skgit-{{ env }}/postgres:/var/lib/postgresql/data
+    deploy:
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U forgejo']
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  db-backup:
+    image: postgres:16
+    env_file: /var/data/config/skgit-{{ env }}/postgres-backup.env
+    environment:
+      - PGTEMP=/dump/tmp
+    networks:
+      - skgit-{{ env }}
+    volumes:
+      # === NFS DATA - DIRECT BIND (NO NAMED VOLUME) ===
+      - /var/data/skgit-{{ env }}/database-dump:/dump
+      # Config files (read-only bind mounts)
+      - /etc/localtime:/etc/localtime:ro
+    # NOTE: do NOT wrap this in `bash -c 'bash -s <<EOF ... EOF'`. An unquoted
+    # heredoc makes the OUTER shell expand ${TS}/${TMP}/${FINAL} before the inner
+    # shell ever sees them; they are unset there, so the dump redirect becomes
+    # `> ""` and every cycle dies with `: No such file or directory`. Pass the
+    # script as a single argv element instead, so exactly one shell expands it.
+    entrypoint:
+      - bash
+      - -c
+      - |
+        trap "break;exit" SIGHUP SIGINT SIGTERM
+        sleep 2m
+        while /bin/true; do
+          TS=$$(date +%d-%m-%Y_%H_%M_%S)
+          TMP=/dump/dump_$${TS}.sql.gz.tmp
+          FINAL=/dump/dump_$${TS}.sql.gz
+          set -o pipefail
+          if pg_dumpall -h postgres -U forgejo | gzip -c > "$${TMP}"; then
+            SIZE=$$(stat -c %s "$${TMP}")
+            if [ "$${SIZE}" -gt 1024 ]; then
+              mv "$${TMP}" "$${FINAL}"
+              echo "[backup] OK: $${FINAL} ($${SIZE} bytes)"
+              ls -tr /dump/dump_*.sql.gz | head -n -"$${BACKUP_NUM_KEEP}" | xargs -r rm
+            else
+              echo "[backup] FAIL: dump too small ($${SIZE} bytes), discarding" 1>&2
+              rm -f "$${TMP}"
+            fi
+          else
+            echo "[backup] FAIL: pg_dumpall pipe exited non-zero, discarding" 1>&2
+            rm -f "$${TMP}"
+          fi
+          set +o pipefail
+          sleep $${BACKUP_FREQUENCY}
+        done
+
+# Runner services (Forgejo Actions + DinD) are deployed separately via
+# skgit-runners.yml (docker compose, not swarm) so they can bind-mount the
+# host Docker socket path and run privileged/DinD containers. See
+# src/skgit/start-runners.sh and src/skgit/stop-runners.sh.
+
+# No named volumes - all mounts are direct bind mounts
+# Simpler, faster, zero-config

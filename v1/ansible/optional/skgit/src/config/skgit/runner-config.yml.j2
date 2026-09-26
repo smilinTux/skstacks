@@ -1,0 +1,99 @@
+# Forgejo Runner Configuration
+# =============================
+# Based on official Forgejo documentation:
+# https://forgejo.org/docs/latest/admin/actions/runner-installation/
+# https://forgejo.org/docs/latest/admin/actions/docker-access/
+#
+# This configuration uses Docker-in-Docker (DIND) for isolated Docker access
+# in CI/CD workflows.
+#
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+# License: AGPL-3.0
+
+log:
+  level: info
+  job_level: info
+
+runner:
+  # Runner state file
+  file: .runner
+
+  # Number of concurrent jobs
+  capacity: {{ skgit.RUNNER_CAPACITY | default(1) }}
+
+  # Environment variables passed to ALL job containers
+  # This is critical for Docker access from within workflows
+  envs:
+    DOCKER_HOST: tcp://skgit-{{ env }}-dind:2375
+    DOCKER_BUILDKIT: "1"
+
+  # Job timeout
+  timeout: 3h
+  shutdown_timeout: 3h
+
+  # Security
+  insecure: false
+
+  # Fetch settings
+  fetch_timeout: 10s
+  fetch_interval: 5s
+  report_interval: 2s
+
+  # Labels define what images are used for `runs-on:` values.
+  # Format: label:container_type://image:tag
+  # NOTE: All labels use catthehacker/ubuntu:act-* images which have:
+  #       - Node.js (required for actions/checkout@v4 and other JS-based actions)
+  #       - Docker CLI (for building/pushing images)
+  #       - Full act runtime environment
+  labels:
+    - "docker:docker://catthehacker/ubuntu:act-latest"
+    - "docker-cli:docker://docker:27-cli"
+    - "node-20:docker://catthehacker/ubuntu:act-latest"
+    - "ubuntu-latest:docker://catthehacker/ubuntu:act-latest"
+    - "ubuntu-22.04:docker://catthehacker/ubuntu:act-22.04"
+    - "ubuntu-24.04:docker://catthehacker/ubuntu:act-24.04"
+
+cache:
+  enabled: true
+  dir: .cache
+
+container:
+  # Network for job containers
+  # Empty = auto-create network per job
+  network: ''
+
+  # IPv6 support
+  enable_ipv6: false
+
+  # Do NOT run job containers as privileged.
+  # DIND handles Docker access securely.
+  privileged: false
+
+  # Additional options for job containers
+  # -u 0: Run as root to allow writing to /var/run/act (action cache)
+  # --add-host: Add host resolution for DIND container
+  # --dns: Explicit DNS servers to fix resolution issues in DinD
+  options: -u 0 --add-host=skgit-{{ env }}-dind:host-gateway --dns=8.8.8.8 --dns=1.1.1.1
+
+  # Working directory
+  workdir_parent: ''
+
+  # Valid volumes that can be mounted from workflows
+  # '**' allows all volumes (for flexibility)
+  valid_volumes:
+    - '**'
+
+  # =============================================================
+  # CRITICAL SETTING: Docker-in-Docker Host
+  # =============================================================
+  # This tells the runner where to create job containers.
+  # Must point to the DIND service.
+  docker_host: 'tcp://skgit-{{ env }}-dind:2375'
+
+  # Don't force pull images on every run (use cache)
+  force_pull: false
+  force_rebuild: false
+
+host:
+  # Host mode workdir (not used with container mode)
+  workdir_parent: ''
