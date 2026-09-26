@@ -30,12 +30,14 @@ while IFS=$'\t' read -r services image; do
   if [ "${rc}" -eq 0 ]; then
     printf '%-12s %-55s %s\n' "${services}" "${image}" "OK"
   elif grep -qi "toomanyrequests" <<<"${out}"; then
-    printf '%-12s %-55s %s\n' "${services}" "${image}" "FAIL (rate-limited)"
-    fail=1
+    # Docker Hub throttles anonymous bursts: inconclusive, not a missing image.
+    printf '%-12s %-55s %s\n' "${services}" "${image}" "RATE-LIMITED (inconclusive)"
+    limited=1
   else
     printf '%-12s %-55s %s\n' "${services}" "${image}" "FAIL"
     fail=1
   fi
-done < <(python3 "${SCRIPT_DIR}/list_images.py" "${ROOT}")
+done < <(if [ -n "${SKSTACKS_LIST_IMAGES:-}" ]; then python3 "${SKSTACKS_LIST_IMAGES}"; else python3 "${SCRIPT_DIR}/list_images.py" "${ROOT}"; fi)
 
+[ "${limited:-0}" = 1 ] && echo "note: some images were rate-limited; rerun later or with docker login for a definitive answer"
 exit "${fail}"
