@@ -3,6 +3,24 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## skstacks-v2.15.0 - 2026-09-26
+
+- v1: **skmon** (Prometheus, Grafana, Loki, Promtail, cAdvisor, node-exporter,
+  Alertmanager, Jaeger) published. Scrape extra services with
+  `skmon.EXTRA_SCRAPE_TARGETS` (static) or `skmon.EXTRA_SCRAPE_CONFIGS`
+  (complete scrape_config entries, e.g. DNS service discovery).
+- v1: **skform** (OpenTofu CLI container) published. Its image is
+  `ghcr.io/opentofu/opentofu` (the Docker Hub name never existed) and it idles
+  with `sleep infinity` as the entrypoint.
+- v1: fixes found by the end-to-end test: skmon's deploy script only found its
+  files in prod; skform's compose was invalid YAML with `SKSTOR_ENABLED` false.
+- v1: new tests: deploy scripts look where playbooks write; compose templates
+  render to valid YAML the way Ansible renders them.
+
+Instance action: skmon needs `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_SECRET_KEY`
+and the other `skmon.*` keys listed in its playbooks; move bespoke Prometheus
+jobs into `EXTRA_SCRAPE_CONFIGS`. skform needs its `skform.*` keys.
+
 ## skstacks-v2.14.0 - 2026-09-25
 
 - v1: **skmem-pg** (Postgres 17 + pgvector + pg_search + Apache AGE) published,
