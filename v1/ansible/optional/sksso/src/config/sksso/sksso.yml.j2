@@ -107,7 +107,7 @@ services:
       - {{ app }}-{{ env }}
 
   server:
-    image: ghcr.io/goauthentik/server:{{ sksso.authentik_version | default('2024.4.2') }}
+    image: "{{ sksso.IMAGE | default('ghcr.io/goauthentik/server:' ~ (sksso.authentik_version | default('2024.4.2'))) }}"
     env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}.env
     command: server
     deploy:
@@ -169,7 +169,7 @@ services:
       start_period: 300s
 
   worker:
-    image: ghcr.io/goauthentik/server:{{ sksso.authentik_version | default('2024.4.2') }}
+    image: "{{ sksso.IMAGE | default('ghcr.io/goauthentik/server:' ~ (sksso.authentik_version | default('2024.4.2'))) }}"
     env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}.env
     command: worker
     deploy:
