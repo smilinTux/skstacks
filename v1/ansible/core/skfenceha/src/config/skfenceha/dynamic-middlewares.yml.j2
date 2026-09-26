@@ -136,6 +136,11 @@ http:
         query: "/error/{status}"
 
     gzip:
+{% if skfenceha.GZIP_COMPRESS is mapping %}
+{# skfenceha.GZIP_COMPRESS instance var (map) replaces the compress options
+   below entirely; {} means Traefik's own defaults. #}
+      compress: {{ skfenceha.GZIP_COMPRESS | tojson }}
+{% else %}
       compress:
         includedContentTypes:
           - "text/html"
@@ -149,6 +154,7 @@ http:
           - "application/rss+xml"
           - "image/svg+xml"
         minResponseBodyBytes: 1024
+{% endif %}
 
     # Chains and standalone middlewares below are referenced by OTHER
     # services' own Docker labels (optional/skgit, skport, skai, skgallery,

@@ -182,10 +182,10 @@ services:
       mode: replicated
       resources:
         reservations:
-          memory: 64M
+          memory: {{ skhub.REDIS_RESOURCES_RESERVATIONS_MEMORY | default("64M") }}
           cpus: '.05'
         limits:
-          memory: 256M
+          memory: {{ skhub.REDIS_RESOURCES_LIMITS_MEMORY | default("256M") }}
           cpus: '1.0'
     networks:
       - skhub-{{ env }}

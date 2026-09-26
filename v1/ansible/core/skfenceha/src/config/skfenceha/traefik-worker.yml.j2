@@ -63,6 +63,17 @@ entryPoints:
         - "{{ ip }}"
 {% endfor %}
 {% endif %}
+{% if skfenceha.WORKER_RESPONDING_TIMEOUTS | default({}) %}
+    # skfenceha.WORKER_RESPONDING_TIMEOUTS instance var (map, rendered
+    # verbatim). Long read/write timeouts keep multi-GB uploads/downloads
+    # (e.g. skhub/Nextcloud chunk assembly) from being cut off. Unset: no
+    # transport block (Traefik's own defaults).
+    transport:
+      respondingTimeouts:
+{% for _timeout_name, _timeout_value in skfenceha.WORKER_RESPONDING_TIMEOUTS.items() %}
+        {{ _timeout_name }}: {{ _timeout_value }}
+{% endfor %}
+{% endif %}
   # TCP passthrough entrypoint for git-over-SSH style services behind this
   # edge (e.g. traefik.tcp labels routing to a git service's SSH port). Port
   # 222 avoids colliding with the host's own SSH on 22.
@@ -95,9 +106,17 @@ providers:
 serversTransport:
   insecureSkipVerify: true
   forwardingTimeouts:
+{% if skfenceha.WORKER_FORWARDING_TIMEOUTS | default({}) %}
+{# skfenceha.WORKER_FORWARDING_TIMEOUTS instance var (map) replaces the
+   framework defaults below entirely; no per-key merge. #}
+{% for _timeout_name, _timeout_value in skfenceha.WORKER_FORWARDING_TIMEOUTS.items() %}
+    {{ _timeout_name }}: {{ _timeout_value }}
+{% endfor %}
+{% else %}
     responseHeaderTimeout: 30s
     dialTimeout: 10s
     idleConnTimeout: 90s
+{% endif %}
 
 metrics:
   prometheus:
