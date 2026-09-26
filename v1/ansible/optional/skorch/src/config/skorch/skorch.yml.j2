@@ -1,0 +1,157 @@
+version: '3.8'
+
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    env_file: /var/data/config/skorch-{{ env }}/skorch.env
+    logging:
+      driver: json-file
+      options:
+        max-size: 4m
+        max-file: "1"
+    volumes:
+      # N8n data directory (direct host bind mount - env aware)
+      - /var/data/skorch-{{ env }}/n8n_data:/home/node/.n8n
+      # Local files directory (direct host bind mount - env aware)
+      - /var/data/skorch-{{ env }}/local-files:/files
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - skorch-{{ env }}
+      - cloud-public-{{ env }}
+    deploy:
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+      mode: replicated
+      replicas: 1
+      labels:
+        # === TRAEFIK: HTTP ===
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        # === TRAEFIK: ROUTERS ===
+        - "traefik.http.routers.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skorch{% if env != 'prod' %}-{{ env }}{% endif %}.{{ cluster_name | default(skorch.CLUSTERNAME | default('cluster1')) }}.{{ domain | default(skorch.DOMAIN | default('example.com')) }}`)"
+        - "traefik.http.routers.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
+        - "traefik.http.routers.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
+        - "traefik.http.routers.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
+        - "traefik.http.routers.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
+        - "traefik.http.routers.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares=default-no-crowdsec@file"
+        - "traefik.http.routers.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.service=skorch{% if env != 'prod' %}-{{ env }}{% endif %}"
+        # === TRAEFIK: SERVICES ===
+        - "traefik.http.services.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=5678"
+        # === STICKY SESSIONS: Required for stateful n8n application ===
+        # Even with replicas: 1, multiple Traefik workers can cause requests to be routed
+        # through different workers during updates, leading to session issues
+        # Sticky sessions ensure all requests from the same client use the same Traefik worker
+        - "traefik.http.services.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky=true"
+        - "traefik.http.services.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie=true"
+        - "traefik.http.services.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie.name=skorch_session"
+        - "traefik.http.services.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie.secure=true"
+        - "traefik.http.services.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie.httpOnly=true"
+        - "traefik.http.services.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie.sameSite=lax"
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    env_file: /var/data/config/skorch-{{ env }}/postgres.env
+    environment:
+      - PGTEMP=/var/lib/postgresql/data/tmp
+    networks:
+      - skorch-{{ env }}
+    volumes:
+      - /var/data/runtime/skorch-{{ env }}/postgres:/var/lib/postgresql/data
+      - /var/data/skorch-{{ env }}/postgres-init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --dir /data --requirepass {{ skorch.REDIS_PASSWORD }}
+    networks:
+      - skorch-{{ env }}
+    volumes:
+      - /var/data/runtime/skorch-{{ env }}/redis:/data
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+
+  postgres-backup:
+    image: prodrigestivill/postgres-backup-local:16
+    env_file: /var/data/config/skorch-{{ env }}/postgres-backup.env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_EXTRA_OPTS: "-Z9 --schema=public --blobs"
+      SCHEDULE: "@daily"
+      BACKUP_KEEP_DAYS: 7
+      BACKUP_KEEP_WEEKS: 4
+      BACKUP_KEEP_MONTHS: 6
+      HEALTHCHECK_PORT: 8080
+    volumes:
+      # Database backup directory (direct host bind mount - env aware)
+      - /var/data/skorch-{{ env }}/database-backup:/backups
+    networks:
+      - skorch-{{ env }}
+    depends_on:
+      - postgres
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+{% if skorch.enable_gpg_signer | default(false) %}
+  # GPG Signer sidecar: REST API for detached PGP signing with pre-provisioned
+  # "trustee" keys. Opt-in (skorch.enable_gpg_signer) because it needs real
+  # keys provisioned into the gpg-keys volume before it does anything useful;
+  # see src/gpg-signer/README.md for key provisioning and the auth model.
+  gpg-signer:
+    image: "{{ skorch.GPG_SIGNER_IMAGE | default('ghcr.io/smilintux/skstacks-gpg-signer:skstacks-v2.18.0') }}"
+    environment:
+      - GNUPGHOME=/keys
+      - GPG_SIGNER_API_SECRET={{ skorch.GPG_SIGNER_API_SECRET }}
+      - GPG_SIGNER_ALLOW_KEY_IMPORT={{ skorch.GPG_SIGNER_ALLOW_KEY_IMPORT | default('false') }}
+      - GPG_SIGNER_MAX_UPLOAD_BYTES={{ skorch.GPG_SIGNER_MAX_UPLOAD_BYTES | default('26214400') }}
+      - TRUSTEE_A_KEY_ID={{ skorch.TRUSTEE_A_KEY_ID | default('') }}
+      - TRUSTEE_B_KEY_ID={{ skorch.TRUSTEE_B_KEY_ID | default('') }}
+      - TRUSTEE_C_KEY_ID={{ skorch.TRUSTEE_C_KEY_ID | default('') }}
+      - LOG_LEVEL=INFO
+    volumes:
+      # GPG keys directory - contains private keys for trustees
+      - /var/data/skorch-{{ env }}/gpg-keys:/keys
+    networks:
+      - skorch-{{ env }}
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
+{% endif %}
+
+networks:
+  cloud-public-{{ env }}:
+    external: true
+  skorch-{{ env }}:
+    external: true

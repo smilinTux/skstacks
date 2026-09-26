@@ -1,0 +1,7 @@
+# Instance-specific workflow exports are never committed here; only the
+# examples/ directory ships with the framework.
+dev/*.json
+staging/*.json
+prod/*.json
+shared/*.json
+!examples/*.json

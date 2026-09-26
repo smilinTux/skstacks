@@ -1,0 +1,61 @@
+# Builds and publishes the gpg-signer sidecar image so a skorch instance can
+# run v1/ansible/optional/skorch's optional gpg-signer service without
+# building it itself. Runs the sidecar's own tests first: a broken signer
+# never reaches the registry.
+name: gpg-signer image
+
+on:
+  push:
+    tags: ['skstacks-v*']
+    paths: ['v1/ansible/optional/skorch/src/gpg-signer/**', '.github/workflows/gpg-signer-image.yml']
+  pull_request:
+    paths: ['v1/ansible/optional/skorch/src/gpg-signer/**', '.github/workflows/gpg-signer-image.yml']
+  workflow_dispatch: {}
+
+env:
+  IMAGE: ghcr.io/smilintux/skstacks-gpg-signer
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - working-directory: v1/ansible/optional/skorch/src/gpg-signer
+        run: |
+          pip install -r requirements.txt pytest
+          python -m pytest -q tests/
+
+  build:
+    needs: test
+    # Publish only on a release tag or an explicit manual run; a plain PR/push
+    # only needs the test job above to prove the image still builds and passes.
+    if: startsWith(github.ref, 'refs/tags/skstacks-v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/skstacks-v') }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: v1/ansible/optional/skorch/src/gpg-signer
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
