@@ -16,10 +16,7 @@ services:
       mode: replicated
       replicas: {{ sksso.postgres_replicas | default(1) }}
       placement:
-{% if sksso.placement_use_worker_constraint | default(true) %}
-        constraints:
-          - "node.role == worker"
-{% endif %}
+        constraints: {{ (["node.role == worker"] if (sksso.placement_use_worker_constraint | default(true)) else []) | tojson }}
       resources:
         reservations:
           memory: 256M
@@ -64,10 +61,7 @@ services:
       mode: replicated
       replicas: {{ sksso.backup_replicas | default(1) }}
       placement:
-{% if sksso.placement_use_worker_constraint | default(true) %}
-        constraints:
-          - "node.role == worker"
-{% endif %}
+        constraints: {{ (["node.role == worker"] if (sksso.placement_use_worker_constraint | default(true)) else []) | tojson }}
       resources:
         reservations:
           memory: 64M
@@ -95,10 +89,7 @@ services:
       mode: replicated
       replicas: {{ sksso.redis_replicas | default(1) }}
       placement:
-{% if sksso.placement_use_worker_constraint | default(true) %}
-        constraints:
-          - "node.role == worker"
-{% endif %}
+        constraints: {{ (["node.role == worker"] if (sksso.placement_use_worker_constraint | default(true)) else []) | tojson }}
       resources:
         reservations:
           memory: 64M
@@ -122,16 +113,12 @@ services:
     deploy:
       mode: replicated
       replicas: {{ sksso.server_replicas | default(1) }}
-      placement:
-{% if sksso.placement_use_worker_constraint | default(true) %}
-        constraints:
-          - "node.role == worker"
-{% endif %}
-{% if sksso.placement_exclude_nodes is defined %}
-{% for node in sksso.placement_exclude_nodes %}
-          - "node.hostname != {{ node }}"
+{% set sksso_pl = namespace(c=(["node.role == worker"] if (sksso.placement_use_worker_constraint | default(true)) else [])) %}
+{% for node in sksso.placement_exclude_nodes | default([]) %}
+{% set sksso_pl.c = sksso_pl.c + ["node.hostname != " ~ node] %}
 {% endfor %}
-{% endif %}
+      placement:
+        constraints: {{ sksso_pl.c | tojson }}
       resources:
         reservations:
           memory: 512M
@@ -186,16 +173,12 @@ services:
     deploy:
       mode: replicated
       replicas: {{ sksso.worker_replicas | default(1) }}
-      placement:
-{% if sksso.placement_use_worker_constraint | default(true) %}
-        constraints:
-          - "node.role == worker"
-{% endif %}
-{% if sksso.placement_exclude_nodes is defined %}
-{% for node in sksso.placement_exclude_nodes %}
-          - "node.hostname != {{ node }}"
+{% set sksso_pl = namespace(c=(["node.role == worker"] if (sksso.placement_use_worker_constraint | default(true)) else [])) %}
+{% for node in sksso.placement_exclude_nodes | default([]) %}
+{% set sksso_pl.c = sksso_pl.c + ["node.hostname != " ~ node] %}
 {% endfor %}
-{% endif %}
+      placement:
+        constraints: {{ sksso_pl.c | tojson }}
       resources:
         reservations:
           memory: 256M
