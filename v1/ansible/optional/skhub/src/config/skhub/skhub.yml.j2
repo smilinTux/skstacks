@@ -19,6 +19,8 @@ services:
       - db
       - redis
     deploy:
+      placement:
+        constraints: {{ (skhub.placement_constraints | default([])) | tojson }}
       replicas: 1
       restart_policy:
         condition: any
@@ -99,6 +101,8 @@ services:
     volumes:
       - /var/data/runtime/skhub-{{ env }}/db:/var/lib/mysql
     deploy:
+      placement:
+        constraints: {{ (skhub.placement_constraints | default([])) | tojson }}
       replicas: 1
       restart_policy:
         condition: any
@@ -122,6 +126,8 @@ services:
     image: mariadb:10.11.7
     env_file: /var/data/config/skhub-{{ env }}/skhub-db-backup.env
     deploy:
+      placement:
+        constraints: {{ (skhub.placement_constraints | default([])) | tojson }}
       replicas: 1
       restart_policy:
         condition: any
@@ -167,6 +173,8 @@ services:
     # timeout 0 / tcp-keepalive 300: avoid "Redis went away" on long uploads.
     command: redis-server --notify-keyspace-events Ex --appendonly yes --timeout 0 --tcp-keepalive 300
     deploy:
+      placement:
+        constraints: {{ (skhub.placement_constraints | default([])) | tojson }}
       replicas: 1
       restart_policy:
         condition: any
@@ -196,6 +204,8 @@ services:
     volumes:
       - /var/data/runtime/skhub-{{ env }}/clamav:/var/lib/clamav
     deploy:
+      placement:
+        constraints: {{ (skhub.placement_constraints | default([])) | tojson }}
       replicas: 1
       restart_policy:
         condition: any
@@ -227,6 +237,8 @@ services:
       retries: 3
       start_period: 30s
     deploy:
+      placement:
+        constraints: {{ (skhub.placement_constraints | default([])) | tojson }}
       replicas: 1
       restart_policy:
         condition: any
@@ -271,6 +283,8 @@ services:
       - /var/data/skhub-{{ env }}/custom_apps:/var/www/html/custom_apps:ro
       - /var/data/skhub-{{ env }}/config:/var/www/html/config:ro
     deploy:
+      placement:
+        constraints: {{ (skhub.placement_constraints | default([])) | tojson }}
       replicas: 1
       restart_policy:
         condition: any
@@ -299,6 +313,8 @@ services:
     depends_on:
       - redis
     deploy:
+      placement:
+        constraints: {{ (skhub.placement_constraints | default([])) | tojson }}
       replicas: 1
       restart_policy:
         condition: any
@@ -330,6 +346,8 @@ services:
     volumes:
       - /var/data/skhub-{{ env }}/html/data:/data
     deploy:
+      placement:
+        constraints: {{ (skhub.placement_constraints | default([])) | tojson }}
       replicas: 1
       restart_policy:
         condition: any
@@ -353,6 +371,8 @@ services:
     security_opt:
       - seccomp:unconfined
     deploy:
+      placement:
+        constraints: {{ (skhub.placement_constraints | default([])) | tojson }}
       replicas: 1
       restart_policy:
         condition: any
@@ -398,6 +418,8 @@ services:
     cap_add:
       - NET_ADMIN
     deploy:
+      placement:
+        constraints: {{ (skhub.placement_constraints | default([])) | tojson }}
       replicas: 1
       restart_policy:
         condition: any
