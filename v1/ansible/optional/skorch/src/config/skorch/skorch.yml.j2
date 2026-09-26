@@ -35,7 +35,7 @@ services:
         - "traefik.enable=true"
         - "traefik.swarm.network=cloud-public-{{ env }}"
         # === TRAEFIK: ROUTERS ===
-        - "traefik.http.routers.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skorch{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skorch.CLUSTERNAME | default(cluster_name) }}.{{ skorch.DOMAIN | default(domain) }}`)"
+        - "traefik.http.routers.skorch{% if env != prod %}-{{ env }}{% endif %}.rule=Host(`skorch{% if env != prod %}-{{ env }}{% endif %}.{{ skorch_cfg.CLUSTERNAME | default(cluster_name) }}.{{ skorch_cfg.DOMAIN | default(domain) }}`)"
         - "traefik.http.routers.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
         - "traefik.http.routers.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
         - "traefik.http.routers.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
@@ -78,7 +78,7 @@ services:
 
   redis:
     image: redis:7.4.7-alpine
-    command: redis-server --dir /data --requirepass {{ skorch.REDIS_PASSWORD }}
+    command: redis-server --dir /data --requirepass {{ skorch_cfg.REDIS_PASSWORD }}
     networks:
       - skorch-{{ env }}
     volumes:
@@ -111,21 +111,21 @@ services:
       restart_policy:
         condition: on-failure
 
-{% if skorch.enable_gpg_signer | default(false) %}
+{% if skorch_cfg.enable_gpg_signer | default(false) %}
   # GPG Signer sidecar: REST API for detached PGP signing with pre-provisioned
-  # "trustee" keys. Opt-in (skorch.enable_gpg_signer) because it needs real
+  # "trustee" keys. Opt-in (skorch_cfg.enable_gpg_signer) because it needs real
   # keys provisioned into the gpg-keys volume before it does anything useful;
   # see src/gpg-signer/README.md for key provisioning and the auth model.
   gpg-signer:
-    image: "{{ skorch.GPG_SIGNER_IMAGE | default('ghcr.io/smilintux/skstacks-gpg-signer:skstacks-v2.18.0') }}"
+    image: "{{ skorch_cfg.GPG_SIGNER_IMAGE | default('ghcr.io/smilintux/skstacks-gpg-signer:skstacks-v2.18.0') }}"
     environment:
       - GNUPGHOME=/keys
-      - GPG_SIGNER_API_SECRET={{ skorch.GPG_SIGNER_API_SECRET }}
-      - GPG_SIGNER_ALLOW_KEY_IMPORT={{ skorch.GPG_SIGNER_ALLOW_KEY_IMPORT | default('false') }}
-      - GPG_SIGNER_MAX_UPLOAD_BYTES={{ skorch.GPG_SIGNER_MAX_UPLOAD_BYTES | default('26214400') }}
-      - TRUSTEE_A_KEY_ID={{ skorch.TRUSTEE_A_KEY_ID | default('') }}
-      - TRUSTEE_B_KEY_ID={{ skorch.TRUSTEE_B_KEY_ID | default('') }}
-      - TRUSTEE_C_KEY_ID={{ skorch.TRUSTEE_C_KEY_ID | default('') }}
+      - GPG_SIGNER_API_SECRET={{ skorch_cfg.GPG_SIGNER_API_SECRET }}
+      - GPG_SIGNER_ALLOW_KEY_IMPORT={{ skorch_cfg.GPG_SIGNER_ALLOW_KEY_IMPORT | default('false') }}
+      - GPG_SIGNER_MAX_UPLOAD_BYTES={{ skorch_cfg.GPG_SIGNER_MAX_UPLOAD_BYTES | default('26214400') }}
+      - TRUSTEE_A_KEY_ID={{ skorch_cfg.TRUSTEE_A_KEY_ID | default('') }}
+      - TRUSTEE_B_KEY_ID={{ skorch_cfg.TRUSTEE_B_KEY_ID | default('') }}
+      - TRUSTEE_C_KEY_ID={{ skorch_cfg.TRUSTEE_C_KEY_ID | default('') }}
       - LOG_LEVEL=INFO
     volumes:
       # GPG keys directory - contains private keys for trustees

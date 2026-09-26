@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
-      - run: pip install pytest pyyaml ansible
+      - run: pip install pytest pyyaml ansible jsonschema
       - run: python -m pytest -q v1/tests v2/platform/swarm/tests v2/platform/k3d/tests
 
   tofu:

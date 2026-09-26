@@ -41,7 +41,7 @@ sections:
       collapsed: {{ section.displayData.collapsed | default(false) }}
       hideForGuests: {{ section.displayData.hideForGuests | default(false) }}
     items:
-{% for item in section.items | default([]) %}
+{% for item in section['items'] | default([]) %}
       - title: {{ item.title }}
 {% if item.description is defined %}
         description: {{ item.description }}
