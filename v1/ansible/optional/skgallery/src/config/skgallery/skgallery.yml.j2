@@ -1,0 +1,305 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+{%- set _base_domain = skgallery.CLUSTERNAME ~ '.' ~ skgallery.DOMAIN -%}
+version: '3.8'
+
+# =============================================================================
+# SKGallery (Immich) Docker Swarm Stack
+# =============================================================================
+# Self-hosted photo and video management solution
+# Components: immich-server, immich-machine-learning, postgres (pgvector), redis
+# Environment: {{ env }}
+# =============================================================================
+
+networks:
+  skgallery-{{ env }}:
+    external: true
+  cloud-public-{{ env }}:
+    external: true
+
+# No named volumes - all mounts are direct bind mounts
+# Simpler, faster, zero-config
+
+services:
+  # ===========================================================================
+  # Immich Server - Main API and Web Interface
+  # ===========================================================================
+  immich-server:
+    image: ghcr.io/immich-app/immich-server:{{ skgallery.IMMICH_VERSION | default('v2.7.5') }}
+    env_file: /var/data/config/skgallery-{{ env }}/skgallery.env
+    volumes:
+      # === DIRECT BIND MOUNTS (NO NAMED VOLUMES) ===
+      - /var/data/skgallery-{{ env }}/upload:/usr/src/app/upload
+      - /var/data/skgallery-{{ env }}/thumbs:/usr/src/app/upload/thumbs
+      - /var/data/skgallery-{{ env }}/profile:/usr/src/app/upload/profile
+      # Note: Immich automatic database dumps are stored in UPLOAD_LOCATION/backups
+      # which resolves to /usr/src/app/upload/backups (a subdirectory of upload)
+      # No separate mount needed - backups will be created in upload/backups
+      - /etc/localtime:/etc/localtime:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "{{ skgallery.LOG_MAX_SIZE | default('10m') }}"
+        max-file: "{{ skgallery.LOG_MAX_FILES | default('5') }}"
+    networks:
+      - skgallery-{{ env }}
+      - cloud-public-{{ env }}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:2283/api/server/ping || exit 1"]
+      interval: {{ skgallery.HEALTH_CHECK_INTERVAL | default('30s') }}
+      timeout: {{ skgallery.HEALTH_CHECK_TIMEOUT | default('10s') }}
+      retries: {{ skgallery.HEALTH_CHECK_RETRIES | default(3) }}
+      start_period: {{ skgallery.HEALTH_CHECK_START_PERIOD | default('60s') }}
+    deploy:
+      mode: replicated
+      replicas: {{ skgallery.SERVER_REPLICAS | default(1) }}
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 20
+        window: 600s
+      placement:
+        constraints:
+          - node.role == worker
+      resources:
+        limits:
+          cpus: '{{ skgallery.SERVER_CPU_LIMIT | default("2.0") }}'
+          memory: {{ skgallery.SERVER_MEMORY_LIMIT | default("2G") }}
+        reservations:
+          cpus: '{{ skgallery.SERVER_CPU_RESERVATION | default("0.5") }}'
+          memory: {{ skgallery.SERVER_MEMORY_RESERVATION | default("512M") }}
+      labels:
+        # === TRAEFIK: HTTP Configuration ===
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+
+        # === TRAEFIK: Main Router ===
+        - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`)"
+        - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints={{ skgallery.TRAEFIK_ENTRYPOINT | default('websecure') }}"
+        - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
+        - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver={{ skgallery.TRAEFIK_CERTRESOLVER | default('main') }}"
+        - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options={{ skgallery.TRAEFIK_TLS_OPTIONS | default('intermediate@file') }}"
+        # NOTE: middlewares default excludes gzip compression, which can cause
+        # buffering issues (ECONNRESET) on large file uploads through the proxy.
+        - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares={{ skgallery.TRAEFIK_MIDDLEWARES | default('upload-chain-no-crowdsec@file') }}"
+        - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.service=skgallery{% if env != 'prod' %}-{{ env }}{% endif %}"
+
+        # === TRAEFIK: Service Configuration ===
+        - "traefik.http.services.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=2283"
+
+        # === TRAEFIK: Health Check ===
+        - "traefik.http.services.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.healthcheck.path=/api/server/ping"
+        - "traefik.http.services.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.healthcheck.interval=30s"
+        - "traefik.http.services.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.healthcheck.timeout=10s"
+    depends_on:
+      - redis
+      - database
+
+  # ===========================================================================
+  # Immich Machine Learning - AI/ML Processing
+  # ===========================================================================
+  # Handles: face detection, object recognition, smart search, CLIP embeddings
+  immich-machine-learning:
+    image: ghcr.io/immich-app/immich-machine-learning:{{ skgallery.IMMICH_VERSION | default('v2.7.5') }}
+    env_file: /var/data/config/skgallery-{{ env }}/skgallery.env
+    volumes:
+      # === DIRECT BIND MOUNT ===
+      - /var/data/skgallery-{{ env }}/model-cache:/cache
+    logging:
+      driver: json-file
+      options:
+        max-size: "{{ skgallery.LOG_MAX_SIZE | default('10m') }}"
+        max-file: "{{ skgallery.LOG_MAX_FILES | default('5') }}"
+    networks:
+      - skgallery-{{ env }}
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3003/ping')"]
+      interval: {{ skgallery.ML_HEALTH_CHECK_INTERVAL | default('30s') }}
+      timeout: {{ skgallery.ML_HEALTH_CHECK_TIMEOUT | default('10s') }}
+      retries: {{ skgallery.ML_HEALTH_CHECK_RETRIES | default(3) }}
+      start_period: {{ skgallery.ML_HEALTH_CHECK_START_PERIOD | default('120s') }}
+    deploy:
+      mode: replicated
+      replicas: {{ skgallery.ML_REPLICAS | default(1) }}
+      update_config:
+        parallelism: 1
+        delay: 30s
+        order: start-first
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+        delay: 15s
+        max_attempts: 5
+        window: 180s
+      placement:
+        constraints:
+          - node.role == worker
+      resources:
+        limits:
+          cpus: '{{ skgallery.ML_CPU_LIMIT | default("2.0") }}'
+          memory: {{ skgallery.ML_MEMORY_LIMIT | default("4G") }}
+        reservations:
+          cpus: '{{ skgallery.ML_CPU_RESERVATION | default("0.5") }}'
+          memory: {{ skgallery.ML_MEMORY_RESERVATION | default("1G") }}
+
+  # ===========================================================================
+  # Redis - In-memory Cache and Message Queue
+  # ===========================================================================
+  redis:
+    image: redis:{{ skgallery.REDIS_VERSION | default('7-alpine') }}
+    command: redis-server --appendonly yes --maxmemory {{ skgallery.REDIS_MAXMEMORY | default('128mb') }} --maxmemory-policy noeviction
+    volumes:
+      - /var/data/skgallery-{{ env }}/redis-data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "{{ skgallery.LOG_MAX_SIZE | default('10m') }}"
+        max-file: "{{ skgallery.LOG_MAX_FILES | default('3') }}"
+    networks:
+      - skgallery-{{ env }}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG || exit 1"]
+      interval: {{ skgallery.REDIS_HEALTH_CHECK_INTERVAL | default('10s') }}
+      timeout: {{ skgallery.REDIS_HEALTH_CHECK_TIMEOUT | default('5s') }}
+      retries: {{ skgallery.REDIS_HEALTH_CHECK_RETRIES | default(3) }}
+      start_period: {{ skgallery.REDIS_HEALTH_CHECK_START_PERIOD | default('10s') }}
+    deploy:
+      mode: replicated
+      replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 5s
+        order: stop-first
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+        window: 60s
+      placement:
+        constraints:
+          - node.role == worker
+      resources:
+        limits:
+          cpus: '{{ skgallery.REDIS_CPU_LIMIT | default("0.5") }}'
+          memory: {{ skgallery.REDIS_MEMORY_LIMIT | default("256M") }}
+        reservations:
+          cpus: '{{ skgallery.REDIS_CPU_RESERVATION | default("0.1") }}'
+          memory: {{ skgallery.REDIS_MEMORY_RESERVATION | default("64M") }}
+
+  # ===========================================================================
+  # PostgreSQL - Vector Database (Immich strategic image)
+  # ===========================================================================
+  # ghcr.io/immich-app/postgres bundles BOTH pgvecto.rs and vectorchord
+  # extensions on top of PostgreSQL, enabling in-place vector migration for
+  # legacy installs. Reference: https://docs.immich.app/install/upgrading
+  database:
+    image: ghcr.io/immich-app/postgres:{{ skgallery.POSTGRES_VERSION | default('14-vectorchord0.4.3-pgvectors0.2.0') }}
+    env_file: /var/data/config/skgallery-{{ env }}/skgallery-db.env
+    shm_size: {{ skgallery.DB_SHM_SIZE | default('128mb') }}
+    volumes:
+      # === DIRECT BIND MOUNT ===
+      - /var/data/skgallery-{{ env }}/db-data:/var/lib/postgresql/data
+      - /etc/localtime:/etc/localtime:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "{{ skgallery.LOG_MAX_SIZE | default('10m') }}"
+        max-file: "{{ skgallery.LOG_MAX_FILES | default('5') }}"
+    networks:
+      - skgallery-{{ env }}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d {{ skgallery.DB_DATABASE_NAME | default('immich') }} -U {{ skgallery.DB_USERNAME | default('postgres') }}"]
+      interval: {{ skgallery.DB_HEALTH_CHECK_INTERVAL | default('10s') }}
+      timeout: {{ skgallery.DB_HEALTH_CHECK_TIMEOUT | default('15s') }}
+      retries: {{ skgallery.DB_HEALTH_CHECK_RETRIES | default(10) }}
+      start_period: {{ skgallery.DB_HEALTH_CHECK_START_PERIOD | default('90s') }}
+    deploy:
+      mode: replicated
+      replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: stop-first
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 20
+        window: 600s
+      placement:
+        constraints:
+          - node.role == worker
+      resources:
+        limits:
+          cpus: '{{ skgallery.DB_CPU_LIMIT | default("2.0") }}'
+          memory: {{ skgallery.DB_MEMORY_LIMIT | default("4G") }}
+        reservations:
+          cpus: '{{ skgallery.DB_CPU_RESERVATION | default("0.25") }}'
+          memory: {{ skgallery.DB_MEMORY_RESERVATION | default("512M") }}
+
+  # ===========================================================================
+  # PostgreSQL Database Backup Service
+  # ===========================================================================
+  # Automated daily backups with retention policy
+  postgres-db-backup:
+    image: postgres:{{ skgallery.POSTGRES_BACKUP_VERSION | default('14') }}
+    env_file: /var/data/config/skgallery-{{ env }}/skgallery-backup.env
+    environment:
+      - PGTEMP=/dump/tmp
+    volumes:
+      # === DIRECT BIND MOUNT FOR BACKUPS ===
+      - /var/data/skgallery-{{ env }}/database-dump:/dump
+      - /etc/localtime:/etc/localtime:ro
+    entrypoint: |
+      bash -c 'bash -s <<EOF
+      trap "break;exit" SIGHUP SIGINT SIGTERM
+      sleep 2m
+      while /bin/true; do
+        pg_dump -Fc -h database -U $${PGUSER} -d $${PGDATABASE} > /dump/dump_`date +%d-%m-%Y"_"%H_%M_%S`.psql
+        (ls -t /dump/dump*.psql|head -n $${BACKUP_NUM_KEEP};ls /dump/dump*.psql)|sort|uniq -u|xargs rm -- {}
+        sleep $${BACKUP_FREQUENCY}
+      done
+      EOF'
+    deploy:
+      mode: replicated
+      replicas: {{ skgallery.BACKUP_REPLICAS | default(1) }}
+      placement:
+        constraints:
+          - node.role == worker
+      resources:
+        reservations:
+          memory: 64M
+          cpus: '.05'
+        limits:
+          memory: 256M
+          cpus: '.25'
+      restart_policy:
+        condition: any
+        delay: 10s
+    networks:
+      - skgallery-{{ env }}
+    depends_on:
+      - database

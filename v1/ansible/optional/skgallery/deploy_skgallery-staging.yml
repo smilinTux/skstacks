@@ -1,0 +1,221 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# =============================================================================
+# SKGallery (Immich) Deployment Playbook - Staging
+# =============================================================================
+# Self-hosted photo and video management solution.
+# TODO before deploy: register skgallery-dev overlay subnet in shared/networks
+# (172.16.227.0/24, not yet registered); add skgallery vault vars (DB_PASSWORD,
+# CLUSTERNAME, DOMAIN); ensure images are pullable on swarm nodes.
+# =============================================================================
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+# Step 1: Select manager node with failover
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+# Step 2: Deploy to selected manager
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skgallery
+    env: staging
+    service_name: skgallery
+    service_type: optional
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Define network variables from vault (idempotent network creation)
+      # TODO: register subnets in shared/networks before first deploy.
+      set_fact:
+        app_networks: "{{ skgallery.networks | default([
+          { 'name': 'skgallery-staging', 'subnet': '172.16.227.0/24', 'driver': 'overlay', 'attachable': true },
+          { 'name': 'cloud-public-staging', 'subnet': '172.16.201.0/24', 'driver': 'overlay', 'attachable': true }
+        ]) }}"
+      tags:
+        - networks
+
+  tasks:
+    - name: Deploying {{ app }}
+      debug:
+        msg: "Running SKStacks deploy {{ app }} (Immich Photo/Video Management) - STAGING..."
+
+    - name: Ensure python3-pip is installed
+      apt:
+        name: python3-pip
+        state: present
+      become: true
+
+    - name: Install Docker SDK for Python
+      pip:
+        name: docker
+        state: present
+      become: true
+
+    - name: Create the {{ app }} directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - /var/data/{{ app }}-{{ env }}
+        - /var/data/config/{{ app }}-{{ env }}
+        - /var/data/{{ app }}-{{ env }}/upload
+        - /var/data/{{ app }}-{{ env }}/upload/backups
+        - /var/data/{{ app }}-{{ env }}/thumbs
+        - /var/data/{{ app }}-{{ env }}/profile
+        - /var/data/{{ app }}-{{ env }}/db-data
+        - /var/data/{{ app }}-{{ env }}/redis-data
+        - /var/data/{{ app }}-{{ env }}/model-cache
+        - /var/data/{{ app }}-{{ env }}/database-dump
+
+    - name: Set upload directory ownership (for Immich user)
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "1000"
+        group: "1000"
+        mode: '0755'
+      loop:
+        - /var/data/{{ app }}-{{ env }}/upload
+        - /var/data/{{ app }}-{{ env }}/upload/backups
+        - /var/data/{{ app }}-{{ env }}/thumbs
+        - /var/data/{{ app }}-{{ env }}/profile
+        - /var/data/{{ app }}-{{ env }}/model-cache
+
+    - name: Set database directory ownership (for PostgreSQL user)
+      file:
+        path: /var/data/{{ app }}-{{ env }}/db-data
+        state: directory
+        owner: "999"
+        group: "999"
+        mode: '0700'
+
+    - name: Set Redis directory ownership
+      file:
+        path: /var/data/{{ app }}-{{ env }}/redis-data
+        state: directory
+        owner: "999"
+        group: "999"
+        mode: '0755'
+
+    - name: Set PostgreSQL backup directory ownership
+      file:
+        path: /var/data/{{ app }}-{{ env }}/database-dump
+        state: directory
+        owner: "999"
+        group: "999"
+        mode: '0755'
+
+    - name: Process {{ app }} environment templates
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: '{{ item.mode | default("0640") }}'
+      loop:
+        - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env" }
+        - { src: "{{ app }}.sh.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env" }
+        - { src: "{{ app }}-db.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}-db.env" }
+        - { src: "{{ app }}-backup.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}-backup.env" }
+      tags:
+        - templates
+
+    - name: Process {{ app }} Docker Compose template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags:
+        - compose
+
+    - name: Create docker-compose.yml symlink
+      file:
+        src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags:
+        - compose
+
+    - name: Process deploy script template
+      template:
+        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/deploy"
+        owner: root
+        group: root
+        mode: '0755'
+      tags:
+        - deploy-script
+
+    - name: Create {{ app }} control script symlink
+      file:
+        src: /var/data/{{ app }}-{{ env }}/deploy
+        dest: /var/data/deploy_{{ app }}-{{ env }}
+        force: yes
+        owner: root
+        group: root
+        mode: '0755'
+        state: link
+
+    - name: Ensure overlay networks exist from app_networks variable
+      include_tasks: ../../shared/tasks/create_networks.yml
+      tags:
+        - networks
+
+    - name: Deploy {{ app }} stack
+      shell: |
+        cd /var/data/{{ app }}-{{ env }}
+        ./deploy
+      register: deploy_output
+      tags:
+        - deploy
+
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags:
+        - deploy
+
+    - name: Post-deploy Check Immich Server service health
+      community.docker.docker_swarm_service_info:
+        name: "{{ app }}-{{ env }}_immich-server"
+      register: immich_service
+      ignore_errors: yes
+
+    - name: Print Immich service status
+      debug:
+        msg: "Immich Server status: {{ 'found' if (immich_service is defined and immich_service.service is defined) else 'not found or starting' }}"
+      when: immich_service is defined
