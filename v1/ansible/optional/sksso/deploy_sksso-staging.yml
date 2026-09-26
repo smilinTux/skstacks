@@ -93,6 +93,14 @@
         - /var/data/runtime/{{ app }}-{{ env }}/redis
         - /var/data/config/{{ app }}-{{ env }}/custom
 
+    - name: Make the {{ app }} media dir writable by Authentik (uid 1000 in the image)
+      file:
+        path: /var/data/{{ app }}-{{ env }}/media
+        state: directory
+        owner: "{{ sksso.authentik_uid | default(1000) }}"
+        group: "{{ sksso.authentik_uid | default(1000) }}"
+        mode: '0755'
+
     - name: Process {{ app }} environment templates
       template:
         src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
