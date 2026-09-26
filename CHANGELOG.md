@@ -5,6 +5,14 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+- v1 core: **skfence** (Traefik + docker-socket-proxy + certs-dumper + error pages), the first core-tier service. `skfence.ACME_ENABLED` defaults to `false` (Traefik self-signed cert, works with no public DNS); `true` enables Let's Encrypt via Cloudflare DNS-01 with no literal secret defaults.
+- v1 core: **skha** (keepalived VRRP VIP failover). A documented exception to the single-selected-manager rule: it runs per host, marked `# skstacks: per-host` and scoped to core by a test.
+- v1: **skdash** (Dashy) with generic Traefik discovery driven by `skdash.discovery.*` instance vars, replacing the estate-specific discovery script.
+- v1: **skhub** (Nextcloud + MariaDB + Redis + ClamAV + notify_push + whiteboard + imaginary + db backup). Collabora and Talk HPB are feature flags, default off (they need public DNS + TLS). `skhub.CLUSTERNAME` / `skhub.DOMAIN` are required.
+- v1: **skgallery** (Immich + pgvector Postgres + Redis) and **skgit** (Forgejo + Postgres, opt-in Actions runners via Docker-in-Docker).
+- v1: **sksso** (Authentik server/worker/postgres/redis).
+- v1 tests: no two services share a subnet (`test_unique_subnets.py`, cloud-public-* exempt). sksso moves to 172.16.104/105/106 (prod/staging/dev) and sksync-staging to 172.16.107.
+- CI: scheduled image-availability canary (`v1/scripts/list_images.py`, `v1/scripts/check_images.sh`). A Docker Hub `toomanyrequests` is reported as RATE-LIMITED (inconclusive), not a failure.
 - v1: **skhub** router now supports `skhub.router_middlewares` (list, default `[]`, appended after the framework's own `skhub,skhub-dav` middlewares on the `skhub-secure` router) and `skhub.tls_options` (string, default unset -> no label).
 - v1: **skdash** router gets the same `skdash.router_middlewares` (default `[]`) and `skdash.tls_options` (default unset) hooks on its secure router. Its compose template also gains `restart_policy` (`on-failure`, 10s delay, 5 attempts) and `rollback_config` (parallelism 1, 10s delay), resource limits/reservations moved to `skdash.RESOURCES_LIMITS_CPUS`/`RESOURCES_LIMITS_MEMORY`/`RESOURCES_RESERVATIONS_CPUS`/`RESOURCES_RESERVATIONS_MEMORY` (defaults unchanged: 0.5/512M limits, 0.1/128M reservations), and a sticky-cookie `sameSite` hook via `skdash.sticky_samesite` (default unset -> no label, current framework behavior).
 - v1: **skhub** and **skdash** both gain `router_middlewares_pre` (list, default `[]`), prepended before the built-in middlewares on the secure router; `router_middlewares` keeps appending after them. Needed for middleware chains where order matters (e.g. a request-buffering middleware that must run before the app's own headers/rewrite middlewares).
@@ -12,6 +20,8 @@ Each entry says what an instance must do, if anything.
 - v1: **skgit**'s `start-runners.sh` fails closed (skips runner startup, by design) when `SKGIT_DIND_NODE` is unset -- but the dev/staging/prod deploy playbooks called it from a `shell` task without ever setting that variable, so runners silently never started on ANY node regardless of the instance's vault. Each playbook's post-deploy task now passes `SKGIT_DIND_NODE: "{{ skgit.DIND_NODE | default('') }}"` through the task's `environment`.
 
 Instance action: none required for skhub/skdash; all new hooks default to current framework behavior. Set the new vars only where an instance needs a middleware, TLS options, resource sizing, cookie policy, or restart/rollback semantics the defaults do not already provide. For skgit, set `skgit.DIND_NODE` to the single node that should run DIND + runners (empty/unset keeps the existing fail-safe skip).
+
+Instance action: a new service needs its vault (`<tier>/group_vars/<env>/<svc>-<env>-<domain-dashed>-<cluster>_vault.yml`) with the required vars listed in its README. **sksso** and **sksync-staging** instances already deployed on the old subnets must recreate those networks (or pin the old subnet via the playbook's network list in their own fork) before redeploying.
 
 ## skstacks-v2.16.0 - 2026-09-26
 
