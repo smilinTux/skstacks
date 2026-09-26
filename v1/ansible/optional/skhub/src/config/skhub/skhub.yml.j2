@@ -291,7 +291,7 @@ services:
         - "traefik.http.services.skhub-push-svc.loadbalancer.server.port=7867"
 
   whiteboard:
-    image: ghcr.io/nextcloud-releases/whiteboard:stable
+    image: ghcr.io/nextcloud-releases/whiteboard:v1.5.4
     env_file: /var/data/config/skhub-{{ env }}/whiteboard.env
     networks:
       - skhub-{{ env }}
