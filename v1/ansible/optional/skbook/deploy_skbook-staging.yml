@@ -1,0 +1,95 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# skbook (BookStack + MariaDB) swarm deploy (staging), adapted from optional/skgraph
+# and optional/skmem-pg. Deploy runs on ONE selected manager only (hosts:
+# selected_manager_group), never the whole manager group, so a first deploy
+# does not run "docker stack deploy" from more than one manager at once.
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skbook
+    env: staging
+    service_name: skbook
+    service_type: optional
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+    - name: Define network variables from vault (idempotent network creation)
+      # skbook-staging: 172.16.221.0/24
+      # cloud-public-staging: 172.16.201.0/24
+      set_fact:
+        app_networks: "{{ skbook.networks | default([
+          { 'name': 'skbook-staging', 'subnet': '172.16.221.0/24', 'driver': 'overlay', 'attachable': true },
+          { 'name': 'cloud-public-staging', 'subnet': '172.16.201.0/24', 'driver': 'overlay', 'attachable': true }
+        ]) }}"
+      tags: [networks, config]
+  tasks:
+    - name: Create {{ app }} directories
+      file: { path: "{{ item }}", state: directory, owner: root, group: root, mode: '0755' }
+      loop:
+        - /var/data/{{ app }}-{{ env }}
+        - /var/data/{{ app }}-{{ env }}/bookstack
+        - /var/data/{{ app }}-{{ env }}/database-dump
+        - /var/data/runtime/{{ app }}-{{ env }}/db
+        - /var/data/config/{{ app }}-{{ env }}
+    - name: Set BookStack config directory ownership
+      file: { path: "/var/data/{{ app }}-{{ env }}/bookstack", state: directory, owner: "{{ skbook.PUID | default(1000) }}", group: "{{ skbook.PGID | default(1000) }}", mode: '0755', recurse: yes }
+    - name: Process {{ app }} env templates
+      template: { src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}", dest: "{{ item.dest }}", mode: '0640' }
+      loop:
+        - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env" }
+        - { src: "{{ app }}.sh.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env" }
+        - { src: "bookstack.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/bookstack.env" }
+        - { src: "{{ app }}-db-backup.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}-db-backup.env" }
+      tags: [templates]
+    - name: Process {{ app }} compose/stack template
+      template: { src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml", mode: '0644' }
+      tags: [compose]
+    - name: docker-compose.yml symlink
+      file: { src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml", dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml", state: link, force: yes }
+      tags: [compose]
+    - name: Process deploy script template
+      template: { src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2", dest: "/var/data/{{ app }}-{{ env }}/deploy", mode: '0755' }
+      tags: [deploy-script]
+    - name: control script symlink
+      file: { src: "/var/data/{{ app }}-{{ env }}/deploy", dest: "/var/data/deploy_{{ app }}-{{ env }}", state: link, force: yes, mode: '0755' }
+      tags: [deploy-script]
+    - name: Ensure overlay networks exist
+      include_tasks: ../../shared/tasks/create_networks.yml
+      tags: [networks]
+    - name: Deploy {{ app }} stack
+      shell: "cd /var/data/{{ app }}-{{ env }} && ./deploy"
+      register: deploy_output
+      tags: [deploy]
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags: [deploy]
