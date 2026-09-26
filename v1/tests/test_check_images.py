@@ -28,3 +28,16 @@ def test_rate_limit_is_inconclusive_not_failure(tmp_path):
 def test_missing_image_fails(tmp_path):
     r = _run(tmp_path, {"c/gone:1": (1, "no such manifest: docker.io/c/gone:1")})
     assert r.returncode == 1 and "FAIL" in r.stdout
+
+
+def test_access_denied_is_inconclusive_not_failure(tmp_path):
+    """A registry answering "denied"/"unauthorized" to an anonymous request
+    (a gated package, or a framework-built image whose release tag has not
+    been pushed yet) is not distinguishable from "gone" without
+    credentials, so it must not permanently fail the canary either."""
+    r = _run(tmp_path, {
+        "a/ok:1": (0, ""),
+        "d/private:1": (1, 'Get "https://ghcr.io/v2/d/private/manifests/1": denied'),
+    })
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "ACCESS-DENIED" in r.stdout
