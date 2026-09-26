@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  portainer:
+    image: portainer/portainer-ce:{{ skport.portainer_version | default('2.45.1') }}
+    env_file:
+      - /var/data/config/skport-{{ env }}/skport.env
+    volumes:
+      # Portainer's own data directory (direct bind mount, per SKStacks
+      # Volume Management Standards)
+      - /var/data/skport-{{ env }}/data:/data
+      - /etc/localtime:/etc/localtime:ro
+      # No Docker socket bind mount: Docker access goes through the
+      # skfence/skfenceha socket-proxy service via DOCKER_HOST (see
+      # skport.env.j2 and README.md "Security").
+    networks:
+      - cloud-public-{{ env }}
+      - cloud-socket-proxy-{{ env }}
+      - skport-{{ env }}
+
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+        limits:
+          memory: 1G
+          cpus: '1.0'
+      restart_policy:
+        condition: any
+        delay: 10s
+        max_attempts: 5
+        window: 120s
+      rollback_config:
+        parallelism: 1
+      labels:
+        # === TRAEFIK: HTTP ===
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        # === TRAEFIK: ROUTERS ===
+        - "traefik.http.routers.skport{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skport{% if env != 'prod' %}-{{ env }}{% endif %}.{{ cluster_name | default(skport.CLUSTERNAME | default('skstack01')) }}.{{ domain | default(skport.DOMAIN | default('example.com')) }}`)"
+        - "traefik.http.routers.skport{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
+        - "traefik.http.routers.skport{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
+        - "traefik.http.routers.skport{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
+        - "traefik.http.routers.skport{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
+        - "traefik.http.routers.skport{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares=default-no-crowdsec@file"
+        - "traefik.http.routers.skport{% if env != 'prod' %}-{{ env }}{% endif %}.service=skport{% if env != 'prod' %}-{{ env }}{% endif %}"
+        # === TRAEFIK: SERVICES ===
+        - "traefik.http.services.skport{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=9000"
+
+networks:
+  cloud-public-{{ env }}:
+    external: true
+  cloud-socket-proxy-{{ env }}:
+    external: true
+  skport-{{ env }}:
+    external: true

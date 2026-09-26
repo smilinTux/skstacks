@@ -1,0 +1,100 @@
+version: '3.8'
+
+networks:
+  cloud-public-{{ env }}:
+    external: true
+  skwhoami-{{ env }}:
+    external: true
+
+x-skwhoami-common: &skwhoami-common
+  image: traefik/whoami:{{ skwhoami.whoami_version | default('v1.12.0') }}
+  env_file:
+    - /var/data/config/skwhoami-{{ env }}/skwhoami.env
+  networks:
+    - cloud-public-{{ env }}
+    - skwhoami-{{ env }}
+  logging:
+    driver: json-file
+    options:
+      max-size: 4m
+      max-file: "1"
+  # deploy: is intentionally NOT part of the shared anchor: each service
+  # below sets its own deploy.labels (distinct Traefik router per instance),
+  # so a merged deploy: here would only be dead weight every service
+  # immediately overrides.
+
+services:
+  whoami01:
+    <<: *skwhoami-common
+    deploy:
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          memory: 64M
+          cpus: '0.1'
+        reservations:
+          memory: 32M
+          cpus: '0.05'
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.routers.skwhoami01{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skwhoami01{% if env != 'prod' %}-{{ env }}{% endif %}.{{ cluster_name | default(skwhoami.CLUSTERNAME | default('skstack01')) }}.{{ domain | default(skwhoami.DOMAIN | default('example.com')) }}`)"
+        - "traefik.http.routers.skwhoami01{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
+        - "traefik.http.routers.skwhoami01{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
+        - "traefik.http.routers.skwhoami01{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
+        - "traefik.http.routers.skwhoami01{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares=default-no-crowdsec@file"
+        - "traefik.http.services.skwhoami01{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=80"
+
+  whoami02:
+    <<: *skwhoami-common
+    deploy:
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          memory: 64M
+          cpus: '0.1'
+        reservations:
+          memory: 32M
+          cpus: '0.05'
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.routers.skwhoami02{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skwhoami02{% if env != 'prod' %}-{{ env }}{% endif %}.{{ cluster_name | default(skwhoami.CLUSTERNAME | default('skstack01')) }}.{{ domain | default(skwhoami.DOMAIN | default('example.com')) }}`)"
+        - "traefik.http.routers.skwhoami02{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
+        - "traefik.http.routers.skwhoami02{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
+        - "traefik.http.routers.skwhoami02{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
+        - "traefik.http.routers.skwhoami02{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares=default-no-crowdsec@file"
+        - "traefik.http.services.skwhoami02{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=80"
+
+  whoami03:
+    <<: *skwhoami-common
+    deploy:
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          memory: 64M
+          cpus: '0.1'
+        reservations:
+          memory: 32M
+          cpus: '0.05'
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.routers.skwhoami03{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skwhoami03{% if env != 'prod' %}-{{ env }}{% endif %}.{{ cluster_name | default(skwhoami.CLUSTERNAME | default('skstack01')) }}.{{ domain | default(skwhoami.DOMAIN | default('example.com')) }}`)"
+        - "traefik.http.routers.skwhoami03{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
+        - "traefik.http.routers.skwhoami03{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
+        - "traefik.http.routers.skwhoami03{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
+        - "traefik.http.routers.skwhoami03{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares=default-no-crowdsec@file"
+        - "traefik.http.services.skwhoami03{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=80"
