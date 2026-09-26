@@ -2,7 +2,7 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 
 -- Grant permissions to skorch user
-GRANT ALL PRIVILEGES ON DATABASE {{ skorch.POSTGRES_DB }} TO {{ skorch.POSTGRES_USER }};
-GRANT ALL ON SCHEMA public TO {{ skorch.POSTGRES_USER }};
+GRANT ALL PRIVILEGES ON DATABASE {{ skorch_cfg.POSTGRES_DB }} TO {{ skorch_cfg.POSTGRES_USER }};
+GRANT ALL ON SCHEMA public TO {{ skorch_cfg.POSTGRES_USER }};
 
 
