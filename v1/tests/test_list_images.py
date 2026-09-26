@@ -55,6 +55,31 @@ def test_image_with_no_default_is_unresolved(tmp_path):
     assert rows["example.com/svcthree:<unresolved>"] == "svcthree"
 
 
+def test_quoted_image_line_has_no_literal_quotes(tmp_path):
+    """A compose template may quote the whole image: value (valid YAML
+    either way). The regex has no YAML parser, so it must strip a matching
+    pair of quotes itself; left in, `"foo:1.2"` reaches `docker manifest
+    inspect` as an invalid reference and fails the canary for an image
+    that is actually fine."""
+    write_template(
+        tmp_path, "svcsix",
+        "services:\n  svcsix:\n"
+        "    image: \"example.com/svcsix:{{ svcsix.VERSION | default('1.2') }}\"\n",
+    )
+    rows = run_list_images(tmp_path)
+    assert rows["example.com/svcsix:1.2"] == "svcsix"
+
+
+def test_single_quoted_image_line_has_no_literal_quotes(tmp_path):
+    write_template(
+        tmp_path, "svcseven",
+        "services:\n  svcseven:\n"
+        "    image: 'example.com/svcseven:3.4'\n",
+    )
+    rows = run_list_images(tmp_path)
+    assert rows["example.com/svcseven:3.4"] == "svcseven"
+
+
 def test_duplicate_image_across_services_is_deduped(tmp_path):
     write_template(tmp_path, "svcfour", "services:\n  svcfour:\n    image: example.com/shared:9\n")
     write_template(tmp_path, "svcfive", "services:\n  svcfive:\n    image: example.com/shared:9\n")

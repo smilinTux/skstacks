@@ -28,3 +28,41 @@ def test_rate_limit_is_inconclusive_not_failure(tmp_path):
 def test_missing_image_fails(tmp_path):
     r = _run(tmp_path, {"c/gone:1": (1, "no such manifest: docker.io/c/gone:1")})
     assert r.returncode == 1 and "FAIL" in r.stdout
+
+
+def test_access_denied_is_inconclusive_not_failure(tmp_path):
+    """A registry answering "denied"/"unauthorized" to an anonymous request
+    (a gated package, or a framework-built image whose release tag has not
+    been pushed yet) is not distinguishable from "gone" without
+    credentials, so it must not permanently fail the canary either."""
+    r = _run(tmp_path, {
+        "a/ok:1": (0, ""),
+        "d/private:1": (1, 'Get "https://ghcr.io/v2/d/private/manifests/1": denied'),
+    })
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "ACCESS-DENIED" in r.stdout
+
+
+def test_pinned_digest_with_moved_tag_is_ok(tmp_path):
+    """`name:tag@digest` fails `docker manifest inspect` once upstream re-pushes
+    the tag ("manifest verification failed"), yet the digest still pulls. The
+    pin is what deploys, so it must be judged by the digest alone."""
+    stub_fail = (1, "manifest verification failed for digest sha256:abc")
+    r = _run(tmp_path, {"e/moved:1@sha256:abc": stub_fail})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "tag moved" in r.stdout
+
+
+def test_pinned_digest_that_is_gone_fails(tmp_path):
+    r = _run(tmp_path, {
+        "f/gone:1@sha256:dead": (1, "manifest verification failed for digest sha256:dead"),
+        "f/gone@sha256:dead": (1, "manifest unknown"),
+    })
+    assert r.returncode == 1 and "FAIL" in r.stdout
+
+
+def test_registry_port_is_not_mistaken_for_a_tag(tmp_path):
+    """host:port/name@digest has no tag; the fallback must not rewrite it."""
+    r = _run(tmp_path, {"reg.local:5000/g/img@sha256:beef": (1, "manifest unknown")})
+    assert r.returncode == 1 and "FAIL" in r.stdout
+    assert "tag moved" not in r.stdout

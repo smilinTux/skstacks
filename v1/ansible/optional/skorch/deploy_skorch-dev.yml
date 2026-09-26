@@ -1,0 +1,247 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+# Step 1: Select manager node with failover
+# Run on all hosts to ensure it executes even with -l limit
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+# Step 2: Deploy to selected manager
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skorch
+    env: dev
+    service_name: skorch
+    service_type: optional
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Define default network variables when not provided in vault
+      # Network subnets must not collide with any other service; see
+      # v1/tests/test_unique_subnets.py.
+      set_fact:
+        app_networks: "{{ skorch_dev_networks | default([
+          { 'name': 'skorch-dev', 'subnet': '172.16.91.0/24' },
+          { 'name': 'cloud-public-dev', 'subnet': '172.16.202.0/24' }
+        ]) }}"
+      tags:
+        - networks
+
+    - name: Set skorch default variables
+      set_fact:
+        skorch_cfg: "{{ skorch_defaults | combine(skorch | default({}), recursive=True) }}"
+      vars:
+        skorch_defaults:
+          N8N_HOST: "skorch-dev.{{ cluster_name | default(skorch.CLUSTERNAME | default('cluster1')) }}.{{ domain | default(skorch.DOMAIN | default('example.com')) }}"
+          N8N_PROTOCOL: "https"
+          N8N_PORT: "5678"
+          POSTGRES_DB: "skorch_db"
+          POSTGRES_USER: "skorch_user"
+          WEBHOOK_URL: "https://skorch-dev.{{ cluster_name | default(skorch.CLUSTERNAME | default('cluster1')) }}.{{ domain | default(skorch.DOMAIN | default('example.com')) }}/"
+          N8N_RUNNERS_ENABLED: "true"
+          N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE: "true"
+          N8N_REINSTALL_MISSING_PACKAGES: "true"
+          GENERIC_TIMEZONE: "UTC"
+          enable_gpg_signer: false
+          # POSTGRES_PASSWORD should be in vault
+          # REDIS_PASSWORD should be in vault
+          # N8N_ENCRYPTION_KEY should be in vault
+          # N8N_BASIC_AUTH_USER should be in vault
+          # N8N_BASIC_AUTH_PASSWORD should be in vault
+          # GPG_SIGNER_API_SECRET should be in vault if enable_gpg_signer is true
+      tags:
+        - always
+
+  tasks:
+    - name: Deploying {{ app }}
+      debug:
+        msg: Running SKStacks deploy {{ app }} scripts...
+
+    - name: Create the {{ app }} directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: 0755
+      loop:
+        - /var/data/{{ app }}-{{ env }}
+        - /var/data/{{ app }}-{{ env }}/n8n_data
+        - /var/data/{{ app }}-{{ env }}/local-files
+        - /var/data/{{ app }}-{{ env }}/postgres-init
+        - /var/data/{{ app }}-{{ env }}/database-backup
+        - /var/data/{{ app }}-{{ env }}/gpg-keys
+        - /var/data/runtime/{{ app }}-{{ env }}/postgres
+        - /var/data/runtime/{{ app }}-{{ env }}/redis
+        - /var/data/config/{{ app }}-{{ env }}
+
+    - name: Set n8n_data directory ownership
+      file:
+        path: /var/data/{{ app }}-{{ env }}/n8n_data
+        state: directory
+        owner: "1000"
+        group: "1000"
+        mode: 0755
+
+    - name: Remove n8n config file if it exists (n8n will recreate it from N8N_ENCRYPTION_KEY env var)
+      file:
+        path: /var/data/{{ app }}-{{ env }}/n8n_data/config
+        state: absent
+      tags:
+        - n8n-config
+
+    - name: Set local-files directory ownership
+      file:
+        path: /var/data/{{ app }}-{{ env }}/local-files
+        state: directory
+        owner: "1000"
+        group: "1000"
+        mode: 0755
+
+    - name: Set gpg-keys directory ownership (GPG signer service runs as UID 1000)
+      file:
+        path: /var/data/{{ app }}-{{ env }}/gpg-keys
+        state: directory
+        owner: "1000"
+        group: "1000"
+        mode: 0700
+      tags:
+        - gpg-signer
+
+    - name: Set postgres directories ownership
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "999"
+        group: "999"
+        mode: 0755
+      loop:
+        - /var/data/{{ app }}-{{ env }}/postgres-init
+        - /var/data/{{ app }}-{{ env }}/database-backup
+        - /var/data/runtime/{{ app }}-{{ env }}/postgres
+
+    - name: Set redis directory ownership
+      file:
+        path: /var/data/runtime/{{ app }}-{{ env }}/redis
+        state: directory
+        owner: "999"
+        group: "999"
+        mode: 0755
+
+    - name: Check if {{ app }}.sh.env already exists on target
+      stat:
+        path: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env"
+      register: sh_env_exists
+      tags:
+        - templates
+
+    - name: Process {{ app }} environment templates (excluding .sh.env if it exists)
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: '0640'
+      loop:
+        - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env" }
+        - { src: "postgres.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/postgres.env" }
+        - { src: "postgres-backup.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/postgres-backup.env" }
+      when: item.src != "{{ app }}.sh.env.j2"
+      tags:
+        - templates
+
+    - name: Create {{ app }}.sh.env only if it doesn't exist
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.sh.env.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env"
+        owner: root
+        group: root
+        mode: '0640'
+      when: not sh_env_exists.stat.exists
+      tags:
+        - templates
+
+    - name: Process {{ app }} Docker Compose template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags:
+        - compose
+
+    - name: Create docker-compose.yml symlink
+      file:
+        src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags:
+        - compose
+
+    - name: Process PostgreSQL init script template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/init-pgvector.sql.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/postgres-init/init-pgvector.sql"
+        owner: "999"
+        group: "999"
+        mode: '0644'
+      tags:
+        - postgres
+
+    # Traefik routing is configured via Docker labels (Docker provider).
+    # Certificates: provided by traefik-certs-dumper (skfence).
+
+    - name: Process deploy script template
+      template:
+        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/deploy"
+        owner: root
+        group: root
+        mode: '0755'
+      tags:
+        - deploy-script
+
+    - name: Deploy {{ app }} stack
+      shell: |
+        cd /var/data/{{ app }}-{{ env }}
+        ./deploy
+      register: deploy_output
+      tags:
+        - deploy
+
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags:
+        - deploy

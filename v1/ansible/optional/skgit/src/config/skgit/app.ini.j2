@@ -1,4 +1,6 @@
 {%- set _base_domain = skgit.CLUSTERNAME ~ '.' ~ skgit.DOMAIN %}
+{%- set _metrics_token = skgit.METRICS_TOKEN | default('') %}
+{%- set _metrics_enabled = (skgit.METRICS_ENABLED if skgit.METRICS_ENABLED is defined else (_metrics_token | length > 0)) | bool %}
 [server]
 DOMAIN = {{ skgit.SUBDOMAIN_PREFIX | default('git') }}{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}
 ROOT_URL = https://{{ skgit.SUBDOMAIN_PREFIX | default('git') }}{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}/
@@ -101,8 +103,11 @@ MODE = {{ skgit.LOG_ROUTER | default('console') }}
 FILE_NAME = {{ skgit.LOG_FILE | default('/data/log/forgejo-router.log') }}
 
 [metrics]
-ENABLED = {{ skgit.METRICS_ENABLED | default('true') }}
+# Fail closed: this is the config Forgejo actually reads (this
+# framework's entrypoint bypasses the image's environment-to-ini step,
+# so app.ini -- not skgit.env's FORGEJO__metrics__* -- is authoritative).
+ENABLED = {{ 'true' if _metrics_enabled else 'false' }}
 ENABLED_ISSUE_BY_LABEL = {{ skgit.METRICS_ENABLED_ISSUE_BY_LABEL | default('true') }}
-{% if skgit.METRICS_TOKEN is defined and skgit.METRICS_TOKEN | length > 0 %}
-TOKEN = {{ skgit.METRICS_TOKEN }}
+{% if _metrics_token %}
+TOKEN = {{ _metrics_token }}
 {% endif %}

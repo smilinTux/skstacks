@@ -1,0 +1,80 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+version: '3.8'
+
+# skstor: Garage (S3-compatible object storage). Single-node
+# (replication_factor=1), matching this framework's single-manager Swarm
+# pattern. See docs/decisions/skstor-backend.md for why Garage replaced
+# MinIO (MinIO's images and repo are gone -- verified 2026-09-25) and this
+# service's README.md for the one-time layout/key/bucket bootstrap Garage
+# needs before it will serve S3 traffic.
+#
+# meta/data are bind mounts onto /var/data/skstor-{{ env }}, the shared
+# NFS filesystem every other service on this estate stores under (matching
+# prod), NOT named Docker volumes: a named local-driver volume is
+# host-local, so if Swarm ever reschedules this replicas=1 service onto a
+# different manager, a named volume would silently start it on an empty
+# volume on the new host instead of the data on shared storage.
+
+networks:
+  skstor-{{ env }}:
+    external: true
+  cloud-public-{{ env }}:
+    external: true
+
+services:
+  garage:
+    image: dxflrs/garage:{{ skstor.GARAGE_IMAGE_REF | default('v2.4.1@sha256:9c96caa2612d3411acc5b0e6701fb238dbfba33e533a6d7d3d811a4b12d0d020') }}
+    env_file: /var/data/config/skstor-{{ env }}/skstor.env
+    volumes:
+      - /var/data/config/skstor-{{ env }}/garage.toml:/etc/garage.toml:ro
+      - /var/data/skstor-{{ env }}/meta:/var/lib/garage/meta
+      - /var/data/skstor-{{ env }}/data:/var/lib/garage/data
+    networks:
+      cloud-public-{{ env }}: {}
+      skstor-{{ env }}:
+        # underscore-free name for S3 clients (skstor-{{ env }}_garage is rejected as a hostname)
+        aliases:
+          - skstor-{{ env }}-garage
+    healthcheck:
+      test: ["CMD", "/garage", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          cpus: '{{ skstor.CPU_LIMIT | default("0.50") }}'
+          memory: {{ skstor.MEMORY_LIMIT | default("1024M") }}
+        reservations:
+          cpus: '{{ skstor.CPU_RESERVATION | default("0.1") }}'
+          memory: {{ skstor.MEMORY_RESERVATION | default("256M") }}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+
+        # S3 API
+        - "traefik.http.routers.skstor{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skstor{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skstor.CLUSTERNAME }}.{{ skstor.DOMAIN }}`)"
+        - "traefik.http.routers.skstor{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
+        - "traefik.http.routers.skstor{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
+        - "traefik.http.routers.skstor{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
+        - "traefik.http.routers.skstor{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
+        - "traefik.http.routers.skstor{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares=default-no-crowdsec@file"
+        - "traefik.http.routers.skstor{% if env != 'prod' %}-{{ env }}{% endif %}.service=skstor{% if env != 'prod' %}-{{ env }}{% endif %}"
+        - "traefik.http.services.skstor{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=3900"
