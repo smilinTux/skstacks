@@ -45,3 +45,19 @@ def test_every_mounted_var_data_dir_is_created():
             if not src.startswith("/var/data/") or src.endswith((".py", ".env", ".yml", ".ini")):
                 continue
             assert src in created, f"{name}: {src} is mounted but never created by the playbook"
+
+
+def test_media_dir_is_writable_by_authentik():
+    """Authentik (uid 1000 in the image) creates /media/public on first migration;
+    a root-owned 0755 media dir fails with PermissionError (skstack06 v2.17.0 run 7)."""
+    import yaml
+    for env in ("dev", "staging", "prod"):
+        plays = yaml.safe_load((SKSSO / f"deploy_sksso-{env}.yml").read_text())
+        found = False
+        for play in plays:
+            for task in play.get("tasks") or []:
+                f = task.get("file") or {}
+                if str(f.get("path", "")).endswith("-{{ env }}/media"):
+                    assert str(f.get("owner")) == "{{ sksso.authentik_uid | default(1000) }}", (env, f)
+                    found = True
+        assert found, f"{env}: no task sets ownership of the media dir"
