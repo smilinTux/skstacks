@@ -57,7 +57,7 @@
 
     - name: Set skorch default variables
       set_fact:
-        skorch: "{{ skorch_defaults | combine(skorch | default({}), recursive=True) }}"
+        skorch_cfg: "{{ skorch_defaults | combine(skorch | default({}), recursive=True) }}"
       vars:
         skorch_defaults:
           N8N_HOST: "skorch.{{ cluster_name | default(skorch.CLUSTERNAME | default('cluster1')) }}.{{ domain | default(skorch.DOMAIN | default('example.com')) }}"
@@ -69,7 +69,7 @@
           N8N_RUNNERS_ENABLED: "true"
           N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE: "true"
           N8N_REINSTALL_MISSING_PACKAGES: "true"
-          GENERIC_TIMEZONE: "Europe/Rome"
+          GENERIC_TIMEZONE: "UTC"
           enable_gpg_signer: false
           # POSTGRES_PASSWORD should be in vault
           # REDIS_PASSWORD should be in vault
