@@ -100,3 +100,7 @@ curl -sf https://sso[-<env>].<your-domain>/-/health/live/
 
 or, from the swarm manager: `docker service logs <stack>_server` /
 `docker service ps <stack>_server` where `<stack>` is `sksso-<env>`.
+
+## user_settings.py override
+
+`sksso.user_settings_py` (string, default empty): the content of an Authentik `user_settings.py` (Django settings override, e.g. `TENANT_APPS`). When set, the deploy writes it to `/var/data/config/sksso-<env>/custom/user_settings.py` and mounts it read-only at `/data/user_settings.py` on server and worker. Empty = no override and no mount.

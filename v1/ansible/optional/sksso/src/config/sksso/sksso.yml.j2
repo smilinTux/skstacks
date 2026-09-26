@@ -153,7 +153,9 @@ services:
         - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-http.loadbalancer.server.port=9000"
     volumes:
       - /var/data/{{ app }}-{{ env }}/media:/media
-      - /var/data/{{ app }}-{{ env }}/data:/data
+{% if sksso.user_settings_py | default("") %}
+      - /var/data/config/{{ app }}-{{ env }}/custom/user_settings.py:/data/user_settings.py:ro
+{% endif %}
       - /var/data/{{ app }}-{{ env }}/custom-templates:/templates
       - /etc/localtime:/etc/localtime:ro
     networks:
@@ -194,6 +196,9 @@ services:
     volumes:
       - /var/data/{{ app }}-{{ env }}/media:/media
       - /var/data/{{ app }}-{{ env }}/certs:/certs
+{% if sksso.user_settings_py | default("") %}
+      - /var/data/config/{{ app }}-{{ env }}/custom/user_settings.py:/data/user_settings.py:ro
+{% endif %}
       - /var/data/{{ app }}-{{ env }}/custom-templates:/templates
       - /etc/localtime:/etc/localtime:ro
     healthcheck:
