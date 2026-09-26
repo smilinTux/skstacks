@@ -5,7 +5,8 @@ published one service at a time as each is cleaned of estate values; today
 this tree holds **skgraph** (FalkorDB), **skvector** (Qdrant),
 **skpdf** (Stirling-PDF), **skmem-pg** (Postgres + pgvector + pg_search +
 AGE), **skreg** (Docker Registry v2), **skmon** (monitoring stack), **skform**
-(OpenTofu CLI container) and the shared tasks they use.
+(OpenTofu CLI container), **sksync** (Syncthing), **skpulse** (Uptime Kuma),
+**skpeek** (SearXNG) and the shared tasks they use.
 
 ## Instance contract
 
