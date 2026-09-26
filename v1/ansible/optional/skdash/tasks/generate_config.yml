@@ -1,0 +1,118 @@
+---
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Generic Traefik-API discovery for skdash.
+#
+# No estate-specific naming: the instance supplies the full Traefik API URL
+# (skdash.discovery.traefik_api_url) and, if its API needs one, a bearer
+# token (skdash.discovery.traefik_api_token). Neither var carries a literal
+# default, so an instance that turns discovery on must set both itself.
+#
+# Discovery ALWAYS degrades to the instance's static skdash.sections when it
+# is turned off or the Traefik API cannot be reached in time: this task file
+# never fails the deploy, it only decides what skdash_effective_sections is.
+# See v1/docs/skdash-discovery.md for the full design.
+
+- name: Determine whether skdash discovery is enabled
+  set_fact:
+    skdash_discovery_enabled: "{{ (skdash.discovery.enabled | default(true)) | bool }}"
+  tags:
+    - config
+
+- name: Require the Traefik API URL when discovery is enabled
+  # No default(): an instance that enables discovery must set this itself.
+  set_fact:
+    skdash_traefik_api_url: "{{ skdash.discovery.traefik_api_url }}"
+  when: skdash_discovery_enabled
+  tags:
+    - config
+
+- name: Require the Traefik API token when discovery is enabled
+  # No default(): a secret var never falls back to a public literal. An
+  # instance whose Traefik API needs no auth sets this to "" explicitly in
+  # its own vault; skdash then sends no Authorization header at all.
+  set_fact:
+    skdash_traefik_api_token: "{{ skdash.discovery.traefik_api_token }}"
+  when: skdash_discovery_enabled
+  tags:
+    - config
+
+- name: Query the Traefik API for HTTP routers
+  uri:
+    url: "{{ skdash_traefik_api_url | regex_replace('/+$', '') }}/api/http/routers"
+    method: GET
+    headers: "{{ {'Authorization': 'Bearer ' + skdash_traefik_api_token} if (skdash_traefik_api_token | default('')) else {} }}"
+    return_content: true
+    status_code: [200]
+    timeout: "{{ skdash.discovery.timeout | default(10) }}"
+    validate_certs: "{{ skdash.discovery.validate_certs | default(true) }}"
+  register: skdash_traefik_response
+  when: skdash_discovery_enabled
+  ignore_errors: true
+  tags:
+    - config
+
+- name: Note whether discovery data is available this run
+  # Covers: discovery off, connection failure, timeout, non-200, and bad JSON
+  # (uri already parses JSON into .json; a non-JSON 200 leaves it undefined).
+  set_fact:
+    skdash_discovery_available: >-
+      {{ skdash_discovery_enabled
+         and (skdash_traefik_response is defined)
+         and (skdash_traefik_response is succeeded)
+         and (skdash_traefik_response.json is defined) }}
+  tags:
+    - config
+
+- name: Warn when discovery could not reach the Traefik API
+  debug:
+    msg: >-
+      skdash discovery is enabled but the Traefik API at
+      {{ skdash_traefik_api_url | default('(unset)') }} did not return a
+      usable response this run; falling back to skdash.sections for this
+      deploy. The dashboard still deploys.
+  when: skdash_discovery_enabled and not skdash_discovery_available
+  tags:
+    - config
+
+- name: Transform discovered routers into Dashy sections
+  set_fact:
+    skdash_discovered_sections: "{{ skdash_traefik_response.json | skdash_routers_to_sections(
+        exclude_patterns=(skdash.discovery.exclude_patterns | default([])),
+        group_map=(skdash.discovery.group_map | default([])),
+        default_group=(skdash.discovery.default_group_name | default('Discovered Services'))) }}"
+  when: skdash_discovery_available
+  tags:
+    - config
+
+- name: Select the sections this deploy will render (discovery vs static fallback)
+  set_fact:
+    skdash_effective_sections: "{{ skdash_discovery_enabled | skdash_select_sections(
+        discovery_available=skdash_discovery_available,
+        discovered_sections=(skdash_discovered_sections | default([])),
+        static_sections=(skdash.sections | default([])),
+        extra_sections=(skdash.discovery.extra_sections | default([]))) }}"
+  tags:
+    - config
+
+- name: Display skdash section selection summary
+  debug:
+    msg: >-
+      skdash sections: discovery_enabled={{ skdash_discovery_enabled }}
+      discovery_available={{ skdash_discovery_available }}
+      sections_rendered={{ skdash_effective_sections | length }}
+  tags:
+    - config

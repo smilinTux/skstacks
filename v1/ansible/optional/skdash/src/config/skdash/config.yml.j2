@@ -1,0 +1,69 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Dashy configuration. `sections` is skdash_effective_sections, which
+# tasks/generate_config.yml sets to EITHER the Traefik-discovery result OR
+# skdash.sections (static fallback); see v1/docs/skdash-discovery.md.
+pageInfo:
+  title: {{ skdash.page_title | default('SKStacks Dashboard') }}
+  navLinks: []
+  description: {{ skdash.page_description | default('Service directory') }}
+  footerText: {{ skdash.footer_text | default('') }}
+appConfig:
+  theme: {{ skdash.theme | default('one-dark') }}
+  layout: {{ skdash.layout | default('auto') }}
+  iconSize: {{ skdash.icon_size | default('medium') }}
+  language: {{ skdash.language | default('en') }}
+  statusCheckInterval: {{ skdash.status_check_interval | default(60) }}
+
+sections:
+{% for section in skdash_effective_sections | default([]) %}
+  - name: {{ section.name }}
+{% if section.icon is defined %}
+    icon: {{ section.icon }}
+{% endif %}
+    displayData:
+      sortBy: {{ section.displayData.sortBy | default('default') }}
+      rows: {{ section.displayData.rows | default(1) }}
+      cols: {{ section.displayData.cols | default(1) }}
+      collapsed: {{ section.displayData.collapsed | default(false) }}
+      hideForGuests: {{ section.displayData.hideForGuests | default(false) }}
+    items:
+{% for item in section.items | default([]) %}
+      - title: {{ item.title }}
+{% if item.description is defined %}
+        description: {{ item.description }}
+{% endif %}
+{% if item.icon_name is defined %}
+        icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/{{ item.icon_name }}.svg
+{% elif item.icon is defined %}
+        icon: {{ item.icon }}
+{% else %}
+        icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/default.svg
+{% endif %}
+{% if item.url is defined %}
+        url: {{ item.url | replace('${CLUSTERNAME}', skdash.CLUSTERNAME) | replace('${DOMAIN}', skdash.DOMAIN) }}
+{% endif %}
+{% if item.target is defined %}
+        target: {{ item.target }}
+{% endif %}
+{% if item.statusCheck is defined %}
+        statusCheck: {{ item.statusCheck }}
+{% endif %}
+{% if item.id is defined %}
+        id: {{ item.id }}
+{% endif %}
+{% endfor %}
+{% endfor %}
