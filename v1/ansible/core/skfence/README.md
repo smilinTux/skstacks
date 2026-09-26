@@ -35,4 +35,23 @@ is unconditional (always on) in skfence's own dynamic-middlewares template;
 there is no `RATE_LIMIT_ENABLED` toggle here (that knob only exists on
 skfenceha).
 
+**Dashboard/API hostname override**: both skfence and skfenceha's dashboard
++ API router (and its two redirect routers) build
+`<name>[-env].<cluster>.<domain>` by default, same as every other router in
+the file. Set `skfence.DASHBOARD_HOST` (or `skfenceha.DASHBOARD_HOST`) to a
+literal hostname to override just that router group - for an estate whose
+dashboard is reachable at a bare `<name>.<domain>` (no cluster segment)
+instead. Everything else (`catch-all`, the wildcard routers) keeps building
+the normal computed hostname regardless. Default (unset): unchanged.
+
+**skfenceha access-log header redaction**: skfenceha's worker-role Traefik
+config (`traefik-worker.yml.j2`, the role that handles all real traffic)
+renders a static `accessLog.fields.headers` block. `skfenceha.ACCESS_LOG_HEADERS`
+(`{defaultMode: keep|drop|redact, names: {<Header>: keep|drop|redact, ...}}`)
+overrides it entirely; unset, the framework default redacts `Authorization`,
+`Cookie`, `Set-Cookie`, `X-Api-Key` and `Proxy-Authorization` (`defaultMode:
+keep` for everything else) - a behaviour change from relying on Traefik's
+own built-in default, see CHANGELOG. skfence has no equivalent (no
+`log:`/`accessLog:` block is rendered at all for it).
+
 See `docs/v1-service-catalog.md` for the full published-service catalog.

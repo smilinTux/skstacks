@@ -7,6 +7,27 @@
 # ACME master's acme.json read-only (see traefik.yml.j2) and never perform a
 # certificate challenge themselves. log:/accessLog: file paths are injected
 # per-node at container start by entrypoint.sh.
+{% set _default_access_log_headers = {'defaultMode': 'keep', 'names': {'Authorization': 'redact', 'Cookie': 'redact', 'Set-Cookie': 'redact', 'X-Api-Key': 'redact', 'Proxy-Authorization': 'redact'}} %}
+{% set access_log_headers = skfenceha.ACCESS_LOG_HEADERS | default(_default_access_log_headers) %}
+
+# Access-log header redaction (skfenceha.ACCESS_LOG_HEADERS instance var,
+# {defaultMode: keep|drop|redact, names: {<Header>: keep|drop|redact, ...}}).
+# Unset, the framework default below redacts common credential-bearing
+# headers - a safe improvement over Traefik's own built-in default (see
+# CHANGELOG). The accessLog: key must stay present (even with no fields:)
+# so entrypoint.sh injects this node's filePath into it rather than
+# appending a second, bare accessLog: block.
+accessLog:
+  format: json
+  fields:
+    headers:
+      defaultMode: {{ access_log_headers.defaultMode | default('keep') }}
+{% if access_log_headers.names | default({}) %}
+      names:
+{% for _header_name, _header_mode in access_log_headers.names.items() %}
+        {{ _header_name }}: {{ _header_mode }}
+{% endfor %}
+{% endif %}
 
 api:
   dashboard: true
