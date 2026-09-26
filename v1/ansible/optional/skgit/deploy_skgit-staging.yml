@@ -54,6 +54,18 @@
       include_vars: "{{ vault_file_path }}"
       when: vault_file_path is defined
 
+    - name: Refuse to enable Forgejo metrics without a token
+      assert:
+        that:
+          - not (skgit.METRICS_ENABLED | default(false) | bool) or (skgit.METRICS_TOKEN | default('') | length > 0)
+        fail_msg: >-
+          skgit.METRICS_ENABLED is true but skgit.METRICS_TOKEN is not set.
+          Set skgit.METRICS_TOKEN in the vault (Prometheus must then send
+          'Authorization: Bearer <token>'), or leave METRICS_ENABLED
+          unset/false to keep /metrics closed.
+      tags:
+        - always
+
     - name: Define default network variables when not provided in vault
       # TODO: register subnets in shared/networks before first deploy.
       set_fact:
