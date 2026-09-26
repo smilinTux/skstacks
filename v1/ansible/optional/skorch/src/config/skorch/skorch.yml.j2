@@ -78,11 +78,12 @@ services:
 
   redis:
     image: redis:7.4.7-alpine
-    command: redis-server --dir /data --requirepass {{ skorch_cfg.REDIS_PASSWORD }}
+    command: redis-server /usr/local/etc/redis/redis.conf
     networks:
       - skorch-{{ env }}
     volumes:
       - /var/data/runtime/skorch-{{ env }}/redis:/data
+      - /var/data/config/skorch-{{ env }}/redis.conf:/usr/local/etc/redis/redis.conf:ro
     deploy:
       restart_policy:
         condition: on-failure
