@@ -121,3 +121,30 @@ def test_env_file_reference_was_not_accidentally_renamed():
     yml = (SKORCH_DIR / "src/config/skorch/skorch.yml.j2").read_text()
     assert "/skorch.env" in yml
     assert "/skorch_cfg.env" not in yml
+
+def test_n8n_version_defaults_to_the_pinned_digest_when_unset():
+    # No instance sets N8N_VERSION, so the template must keep the pinned
+    # digest it ships today rather than silently drifting to a moving tag.
+    skorch_cfg = combine(SKORCH_DEFAULTS, dict(REQUIRED_SECRETS))
+    rendered = render_all(skorch_cfg)
+    stack = rendered["src/config/skorch/skorch.yml.j2"]
+    assert (
+        'image: "n8nio/n8n@sha256:'
+        'cae1f28d585a99d9ce9a56f82fbfc99fc100862ffef988d73fa2048d2687b0cc"' in stack
+    )
+
+
+def test_instance_can_pin_a_different_n8n_version():
+    extra_vars_skorch = dict(
+        REQUIRED_SECRETS,
+        N8N_VERSION="n8nio/n8n@sha256:"
+        "ffeb52485f78b1b06c9a832205853cf75da72a07a514c9a27724df85979d6c34",
+    )
+    skorch_cfg = combine(SKORCH_DEFAULTS, extra_vars_skorch)
+    rendered = render_all(skorch_cfg)
+    stack = rendered["src/config/skorch/skorch.yml.j2"]
+    assert (
+        'image: "n8nio/n8n@sha256:'
+        'ffeb52485f78b1b06c9a832205853cf75da72a07a514c9a27724df85979d6c34"' in stack
+    )
+    assert "cae1f28d" not in stack
