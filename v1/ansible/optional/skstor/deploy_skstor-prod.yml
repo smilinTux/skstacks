@@ -192,10 +192,59 @@
       tags:
         - deploy
 
-    - name: Post-deploy Check Garage service health
-      community.docker.docker_swarm_service_info:
-        name: "{{ app }}-{{ env }}_garage"
-      register: garage_service
-      ignore_errors: yes
+    - name: Wait for Garage service to report 1/1 replicas
+      shell: |
+        docker service ls --filter "name={{ app }}-{{ env }}_garage" --format "{{ '{{.Replicas}}' }}"
+      register: garage_replicas
+      until: garage_replicas.stdout | trim == "1/1"
+      retries: 12
+      delay: 5
+      changed_when: false
       tags:
         - post-deploy
+
+    - name: Find swarm node running the Garage task
+      # Swarm may schedule garage on any node, not necessarily the manager
+      # this playbook is running on, so the layout bootstrap below has to
+      # run wherever the container actually is (see bootstrap.sh.j2).
+      shell: |
+        docker service ps "{{ app }}-{{ env }}_garage" --filter "desired-state=running" --format "{{ '{{.Node}}' }}" | head -1
+      register: garage_node
+      changed_when: false
+      tags:
+        - post-deploy
+
+    - name: Fail if no swarm node is running the Garage task
+      fail:
+        msg: >-
+          Could not determine which swarm node is running
+          {{ app }}-{{ env }}_garage; cannot bootstrap the cluster layout.
+      when: garage_node.stdout | trim | length == 0
+      tags:
+        - post-deploy
+
+    - name: Render Garage layout bootstrap script
+      template:
+        src: "{{ playbook_dir }}/src/{{ app }}/bootstrap.sh.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/bootstrap.sh"
+        owner: root
+        group: root
+        mode: '0755'
+      tags:
+        - post-deploy
+        - bootstrap
+
+    - name: Run Garage cluster layout bootstrap on the node running Garage
+      shell: "/var/data/{{ app }}-{{ env }}/bootstrap.sh"
+      delegate_to: "{{ garage_node.stdout | trim }}"
+      register: bootstrap_output
+      changed_when: "'Layout applied' in bootstrap_output.stdout"
+      tags:
+        - post-deploy
+        - bootstrap
+
+    - name: Show Garage layout bootstrap output
+      debug: var=bootstrap_output.stdout_lines
+      tags:
+        - post-deploy
+        - bootstrap

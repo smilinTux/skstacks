@@ -1,6 +1,9 @@
-"""skstor's deploy script bootstraps Garage's cluster layout exactly once.
-Runs the script's bootstrap block against a fake `docker` that emulates the
-garage CLI (v2.4.x output shapes). `garage status` lists a connected node even
+"""skstor's Garage cluster layout bootstrap runs exactly once. It lives in
+bootstrap.sh.j2, copied to and executed on whichever swarm node is actually
+running the garage task (Swarm can schedule it anywhere, not just the manager
+that ran `docker stack deploy` -- see deploy_skstor-*.yml). This test runs
+the rendered script's body against a fake `docker` that emulates the garage
+CLI (v2.4.x output shapes). `garage status` lists a connected node even
 before it has a role, and truncates IDs to 16 chars, so it cannot tell a fresh
 node from a bootstrapped one; the current layout version can (0 = never applied)."""
 import os
@@ -8,7 +11,7 @@ import pathlib
 import stat
 import subprocess
 
-DEPLOY = pathlib.Path(__file__).resolve().parents[1] / "ansible/optional/skstor/src/skstor/deploy.j2"
+BOOTSTRAP = pathlib.Path(__file__).resolve().parents[1] / "ansible/optional/skstor/src/skstor/bootstrap.sh.j2"
 NODE = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9"
 
 FAKE_DOCKER = r"""#!/bin/bash
@@ -23,10 +26,9 @@ esac
 
 
 def bootstrap_block():
-    text = DEPLOY.read_text()
+    text = BOOTSTRAP.read_text()
     start = text.index("CONTAINER_ID=")
-    end = text.index('echo -e "${GREEN}Deployment complete!${NC}"')
-    return 'GREEN=""; YELLOW=""; RED=""; NC=""; STACK_NAME=skstor-dev\n' + text[start:end]
+    return 'GREEN=""; YELLOW=""; RED=""; NC=""; STACK_NAME=skstor-dev\n' + text[start:]
 
 
 def run(tmp_path, layout_version):

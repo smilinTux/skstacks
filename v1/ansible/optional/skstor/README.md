@@ -62,9 +62,12 @@ accept losing failover-transparency for metadata.
 
 ## One-time bootstrap (per instance, after the first deploy)
 
-The deploy script (`src/skstor/deploy.j2`) already assigns and applies a
-single-node cluster layout automatically -- Garage refuses all S3 traffic
-until a layout exists, so this step is not optional and not manual.
+The deploy playbook already assigns and applies a single-node cluster layout
+automatically, once the stack is up -- Garage refuses all S3 traffic until a
+layout exists, so this step is not optional and not manual. The bootstrap
+runs as an Ansible task (`bootstrap.sh.j2`) delegated to whichever swarm node
+Swarm actually scheduled the garage task on, since that node is not always
+the manager the playbook itself runs on.
 
 What is still a manual, per-consumer, one-time step (Garage has no admin
 root credential to hand out, unlike MinIO):
