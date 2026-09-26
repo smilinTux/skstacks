@@ -60,6 +60,13 @@ providers:
     network: "cloud-socket-proxy-{{ env }}"
     exposedByDefault: false
     watch: true
+  docker:
+    # Standalone-container label discovery alongside swarm (some services
+    # attach Traefik labels as plain containers, not swarm services).
+    endpoint: "tcp://tasks.{{ app }}-{{ env }}_socket-proxy:2375"
+    network: "cloud-socket-proxy-{{ env }}"
+    exposedByDefault: false
+    watch: true
   file:
     directory: "/etc/traefik/dynamic"
     watch: true
