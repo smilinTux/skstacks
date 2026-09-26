@@ -1,0 +1,245 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# skbackup: Duplicati, the framework's backup core service. See this
+# service's README.md for the full vault contract and design.
+# TODO before deploy: register the dev overlay subnet below in
+# shared/networks if this estate tracks one; set the skbackup vault vars
+# (see README.md) -- in particular skbackup.settings_encryption_key and
+# skbackup.ui_password, which have no default and fail the deploy closed if
+# left empty, and skbackup.passphrase (or a per-job passphrase) for any
+# job listed in skbackup.jobs. Ensure the image is pullable on swarm nodes.
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+# Step 1: Select manager node with failover
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+# Step 2: Deploy to selected manager
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skbackup
+    env: dev
+    service_name: skbackup
+    service_type: optional
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Define network variables
+      # Networks are created idempotently by the create_networks.yml shared
+      # task below. Reference: See shared/networks for all registered
+      # network subnets.
+      set_fact:
+        app_networks: "{{ skbackup.networks | default([
+          { 'name': 'skbackup-dev', 'subnet': '172.16.246.0/24', 'driver': 'overlay', 'attachable': true },
+          { 'name': 'cloud-public-dev', 'subnet': '172.16.202.0/24', 'driver': 'overlay', 'attachable': true }
+        ]) }}"
+      tags:
+        - networks
+        - config
+
+  tasks:
+    - name: Deploying {{ app }}
+      debug:
+        msg: Running SKStacks deploy {{ app }} scripts...
+
+    - name: Fail closed if required skbackup secrets are empty or unset
+      assert:
+        that:
+          - (skbackup.settings_encryption_key | default('')) | length > 0
+          - (skbackup.ui_password | default('')) | length > 0
+        fail_msg: >-
+          ERROR: skbackup.settings_encryption_key and skbackup.ui_password
+          are required and must not be empty. The upstream Duplicati image
+          defaults the UI password to the literal "changeme" when unset;
+          this framework refuses to deploy on that default instead of
+          shipping it.
+      tags:
+        - config
+        - secrets
+
+    - name: Fail closed if any declared skbackup job has no encryption passphrase
+      assert:
+        that:
+          - (item.passphrase | default(skbackup.passphrase | default(''))) | length > 0
+        fail_msg: >-
+          ERROR: skbackup job '{{ item.name | default('(unnamed)') }}' has no
+          encryption passphrase. Set skbackup.jobs[].passphrase for this job,
+          or skbackup.passphrase as an instance-wide default.
+      loop: "{{ skbackup.jobs | default([]) }}"
+      loop_control:
+        label: "{{ item.name | default('(unnamed)') }}"
+      tags:
+        - config
+        - secrets
+
+    - name: Ensure python3-pip is installed
+      apt:
+        name: python3-pip
+        state: present
+
+    - name: Install Docker SDK for Python (required for docker_swarm_service_info)
+      pip:
+        name: docker
+        state: present
+
+    - name: Create the {{ app }} directories
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "/var/data/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/config", owner: "1000", group: "1000", mode: "0770" }
+        - { path: "/var/data/{{ app }}-{{ env }}/backups", owner: "1000", group: "1000", mode: "0770" }
+        - { path: "/var/data/config/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/config/{{ app }}-{{ env }}/jobs", owner: "root", group: "root", mode: "0750" }
+
+    - name: Copy {{ app }} config files except templates
+      copy:
+        src: "{{ item }}"
+        dest: /var/data/config/{{ app }}-{{ env }}/
+        owner: root
+        group: root
+        mode: '0644'
+      with_fileglob:
+        - "src/config/{{ app }}/*"
+      when: "'.j2' not in item"
+      tags:
+        - config
+
+    - name: Copy {{ app }} base src files (excluding templates)
+      copy:
+        src: "{{ playbook_dir }}/src/{{ app }}"
+        dest: "/var/data/{{ app }}-{{ env }}/"
+        force: yes
+        backup: yes
+      tags:
+        - parentdir
+        - backup
+
+    - name: Process {{ app }} environment templates
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop:
+        - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env", mode: "0640" }
+        - { src: "{{ app }}.sh.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env", mode: "0640" }
+        - { src: "exclude.filter.j2", dest: "/var/data/config/{{ app }}-{{ env }}/exclude.filter", mode: "0644" }
+      tags:
+        - templates
+
+    - name: Process {{ app }} Docker Compose template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags:
+        - compose
+
+    - name: Create docker-compose.yml symlink
+      file:
+        src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags:
+        - compose
+
+    - name: Render declarative backup job configs
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/job.json.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/jobs/{{ item.name }}.json"
+        owner: root
+        group: root
+        mode: '0600'
+      vars:
+        job: "{{ item }}"
+      loop: "{{ skbackup.jobs | default([]) }}"
+      loop_control:
+        label: "{{ item.name | default('(unnamed)') }}"
+      tags:
+        - templates
+        - jobs
+
+    - name: Process {{ app }} deploy script template
+      template:
+        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/deploy"
+        owner: root
+        group: root
+        mode: '0755'
+      tags:
+        - templates
+        - deploy-script
+
+    - name: Create {{ app }} control script symlink
+      file:
+        src: /var/data/{{ app }}-{{ env }}/deploy
+        dest: /var/data/deploy_{{ app }}-{{ env }}
+        force: yes
+        owner: root
+        group: root
+        mode: '0755'
+        state: link
+
+    - name: Ensure overlay networks exist from app_networks variable
+      include_tasks: ../../shared/tasks/create_networks.yml
+      tags:
+        - networks
+
+    - name: Deploy {{ app }} stack
+      shell: |
+        cd /var/data/{{ app }}-{{ env }}
+        timeout 600 ./deploy || (echo "Deploy script timed out or failed" >&2 && exit 1)
+      register: deploy_output
+      tags:
+        - deploy
+
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags:
+        - deploy
+
+    - name: Post-deploy Check Duplicati service health
+      community.docker.docker_swarm_service_info:
+        name: "{{ app }}-{{ env }}_duplicati"
+      register: duplicati_service
+      ignore_errors: yes
+      tags:
+        - post-deploy
