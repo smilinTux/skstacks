@@ -109,3 +109,15 @@ def test_sso_block_still_absent_when_disabled():
 def test_still_renders_with_every_field_set_or_unset(extra):
     out = render(**SSO_BASE, **extra)
     assert "APP_KEY=" in out
+
+
+def test_db_username_and_password_use_laravel_key_names():
+    """BookStack's Laravel app reads standard Laravel .env keys (DB_USERNAME,
+    DB_PASSWORD), confirmed against the live skbook-prod instance's own
+    rendered bookstack.env. DB_USER/DB_PASS are not recognized and would
+    leave BookStack unable to find its DB credentials at all."""
+    out = render(**SSO_BASE)
+    assert "DB_USERNAME=user" in out
+    assert "DB_PASSWORD=pass" in out
+    assert "DB_USER=" not in out
+    assert "DB_PASS=" not in out
