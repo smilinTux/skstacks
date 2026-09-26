@@ -37,7 +37,7 @@ services:
         constraints:
           - "node.hostname == {{ skdesk.PLACEMENT_HOSTNAME }}"
       restart_policy:
-        condition: on-failure
+        condition: any
         delay: 5s
         max_attempts: 0
       labels:
@@ -64,7 +64,7 @@ services:
         constraints:
           - "node.hostname == {{ skdesk.PLACEMENT_HOSTNAME }}"
       restart_policy:
-        condition: on-failure
+        condition: any
         delay: 5s
         max_attempts: 0
       labels:
