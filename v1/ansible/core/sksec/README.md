@@ -38,9 +38,11 @@ the lookup path):
 
 ```yaml
 sksec:
-  # REQUIRED - no framework default, these are estate-specific
-  CLUSTERNAME: "<your-cluster-name>"
-  DOMAIN: "<your-domain>"
+  # OPTIONAL here specifically: falls back to the inventory's own
+  # domain/cluster_name host vars (see "Instance contract") if unset, so
+  # most instances don't need to set these per-service at all.
+  # CLUSTERNAME: "<your-cluster-name>"
+  # DOMAIN: "<your-domain>"
   APP_ENV: "prod"          # or dev/staging - must match the env you deploy
   CROWDSEC_AGENT_HOST: "sksec-prod_crowdsec:8080"
   GID: "1000"
