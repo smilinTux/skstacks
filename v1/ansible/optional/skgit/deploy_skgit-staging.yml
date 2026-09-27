@@ -306,7 +306,9 @@
         chown -R 1000:1000 /var/data/{{ app }}-{{ env }}/data || true
         chown -R 1000:1000 /var/data/{{ app }}-{{ env }}/config || true
         chmod -R 755 /var/data/{{ app }}-{{ env }}/data || true
-        chmod -R 755 /var/data/{{ app }}-{{ env }}/config || true
+        # The config dir only, never -R: app.ini is 0600 (secret key, tokens,
+        # DB and mail passwords) and must stay that way.
+        chmod 755 /var/data/{{ app }}-{{ env }}/config || true
 
         if [ -f /var/data/{{ app }}-{{ env }}/start-runners.sh ]; then
           echo "Starting runners..."

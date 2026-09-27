@@ -126,8 +126,9 @@
           force: yes
           owner: root
           group: root
-          mode: 0755
-          state: link 
+          # No mode: `file` follows a link, so a mode here would re-mode the
+          # target skreg.yml (0600, carries the registry HTTP secret).
+          state: link
 
     - name: remove/create and start {{ app }} swarm stack
       debug:
