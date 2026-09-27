@@ -1,6 +1,26 @@
 #!/bin/bash
 set -e
 
+# Never force-restart a service on its FIRST install: a restart in the middle
+# of first-boot init (schema migrations, initial setup) can leave it corrupt.
+# record_preexisting runs before the stack deploy; only services that already
+# existed then are force-updated afterwards (a redeploy still restarts them to
+# pick up changed bind-mounted config files).
+PREEXISTING_SERVICES=" "
+record_preexisting() {
+    local svc
+    for svc in "$@"; do
+        if docker service inspect "$svc" >/dev/null 2>&1; then
+            PREEXISTING_SERVICES+="$svc "
+        fi
+    done
+}
+preexisted() {
+    case "$PREEXISTING_SERVICES" in *" $1 "*) return 0 ;; esac
+    echo "First install of $1: skipping forced restart (first-boot init must finish)"
+    return 1
+}
+
 APP="{{ app }}"
 ENV="{{ env }}"
 STACK_NAME="{{ app }}-${ENV}"
@@ -25,6 +45,7 @@ if [ ! -f "${COMPOSE_FILE}" ]; then
 fi
 
 echo -e "${YELLOW}Deploying stack configuration...${NC}"
+record_preexisting "${STACK_NAME}_socket-proxy" "${STACK_NAME}_traefik-certs-dumper"
 timeout 60 docker stack deploy \
     -c "${COMPOSE_FILE}" \
     --prune \
@@ -49,8 +70,8 @@ else
     echo "Warning: Traefik service $TRAEFIK_SVC not found, skipping restart"
 fi
 
-timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false "${STACK_NAME}_socket-proxy" || true
-timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false "${STACK_NAME}_traefik-certs-dumper" || true
+preexisted "${STACK_NAME}_socket-proxy" && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false "${STACK_NAME}_socket-proxy" || true
+preexisted "${STACK_NAME}_traefik-certs-dumper" && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false "${STACK_NAME}_traefik-certs-dumper" || true
 
 echo -e "${YELLOW}Waiting for services to stabilize...${NC}"
 sleep 10
