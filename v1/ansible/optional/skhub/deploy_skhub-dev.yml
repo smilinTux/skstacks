@@ -274,14 +274,10 @@
 
     - name: Get Nextcloud container ID (any running container)
       shell: |
-        SERVICE_NAME="{{ app }}-{{ env }}_nextcloud"
-        TASK_ID=$(docker service ps ${SERVICE_NAME} --no-trunc --filter "desired-state=running" -q 2>/dev/null | head -1)
-        if [ -n "$TASK_ID" ]; then
-          CONTAINER_ID=$(docker ps -q --filter "label=com.docker.swarm.task.id=${TASK_ID}" | head -1)
-        fi
-        if [ -z "$CONTAINER_ID" ]; then
-          CONTAINER_ID=$(docker ps -q --filter "ancestor=nextcloud:31.0.14" | head -1)
-        fi
+        # Runs on the node hosting the task (often a worker), so no
+        # manager-only swarm service listing here: swarm names the container
+        # <service>.<slot>.<task id>, and the service label pins it exactly.
+        CONTAINER_ID=$(docker ps -q --filter "status=running" --filter "label=com.docker.swarm.service.name={{ app }}-{{ env }}_nextcloud" | head -1)
         if [ -n "$CONTAINER_ID" ]; then
           echo "$CONTAINER_ID"
         else

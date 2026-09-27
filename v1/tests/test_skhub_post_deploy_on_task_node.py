@@ -104,3 +104,17 @@ def test_waits_for_first_run_install_before_occ(playbook):
     assert not _truthy(wait.get("ignore_errors"))
     first_config = next(i for i, t in enumerate(tasks) if t.get("register") == "redis_config_result")
     assert tasks.index(wait) < first_config
+
+
+@pytest.mark.parametrize("playbook", PLAYBOOKS, ids=lambda p: p.name)
+def test_delegated_tasks_use_no_manager_only_commands(playbook):
+    """Tasks delegated to the Nextcloud node usually run on a WORKER, where
+    `docker service ...` / `docker node ...` fail ("This node is not a swarm
+    manager"). The container lookup did exactly that and fell back to an
+    ancestor filter that misses digest-pinned images (v2.19.0 rc4)."""
+    bad = [
+        t.get("name") for t in _tasks(playbook)
+        if NODE_VAR in str(t.get("delegate_to", ""))
+        and any(c in _shell(t) for c in ("docker service ", "docker node ", "docker stack "))
+    ]
+    assert bad == []
