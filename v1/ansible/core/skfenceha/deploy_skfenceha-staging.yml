@@ -257,6 +257,30 @@
         - config
         - dynamic
 
+    # Instance-owned dynamic files (skfenceha.EXTRA_DYNAMIC_FILES, default
+    # empty = no-op). See this service's README.
+    - name: Render instance EXTRA_DYNAMIC_FILES into the dynamic config dir(s)
+      include_tasks:
+        file: ../../shared/tasks/render_extra_dynamic_files.yml
+        apply:
+          tags:
+            - config
+            - dynamic
+      when: (skfenceha.EXTRA_DYNAMIC_FILES | default([])) | length > 0
+      vars:
+        extra_dynamic_files: "{{ skfenceha.EXTRA_DYNAMIC_FILES | default([]) }}"
+        extra_dynamic_config_dir: "/var/data/config/{{ app }}-{{ env }}"
+        extra_dynamic_acme_supported: true
+        extra_dynamic_reserved:
+          - routers.yml
+          - services.yml
+          - middlewares.yml
+          - tls.yml
+          - sksec.yml
+      tags:
+        - config
+        - dynamic
+
     - name: Render traefik.yml (ACME-master role) from template with vault secrets
       template:
         src: "{{ playbook_dir }}/src/config/{{ app }}/traefik.yml.j2"
