@@ -134,7 +134,8 @@ echo -e "${GREEN}Service Status:${NC}"
 docker service ls | grep "${STACK_NAME}"
 
 echo -e "${YELLOW}Checking service health...${NC}"
-for _ in $(seq 1 36); do
+# Heavy first boot: poll for HEALTH_WAIT_SECONDS (default 900), then warn.
+for _ in $(seq 1 $(( (${HEALTH_WAIT_SECONDS:-900} + 4) / 5 ))); do
     REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_forgejo" --format "{% raw %}{{.Replicas}}{% endraw %}")
     [[ "$REPLICAS" == "1/1" ]] && break
     sleep 5
