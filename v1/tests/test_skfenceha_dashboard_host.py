@@ -45,4 +45,4 @@ def test_dashboard_host_override_applies_only_to_the_dashboard_group(key, path):
     assert routers["dashboard-redirect-https"]["rule"].startswith(f"Host(`{override_host}`)")
     # unaffected: catch-all and both wildcard routers keep the computed host
     assert routers["catch-all"]["rule"] == f"Host(`{key}.cluster1.example.com`)"
-    assert "cluster1.example.com" in routers["wildcard-cluster"]["rule"]
+    assert r"cluster1\.example\.com" in routers["wildcard-cluster"]["rule"]
