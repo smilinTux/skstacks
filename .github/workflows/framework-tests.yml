@@ -19,6 +19,23 @@ jobs:
       - run: pip install pytest pyyaml ansible jsonschema
       - run: python -m pytest -q v1/tests v2/platform/swarm/tests v2/platform/k3d/tests
 
+  ansible-render:
+    # Renders every v1 deploy_<svc>-<env>.yml through REAL Ansible (not the
+    # plain-jinja2 render the pytest suite uses) with the public, fake example
+    # vars in v1/tests/render/vars/, then validates the output (compose schema,
+    # YAML/JSON/TOML parse, bash -n, leftover Jinja, README vault contract).
+    # Catches Ansible-only template bugs without a VM or a vault.
+    # ansible-core is pinned to the controller version the instances deploy
+    # with; bump it deliberately, together with that controller.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install 'ansible-core==2.21.3' pyyaml jsonschema pytest
+      - run: python v1/tests/render/render_playbooks.py
+
   tofu:
     runs-on: ubuntu-latest
     steps:

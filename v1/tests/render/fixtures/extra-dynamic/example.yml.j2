@@ -1,0 +1,7 @@
+# An instance-owned dynamic file (EXTRA_DYNAMIC_FILES fixture for the render gate).
+http:
+  routers:
+    example-extra:
+      rule: "Host(`extra.{{ domain }}`)"
+      service: noop@internal
+      entryPoints: [websecure]

@@ -1,0 +1,10 @@
+# Public, obviously fake example vault for the real-Ansible render gate
+# (v1/tests/render/render_playbooks.py). Minimal: only what the deploy
+# needs to render. example.test / 192.0.2.0/24 only; no real secrets.
+skmon:
+  CLUSTERNAME: render
+  DOMAIN: example.test
+  GRAFANA_ADMIN_USER: admin
+  GRAFANA_ADMIN_PASSWORD: example-grafana-admin-password-not-a-secret
+  GRAFANA_SECRET_KEY: example-grafana-secret-key-not-a-secret
+  GRAFANA_ROOT_URL: https://skmon.render.example.test

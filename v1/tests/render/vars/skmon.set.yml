@@ -1,0 +1,9 @@
+# Second render pass: merged over skmon.example.yml to drive the optional
+# hooks down their "set" path. Fake values only.
+skmon:
+  EXTRA_SCRAPE_TARGETS:
+    - {job_name: example, target: "app.render.example.test:9100"}
+  EXTRA_SCRAPE_CONFIGS:
+    - job_name: example-dns
+      dns_sd_configs:
+        - {names: [tasks.example], type: A, port: 9100}

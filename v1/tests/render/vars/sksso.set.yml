@@ -1,0 +1,14 @@
+# Second render pass: merged over sksso.example.yml to drive the optional
+# hooks down their "set" path. Fake values only.
+sksso:
+  CLOUDFLARED: true
+  placement_use_worker_constraint: false
+  placement_exclude_nodes: [render-node-2]
+  csrf_extra_origins: [https://sso.example.test]
+  extra_env: {AUTHENTIK_EXAMPLE_FLAG: "true"}
+  email_host: smtp.example.test
+  email_username: authentik@example.test
+  email_password: example-email-password-not-a-secret
+  email_from: authentik@example.test
+  geoip_account_id: "123456"
+  geoip_license_key: example-geoip-license-key-not-a-secret

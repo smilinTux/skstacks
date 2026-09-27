@@ -1,0 +1,11 @@
+# Second render pass: merged over skdash.example.yml to drive the optional
+# hooks down their "set" path. Fake values only.
+skdash:
+  discovery: {enabled: false}
+  sections:
+    - name: Example
+      items:
+        - {title: Example, url: https://app.render.example.test}
+  router_middlewares: [example-mw@file]
+  tls_options: generic-tls@file
+  sticky_samesite: strict

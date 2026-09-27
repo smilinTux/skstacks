@@ -1,0 +1,8 @@
+# Public, obviously fake example vault for the real-Ansible render gate
+# (v1/tests/render/render_playbooks.py). Minimal: only what the deploy
+# needs to render. example.test / 192.0.2.0/24 only; no real secrets.
+sksync:
+  ENCRYPTION_TOKEN: example-encryption-token-not-a-secret
+  SYNCWALLET: example-wallet
+  TZ: UTC
+  UUID: 00000000-0000-4000-8000-000000000000

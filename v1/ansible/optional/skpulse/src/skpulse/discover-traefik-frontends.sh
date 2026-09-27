@@ -75,7 +75,7 @@ fi
 extract_fqdn() {
     local rule="$1"
     # Extract content between Host(` and `)
-    echo "$rule" | sed -n "s/.*Host(\`\([^`]*\)\`).*/\1/p"
+    echo "$rule" | sed -n "s/.*Host(\`\([^\`]*\)\`).*/\1/p"
 }
 
 # Function to determine if HTTPS should be used

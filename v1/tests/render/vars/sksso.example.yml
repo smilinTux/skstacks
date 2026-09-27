@@ -1,0 +1,9 @@
+# Public, obviously fake example vault for the real-Ansible render gate
+# (v1/tests/render/render_playbooks.py). Minimal: only what the deploy
+# needs to render. example.test / 192.0.2.0/24 only; no real secrets.
+sksso:
+  CLUSTERNAME: render
+  DOMAIN: example.test
+  postgres_user: authentik
+  postgres_password: example-postgres-password-not-a-secret
+  authentik_secret_key: example-authentik-secret-key-not-a-secret
