@@ -1,0 +1,12 @@
+# Second render pass: merged over skpdf.example.yml to drive login, OAuth2 and
+# the instance key down their "set" path (secrets go to skpdf.env, never to
+# settings.yml; AUTO_KEY must pass the UUID assert). Fake values only.
+skpdf:
+  SECURITY_ENABLELOGIN: "true"
+  SECURITY_INITIAL_USERNAME: admin
+  SECURITY_INITIAL_PASSWORD: example-admin-password-not-a-secret
+  OAUTH2_ENABLED: true
+  OAUTH2_ISSUER: https://sso.example.test/application/o/skpdf/
+  OAUTH2_CLIENT_ID: skpdf
+  OAUTH2_CLIENT_SECRET: example-oauth-client-secret-not-a-secret
+  AUTO_KEY: 00000000-0000-4000-8000-000000000000

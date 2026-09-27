@@ -78,6 +78,29 @@
       debug:
         msg: Running SKStacks deploy {{ app }} scripts...
 
+    - name: Refuse a skpdf.AUTO_KEY that is not a UUID
+      # Stirling (InitialSetup.initSecretKey) silently swaps a non-UUID key for
+      # a random one and writes it into settings.yml, which the image leaves
+      # world-readable. Unset is fine: Stirling then generates its own.
+      assert:
+        that:
+          - skpdf.AUTO_KEY is match('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
+        fail_msg: "skpdf.AUTO_KEY must be a UUID (e.g. from `uuidgen`), or unset"
+        quiet: true
+      when: (skpdf.AUTO_KEY | default('', true) | string | length) > 0
+
+    - name: Create the {{ app }} data root (0750, not traversable by other accounts)
+      # The image runs `chmod -R 755 /configs` (= extraConfigs) on every start,
+      # and /configs also holds Stirling's own state (H2 user DB, a generated
+      # key). This dir sits above the bind mount, so the container never
+      # re-modes it, and it keeps other host accounts out of extraConfigs.
+      file:
+        path: /var/data/{{ app }}-{{ env }}
+        state: directory
+        owner: root
+        group: root
+        mode: '0750'
+
     - name: Create the {{ app }} directories
       file:
         path: "{{ item }}"
@@ -86,7 +109,6 @@
         group: root
         mode: 0755
       loop:
-        - /var/data/{{ app }}-{{ env }}
         - /var/data/{{ app }}-{{ env }}/trainingData
         - /var/data/{{ app }}-{{ env }}/extraConfigs
         - /var/data/{{ app }}-{{ env }}/logs
@@ -107,7 +129,7 @@
         dest: "{{ item.dest }}"
         owner: root
         group: root
-        mode: '0640'
+        mode: '0600'
       loop:
         - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env" }
       when: item.src != (app + '.sh.env.j2')

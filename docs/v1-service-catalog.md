@@ -662,6 +662,7 @@ skpdf:
   DOMAIN: "example.com"
   SECURITY_ENABLELOGIN: false
   # SECURITY_INITIAL_PASSWORD: "changeme"   # required only if SECURITY_ENABLELOGIN: true
+  # AUTO_KEY: "<uuidgen output>"            # optional; must be a UUID
 ```
 
 **Deploy**: `deploy_skpdf-<env>.yml`, standard invocation.
@@ -673,6 +674,15 @@ skpdf:
 Traefik middleware that must be attached to the router for
 `MAX_UPLOAD_SIZE`/`MAX_RESPONSE_SIZE` to actually take effect (a prior gap
 here was fixed; see the template's own dated comment).
+
+The Stirling-PDF image runs `chmod -R 755 /configs` (= `extraConfigs/`) on
+every start, so nothing secret goes in `settings.yml`: the initial admin
+password, the OAuth2 client secret and `AUTO_KEY` reach the container through
+`skpdf.env` (0600) as `SECURITY_INITIALLOGIN_PASSWORD`,
+`SECURITY_OAUTH2_CLIENTSECRET` and `AUTOMATICALLYGENERATED_KEY`.
+`/var/data/skpdf-<env>` is 0750 root:root because Stirling's own state in
+`/configs` (H2 user DB, a generated key) has no env override. Leave `AUTO_KEY`
+unset or set a UUID: Stirling replaces any other value with a random key.
 
 ### skpeek
 

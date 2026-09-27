@@ -7,6 +7,14 @@
 # =============================================================================
 # Note: Environment variables take precedence over this file
 # Remove comment marker # at start of line to enable configuration
+#
+# NO SECRETS IN THIS FILE. The Stirling-PDF image runs `chmod -R 755 /configs`
+# on every container start, so this file is world-readable on the host no
+# matter what mode the deploy writes. The initial admin password, the OAuth2
+# client secret and AutomaticallyGenerated.key are passed through skpdf.env
+# (0600, outside the /configs mount) as SECURITY_INITIALLOGIN_PASSWORD,
+# SECURITY_OAUTH2_CLIENTSECRET and AUTOMATICALLYGENERATED_KEY; Stirling's
+# settings binding lets an environment variable override this file.
 
 security:
   enableLogin: {{ skpdf.SECURITY_ENABLELOGIN | default('false') | lower }}
@@ -16,14 +24,14 @@ security:
 {% if skpdf.SECURITY_ENABLELOGIN | default('false') | lower == 'true' %}
   initialLogin:
     username: "{{ skpdf.SECURITY_INITIAL_USERNAME | default('admin') }}"
-    password: "{{ skpdf.SECURITY_INITIAL_PASSWORD }}"
+    # password: from skpdf.env (SECURITY_INITIALLOGIN_PASSWORD)
 {% endif %}
 {% if skpdf.OAUTH2_ENABLED | default(false) %}
   oauth2:
     enabled: true
     issuer: "{{ skpdf.OAUTH2_ISSUER | default('') }}"
     clientId: "{{ skpdf.OAUTH2_CLIENT_ID | default('') }}"
-    clientSecret: "{{ skpdf.OAUTH2_CLIENT_SECRET | default('') }}"
+    # clientSecret: from skpdf.env (SECURITY_OAUTH2_CLIENTSECRET)
     autoCreateUser: {{ skpdf.OAUTH2_AUTO_CREATE_USER | default('false') | lower }}
     useAsUsername: "{{ skpdf.OAUTH2_USE_AS_USERNAME | default('email') }}"
     scopes: "{{ skpdf.OAUTH2_SCOPES | default('openid, profile, email') }}"
@@ -70,6 +78,5 @@ endpoints:
 metrics:
   enabled: {{ skpdf.METRICS_ENABLED | default('true') | lower }}
 
-# Automatically Generated Settings (Do Not Edit Directly)
-AutomaticallyGenerated:
-  key: {{ skpdf.AUTO_KEY | default('skpdf-' + env) }}
+# AutomaticallyGenerated.key: from skpdf.env (AUTOMATICALLYGENERATED_KEY) when
+# skpdf.AUTO_KEY is set (must be a UUID); otherwise Stirling generates one.
