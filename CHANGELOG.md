@@ -3,7 +3,7 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
-## Unreleased (v2.19.1)
+## skstacks-v2.19.1 - 2026-09-27
 
 - v1: **skhub**'s Redis post-deploy step wrote Nextcloud's `config.php` with a literal backslash-n (PHP single quotes), breaking the file ("syntax error, unexpected variable $CONFIG") the first time it had to write. It now uses `PHP_EOL`. Instance action: none if skhub was never deployed with v2.19.0; if it was and Nextcloud reports that parse error, replace the literal `\n` after `<?php` and after the final `;` in `config.php` with real newlines, then redeploy.
 - v1: **skboard** fresh installs no longer corrupt the Vikunja SQLite db. The deploy ran `docker service update --force` on `<stack>_vikunja` ~5s after `docker stack deploy`, which on a first install killed the first Vikunja task mid-way through its initial migrations (slow on NFS) and left a half-migrated `vikunja.db`, so every later start failed with `Migration failed: migration 20200515172220 failed: no such column: done_at_unix` (or `table tasks_dg_tmp already exists`). `deploy.j2` now checks whether the vikunja service exists before `docker stack deploy` and only forces the update on a redeploy (where it still picks up changed bind-mounted config); on a first install it is skipped. Instance action: an instance whose first skboard deploy failed with "Migration failed" must remove its half-created `data/vikunja.db` (fresh instance, no data) and redeploy; others need nothing.
