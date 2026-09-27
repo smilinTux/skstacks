@@ -1,6 +1,26 @@
 #!/bin/bash
 set -e
 
+# Never force-restart a service on its FIRST install: a restart in the middle
+# of first-boot init (schema migrations, initial setup) can leave it corrupt.
+# record_preexisting runs before the stack deploy; only services that already
+# existed then are force-updated afterwards (a redeploy still restarts them to
+# pick up changed bind-mounted config files).
+PREEXISTING_SERVICES=" "
+record_preexisting() {
+    local svc
+    for svc in "$@"; do
+        if docker service inspect "$svc" >/dev/null 2>&1; then
+            PREEXISTING_SERVICES+="$svc "
+        fi
+    done
+}
+preexisted() {
+    case "$PREEXISTING_SERVICES" in *" $1 "*) return 0 ;; esac
+    echo "First install of $1: skipping forced restart (first-boot init must finish)"
+    return 1
+}
+
 # SKGit deployment script (rendered)
 APP="skgit"
 STACK_NAME="skgit-{{ env }}"
@@ -93,6 +113,7 @@ if [ ! -f "${COMPOSE_FILE}" ]; then
 fi
 
 echo -e "${YELLOW}Deploying stack configuration...${NC}"
+record_preexisting "${STACK_NAME}_forgejo" "${STACK_NAME}_postgres" "${STACK_NAME}_db-backup"
 docker stack deploy \
     -c "${COMPOSE_FILE}" \
     --prune \
@@ -102,9 +123,9 @@ docker stack deploy \
 sleep 5
 
 echo -e "${YELLOW}Updating services with new configuration...${NC}"
-timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_forgejo || true
-timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_postgres || true
-timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_db-backup || true
+preexisted ${STACK_NAME}_forgejo && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_forgejo || true
+preexisted ${STACK_NAME}_postgres && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_postgres || true
+preexisted ${STACK_NAME}_db-backup && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_db-backup || true
 
 echo -e "${YELLOW}Waiting for services to stabilize...${NC}"
 sleep 10
@@ -113,7 +134,8 @@ echo -e "${GREEN}Service Status:${NC}"
 docker service ls | grep "${STACK_NAME}"
 
 echo -e "${YELLOW}Checking service health...${NC}"
-for _ in $(seq 1 36); do
+# Heavy first boot: poll for HEALTH_WAIT_SECONDS (default 900), then warn.
+for _ in $(seq 1 $(( (${HEALTH_WAIT_SECONDS:-900} + 4) / 5 ))); do
     REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_forgejo" --format "{% raw %}{{.Replicas}}{% endraw %}")
     [[ "$REPLICAS" == "1/1" ]] && break
     sleep 5

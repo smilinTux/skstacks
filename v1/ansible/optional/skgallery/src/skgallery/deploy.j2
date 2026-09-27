@@ -8,6 +8,26 @@
 # =============================================================================
 set -e
 
+# Never force-restart a service on its FIRST install: a restart in the middle
+# of first-boot init (schema migrations, initial setup) can leave it corrupt.
+# record_preexisting runs before the stack deploy; only services that already
+# existed then are force-updated afterwards (a redeploy still restarts them to
+# pick up changed bind-mounted config files).
+PREEXISTING_SERVICES=" "
+record_preexisting() {
+    local svc
+    for svc in "$@"; do
+        if docker service inspect "$svc" >/dev/null 2>&1; then
+            PREEXISTING_SERVICES+="$svc "
+        fi
+    done
+}
+preexisted() {
+    case "$PREEXISTING_SERVICES" in *" $1 "*) return 0 ;; esac
+    echo "First install of $1: skipping forced restart (first-boot init must finish)"
+    return 1
+}
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -73,6 +93,7 @@ echo -e "${GREEN}Pre-deployment checks passed${NC}"
 # ---------------------------------------------------------------------------
 echo -e "${YELLOW}Deploying ${STACK_NAME} stack...${NC}"
 cd "${CONFIG_DIR}"
+record_preexisting "${STACK_NAME}_immich-server" "${STACK_NAME}_immich-machine-learning" "${STACK_NAME}_redis" "${STACK_NAME}_database"
 docker stack deploy -c "${COMPOSE_FILE}" "${STACK_NAME}"
 
 # ---------------------------------------------------------------------------
@@ -91,7 +112,7 @@ for SERVICE in immich-server immich-machine-learning redis database; do
     SERVICE_FULL="${STACK_NAME}_${SERVICE}"
     if docker service ls --format "{{ '{{' }}.Name{{ '}}' }}" | grep -q "^${SERVICE_FULL}$"; then
         echo -e "${BLUE}  -> Updating ${SERVICE}...${NC}"
-        timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${SERVICE_FULL} 2>/dev/null || true
+        preexisted ${SERVICE_FULL} && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${SERVICE_FULL} 2>/dev/null || true
     fi
 done
 
@@ -119,7 +140,8 @@ check_service_health() {
     local EXPECTED=$2
     local SERVICE_FULL="${STACK_NAME}_${SERVICE}"
 
-    for _ in $(seq 1 36); do
+    # Heavy first boot: poll for HEALTH_WAIT_SECONDS (default 900), then warn.
+    for _ in $(seq 1 $(( (${HEALTH_WAIT_SECONDS:-900} + 4) / 5 ))); do
         REPLICAS=$(docker service ls --filter "name=${SERVICE_FULL}" --format "{{ '{{' }}.Replicas{{ '}}' }}" 2>/dev/null || echo "0/0")
         [[ "$REPLICAS" == "${EXPECTED}/${EXPECTED}" ]] && break
         sleep 5

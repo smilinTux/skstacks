@@ -1,6 +1,26 @@
 #!/bin/bash
 set -e
 
+# Never force-restart a service on its FIRST install: a restart in the middle
+# of first-boot init (schema migrations, initial setup) can leave it corrupt.
+# record_preexisting runs before the stack deploy; only services that already
+# existed then are force-updated afterwards (a redeploy still restarts them to
+# pick up changed bind-mounted config files).
+PREEXISTING_SERVICES=" "
+record_preexisting() {
+    local svc
+    for svc in "$@"; do
+        if docker service inspect "$svc" >/dev/null 2>&1; then
+            PREEXISTING_SERVICES+="$svc "
+        fi
+    done
+}
+preexisted() {
+    case "$PREEXISTING_SERVICES" in *" $1 "*) return 0 ;; esac
+    echo "First install of $1: skipping forced restart (first-boot init must finish)"
+    return 1
+}
+
 APP="skmon"
 STACK_NAME="{{ app }}-{{ env }}"
 CONFIG_DIR="/var/data/config/${APP}-{{ env }}"
@@ -31,6 +51,7 @@ fi
 
 # Deploy stack with prune and registry auth
 echo -e "${YELLOW}📝 Deploying stack configuration...${NC}"
+record_preexisting "${STACK_NAME}_prometheus" "${STACK_NAME}_grafana" "${STACK_NAME}_loki" "${STACK_NAME}_promtail" "${STACK_NAME}_node-exporter" "${STACK_NAME}_cadvisor" "${STACK_NAME}_alertmanager" "${STACK_NAME}_jaeger"
 docker stack deploy \
     -c "${COMPOSE_FILE}" \
     --prune \
@@ -42,14 +63,14 @@ sleep 10
 
 # Force update services to pull latest images
 echo -e "${YELLOW}🔄 Forcing service updates to pull latest images...${NC}"
-timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_prometheus || true
-timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_grafana || true
-timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_loki || true
-timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_promtail || true
-timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_node-exporter || true
-timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_cadvisor || true
-timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_alertmanager || true
-timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_jaeger || true
+preexisted ${STACK_NAME}_prometheus && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_prometheus || true
+preexisted ${STACK_NAME}_grafana && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_grafana || true
+preexisted ${STACK_NAME}_loki && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_loki || true
+preexisted ${STACK_NAME}_promtail && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_promtail || true
+preexisted ${STACK_NAME}_node-exporter && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_node-exporter || true
+preexisted ${STACK_NAME}_cadvisor && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_cadvisor || true
+preexisted ${STACK_NAME}_alertmanager && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_alertmanager || true
+preexisted ${STACK_NAME}_jaeger && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_jaeger || true
 
 # Wait for services to stabilize
 echo -e "${YELLOW}⏳ Waiting for services to stabilize...${NC}"

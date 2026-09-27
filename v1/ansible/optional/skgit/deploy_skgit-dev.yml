@@ -66,6 +66,31 @@
       tags:
         - always
 
+    - name: Resolve the admin credentials (lowercase key wins, the documented uppercase key is accepted)
+      # The header documents ADMIN_EMAIL / ADMIN_PASSWORD (uppercase, like the
+      # other skgit secrets) while these tasks read admin_email/admin_password:
+      # an instance following the docs got no admin user. Accept both.
+      set_fact:
+        skgit_admin_password: "{{ skgit.admin_password | default(skgit.ADMIN_PASSWORD | default('')) }}"
+        skgit_admin_email: "{{ skgit.admin_email | default(skgit.ADMIN_EMAIL | default('')) }}"
+        skgit_admin_username: "{{ skgit.admin_username | default(skgit.ADMIN_USERNAME | default('skadmin')) }}"
+      no_log: true
+      tags:
+        - always
+
+    - name: Refuse an admin bootstrap without credentials
+      # skgit.admin_enabled asks for an admin user; without a password and an
+      # email the bootstrap below used to be skipped silently.
+      assert:
+        that:
+          - not (skgit.admin_enabled | default(false) | bool) or (skgit_admin_password | length > 0 and skgit_admin_email | length > 0)
+        fail_msg: >-
+          skgit.admin_enabled is true but no admin password and/or email is set
+          (skgit.admin_password/admin_email or ADMIN_PASSWORD/ADMIN_EMAIL). Set both in the vault, or leave
+          skgit.admin_enabled unset/false to skip the admin bootstrap.
+      tags:
+        - always
+
     - name: Define default network variables when not provided in vault
       # TODO: register subnets in shared/networks before first deploy.
       set_fact:
@@ -235,15 +260,49 @@
       tags:
         - deploy
 
-    - name: Wait for Forgejo container to start and fix permissions
-      shell: |
-        for i in {1..30}; do
-          if docker service ls --filter name={{ app }}-{{ env }}_forgejo --format '{{ '{{' }}.Replicas{{ '}}' }}' | grep -q "1/1"; then
-            break
-          fi
-          sleep 2
-        done
+    - name: Announce the Forgejo first-install wait budget
+      # Forgejo has a Docker healthcheck (start_period 300s), so Swarm reports
+      # the task Running only once Forgejo answers. On a busy host that takes
+      # minutes, so the budget is generous and tunable.
+      debug:
+        msg: >-
+          Waiting up to {{ skgit.first_install_wait_seconds | default(1800) }}s
+          (skgit.first_install_wait_seconds) for the Forgejo task to become
+          Running, and again for its API before any admin bootstrap. A first
+          install on a busy host can take 10 minutes or more; the retry
+          countdown below is progress, not a hang (run with -vvv to see each
+          task state).
+      when: deploy_output.rc == 0
+      tags:
+        - post-deploy
+        - admin
 
+    - name: Wait for the swarm node running the Forgejo task
+      # Polls until a task reports Running (healthy); fails the play if none
+      # does within skgit.first_install_wait_seconds. Each attempt reports the
+      # current task states (e.g. "Starting 4 minutes ago") on stderr. The
+      # node is also where the admin bootstrap below runs (placement
+      # constraints may put Forgejo on a worker).
+      shell: |
+        STATES=$(docker service ps "{{ app }}-{{ env }}_forgejo" --filter "desired-state=running" --format "{{ '{{.Node}} {{.CurrentState}}' }}")
+        NODE=$(printf '%s\n' "$STATES" | awk '$2 == "Running" {print $1; exit}')
+        if [ -z "$NODE" ]; then
+          echo "{{ app }}-{{ env }}_forgejo has no Running task yet; current: $(printf '%s' "${STATES:-no task scheduled}" | tr '\n' ';')" >&2
+          exit 1
+        fi
+        echo "$NODE"
+      register: forgejo_node
+      until: forgejo_node.rc == 0 and (forgejo_node.stdout | trim | length > 0)
+      retries: "{{ ((skgit.first_install_wait_seconds | default(1800) | int) + 4) // 5 }}"
+      delay: 5
+      changed_when: false
+      when: deploy_output.rc == 0
+      tags:
+        - post-deploy
+        - admin
+
+    - name: Fix Forgejo data permissions and start runners
+      shell: |
         chown -R 1000:1000 /var/data/{{ app }}-{{ env }}/data || true
         chown -R 1000:1000 /var/data/{{ app }}-{{ env }}/config || true
         chmod -R 755 /var/data/{{ app }}-{{ env }}/data || true
@@ -260,40 +319,96 @@
       tags:
         - post-deploy
 
-    - name: Create admin user if credentials provided (opt-in via skgit.admin_enabled)
+    - name: Wait for the Forgejo API before creating the admin user
       shell: |
-        for i in {1..60}; do
-          if docker exec $(docker ps -q -f name={{ app }}-{{ env }}_forgejo | head -n1) \
-            curl -sf http://localhost:3000/api/v1/version >/dev/null 2>&1; then
-            break
-          fi
-          sleep 2
-        done
-
-        ADMIN_EXISTS=$(docker exec $(docker ps -q -f name={{ app }}-{{ env }}_forgejo | head -n1) \
-          forgejo admin user list --format json 2>/dev/null | \
-          jq -r '.[] | select(.username == "{{ skgit.admin_username | default('skadmin') }}") | .username' || echo "")
-
-        if [ -z "$ADMIN_EXISTS" ]; then
-          echo "Creating admin user: {{ skgit.admin_username | default('skadmin') }}"
-          docker exec $(docker ps -q -f name={{ app }}-{{ env }}_forgejo | head -n1) \
-            forgejo admin user create \
-            --admin \
-            --username "{{ skgit.admin_username | default('skadmin') }}" \
-            --password "{{ skgit.admin_password }}" \
-            --email "{{ skgit.admin_email }}" \
-            --must-change-password false || true
-          echo "Admin user created"
-        else
-          echo "Admin user already exists, skipping creation"
+        CID=$(docker ps -q -f "name={{ app }}-{{ env }}_forgejo." | head -n1)
+        if [ -z "$CID" ]; then
+          echo "no running {{ app }}-{{ env }}_forgejo container on this node yet" >&2
+          exit 1
         fi
+        docker exec "$CID" curl -sf http://localhost:3000/api/v1/version >/dev/null || { echo "Forgejo API not answering yet" >&2; exit 1; }
+      delegate_to: "{{ forgejo_node.stdout | trim }}"
+      register: forgejo_api
+      until: forgejo_api.rc == 0
+      retries: "{{ ((skgit.first_install_wait_seconds | default(1800) | int) + 9) // 10 }}"
+      delay: 10
+      changed_when: false
       when:
         - deploy_output.rc == 0
         - skgit.admin_enabled | default(false) | bool
-        - skgit.admin_password is defined
-        - skgit.admin_email is defined
-      ignore_errors: yes
+        - skgit_admin_password | length > 0
+        - skgit_admin_email | length > 0
+      tags:
+        - post-deploy
+        - admin
+
+    - name: Create admin user if credentials provided (opt-in via skgit.admin_enabled)
+      # no_log because the task carries the password. It never fails itself
+      # (failed_when: false) so the next task can fail with a message that
+      # holds only this script's own, password-redacted output.
+      shell: |
+        CID=$(docker ps -q -f "name={{ app }}-{{ env }}_forgejo." | head -n1)
+        if [ -z "$CID" ]; then
+          echo "no running {{ app }}-{{ env }}_forgejo container found on this node"
+          exit 1
+        fi
+        if ! USERS=$(docker exec "$CID" forgejo admin user list 2>&1); then
+          echo "forgejo admin user list failed; cannot tell whether $ADMIN_USERNAME exists"
+          exit 1
+        fi
+        if printf '%s\n' "$USERS" | awk -v u="$ADMIN_USERNAME" 'NR > 1 && $2 == u {found = 1} END {exit !found}'; then
+          echo "Admin user $ADMIN_USERNAME already exists, skipping creation"
+          exit 0
+        fi
+        if OUT=$(docker exec "$CID" forgejo admin user create \
+            --admin \
+            --username "$ADMIN_USERNAME" \
+            --password "$ADMIN_PASSWORD" \
+            --email "$ADMIN_EMAIL" \
+            --must-change-password=false 2>&1); then
+          echo "Admin user $ADMIN_USERNAME created"
+          exit 0
+        fi
+        case "$OUT" in
+          *"already exists"*)
+            echo "Admin user $ADMIN_USERNAME already exists, skipping creation"
+            exit 0 ;;
+        esac
+        OUT=${OUT//"$ADMIN_PASSWORD"/<redacted>}
+        echo "forgejo admin user create failed: $(printf '%s' "$OUT" | tail -n 3 | tr '\n' ' ')"
+        exit 1
+      args:
+        executable: /bin/bash
+      environment:
+        ADMIN_USERNAME: "{{ skgit_admin_username }}"
+        ADMIN_PASSWORD: "{{ skgit_admin_password }}"
+        ADMIN_EMAIL: "{{ skgit_admin_email }}"
+      delegate_to: "{{ forgejo_node.stdout | trim }}"
+      register: forgejo_admin
+      failed_when: false
+      changed_when: forgejo_admin.rc == 0 and ' created' in forgejo_admin.stdout
+      when:
+        - deploy_output.rc == 0
+        - skgit.admin_enabled | default(false) | bool
+        - skgit_admin_password | length > 0
+        - skgit_admin_email | length > 0
       tags:
         - post-deploy
         - admin
       no_log: true  # Don't log password in output
+
+    - name: Fail if the requested admin user could not be created
+      fail:
+        msg: >-
+          skgit.admin_enabled is true but the Forgejo admin user
+          {{ skgit_admin_username }} was not created:
+          {{ forgejo_admin.stdout | default('no output') }}
+      when:
+        - deploy_output.rc == 0
+        - skgit.admin_enabled | default(false) | bool
+        - skgit_admin_password | length > 0
+        - skgit_admin_email | length > 0
+        - forgejo_admin.rc | default(1) != 0
+      tags:
+        - post-deploy
+        - admin

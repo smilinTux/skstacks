@@ -3,6 +3,10 @@
 {% set fqdn = 'skfenceha' + ('-' + env if env != 'prod' else '') + '.' + base_cluster + '.' + base_domain %}
 {% set dashboard_fqdn = skfenceha.DASHBOARD_HOST | default(fqdn) %}
 {% set acme_on = skfenceha.ACME_ENABLED | default(false) %}
+{# skfenceha.ROUTER_CERT_RESOLVER: resolver for every router except the
+   dashboard one (default main; empty renders `tls: {}`, i.e. Traefik picks a
+   stored certificate matching the SNI without asking the resolver). #}
+{% set router_resolver = skfenceha.ROUTER_CERT_RESOLVER | default('main') if acme_on else '' %}
 # Traefik HTTP routers (dynamic/routers.yml).
 # This file is managed by Ansible - do not edit manually.
 #
@@ -53,9 +57,9 @@ http:
         - dashboard-redirect@file
       service: noop@internal
       priority: 100
-{% if acme_on %}
+{% if router_resolver %}
       tls:
-        certResolver: main
+        certResolver: {{ router_resolver }}
 {% else %}
       tls: {}
 {% endif %}
@@ -69,9 +73,9 @@ http:
       priority: 99
       middlewares:
         - default@file
-{% if acme_on %}
+{% if router_resolver %}
       tls:
-        certResolver: main
+        certResolver: {{ router_resolver }}
 {% else %}
       tls: {}
 {% endif %}
@@ -84,9 +88,9 @@ http:
         - websecure
       service: error-pages@file
       priority: 0
-{% if acme_on %}
+{% if router_resolver %}
       tls:
-        certResolver: main
+        certResolver: {{ router_resolver }}
 {% else %}
       tls: {}
 {% endif %}
@@ -99,9 +103,9 @@ http:
         - websecure
       service: error-pages@file
       priority: 0
-{% if acme_on %}
+{% if router_resolver %}
       tls:
-        certResolver: main
+        certResolver: {{ router_resolver }}
 {% else %}
       tls: {}
 {% endif %}
@@ -114,9 +118,9 @@ http:
         - websecure
       service: error-pages@file
       priority: 1
-{% if acme_on %}
+{% if router_resolver %}
       tls:
-        certResolver: main
+        certResolver: {{ router_resolver }}
 {% else %}
       tls: {}
 {% endif %}

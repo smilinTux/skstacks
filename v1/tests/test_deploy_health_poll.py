@@ -31,8 +31,13 @@ import pytest
 V1_DIR = pathlib.Path(__file__).resolve().parents[1]
 DEPLOY_FILES = sorted((V1_DIR / "ansible").glob("*/*/src/*/deploy.j2"))
 
-# Matches the poll loop this fix introduces (see skstor's deploy.j2).
-POLL_RE = re.compile(r"for _ in \$\(seq 1 36\); do\n.*?\n[ \t]*done", re.DOTALL)
+# Matches the poll loop this fix introduces (see skstor's deploy.j2): the
+# fixed 36 x 5s form, or the heavy services' HEALTH_WAIT_SECONDS budget
+# (skgit, skgallery; see test_deploy_health_wait_budget.py).
+POLL_RE = re.compile(
+    r"for _ in \$\(seq 1 (?:36|\$\(\( \(\$\{HEALTH_WAIT_SECONDS:-900\} \+ 4\) / 5 \)\))\); do\n.*?\n[ \t]*done",
+    re.DOTALL,
+)
 IF_START_RE = re.compile(r"^([ \t]*)if .*; then[ \t]*$")
 _OPENERS = ("if", "for", "while", "case")
 _CLOSERS = {"fi", "done", "esac"}

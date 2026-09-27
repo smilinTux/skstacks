@@ -8,6 +8,26 @@
 # =============================================================================
 set -e
 
+# Never force-restart a service on its FIRST install: a restart in the middle
+# of first-boot init (schema migrations, initial setup) can leave it corrupt.
+# record_preexisting runs before the stack deploy; only services that already
+# existed then are force-updated afterwards (a redeploy still restarts them to
+# pick up changed bind-mounted config files).
+PREEXISTING_SERVICES=" "
+record_preexisting() {
+    local svc
+    for svc in "$@"; do
+        if docker service inspect "$svc" >/dev/null 2>&1; then
+            PREEXISTING_SERVICES+="$svc "
+        fi
+    done
+}
+preexisted() {
+    case "$PREEXISTING_SERVICES" in *" $1 "*) return 0 ;; esac
+    echo "First install of $1: skipping forced restart (first-boot init must finish)"
+    return 1
+}
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -111,6 +131,7 @@ if [ ! -f "${COMPOSE_FILE}" ]; then
 fi
 
 echo -e "${YELLOW}Deploying stack configuration...${NC}"
+record_preexisting "${STACK_NAME}_bookstack" "${STACK_NAME}_db" "${STACK_NAME}_db-backup"
 docker stack deploy \
     -c "${COMPOSE_FILE}" \
     --prune \
@@ -120,9 +141,9 @@ docker stack deploy \
 sleep 5
 
 echo -e "${YELLOW}Forcing service updates...${NC}"
-timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_bookstack || true
-timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_db || true
-timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_db-backup || true
+preexisted ${STACK_NAME}_bookstack && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_bookstack || true
+preexisted ${STACK_NAME}_db && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_db || true
+preexisted ${STACK_NAME}_db-backup && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_db-backup || true
 
 echo -e "${YELLOW}Waiting for services to stabilize...${NC}"
 sleep 10
