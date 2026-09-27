@@ -149,10 +149,11 @@
         dest: "{{ item.dest }}"
         owner: root
         group: root
-        mode: '0644'
+        mode: "{{ item.mode }}"
       loop:
-        - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env" }
-        - { src: "{{ app }}.sh.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env" }
+        # skmail.env is the container env_file and carries RELAY_PASSWORD: root-only.
+        - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env", mode: '0600' }
+        - { src: "{{ app }}.sh.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env", mode: '0644' }
       tags:
         - templates
 
