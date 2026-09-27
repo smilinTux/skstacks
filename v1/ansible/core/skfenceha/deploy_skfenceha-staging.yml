@@ -113,11 +113,25 @@
       debug:
         msg: Running SKStacks deploy {{ app }} scripts...
 
+    # traefik-worker runs on every manager (global) and each node writes its
+    # own access-<hostname>.log into the shared log dir. Every manager gets
+    # its own logrotate file naming only its own logs, because a node can
+    # only signal its own Traefik. The name is the hostname Swarm hands
+    # entrypoint.sh as NODE_HOSTNAME, read from each node.
     - name: Ensure logrotate is installed
       apt:
         name: logrotate
         state: present
         update_cache: yes
+      delegate_to: "{{ item }}"
+      loop: "{{ groups[target_manager_group] }}"
+
+    - name: Read each manager hostname for its Traefik log file names
+      command: hostname
+      delegate_to: "{{ item }}"
+      loop: "{{ groups[target_manager_group] }}"
+      register: skfenceha_logrotate_nodes
+      changed_when: false
 
     - name: Create logrotate configuration for {{ app }} logs
       template:
@@ -126,9 +140,14 @@
         owner: root
         group: root
         mode: '0644'
+      delegate_to: "{{ item.item }}"
+      loop: "{{ skfenceha_logrotate_nodes.results }}"
+      loop_control:
+        label: "{{ item.item }}"
       vars:
-        log_path: "/var/data/logs/{{ app }}-{{ env }}/traefik/*/*.log"
-        retention_days: "3"
+        log_dir: "/var/data/logs/{{ app }}-{{ env }}/traefik"
+        logrotate_node: "{{ item.stdout | trim }}"
+        retention_days: "{{ skfenceha.LOGROTATE_ROTATE | default('7' if env == 'prod' else '3') }}"
 
     - name: Create the {{ app }} directories
       file:
