@@ -98,20 +98,27 @@ fi
 # =============================================================================
 # Configure Postfix to relay outbound mail through Mailgun
 # This is needed because residential IPs are often blocked by Gmail/Google
-echo "Configuring SMTP relay through {{ skmail.RELAY_HOST }}..."
+# The relay credentials come from the container environment (skmail.env is the
+# service's env_file, rendered 0600). They are never templated into this file,
+# which lives world-readable on the shared /var/data.
+if [ -z "${RELAY_HOST:-}" ] || [ -z "${RELAY_USER:-}" ] || [ -z "${RELAY_PASSWORD:-}" ]; then
+    echo "WARNING: RELAY_HOST, RELAY_USER or RELAY_PASSWORD not set in the container environment; skipping SMTP relay setup"
+else
+RELAY_HOSTPORT="[${RELAY_HOST}]:${RELAY_PORT:-587}"
+echo "Configuring SMTP relay through ${RELAY_HOST}..."
 
 # Add relay domain mapping
 if [ ! -f /tmp/docker-mailserver/postfix-relaymap.cf ] || ! grep -q "@{{ skmail.DOMAIN }}" /tmp/docker-mailserver/postfix-relaymap.cf; then
-    echo "@{{ skmail.DOMAIN }} [{{ skmail.RELAY_HOST }}]:{{ skmail.RELAY_PORT | default('587') }}" >> /tmp/docker-mailserver/postfix-relaymap.cf
+    echo "@{{ skmail.DOMAIN }} ${RELAY_HOSTPORT}" >> /tmp/docker-mailserver/postfix-relaymap.cf
     echo "✓ Added relay mapping for @{{ skmail.DOMAIN }}"
 fi
 
 # Add SASL authentication credentials
 if [ ! -f /tmp/docker-mailserver/postfix-sasl-password.cf ] || ! grep -q "@{{ skmail.DOMAIN }}" /tmp/docker-mailserver/postfix-sasl-password.cf; then
-    echo "@{{ skmail.DOMAIN }} {{ skmail.RELAY_USER }}:{{ skmail.RELAY_PASSWORD }}" >> /tmp/docker-mailserver/postfix-sasl-password.cf
-    echo "[{{ skmail.RELAY_HOST }}]:{{ skmail.RELAY_PORT | default('587') }} {{ skmail.RELAY_USER }}:{{ skmail.RELAY_PASSWORD }}" >> /tmp/docker-mailserver/postfix-sasl-password.cf
+    (umask 077; printf '%s\n' "@{{ skmail.DOMAIN }} ${RELAY_USER}:${RELAY_PASSWORD}" "${RELAY_HOSTPORT} ${RELAY_USER}:${RELAY_PASSWORD}" >> /tmp/docker-mailserver/postfix-sasl-password.cf)
     chmod 600 /tmp/docker-mailserver/postfix-sasl-password.cf
     echo "✓ Added SASL credentials for relay"
+fi
 fi
 
 # Ensure Postfix is configured for SASL authentication
