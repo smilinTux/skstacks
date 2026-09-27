@@ -17,8 +17,28 @@
 # CHANGELOG). The accessLog: key must stay present (even with no fields:)
 # so entrypoint.sh injects this node's filePath into it rather than
 # appending a second, bare accessLog: block.
+{% if skfenceha.WORKER_LOG is defined and skfenceha.WORKER_LOG is mapping %}
+{# skfenceha.WORKER_LOG instance var (map, e.g. {level: INFO, format: json}),
+   rendered block-style so entrypoint.sh can inject filePath under a bare
+   `log:` line and replace `level:` in place with LOG_LEVEL. Unset: no log:
+   block here; entrypoint.sh appends one. #}
+log:
+{% for _log_name, _log_value in skfenceha.WORKER_LOG.items() %}
+  {{ _log_name }}: {{ _log_value | tojson }}
+{% endfor %}
+
+{% endif %}
 accessLog:
   format: json
+{% if skfenceha.ACCESS_LOG_FILTERS is defined and skfenceha.ACCESS_LOG_FILTERS is mapping %}
+  # skfenceha.ACCESS_LOG_FILTERS instance var (map, rendered verbatim).
+  filters: {{ skfenceha.ACCESS_LOG_FILTERS | tojson }}
+{% endif %}
+{% if skfenceha.ACCESS_LOG_FIELDS is defined and skfenceha.ACCESS_LOG_FIELDS is mapping %}
+  # skfenceha.ACCESS_LOG_FIELDS instance var (map) replaces the whole
+  # fields: block, ACCESS_LOG_HEADERS included.
+  fields: {{ skfenceha.ACCESS_LOG_FIELDS | tojson }}
+{% else %}
   fields:
     headers:
       defaultMode: {{ access_log_headers.defaultMode | default('keep') }}
@@ -27,6 +47,7 @@ accessLog:
 {% for _header_name, _header_mode in access_log_headers.names.items() %}
         {{ _header_name }}: {{ _header_mode }}
 {% endfor %}
+{% endif %}
 {% endif %}
 
 api:
@@ -82,9 +103,20 @@ entryPoints:
   metrics:
     address: ":8082"
 
+{% if skfenceha.WORKER_GLOBAL is defined and skfenceha.WORKER_GLOBAL is mapping %}
+{# skfenceha.WORKER_GLOBAL instance var (map) replaces the defaults below;
+   {} omits the global: block (Traefik's own defaults). #}
+{% if skfenceha.WORKER_GLOBAL %}
+global:
+{% endif %}
+{% for _global_name, _global_value in skfenceha.WORKER_GLOBAL.items() %}
+  {{ _global_name }}: {{ _global_value | tojson }}
+{% endfor %}
+{% else %}
 global:
   checknewversion: false
   sendanonymoususage: false
+{% endif %}
 
 providers:
   swarm:
@@ -118,6 +150,12 @@ serversTransport:
     idleConnTimeout: 90s
 {% endif %}
 
+{% if skfenceha.WORKER_TLS is defined and skfenceha.WORKER_TLS is mapping %}
+# skfenceha.WORKER_TLS instance var (map, rendered verbatim as a static tls:
+# block). Unset: none.
+tls: {{ skfenceha.WORKER_TLS | tojson }}
+
+{% endif %}
 metrics:
   prometheus:
     addEntryPointsLabels: true

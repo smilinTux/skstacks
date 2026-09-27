@@ -8,7 +8,11 @@ http:
       basicAuth:
         users:
           - '{{ skfenceha.DASHBOARD_AUTH_HASH }}'
-        realm: "TraefikDashboard"
+{# skfenceha.DASHBOARD_AUTH_REALM instance var; empty omits realm (Traefik's
+   own default realm). #}
+{% if skfenceha.DASHBOARD_AUTH_REALM | default('TraefikDashboard') != '' %}
+        realm: "{{ skfenceha.DASHBOARD_AUTH_REALM | default('TraefikDashboard') }}"
+{% endif %}
 {% else %}
     # No dashboard credentials configured (skfenceha.DASHBOARD_AUTH_HASH is
     # empty): stub middleware so traefikAuth@file references never fail.
@@ -74,6 +78,14 @@ http:
 
     default-security-headers:
       headers:
+{% if skfenceha.SECURITY_HEADERS is defined and skfenceha.SECURITY_HEADERS is mapping %}
+{# skfenceha.SECURITY_HEADERS instance var (map of Traefik headers options)
+   replaces the options below entirely; no per-key merge. The CORS block
+   still follows when CORS_ALLOWED_ORIGINS is set. #}
+{% for _opt_name, _opt_value in skfenceha.SECURITY_HEADERS.items() %}
+        {{ _opt_name }}: {{ _opt_value | tojson }}
+{% endfor %}
+{% else %}
         browserXssFilter: true
         contentTypeNosniff: true
         forceSTSHeader: true
@@ -87,6 +99,7 @@ http:
           X-Permitted-Cross-Domain-Policies: "none"
           X-Robots-Tag: "none"
           Server: ""
+{% endif %}
 {% if skfenceha.CORS_ALLOWED_ORIGINS | default([]) | length > 0 %}
         # CORS for an operator-chosen set of origins (e.g. a dashboard app
         # calling this edge's API cross-origin). Empty by default: nothing
