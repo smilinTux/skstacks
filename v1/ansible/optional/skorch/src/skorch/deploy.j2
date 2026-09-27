@@ -1,6 +1,26 @@
 #!/bin/bash
 set -e
 
+# Never force-restart a service on its FIRST install: a restart in the middle
+# of first-boot init (schema migrations, initial setup) can leave it corrupt.
+# record_preexisting runs before the stack deploy; only services that already
+# existed then are force-updated afterwards (a redeploy still restarts them to
+# pick up changed bind-mounted config files).
+PREEXISTING_SERVICES=" "
+record_preexisting() {
+    local svc
+    for svc in "$@"; do
+        if docker service inspect "$svc" >/dev/null 2>&1; then
+            PREEXISTING_SERVICES+="$svc "
+        fi
+    done
+}
+preexisted() {
+    case "$PREEXISTING_SERVICES" in *" $1 "*) return 0 ;; esac
+    echo "First install of $1: skipping forced restart (first-boot init must finish)"
+    return 1
+}
+
 # SKOrch{% if env == 'prod' %}-Prod{% elif env == 'staging' %}-Staging{% else %}-Dev{% endif %} Deployment Script
 APP="skorch"
 STACK_NAME=skorch{% if env == 'prod' %}-prod{% elif env == 'staging' %}-staging{% else %}-dev{% endif %}
@@ -113,6 +133,7 @@ echo ""
 
 # Deploy stack
 echo -e "${YELLOW}📝 Deploying stack configuration...${NC}"
+record_preexisting "${STACK_NAME}_n8n" "${STACK_NAME}_postgres" "${STACK_NAME}_redis" "${STACK_NAME}_postgres-backup"
 docker stack deploy \
     -c "${COMPOSE_FILE}" \
     --prune \
@@ -124,10 +145,10 @@ sleep 5
 
 # Force update services
 echo -e "${YELLOW}🔄 Forcing service updates...${NC}"
-timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_n8n || true
-timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_postgres || true
-timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_redis || true
-timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_postgres-backup || true
+preexisted ${STACK_NAME}_n8n && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_n8n || true
+preexisted ${STACK_NAME}_postgres && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_postgres || true
+preexisted ${STACK_NAME}_redis && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_redis || true
+preexisted ${STACK_NAME}_postgres-backup && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_postgres-backup || true
 
 # Wait for stabilization
 echo -e "${YELLOW}⏳ Waiting for services to stabilize...${NC}"
