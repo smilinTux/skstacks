@@ -3,3 +3,5 @@
 abbebd122b19006884a27719c964bf7abd02ff27:v1/ansible/optional/skorch/src/gpg-signer/tests/test_signer.py:generic-api-key:44
 # Any-commit form: the v2.18.0 release squash (d8118b1) re-added the same fixture.
 *:v1/ansible/optional/skorch/src/gpg-signer/tests/test_signer.py:generic-api-key:44
+# test_skgit_first_install_waits.py:33 is a made-up sentinel password (PR #75) used to assert the password never leaks into output; not a credential.
+*:v1/tests/test_skgit_first_install_waits.py:generic-api-key:33
