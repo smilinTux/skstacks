@@ -1,0 +1,11 @@
+# Second render pass: merged over skform.example.yml to drive the optional
+# hooks down their "set" path. Fake values only.
+skform:
+  SKSTOR_ENABLED: true
+  STATE_BACKEND_TYPE: s3
+  PROVIDER_CLOUDFLARE_ENABLED: true
+  SKSTOR_ENDPOINT: http://skstor-dev-garage:3900
+  SKSTOR_BUCKET: tofu-state
+  SKSTOR_REGION: garage
+vault_skform_cloudflare_api_token: example-cloudflare-api-token-not-a-secret
+vault_skform_cloudflare_email: dns@example.test

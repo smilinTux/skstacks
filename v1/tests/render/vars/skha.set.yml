@@ -1,0 +1,6 @@
+# Second render pass: merged over skha.example.yml to drive the optional
+# hooks down their "set" path. Fake values only.
+skha:
+  health_checks:
+    - {name: traefik, ports: [80, 443], container_pattern: traefik-worker}
+    - {name: mail, ports: [25], container_pattern: mailserver}

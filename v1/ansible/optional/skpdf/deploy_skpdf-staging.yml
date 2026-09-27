@@ -129,9 +129,9 @@
       template:
         src: "{{ playbook_dir }}/src/config/{{ app }}/settings.yml.j2"
         dest: "/var/data/{{ app }}-{{ env }}/extraConfigs/settings.yml"
-        owner: root
-        group: root
-        mode: '0644'
+        owner: "1000"
+        group: "1000"
+        mode: '0600'
       tags:
         - templates
 

@@ -1,0 +1,10 @@
+# Second render pass: merged over skfence.example.yml to drive the optional
+# hooks down their "set" path. Fake values only.
+skfence:
+  ACME_ENABLED: true
+  DASHBOARD_HOST: traefik.render.example.test
+  EXTRA_DYNAMIC_FILES:
+  - src: extra-dynamic/example.yml.j2
+    dest: example-extra.yml
+  CLOUDFLARE_EMAIL: acme@example.test
+  CLOUDFLARE_DNS_API_TOKEN: example-cloudflare-dns-api-token-not-a-secret

@@ -1,0 +1,15 @@
+# Second render pass: merged over skbook.example.yml to drive the optional
+# hooks down their "set" path. Fake values only.
+skbook:
+  placement_constraints: ["node.hostname == render-node-1"]
+  router_middlewares: [example-mw@file]
+  router_middlewares_pre: [example-pre@file]
+  tls_options: generic-tls@file
+  sticky_samesite: strict
+  MAIL_HOST: smtp.example.test
+  MAIL_USERNAME: bookstack@example.test
+  MAIL_PASSWORD: example-mail-password-not-a-secret
+  ENABLE_SSO: true
+  OIDC_CLIENT_ID: bookstack
+  OIDC_CLIENT_SECRET: example-oidc-client-secret-not-a-secret
+  OIDC_ISSUER: https://sso.example.test

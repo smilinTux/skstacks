@@ -60,48 +60,51 @@ declare -A NETWORKS
 NETWORKS["{{ network.name }}"]="{{ network.subnet }}"
 {% endfor %}
 
-ensure_networks() {
-    echo -e "${YELLOW}Checking Docker overlay networks...${NC}"
+# -----------------------------------------------------------------------------
+# Network safety: a deploy never deletes an existing network (same pattern in
+# every deploy.j2 and in shared/tasks/create_networks.yml).
+#   exists, same subnet      -> reused
+#   exists, other subnet     -> deploy stops; set the vault to the live subnet
+#   missing                  -> created
+# NETWORK_RECREATE_ON_MISMATCH=true (env, or vault network_recreate_on_mismatch)
+# may recreate only this service's own network; shared cloud-* never.
+# -----------------------------------------------------------------------------
+NETWORK_VAULT_KEY="sksso_{{ env }}_networks"
+NETWORK_OWNED="{{ app }}-{{ env }}"
+NETWORK_RECREATE_ON_MISMATCH="${NETWORK_RECREATE_ON_MISMATCH:-{{ network_recreate_on_mismatch | default(false) | string | lower }}}"
 
-    for NETWORK_NAME in "${!NETWORKS[@]}"; do
-        SUBNET="${NETWORKS[$NETWORK_NAME]}"
-
-        if docker network ls --format "{{ '{{' }}.Name{{ '}}' }}" | grep -q "^${NETWORK_NAME}$"; then
-            CURRENT_SUBNET=$(docker network inspect "${NETWORK_NAME}" --format "{{ '{{' }}range .IPAM.Config{{ '}}' }}{{ '{{' }}.Subnet{{ '}}' }}{{ '{{' }}end{{ '}}' }}" 2>/dev/null | head -1)
-            if [ "${CURRENT_SUBNET}" != "${SUBNET}" ]; then
-                echo -e "${YELLOW}Network ${NETWORK_NAME} exists with subnet ${CURRENT_SUBNET}, expected ${SUBNET}${NC}"
-                CONTAINERS_USING=$(docker network inspect "${NETWORK_NAME}" --format "{{ '{{' }}len .Containers{{ '}}' }}" 2>/dev/null || echo "0")
-                if [ "${CONTAINERS_USING}" = "0" ]; then
-                    docker network rm "${NETWORK_NAME}" 2>/dev/null || true
-                    sleep 1
-                    if docker network create --driver overlay --attachable --subnet "${SUBNET}" "${NETWORK_NAME}"; then
-                        echo -e "${GREEN}Network ${NETWORK_NAME} recreated with subnet ${SUBNET}${NC}"
-                    else
-                        echo -e "${RED}Failed to recreate network ${NETWORK_NAME}${NC}"
-                        exit 1
-                    fi
-                else
-                    echo -e "${YELLOW}Network ${NETWORK_NAME} is in use (${CONTAINERS_USING} containers), leaving it alone${NC}"
-                fi
-            else
-                echo -e "${GREEN}Network ${NETWORK_NAME} exists with correct subnet ${SUBNET}${NC}"
-            fi
-        else
-            echo -e "${YELLOW}Creating overlay network ${NETWORK_NAME} with subnet ${SUBNET}...${NC}"
-            if docker network create --driver overlay --attachable --subnet "${SUBNET}" "${NETWORK_NAME}"; then
-                echo -e "${GREEN}Network ${NETWORK_NAME} created${NC}"
-                sleep 2
-            else
-                echo -e "${RED}Failed to create network ${NETWORK_NAME}${NC}"
-                exit 1
-            fi
-        fi
-    done
-
-    echo -e "${GREEN}Network verification complete${NC}"
+ensure_network() {
+    local name="$1" subnet="$2" live
+    if ! docker network ls --format '{% raw %}{{.Name}}{% endraw %}' | grep -qx "${name}"; then
+        echo "Creating overlay network ${name} (${subnet})"
+        docker network create --driver overlay --attachable --subnet "${subnet}" "${name}" || return 1
+        sleep 2
+        return 0
+    fi
+    live=$(docker network inspect "${name}" --format '{% raw %}{{range .IPAM.Config}}{{.Subnet}} {{end}}{% endraw %}' 2>/dev/null | awk '{print $1}')
+    if [ -z "${live}" ] || [ "${live}" = "${subnet}" ]; then
+        echo "Network ${name} exists (subnet ${live:-unknown}), reusing it"
+        return 0
+    fi
+    if [ "${NETWORK_RECREATE_ON_MISMATCH}" = "true" ] && [ "${name}" = "${NETWORK_OWNED}" ] && [ "${name#cloud-}" = "${name}" ]; then
+        echo "NETWORK_RECREATE_ON_MISMATCH=true: recreating ${name} (${live} -> ${subnet})"
+        docker network rm "${name}" || return 1
+        sleep 2
+        docker network create --driver overlay --attachable --subnet "${subnet}" "${name}" || return 1
+        sleep 2
+        return 0
+    fi
+    echo "ERROR: network ${name} exists with subnet ${live}, but the configured subnet is ${subnet}." >&2
+    echo "ERROR: refusing to delete it (other stacks may be attached). To adopt the live network, set the ${name} subnet to ${live} in the vault (${NETWORK_VAULT_KEY})." >&2
+    if [ "${name}" = "${NETWORK_OWNED}" ] && [ "${name#cloud-}" = "${name}" ]; then
+        echo "ERROR: or, to recreate this service's own network with ${subnet}, remove the stack and rerun with NETWORK_RECREATE_ON_MISMATCH=true." >&2
+    fi
+    return 1
 }
 
-ensure_networks
+for network_name in "${!NETWORKS[@]}"; do
+    ensure_network "${network_name}" "${NETWORKS[$network_name]}" || { echo "ERROR: network setup failed for ${network_name}" >&2; exit 1; }
+done
 
 echo -e "${YELLOW}Deploying stack configuration...${NC}"
 cd "${CONFIG_DIR}"

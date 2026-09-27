@@ -1,0 +1,58 @@
+# Second render pass: merged over skfenceha.example.yml to drive the optional
+# hooks down their "set" path. Fake values only.
+skfenceha:
+  ACME_ENABLED: true
+  ACME_DOCKER_PROVIDER_ENABLED: true
+  ROUTER_CERT_RESOLVER: ''
+  CROWDSEC_ENABLED: true
+  RATE_LIMIT_ENABLED: true
+  DASHBOARD_HOST: traefik.render.example.test
+  DASHBOARD_AUTH_HASH: admin:$2y$05$abcdefghijklmnopqrstuv
+  DASHBOARD_AUTH_REALM: Edge
+  CORS_ALLOWED_ORIGINS:
+  - https://app.example.test
+  SECURITY_HEADERS:
+    browserXssFilter: true
+    contentTypeNosniff: true
+    customFrameOptionsValue: SAMEORIGIN
+  GZIP_COMPRESS: {}
+  WORKER_RESPONDING_TIMEOUTS:
+    readTimeout: 7200s
+    writeTimeout: 7200s
+    idleTimeout: 1800s
+  WORKER_FORWARDING_TIMEOUTS:
+    responseHeaderTimeout: 7200s
+    dialTimeout: 30s
+    idleConnTimeout: 1800s
+  WORKER_LOG:
+    level: INFO
+    format: json
+  ACCESS_LOG_FILTERS:
+    statusCodes:
+    - 200-299
+    - 400-599
+    retryAttempts: true
+    minDuration: 10ms
+  ACCESS_LOG_FIELDS:
+    defaultMode: keep
+    headers:
+      defaultMode: keep
+      names:
+        Authorization: redact
+  ACCESS_LOG_HEADERS:
+  - X-Request-Id
+  WORKER_GLOBAL:
+    checknewversion: false
+  WORKER_TLS:
+    stores:
+      default:
+        defaultCertificate:
+          certFile: /certs/example.crt
+          keyFile: /certs/example.key
+  LOGROTATE_ROTATE: '14'
+  EXTRA_DYNAMIC_FILES:
+  - src: extra-dynamic/example.yml.j2
+    dest: example-extra.yml
+    acme: true
+  CLOUDFLARE_EMAIL: acme@example.test
+  CLOUDFLARE_DNS_API_TOKEN: example-cloudflare-dns-api-token-not-a-secret

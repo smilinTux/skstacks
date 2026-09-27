@@ -97,8 +97,10 @@
         group: root
         mode: '0644'
       vars:
-        log_path: "/var/data/logs/{{ app }}-{{ env }}/traefik/*/*.log"
-        retention_days: "{{ '7' if env == 'prod' else '3' }}"
+        log_dir: "/var/data/logs/{{ app }}-{{ env }}/traefik"
+        # traefik.yml.j2 names the log directory after this node
+        logrotate_node: "{{ NODE_HOSTNAME }}"
+        retention_days: "{{ skfence.LOGROTATE_ROTATE | default('7' if env == 'prod' else '3') }}"
 
     - name: Create the {{ app }} directories
       file:
@@ -179,6 +181,30 @@
         - { src: "dynamic-tls.yml.j2", dest: "tls.yml" }
         - { src: "routers.yml.j2", dest: "routers.yml" }
         - { src: "services.yml.j2", dest: "services.yml" }
+      tags:
+        - config
+        - dynamic
+
+    # Instance-owned dynamic files (skfence.EXTRA_DYNAMIC_FILES, default
+    # empty = no-op). See this service's README.
+    - name: Render instance EXTRA_DYNAMIC_FILES into the dynamic config dir(s)
+      include_tasks:
+        file: ../../shared/tasks/render_extra_dynamic_files.yml
+        apply:
+          tags:
+            - config
+            - dynamic
+      when: (skfence.EXTRA_DYNAMIC_FILES | default([])) | length > 0
+      vars:
+        extra_dynamic_files: "{{ skfence.EXTRA_DYNAMIC_FILES | default([]) }}"
+        extra_dynamic_config_dir: "/var/data/config/{{ app }}-{{ env }}"
+        extra_dynamic_acme_supported: false
+        extra_dynamic_reserved:
+          - routers.yml
+          - services.yml
+          - middlewares.yml
+          - tls.yml
+          - sksec.yml
       tags:
         - config
         - dynamic

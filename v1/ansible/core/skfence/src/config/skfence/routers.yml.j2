@@ -72,12 +72,18 @@ http:
 
     # Lowest-priority catch-alls: anything else on this domain/cluster gets
     # a branded error page rather than Traefik's bare 404.
+    # Traefik v3 rule syntax: HostRegexp takes a plain Go regexp (the v2
+    # {name:re} placeholder form never matches under v3), anchored, with
+    # the domain's dots escaped. priority must stay explicit and low: 0
+    # means "use the rule length" in Traefik, and these regexps are longer
+    # than a typical service Host() rule, so 0 would let the catch-all
+    # outrank real service routers.
     wildcard-domain:
-      rule: HostRegexp(`{subdomain:.+}.{{ base_domain }}`)
+      rule: HostRegexp(`^[a-z0-9-]+(\.[a-z0-9-]+)*\.{{ base_domain | replace('.', '\\.') }}$`)
       entryPoints:
         - websecure
       service: error-pages@file
-      priority: 0
+      priority: 1
 {% if acme_on %}
       tls:
         certResolver: main
@@ -88,11 +94,11 @@ http:
         - default@file
 
     wildcard-cluster:
-      rule: HostRegexp(`{subdomain:.+}.{{ base_cluster }}.{{ base_domain }}`)
+      rule: HostRegexp(`^[a-z0-9-]+(\.[a-z0-9-]+)*\.{{ base_cluster | replace('.', '\\.') }}\.{{ base_domain | replace('.', '\\.') }}$`)
       entryPoints:
         - websecure
       service: error-pages@file
-      priority: 0
+      priority: 1
 {% if acme_on %}
       tls:
         certResolver: main
