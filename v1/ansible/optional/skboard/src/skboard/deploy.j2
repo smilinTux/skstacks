@@ -135,6 +135,15 @@ if [ ! -f "${COMPOSE_FILE}" ]; then
     exit 1
 fi
 
+# Record whether Vikunja already exists BEFORE deploying: on a first install
+# its first task runs the initial SQLite migrations, and a forced restart
+# would kill it mid-migration and leave a half-migrated vikunja.db.
+if docker service inspect "${STACK_NAME}_vikunja" >/dev/null 2>&1; then
+    VIKUNJA_EXISTED=1
+else
+    VIKUNJA_EXISTED=0
+fi
+
 # Deploy stack
 echo -e "${YELLOW}Deploying stack configuration...${NC}"
 docker stack deploy \
@@ -146,9 +155,14 @@ docker stack deploy \
 # Wait for services to register
 sleep 5
 
-# Force update services
-echo -e "${YELLOW}Forcing service updates to pull latest images...${NC}"
-timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_vikunja || true
+# Force update services (redeploy only: restarts to pick up changed
+# bind-mounted config; skipped on first install, see VIKUNJA_EXISTED above)
+if [ "${VIKUNJA_EXISTED}" = "1" ]; then
+    echo -e "${YELLOW}Forcing service updates to pull latest images...${NC}"
+    timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_vikunja || true
+else
+    echo -e "${YELLOW}First install: skipping forced update so Vikunja's initial migrations can finish${NC}"
+fi
 
 # Wait for stabilization
 echo -e "${YELLOW}Waiting for services to stabilize...${NC}"

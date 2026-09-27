@@ -316,10 +316,10 @@
             \$target_redis = array('host' => '{{ app }}-{{ env }}_redis', 'password' => '', 'port' => 6379, 'timeout' => 0.0, 'read_timeout' => 0.0);
             if (!isset(\$config['redis']) || \$config['redis'] !== \$target_redis) {
               \$config['redis'] = \$target_redis;
-              file_put_contents(\$config_file, '<?php\n\$CONFIG = ' . var_export(\$config, true) . ';\n');
-              echo 'Redis configuration updated\n';
+              file_put_contents(\$config_file, '<?php' . PHP_EOL . '\$CONFIG = ' . var_export(\$config, true) . ';' . PHP_EOL);
+              echo 'Redis configuration updated' . PHP_EOL;
             } else {
-              echo 'Redis already configured correctly\n';
+              echo 'Redis already configured correctly' . PHP_EOL;
             }
           "
         fi
