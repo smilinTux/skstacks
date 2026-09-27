@@ -251,22 +251,41 @@
       tags:
         - post-deploy
 
+    - name: Announce the Nextcloud first-install wait budget
+      # The two waits below share one budget. Nextcloud has a Docker
+      # healthcheck, so Swarm reports the task Running only once it is
+      # healthy, i.e. after the entrypoint copy AND the first DB install. On
+      # a memory-pressured host that took ~9 minutes, so the budget is
+      # generous and tunable via skhub.first_install_wait_seconds.
+      debug:
+        msg: >-
+          Waiting up to {{ skhub.first_install_wait_seconds | default(1800) }}s
+          (skhub.first_install_wait_seconds) for the Nextcloud task to become
+          Running and again for its first-run install. A first install on a
+          busy host can take 10 minutes or more; the retry countdown below is
+          progress, not a hang (run with -vvv to see each task state).
+      tags:
+        - post-deploy
+
     - name: Wait for the swarm node running the Nextcloud task
       # Instances pin skhub to workers (skhub.placement_constraints), so the
       # Nextcloud container is usually NOT on the manager this play runs on.
       # Resolve the node running the task (same approach as skstor's garage
       # bootstrap) and delegate every docker exec below to it. Polls until a
-      # task reports Running; fails the play if none does.
+      # task reports Running (healthy); fails the play if none does within
+      # skhub.first_install_wait_seconds. Each attempt reports the current
+      # task states (e.g. "Starting 4 minutes ago") on stderr.
       shell: |
-        NODE=$(docker service ps "{{ app }}-{{ env }}_nextcloud" --filter "desired-state=running" --format "{{ '{{.Node}} {{.CurrentState}}' }}" | awk '$2 == "Running" {print $1; exit}')
+        STATES=$(docker service ps "{{ app }}-{{ env }}_nextcloud" --filter "desired-state=running" --format "{{ '{{.Node}} {{.CurrentState}}' }}")
+        NODE=$(printf '%s\n' "$STATES" | awk '$2 == "Running" {print $1; exit}')
         if [ -z "$NODE" ]; then
-          echo "{{ app }}-{{ env }}_nextcloud has no Running task on any swarm node yet" >&2
+          echo "{{ app }}-{{ env }}_nextcloud has no Running task yet; current: $(printf '%s' "${STATES:-no task scheduled}" | tr '\n' ';')" >&2
           exit 1
         fi
         echo "$NODE"
       register: nextcloud_node
       until: nextcloud_node.rc == 0 and (nextcloud_node.stdout | trim | length > 0)
-      retries: 60
+      retries: "{{ ((skhub.first_install_wait_seconds | default(1800) | int) + 4) // 5 }}"
       delay: 5
       changed_when: false
       tags:
@@ -294,13 +313,14 @@
       # On a fresh cluster the entrypoint is still installing Nextcloud when
       # the task reaches Running, and occ app/config commands only print
       # "Nextcloud is not installed" until it finishes (first install against
-      # MariaDB can take minutes). Poll up to 10 minutes, then fail.
+      # MariaDB can take minutes). Poll up to skhub.first_install_wait_seconds
+      # (default 30 minutes), then fail.
       shell: |
-        docker exec "{{ nextcloud_container.stdout | trim }}" php occ status --output=json 2>/dev/null | grep -q '"installed":true'
+        docker exec "{{ nextcloud_container.stdout | trim }}" php occ status --output=json 2>/dev/null | grep -q '"installed":true' || { echo "Nextcloud first-run install not finished yet" >&2; exit 1; }
       delegate_to: "{{ nextcloud_node.stdout | trim }}"
       register: nextcloud_installed
       until: nextcloud_installed.rc == 0
-      retries: 60
+      retries: "{{ ((skhub.first_install_wait_seconds | default(1800) | int) + 9) // 10 }}"
       delay: 10
       changed_when: false
       tags:
