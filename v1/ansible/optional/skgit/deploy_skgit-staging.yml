@@ -121,7 +121,7 @@
       loop:
         - { path: "/var/data/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
         # === DIRECT BIND MOUNTS - NO NAMED VOLUMES ===
-        - { path: "/var/data/{{ app }}-{{ env }}/data", owner: "1000", group: "1000", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/data", owner: "1000", group: "1000", mode: "0750" }
         - { path: "/var/data/{{ app }}-{{ env }}/config", owner: "1000", group: "1000", mode: "0755" }
         - { path: "/var/data/logs/{{ app }}-{{ env }}", owner: "1000", group: "1000", mode: "0755" }
         - { path: "/var/data/runtime/{{ app }}-{{ env }}/postgres", owner: "999", group: "999", mode: "0755" }
@@ -305,7 +305,19 @@
       shell: |
         chown -R 1000:1000 /var/data/{{ app }}-{{ env }}/data || true
         chown -R 1000:1000 /var/data/{{ app }}-{{ env }}/config || true
-        chmod -R 755 /var/data/{{ app }}-{{ env }}/data || true
+        # Never a blanket `chmod -R 755` on data/: it is Forgejo's /data and
+        # holds its private keys (ssh/ssh_host_*_key, forgejo/ssh/gitea.*,
+        # forgejo/jwt/private.pem) and every repository. Forgejo runs as the
+        # owner (container user 1000:1000), so: owner rwX (existing execute
+        # bits such as git hooks are kept), group read, other nothing; dirs
+        # end up 0750. Then private keys 0600 and ~git/.ssh 0700, the modes
+        # ssh-keygen / Forgejo create them with and OpenSSH StrictModes wants.
+        D=/var/data/{{ app }}-{{ env }}/data
+        chmod -R u+rwX,g+rX,g-w,o-rwx "$D" || true
+        for K in "$D/ssh" "$D/forgejo/ssh" "$D/forgejo/jwt" "$D/git/.ssh"; do
+          [ -d "$K" ] && find "$K" -type f ! -name '*.pub' -exec chmod 0600 {} + || true
+        done
+        [ -d "$D/git/.ssh" ] && chmod 0700 "$D/git/.ssh" || true
         # The config dir only, never -R: app.ini is 0600 (secret key, tokens,
         # DB and mail passwords) and must stay that way.
         chmod 755 /var/data/{{ app }}-{{ env }}/config || true
