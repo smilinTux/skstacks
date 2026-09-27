@@ -110,9 +110,18 @@
         group: root
         mode: '0644'
       loop:
-        - settings.yml.j2
         - uwsgi.ini.j2
         - limiter.toml.j2
+      tags:
+        - templates
+        - config
+
+    # settings.yml carries server.secret_key: rendered from the framework
+    # template, or skpeek.SETTINGS_YML verbatim when set, root:root 0640.
+    - name: Process {{ app }} settings.yml (template, or skpeek.SETTINGS_YML verbatim)
+      import_tasks: tasks/settings_yml.yml
+      vars:
+        skpeek_settings_dest: "/var/data/{{ app }}-{{ env }}/etc/settings.yml"
       tags:
         - templates
         - config

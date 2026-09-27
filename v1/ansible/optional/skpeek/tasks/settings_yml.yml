@@ -1,0 +1,86 @@
+---
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# SearXNG settings.yml for skpeek.
+#
+# Unset or empty skpeek.SETTINGS_YML: render the framework template
+# (src/skpeek/etc/settings.yml.j2), exactly as the config loop did before.
+# Set: the value is an instance-owned settings.yml (raw YAML string), written
+# verbatim. It must parse as a YAML mapping; anything else stops the deploy
+# here, before settings.yml is touched.
+#
+# Both paths write root:root 0640. The file carries server.secret_key, so it
+# must not be world-readable; the SearXNG entrypoint runs as root (and chowns
+# /etc/searxng to searxng:searxng), so the container still reads it.
+#
+# The value is never logged (no_log): it can carry server.secret_key.
+#
+# Expects: app, env, playbook_dir, skpeek, skpeek_settings_dest.
+
+- name: Validate skpeek.SETTINGS_YML
+  when: (skpeek.SETTINGS_YML | default('')) | length > 0
+  block:
+    - name: Assert skpeek.SETTINGS_YML is a string
+      ansible.builtin.assert:
+        that: skpeek.SETTINGS_YML is string
+        fail_msg: >-
+          skpeek.SETTINGS_YML must be a string holding the whole settings.yml
+          as raw YAML (a `|` block scalar in the vault), not a YAML
+          {{ skpeek.SETTINGS_YML | type_debug }}.
+        quiet: true
+
+    - name: Parse skpeek.SETTINGS_YML
+      block:
+        - name: Parse skpeek.SETTINGS_YML as YAML
+          ansible.builtin.set_fact:
+            skpeek_settings_doc: "{{ skpeek.SETTINGS_YML | from_yaml }}"
+          no_log: true
+      rescue:
+        - name: Fail on skpeek.SETTINGS_YML that is not YAML
+          ansible.builtin.fail:
+            msg: >-
+              skpeek.SETTINGS_YML does not parse as YAML (or holds Jinja that
+              failed to template: tag the vault value `!unsafe` to write it
+              literally). The error is hidden because the value can carry
+              server.secret_key; check it with
+              `python3 -c 'import sys,yaml; yaml.safe_load(sys.stdin)' < settings.yml`.
+
+    - name: Assert skpeek.SETTINGS_YML is a YAML mapping
+      ansible.builtin.assert:
+        that: skpeek_settings_doc is mapping
+        fail_msg: >-
+          skpeek.SETTINGS_YML must be a YAML mapping (a complete SearXNG
+          settings.yml), not a YAML {{ skpeek_settings_doc | type_debug }}.
+        quiet: true
+
+- name: Render {{ app }} settings.yml from the framework template
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/src/{{ app }}/etc/settings.yml.j2"
+    dest: "{{ skpeek_settings_dest }}"
+    owner: root
+    group: root
+    mode: '0640'
+  when: (skpeek.SETTINGS_YML | default('')) | length == 0
+
+- name: Write skpeek.SETTINGS_YML verbatim as {{ app }} settings.yml
+  ansible.builtin.copy:
+    content: "{{ skpeek.SETTINGS_YML }}"
+    dest: "{{ skpeek_settings_dest }}"
+    owner: root
+    group: root
+    mode: '0640'
+  no_log: true
+  when: (skpeek.SETTINGS_YML | default('')) | length > 0
