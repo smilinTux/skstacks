@@ -1,0 +1,5 @@
+# Second render pass: merged over sksync.example.yml to drive the optional
+# hooks down their "set" path. Fake values only.
+sksync:
+  SYNC_DATA_EXTRA_MOUNT: /var/syncthing/data
+  placement_constraints: ["node.role == worker"]

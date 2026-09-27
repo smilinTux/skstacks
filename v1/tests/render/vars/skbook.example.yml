@@ -1,0 +1,11 @@
+# Public, obviously fake example vault for the real-Ansible render gate
+# (v1/tests/render/render_playbooks.py). Minimal: only what the deploy
+# needs to render. example.test / 192.0.2.0/24 only; no real secrets.
+skbook:
+  CLUSTERNAME: render
+  DOMAIN: example.test
+  MYSQL_ROOT_PASSWORD: example-mysql-root-password-not-a-secret
+  DB_DATABASE: bookstack
+  DB_USER: bookstack
+  DB_PASSWORD: example-db-password-not-a-secret
+  APP_KEY: base64:ZXhhbXBsZS1hcHAta2V5LW5vdC1hLXNlY3JldA==

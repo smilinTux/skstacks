@@ -1,0 +1,10 @@
+# Second render pass: merged over skbackup.example.yml to drive the optional
+# hooks down their "set" path. Fake values only.
+skbackup:
+  passphrase: example-passphrase-not-a-secret
+  ACME_ENABLED: true
+  exclude: ["-*/cache/*"]
+  jobs:
+    - name: example-job
+      destination_url: "file:///backups/example"
+      sources: [/source/example/]

@@ -1,0 +1,15 @@
+# Public, obviously fake example vault for the real-Ansible render gate
+# (v1/tests/render/render_playbooks.py). Minimal: only what the deploy
+# needs to render. example.test / 192.0.2.0/24 only; no real secrets.
+skhub:
+  CLUSTERNAME: render
+  DOMAIN: example.test
+  nextcloud_admin_user: admin
+  nextcloud_admin_password: example-nextcloud-admin-password-not-a-secret
+  mysql_root_password: example-mysql-root-password-not-a-secret
+  mysql_user: nextcloud
+  mysql_password: example-mysql-password-not-a-secret
+  whiteboard_jwt_secret: example-whiteboard-jwt-secret-not-a-secret
+  turn_secret: example-turn-secret-not-a-secret
+  signaling_secret: example-signaling-secret-not-a-secret
+  internal_secret: example-internal-secret-not-a-secret

@@ -1,0 +1,22 @@
+# Public, obviously fake example vault for the real-Ansible render gate
+# (v1/tests/render/render_playbooks.py). Minimal: only what the deploy
+# needs to render. example.test / 192.0.2.0/24 only; no real secrets.
+skform:
+  CLUSTERNAME: render
+  DOMAIN: example.test
+  APP_ENV: dev
+  TOFU_LOG_LEVEL: info
+  STATE_BACKEND_TYPE: local
+  STATE_BACKEND_PATH: /var/data/skform-state
+  SKSTOR_ENABLED: false
+  PROVIDER_AWS_ENABLED: false
+  PROVIDER_AZURE_ENABLED: false
+  PROVIDER_GCP_ENABLED: false
+  PROVIDER_DIGITALOCEAN_ENABLED: false
+  PROVIDER_HETZNER_ENABLED: false
+  PROVIDER_PROXMOX_ENABLED: false
+  PROVIDER_VIRTUALBOX_ENABLED: false
+  PROVIDER_VSPHERE_ENABLED: false
+  PROVIDER_CLOUDFLARE_ENABLED: false
+  PROVIDER_LINODE_ENABLED: false
+  PROVIDER_SCALEWAY_ENABLED: false

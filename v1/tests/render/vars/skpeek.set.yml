@@ -1,0 +1,16 @@
+# Second render pass: merged over skpeek.example.yml to drive the optional
+# hooks down their "set" path. Fake values only.
+skpeek:
+  extra_env: {SEARXNG_EXAMPLE_FLAG: "true"}
+  # !unsafe: written verbatim, {{QUERY}} must survive (see skpeek README)
+  SETTINGS_YML: !unsafe |
+    general:
+      instance_name: "SKPeek"
+    server:
+      secret_key: "example-searxng-secret-not-a-secret"
+      limiter: false
+    engines:
+      - name: example-command
+        engine: command
+        command: ["echo", "{{QUERY}}"]
+        shortcut: exc

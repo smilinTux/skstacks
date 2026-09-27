@@ -1,0 +1,15 @@
+# Second render pass: merged over skhub.example.yml to drive the optional
+# hooks down their "set" path. Fake values only.
+skhub:
+  placement_constraints: ["node.role == worker"]
+  router_middlewares: [example-mw@file]
+  router_middlewares_pre: [example-pre@file]
+  tls_options: generic-tls@file
+  sticky_samesite: strict
+  storage_backend: skstor
+  s3_access_key: example-s3-access-key-not-a-secret
+  s3_secret_key: example-s3-secret-key-not-a-secret
+  REDIS_RESOURCES_LIMITS_MEMORY: 512M
+  REDIS_RESOURCES_RESERVATIONS_MEMORY: 64M
+  TZ: UTC
+  TALK_HPB_TZ: UTC

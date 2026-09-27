@@ -1,0 +1,6 @@
+# Public, obviously fake example vault for the real-Ansible render gate
+# (v1/tests/render/render_playbooks.py). Minimal: only what the deploy
+# needs to render. example.test / 192.0.2.0/24 only; no real secrets.
+skorch:
+  POSTGRES_PASSWORD: example-postgres-password-not-a-secret
+  REDIS_PASSWORD: example-redis-password-not-a-secret

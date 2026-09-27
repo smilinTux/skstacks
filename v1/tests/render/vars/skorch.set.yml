@@ -1,0 +1,10 @@
+# Second render pass: merged over skorch.example.yml to drive the optional
+# hooks down their "set" path. Fake values only.
+skorch:
+  enable_gpg_signer: true
+  GPG_SIGNER_API_SECRET: example-gpg-signer-api-secret-not-a-secret
+  TRUSTEE_A_KEY_ID: EXAMPLE0000000001
+  TRUSTEE_B_KEY_ID: EXAMPLE0000000002
+  TRUSTEE_C_KEY_ID: EXAMPLE0000000003
+  placement_constraints: ["node.role == worker"]
+  extra_env: {N8N_EXAMPLE_FLAG: "true"}

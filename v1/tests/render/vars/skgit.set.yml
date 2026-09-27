@@ -1,0 +1,6 @@
+# Second render pass: merged over skgit.example.yml to drive the optional
+# hooks down their "set" path. Fake values only.
+skgit:
+  DIND_NODE: render-node-1
+  METRICS_TOKEN: example-metrics-token-not-a-secret
+  placement_constraints: ["node.role == worker"]

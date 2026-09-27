@@ -1,0 +1,24 @@
+# Public, obviously fake example vault for the real-Ansible render gate
+# (v1/tests/render/render_playbooks.py). Minimal: only what the deploy
+# needs to render. example.test / 192.0.2.0/24 only; no real secrets.
+sksec:
+  APP_ENV: dev
+  BOUNCER_CPU_LIMIT: '0.25'
+  BOUNCER_CPU_RESERVATION: '0.05'
+  BOUNCER_MEMORY_LIMIT: 128M
+  BOUNCER_MEMORY_RESERVATION: 32M
+  COLLECTIONS: crowdsecurity/traefik crowdsecurity/linux
+  CROWDSEC_BOUNCER_API_KEY: example-crowdsec-bouncer-api-key-not-a-secret
+  CROWDSEC_CPU_LIMIT: '0.5'
+  CROWDSEC_CPU_RESERVATION: '0.1'
+  CROWDSEC_MEMORY_LIMIT: 512M
+  CROWDSEC_MEMORY_RESERVATION: 128M
+  GID: 1000
+  HEALTH_CHECK_INTERVAL: 30s
+  HEALTH_CHECK_RETRIES: 3
+  HEALTH_CHECK_START_PERIOD: 60s
+  HEALTH_CHECK_TIMEOUT: 10s
+  LOG_FORMAT: json
+  LOG_LEVEL: info
+  LOG_MAX_FILES: '3'
+  LOG_MAX_SIZE: 10m

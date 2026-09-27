@@ -1,0 +1,4 @@
+# Second render pass: merged over skmesh.example.yml to drive the optional
+# hooks down their "set" path. Fake values only.
+skmesh:
+  DASHBOARD_IMAGE: registry.example.test/skmesh-dashboard:1.0.0

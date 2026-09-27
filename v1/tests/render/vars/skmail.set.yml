@@ -1,0 +1,15 @@
+# Second render pass: merged over skmail.example.yml to drive the optional
+# hooks down their "set" path. Fake values only.
+skmail:
+  RESOURCES_LIMITS_CPUS: "1"
+  RESOURCES_LIMITS_MEMORY: 1G
+  RESOURCES_RESERVATIONS_CPUS: ""
+  RESOURCES_RESERVATIONS_MEMORY: ""
+  SSL_DOMAIN: mail.example.test
+  TLS_DOMAINS:
+    - mail.example.test
+    - {main: example.test, sans: [imap.example.test, smtp.example.test]}
+  MAIL_WEB_IMAGE: traefik/whoami:v1.11.0
+  MAIL_WEB_PLACEMENT_CONSTRAINTS: ["node.hostname == render-node-1", "node.role == manager"]
+  BOOTSTRAP_ACCOUNT: postmaster@example.test
+  BOOTSTRAP_PASSWORD: example-bootstrap-password-not-a-secret
