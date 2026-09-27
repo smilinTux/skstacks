@@ -48,6 +48,16 @@ providers:
     network: "cloud-socket-proxy-{{ env }}"
     exposedByDefault: false
     watch: true
+{% if skfenceha.ACME_DOCKER_PROVIDER_ENABLED | default(false) %}
+  # skfenceha.ACME_DOCKER_PROVIDER_ENABLED instance var (default false):
+  # standalone-container label discovery on the ACME master too, the same
+  # block the worker role always carries.
+  docker:
+    endpoint: "tcp://tasks.{{ app }}-{{ env }}_socket-proxy:2375"
+    network: "cloud-socket-proxy-{{ env }}"
+    exposedByDefault: false
+    watch: true
+{% endif %}
   file:
     directory: "/etc/traefik/dynamic"
     watch: true
