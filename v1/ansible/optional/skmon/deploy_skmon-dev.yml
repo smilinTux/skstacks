@@ -121,10 +121,10 @@
         src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
         dest: "{{ item.dest }}"
         owner: root
-        group: root
-        mode: '0644'
+        group: '{{ item.group | default("root") }}'
+        mode: '{{ item.mode | default("0644") }}'
       loop:
-        - { src: "prometheus.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/prometheus/prometheus.yml" }
+        - { src: "prometheus.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/prometheus/prometheus.yml", group: "65534", mode: "0640" }
         - { src: "grafana-datasources.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/grafana/provisioning/datasources/datasources.yml" }
         - { src: "grafana-dashboards.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/grafana/provisioning/dashboards/dashboards.yml" }
         - { src: "loki-config.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/loki/local-config.yaml" }
