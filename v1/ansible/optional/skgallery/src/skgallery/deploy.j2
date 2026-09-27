@@ -140,7 +140,8 @@ check_service_health() {
     local EXPECTED=$2
     local SERVICE_FULL="${STACK_NAME}_${SERVICE}"
 
-    for _ in $(seq 1 36); do
+    # Heavy first boot: poll for HEALTH_WAIT_SECONDS (default 900), then warn.
+    for _ in $(seq 1 $(( (${HEALTH_WAIT_SECONDS:-900} + 4) / 5 ))); do
         REPLICAS=$(docker service ls --filter "name=${SERVICE_FULL}" --format "{{ '{{' }}.Replicas{{ '}}' }}" 2>/dev/null || echo "0/0")
         [[ "$REPLICAS" == "${EXPECTED}/${EXPECTED}" ]] && break
         sleep 5

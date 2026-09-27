@@ -192,12 +192,27 @@
       tags:
         - deploy
 
+    - name: Announce the Garage first-install wait budget
+      debug:
+        msg: >-
+          Waiting up to {{ skstor.first_install_wait_seconds | default(600) }}s
+          (skstor.first_install_wait_seconds) for the Garage service to report
+          1/1 replicas. A first install (image pull plus Garage start) on a
+          busy host can take several minutes; the retry countdown below is
+          progress, not a hang (run with -vvv to see each state).
+      tags:
+        - post-deploy
+
     - name: Wait for Garage service to report 1/1 replicas
+      # Polls for skstor.first_install_wait_seconds (default 600), then fails
+      # the play. Each attempt reports the current replica count on stderr.
       shell: |
-        docker service ls --filter "name={{ app }}-{{ env }}_garage" --format "{{ '{{.Replicas}}' }}"
+        REPLICAS=$(docker service ls --filter "name={{ app }}-{{ env }}_garage" --format "{{ '{{.Replicas}}' }}")
+        [ "$REPLICAS" = "1/1" ] || echo "{{ app }}-{{ env }}_garage replicas: ${REPLICAS:-none yet}" >&2
+        echo "$REPLICAS"
       register: garage_replicas
       until: garage_replicas.stdout | trim == "1/1"
-      retries: 12
+      retries: "{{ ((skstor.first_install_wait_seconds | default(600) | int) + 4) // 5 }}"
       delay: 5
       changed_when: false
       tags:
