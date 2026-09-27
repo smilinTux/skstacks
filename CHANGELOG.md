@@ -3,7 +3,7 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
-## Unreleased (v2.19.0)
+## skstacks-v2.19.0 - 2026-09-26
 
 - v1: **skhub** post-deploy steps, including the notify_push install, now run on the node hosting Nextcloud. Instances pin skhub to workers (`skhub.placement_constraints`), but the container lookup and every `docker exec` ran on the play's manager, found no container there, and were silently skipped (`ignore_errors` plus a `length > 0` guard), so notify_push was never installed and its service failed forever with `exec .../custom_apps/notify_push/bin/x86_64/notify_push: no such file or directory`. The playbooks now resolve the node running `<app>-<env>_nextcloud` via `docker service ps` (polled up to 5 minutes, the same approach as skstor's garage bootstrap), `delegate_to` it for the container lookup and all `docker exec` steps, and wait up to 10 minutes for Nextcloud's first-run install before any `occ` call. The container lookup, Redis config/wait and notify_push steps now fail the play instead of being skipped; optional app and tuning steps (Collabora, Talk, recognize, ClamAV, maintenance) stay best-effort. Instance action: none; a redeploy installs notify_push where it was missing.
 - v1: **skmail**'s `user-patches.sh` only waits for `/etc/dms/tls` certificates and rewrites Dovecot's cert paths when `skmail.SSL_TYPE` is `manual` (the traefik-certs-dumper bind). With `letsencrypt` (default) or `self-signed` it no longer blocks startup for up to 300s, which outlasted the healthcheck and got the container killed as unhealthy in a loop. Instance action: none.
