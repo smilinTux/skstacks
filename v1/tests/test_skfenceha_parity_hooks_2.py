@@ -170,8 +170,8 @@ def test_worker_access_log_key_stays_bare_for_entrypoint():
     assert "\naccessLog:\n" in out
 
 
-def test_worker_global_empty_renders_null():
-    assert worker(WORKER_GLOBAL={})["global"] is None
+def test_worker_global_empty_omits_the_block():
+    assert "global" not in worker(WORKER_GLOBAL={})
 
 
 def test_worker_global_custom():

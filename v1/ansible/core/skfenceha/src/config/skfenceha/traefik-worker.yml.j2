@@ -105,8 +105,10 @@ entryPoints:
 
 {% if skfenceha.WORKER_GLOBAL is defined and skfenceha.WORKER_GLOBAL is mapping %}
 {# skfenceha.WORKER_GLOBAL instance var (map) replaces the defaults below;
-   {} renders a bare `global:` (Traefik's own defaults). #}
+   {} omits the global: block (Traefik's own defaults). #}
+{% if skfenceha.WORKER_GLOBAL %}
 global:
+{% endif %}
 {% for _global_name, _global_value in skfenceha.WORKER_GLOBAL.items() %}
   {{ _global_name }}: {{ _global_value | tojson }}
 {% endfor %}
