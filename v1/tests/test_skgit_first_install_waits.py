@@ -205,7 +205,11 @@ esac
 def _run_admin(tmp_path, playbook, **flags):
     task = _admin_task(playbook)
     skgit = {"admin_username": "skadmin", "admin_password": PASSWORD, "admin_email": "admin@example.org"}
-    ctx = {"app": "skgit", "env": "dev", "skgit": skgit}
+    # The playbook resolves these facts once (set_fact, no_log) from either key spelling.
+    ctx = {"app": "skgit", "env": "dev", "skgit": skgit,
+           "skgit_admin_username": skgit["admin_username"],
+           "skgit_admin_password": skgit["admin_password"],
+           "skgit_admin_email": skgit["admin_email"]}
     script = _ENV.from_string(_shell(task)).render(**ctx)
     task_env = {k: _ENV.from_string(str(v)).render(**ctx) for k, v in (task.get("environment") or {}).items()}
     fake = tmp_path / "docker"

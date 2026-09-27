@@ -66,15 +66,27 @@
       tags:
         - always
 
+    - name: Resolve the admin credentials (lowercase key wins, the documented uppercase key is accepted)
+      # The header documents ADMIN_EMAIL / ADMIN_PASSWORD (uppercase, like the
+      # other skgit secrets) while these tasks read admin_email/admin_password:
+      # an instance following the docs got no admin user. Accept both.
+      set_fact:
+        skgit_admin_password: "{{ skgit.admin_password | default(skgit.ADMIN_PASSWORD | default('')) }}"
+        skgit_admin_email: "{{ skgit.admin_email | default(skgit.ADMIN_EMAIL | default('')) }}"
+        skgit_admin_username: "{{ skgit.admin_username | default(skgit.ADMIN_USERNAME | default('skadmin')) }}"
+      no_log: true
+      tags:
+        - always
+
     - name: Refuse an admin bootstrap without credentials
       # skgit.admin_enabled asks for an admin user; without a password and an
       # email the bootstrap below used to be skipped silently.
       assert:
         that:
-          - not (skgit.admin_enabled | default(false) | bool) or (skgit.admin_password is defined and skgit.admin_email is defined)
+          - not (skgit.admin_enabled | default(false) | bool) or (skgit_admin_password | length > 0 and skgit_admin_email | length > 0)
         fail_msg: >-
-          skgit.admin_enabled is true but skgit.admin_password and/or
-          skgit.admin_email are not set. Set both in the vault, or leave
+          skgit.admin_enabled is true but no admin password and/or email is set
+          (skgit.admin_password/admin_email or ADMIN_PASSWORD/ADMIN_EMAIL). Set both in the vault, or leave
           skgit.admin_enabled unset/false to skip the admin bootstrap.
       tags:
         - always
@@ -324,8 +336,8 @@
       when:
         - deploy_output.rc == 0
         - skgit.admin_enabled | default(false) | bool
-        - skgit.admin_password is defined
-        - skgit.admin_email is defined
+        - skgit_admin_password | length > 0
+        - skgit_admin_email | length > 0
       tags:
         - post-deploy
         - admin
@@ -368,9 +380,9 @@
       args:
         executable: /bin/bash
       environment:
-        ADMIN_USERNAME: "{{ skgit.admin_username | default('skadmin') }}"
-        ADMIN_PASSWORD: "{{ skgit.admin_password }}"
-        ADMIN_EMAIL: "{{ skgit.admin_email }}"
+        ADMIN_USERNAME: "{{ skgit_admin_username }}"
+        ADMIN_PASSWORD: "{{ skgit_admin_password }}"
+        ADMIN_EMAIL: "{{ skgit_admin_email }}"
       delegate_to: "{{ forgejo_node.stdout | trim }}"
       register: forgejo_admin
       failed_when: false
@@ -378,8 +390,8 @@
       when:
         - deploy_output.rc == 0
         - skgit.admin_enabled | default(false) | bool
-        - skgit.admin_password is defined
-        - skgit.admin_email is defined
+        - skgit_admin_password | length > 0
+        - skgit_admin_email | length > 0
       tags:
         - post-deploy
         - admin
@@ -389,13 +401,13 @@
       fail:
         msg: >-
           skgit.admin_enabled is true but the Forgejo admin user
-          {{ skgit.admin_username | default('skadmin') }} was not created:
+          {{ skgit_admin_username }} was not created:
           {{ forgejo_admin.stdout | default('no output') }}
       when:
         - deploy_output.rc == 0
         - skgit.admin_enabled | default(false) | bool
-        - skgit.admin_password is defined
-        - skgit.admin_email is defined
+        - skgit_admin_password | length > 0
+        - skgit_admin_email | length > 0
         - forgejo_admin.rc | default(1) != 0
       tags:
         - post-deploy
