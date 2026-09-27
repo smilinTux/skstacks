@@ -1,0 +1,35 @@
+# Perplexica configuration. Every provider is optional: leave its API_KEY
+# empty (the default) to leave that provider unavailable rather than fail
+# closed with a shared literal secret (v1/tests/test_no_default_secrets.py).
+[GENERAL]
+SIMILARITY_MEASURE = "{{ skseek.SIMILARITY_MEASURE | default('cosine') }}"
+KEEP_ALIVE = "{{ skseek.KEEP_ALIVE | default('5m') }}"
+
+[MODELS.OPENAI]
+API_KEY = "{{ skseek.OPENAI_API_KEY | default('') }}"
+
+[MODELS.GROQ]
+API_KEY = "{{ skseek.GROQ_API_KEY | default('') }}"
+
+[MODELS.ANTHROPIC]
+API_KEY = "{{ skseek.ANTHROPIC_API_KEY | default('') }}"
+
+[MODELS.GEMINI]
+API_KEY = "{{ skseek.GEMINI_API_KEY | default('') }}"
+
+[MODELS.CUSTOM_OPENAI]
+API_KEY = "{{ skseek.CUSTOM_OPENAI_API_KEY | default('') }}"
+API_URL = "{{ skseek.CUSTOM_OPENAI_API_URL | default('') }}"
+MODEL_NAME = "{{ skseek.CUSTOM_OPENAI_MODEL_NAME | default('') }}"
+
+[MODELS.DEEPSEEK]
+API_KEY = "{{ skseek.DEEPSEEK_API_KEY | default('') }}"
+
+[MODELS.OLLAMA]
+API_URL = "{{ skseek.OLLAMA_API_URL | default('') }}"
+
+[MODELS.LM_STUDIO]
+API_URL = "{{ skseek.LM_STUDIO_API_URL | default('') }}"
+
+[API_ENDPOINTS]
+SEARXNG = "{{ skseek.SEARXNG_API_URL }}"

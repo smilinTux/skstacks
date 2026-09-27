@@ -154,8 +154,8 @@ sleep 5
 
 # Force update services
 echo -e "${YELLOW}Forcing service updates to pull latest images...${NC}"
-docker service update --force --detach=false ${STACK_NAME}_skpeek || true
-docker service update --force --detach=false ${STACK_NAME}_redis || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_skpeek || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_redis || true
 
 # Wait for stabilization
 echo -e "${YELLOW}Waiting for services to stabilize...${NC}"
@@ -167,12 +167,16 @@ docker service ls | grep "${STACK_NAME}"
 
 # Health check
 echo -e "${YELLOW}Checking service health...${NC}"
-REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_skpeek" --format "{% raw %}{{.Replicas}}{% endraw %}")
+for _ in $(seq 1 36); do
+    REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_skpeek" --format "{% raw %}{{.Replicas}}{% endraw %}")
+    [[ "$REPLICAS" == "1/1" ]] && break
+    sleep 5
+done
 REDIS_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_redis" --format "{% raw %}{{.Replicas}}{% endraw %}" | head -1)
 
 if [[ "$REPLICAS" == "1/1" ]]; then
     echo -e "${GREEN}${STACK_NAME} SKPeek is healthy and running!${NC}"
-    echo -e "${GREEN}Web UI: https://skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.${CLUSTERNAME:-{{ skpeek.CLUSTERNAME | default('cluster1') }}}.${DOMAIN:-{{ skpeek.DOMAIN | default('example.com') }}}${NC}"
+    echo -e "${GREEN}Web UI: https://skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.${CLUSTERNAME:-{{ skpeek.CLUSTERNAME | default(cluster_name) }}}.${DOMAIN:-{{ skpeek.DOMAIN | default(domain) }}}${NC}"
     echo -e "${GREEN}Redis: ${REDIS_REPLICAS}${NC}"
 else
     echo -e "${RED}${STACK_NAME} SKPeek health check: ${REPLICAS}${NC}"

@@ -6,18 +6,26 @@
 services:
   valkey:
     image: valkey/valkey:8-alpine
-    command:
-      - "valkey-server"
-      - "--appendonly"
-      - "yes"
-      - "--requirepass"
-      - "${VALKEY_PASSWORD}"
+    environment:
+      - VALKEY_PASSWORD=${VALKEY_PASSWORD}
+      # valkey-cli (8.x) reads REDISCLI_AUTH itself, so the healthcheck below
+      # never needs -a <password> on its own command line.
+      - REDISCLI_AUTH=${VALKEY_PASSWORD}
+    entrypoint:
+      - sh
+      - -c
+      - |
+        set -e
+        mkdir -p /usr/local/etc/valkey
+        umask 077
+        printf 'requirepass %s\n' "$$VALKEY_PASSWORD" > /usr/local/etc/valkey/valkey.conf
+        exec valkey-server /usr/local/etc/valkey/valkey.conf --appendonly yes
     networks:
       - skstacks
     volumes:
       - valkey-data:/data
     healthcheck:
-      test: ["CMD", "valkey-cli", "-a", "${VALKEY_PASSWORD}", "ping"]
+      test: ["CMD", "valkey-cli", "ping"]
       interval: 30s
       timeout: 5s
       retries: 3

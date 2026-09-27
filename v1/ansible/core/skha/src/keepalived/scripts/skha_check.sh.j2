@@ -23,10 +23,17 @@
 {% if item.container_pattern is defined %}
 # Only runs the port checks on nodes running a "{{ item.container_pattern }}"
 # container (Docker Swarm service name match); other nodes (for example the
-# ACME master, which fronts no worker ports) pass automatically.
+# ACME master, which fronts no worker ports) pass automatically, unless
+# `require: true` is set on this entry (see README.md), in which case a
+# missing container FAILS the check instead of skipping it.
 if command -v docker >/dev/null 2>&1; then
     if ! docker ps --filter "name={{ item.container_pattern }}" --filter "status=running" --format "{{ '{{' }}.Names{{ '}}' }}" | grep -q "{{ item.container_pattern }}"; then
+{% if item.require | default(false) %}
+        echo "{{ item.name }}: required container '{{ item.container_pattern }}' not running"
+        exit 1
+{% else %}
         exit 0
+{% endif %}
     fi
 fi
 {% endif %}

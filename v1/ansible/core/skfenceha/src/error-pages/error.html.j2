@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Error {{ status_code }} - SKStacks</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1e40af;
+            --secondary: #7c3aed;
+            --error: #dc2626;
+            --warning: #f59e0b;
+            --success: #10b981;
+            --bg: #0f172a;
+            --bg-light: #1e293b;
+            --bg-lighter: #334155;
+            --text: #f1f5f9;
+            --text-muted: #94a3b8;
+            --border: #475569;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, var(--bg) 0%, var(--bg-light) 100%);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 800px;
+            width: 100%;
+            text-align: center;
+        }
+
+        .logo {
+            margin-bottom: 30px;
+        }
+
+        .logo img {
+            max-width: 300px;
+            height: auto;
+            filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.3));
+        }
+
+        .error-code {
+            font-size: 120px;
+            font-weight: 900;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 20px;
+            line-height: 1;
+            text-shadow: 0 0 40px rgba(37, 99, 235, 0.3);
+        }
+
+        .error-title {
+            font-size: 32px;
+            font-weight: 700;
+            margin-bottom: 15px;
+            color: var(--text);
+        }
+
+        .error-message {
+            font-size: 18px;
+            color: var(--text-muted);
+            margin-bottom: 40px;
+        }
+
+        .actions {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-bottom: 40px;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-dark);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4);
+        }
+
+        .btn-secondary {
+            background: var(--bg-lighter);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-light);
+            transform: translateY(-2px);
+        }
+
+        .debug-toggle {
+            margin-top: 30px;
+            padding: 10px 20px;
+            background: transparent;
+            color: var(--text-muted);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+
+        .debug-toggle:hover {
+            color: var(--text);
+            border-color: var(--primary);
+        }
+
+        .debug-info {
+            display: none;
+            margin-top: 40px;
+            padding: 30px;
+            background: var(--bg-light);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            text-align: left;
+            max-height: 70vh;
+            overflow-y: auto;
+        }
+
+        .debug-info.visible {
+            display: block;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .debug-section {
+            margin-bottom: 25px;
+        }
+
+        .debug-section:last-child {
+            margin-bottom: 0;
+        }
+
+        .debug-section h3 {
+            color: var(--primary);
+            font-size: 18px;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--border);
+        }
+
+        .debug-item {
+            margin-bottom: 10px;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .debug-item:last-child {
+            border-bottom: none;
+        }
+
+        .debug-label {
+            color: var(--text-muted);
+            font-weight: 600;
+            display: inline-block;
+            min-width: 180px;
+            margin-right: 10px;
+        }
+
+        .debug-value {
+            color: var(--text);
+            font-family: 'Courier New', monospace;
+            word-break: break-all;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-left: 8px;
+        }
+
+        .status-healthy {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--success);
+        }
+
+        .status-warning {
+            background: rgba(245, 158, 11, 0.2);
+            color: var(--warning);
+        }
+
+        .status-error {
+            background: rgba(220, 38, 38, 0.2);
+            color: var(--error);
+        }
+
+        .json-preview {
+            background: var(--bg);
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: var(--text-muted);
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .footer {
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid var(--border);
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        .footer a {
+            color: var(--primary);
+            text-decoration: none;
+        }
+
+        .footer a:hover {
+            text-decoration: underline;
+        }
+
+        @media (max-width: 600px) {
+            .error-code {
+                font-size: 80px;
+            }
+
+            .error-title {
+                font-size: 24px;
+            }
+
+            .debug-label {
+                display: block;
+                margin-bottom: 5px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">
+            <img src="https://smilinTux.org/logos/skstacks-banner.png" alt="SKStacks Logo" onerror="this.style.display='none'">
+        </div>
+
+        <div class="error-code">{{ status_code }}</div>
+        <h1 class="error-title">{{ error_title }}</h1>
+        <p class="error-message">{{ error_message }}</p>
+
+        <div class="actions">
+            <a href="/" class="btn btn-primary">Go Home</a>
+            <a href="javascript:history.back()" class="btn btn-secondary">Go Back</a>
+        </div>
+
+        <button class="debug-toggle" onclick="toggleDebug()" id="debugToggle">
+            🔍 Show Debug Info (Ctrl+D)
+        </button>
+
+        <div class="debug-info" id="debugInfo">
+            <div class="debug-section">
+                <h3>📊 Request Information</h3>
+                <div class="debug-item">
+                    <span class="debug-label">Status Code:</span>
+                    <span class="debug-value">{{ status_code }}</span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">Request Path:</span>
+                    <span class="debug-value">{{ request_path }}</span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">Request Method:</span>
+                    <span class="debug-value">{{ request_method }}</span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">Client IP:</span>
+                    <span class="debug-value">{{ client_ip }}</span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">User Agent:</span>
+                    <span class="debug-value">{{ user_agent }}</span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">Timestamp:</span>
+                    <span class="debug-value">{{ timestamp }}</span>
+                </div>
+            </div>
+
+            <div class="debug-section">
+                <h3>🐳 Container Information</h3>
+                <div class="debug-item">
+                    <span class="debug-label">Container ID:</span>
+                    <span class="debug-value">{{ container_id }}</span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">Container Name:</span>
+                    <span class="debug-value">{{ container_name }}</span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">Service Name:</span>
+                    <span class="debug-value">{{ service_name }}</span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">Image:</span>
+                    <span class="debug-value">{{ container_image }}</span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">Hostname:</span>
+                    <span class="debug-value">{{ hostname }}</span>
+                </div>
+            </div>
+
+            <div class="debug-section">
+                <h3>🖥️ Node Information</h3>
+                <div class="debug-item">
+                    <span class="debug-label">Node ID:</span>
+                    <span class="debug-value">{{ node_id }}</span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">Node Hostname:</span>
+                    <span class="debug-value">{{ node_hostname }}</span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">Node Name:</span>
+                    <span class="debug-value">{{ node_name }} <span class="status-badge status-healthy">{{ node_name }}</span></span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">Node Role:</span>
+                    <span class="debug-value">{{ node_role }} <span class="status-badge status-healthy">{{ node_role }}</span></span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">Node Labels:</span>
+                    <span class="debug-value">{{ node_labels }}</span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">Node Address:</span>
+                    <span class="debug-value">{{ node_address }}</span>
+                </div>
+            </div>
+
+            <div class="debug-section">
+                <h3>🌐 Network Information</h3>
+                <div class="debug-item">
+                    <span class="debug-label">Network Mode:</span>
+                    <span class="debug-value">{{ network_mode }}</span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">Networks:</span>
+                    <span class="debug-value">{{ networks }}</span>
+                </div>
+            </div>
+
+            <div class="debug-section">
+                <h3>⚙️ Environment</h3>
+                <div class="debug-item">
+                    <span class="debug-label">Environment:</span>
+                    <span class="debug-value">{{ app_env }} <span class="status-badge status-healthy">{{ app_env }}</span></span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">Cluster:</span>
+                    <span class="debug-value">{{ cluster_name }}</span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">Domain:</span>
+                    <span class="debug-value">{{ domain }}</span>
+                </div>
+            </div>
+
+            <div class="debug-section">
+                <h3>📈 System Metrics</h3>
+                <div class="debug-item">
+                    <span class="debug-label">Uptime:</span>
+                    <span class="debug-value">{{ uptime }}</span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">Memory Usage:</span>
+                    <span class="debug-value">{{ memory_usage }}</span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">CPU Usage:</span>
+                    <span class="debug-value">{{ cpu_usage }}</span>
+                </div>
+            </div>
+
+            <div class="debug-section">
+                <h3>🏗️ Cluster Information</h3>
+                <div class="debug-item">
+                    <span class="debug-label">Swarm Cluster ID:</span>
+                    <span class="debug-value">{{ cluster_swarm_id }}</span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">Total Nodes:</span>
+                    <span class="debug-value">{{ cluster_nodes_count }}</span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">Total Services:</span>
+                    <span class="debug-value">{{ cluster_services_count }}</span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">Total Stacks:</span>
+                    <span class="debug-value">{{ cluster_stacks_count }}</span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">Total Networks:</span>
+                    <span class="debug-value">{{ cluster_networks_count }}</span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">Total Volumes:</span>
+                    <span class="debug-value">{{ cluster_volumes_count }}</span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">All Nodes:</span>
+                    <span class="debug-value"><pre class="json-preview" style="margin-top: 10px;">{{ cluster_nodes_json }}</pre></span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">All Services:</span>
+                    <span class="debug-value"><pre class="json-preview" style="margin-top: 10px;">{{ cluster_services_json }}</pre></span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">All Stacks:</span>
+                    <span class="debug-value"><pre class="json-preview" style="margin-top: 10px;">{{ cluster_stacks_json }}</pre></span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">All Networks:</span>
+                    <span class="debug-value"><pre class="json-preview" style="margin-top: 10px;">{{ cluster_networks_json }}</pre></span>
+                </div>
+                <div class="debug-item">
+                    <span class="debug-label">All Volumes:</span>
+                    <span class="debug-value"><pre class="json-preview" style="margin-top: 10px;">{{ cluster_volumes_json }}</pre></span>
+                </div>
+            </div>
+
+            <div class="debug-section">
+                <h3>🔍 Full Debug Data</h3>
+                <div class="json-preview">{{ debug_json }}</div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>SKStacks Infrastructure Framework | <a href="https://smilinTux.org" target="_blank">smilinTux.org</a></p>
+            <p>Press <kbd>Ctrl+D</kbd> to toggle debug information</p>
+        </div>
+    </div>
+
+    <script>
+        function toggleDebug() {
+            const debugInfo = document.getElementById('debugInfo');
+            const toggle = document.getElementById('debugToggle');
+            
+            if (debugInfo.classList.contains('visible')) {
+                debugInfo.classList.remove('visible');
+                toggle.textContent = '🔍 Show Debug Info (Ctrl+D)';
+            } else {
+                debugInfo.classList.add('visible');
+                toggle.textContent = '🔒 Hide Debug Info (Ctrl+D)';
+            }
+        }
+
+        // Keyboard shortcut: Ctrl+D or Cmd+D
+        document.addEventListener('keydown', function(e) {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
+                e.preventDefault();
+                toggleDebug();
+            }
+        });
+
+        // Also allow triple-click on error code to show debug
+        let clickCount = 0;
+        document.querySelector('.error-code').addEventListener('click', function() {
+            clickCount++;
+            if (clickCount === 3) {
+                toggleDebug();
+                clickCount = 0;
+            }
+            setTimeout(() => { clickCount = 0; }, 1000);
+        });
+    </script>
+</body>
+</html>
+

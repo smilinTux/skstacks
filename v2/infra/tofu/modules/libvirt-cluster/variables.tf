@@ -74,3 +74,8 @@ variable "registry_mirrors" {
   type        = list(string)
   default     = []
 }
+variable "disable_auto_updates" {
+  description = "Disable unattended-upgrades, the apt-daily timers/services, needrestart's auto-restart, motd-news, and snapd auto-refresh via cloud-init, before the HWE kernel package install runs. For a short-lived test cluster, a background reboot mid-run is pure risk. Default false renders byte-identical cloud-init to today."
+  type        = bool
+  default     = false
+}

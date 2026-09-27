@@ -54,7 +54,7 @@ sections:
         icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/default.svg
 {% endif %}
 {% if item.url is defined %}
-        url: {{ item.url | replace('${CLUSTERNAME}', skdash.CLUSTERNAME) | replace('${DOMAIN}', skdash.DOMAIN) }}
+        url: {{ item.url | replace('${CLUSTERNAME}', skdash.CLUSTERNAME | default(cluster_name)) | replace('${DOMAIN}', skdash.DOMAIN | default(domain)) }}
 {% endif %}
 {% if item.target is defined %}
         target: {{ item.target }}

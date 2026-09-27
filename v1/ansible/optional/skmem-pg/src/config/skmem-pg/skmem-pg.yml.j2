@@ -44,7 +44,7 @@ services:
   # Crash-consistent pg_dump backups (mirrors sksso/authentik postgres-db-backup).
   # Dumps -> /var/data/{{ app }}-{{ env }}/database-dump ; offsite'd by skbackup/Duplicati.
   skmem-pg-backup:
-    image: postgres:17
+    image: postgres:17.11
     env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}-backup.env
     environment:
       - PGTEMP=/dump/tmp

@@ -48,6 +48,8 @@ services:
     deploy:
       mode: replicated
       replicas: 1
+      placement:
+        constraints: {{ (skgit.placement_constraints | default([])) | tojson }}
       resources:
         limits:
           cpus: '${CPU_LIMIT}'
@@ -104,7 +106,7 @@ services:
     # start_period gives postgres time to become ready.
 
   postgres:
-    image: postgres:16
+    image: postgres:16.14@sha256:ff23cdce56cac62ada6f66013e1a50864c0abbe79d132d40b6e05bd80f378a70
     env_file: /var/data/config/skgit-{{ env }}/postgres.env
     environment:
       - PGTEMP=/var/lib/postgresql/data/tmp
@@ -116,6 +118,8 @@ services:
     deploy:
       mode: replicated
       replicas: 1
+      placement:
+        constraints: {{ (skgit.placement_constraints | default([])) | tojson }}
       resources:
         limits:
           cpus: '0.5'
@@ -131,12 +135,15 @@ services:
       start_period: 30s
 
   db-backup:
-    image: postgres:16
+    image: postgres:16.14@sha256:ff23cdce56cac62ada6f66013e1a50864c0abbe79d132d40b6e05bd80f378a70
     env_file: /var/data/config/skgit-{{ env }}/postgres-backup.env
     environment:
       - PGTEMP=/dump/tmp
     networks:
       - skgit-{{ env }}
+    deploy:
+      placement:
+        constraints: {{ (skgit.placement_constraints | default([])) | tojson }}
     volumes:
       # === NFS DATA - DIRECT BIND (NO NAMED VOLUME) ===
       - /var/data/skgit-{{ env }}/database-dump:/dump

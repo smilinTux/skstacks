@@ -71,11 +71,12 @@ resource "libvirt_cloudinit_disk" "node" {
     "local-hostname" = each.key
   })
   user_data = templatefile("${path.module}/cloud-init.yaml.tftpl", {
-    hostname       = each.key
-    admin_user     = var.admin_user
-    ssh_public_key = var.ssh_public_key
-    k3d            = each.value.worker && var.worker_k3d
-    daemon_json    = length(var.registry_mirrors) > 0 ? jsonencode({ "registry-mirrors" = var.registry_mirrors }) : ""
+    hostname             = each.key
+    admin_user           = var.admin_user
+    ssh_public_key       = var.ssh_public_key
+    k3d                  = each.value.worker && var.worker_k3d
+    daemon_json          = length(var.registry_mirrors) > 0 ? jsonencode({ "registry-mirrors" = var.registry_mirrors }) : ""
+    disable_auto_updates = var.disable_auto_updates
   })
   network_config = yamlencode({
     version = 2

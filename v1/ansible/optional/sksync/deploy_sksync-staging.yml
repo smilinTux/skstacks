@@ -91,6 +91,17 @@
         - { path: "/var/data/{{ app }}-{{ env }}/syncthing_config", owner: '1000', group: '1000', mode: '0755' }
         - { path: "/var/data/config/{{ app }}-{{ env }}", owner: 'root', group: 'root', mode: '0755' }
 
+    - name: Create the optional {{ app }} extra data directory (SYNC_DATA_EXTRA_MOUNT parity hook)
+      # Only needed when sksync.SYNC_DATA_EXTRA_MOUNT is set (see sksync.yml.j2);
+      # unused otherwise so other instances are unaffected.
+      file:
+        path: "/var/data/{{ app }}-{{ env }}/syncthing_data"
+        state: directory
+        owner: '1000'
+        group: '1000'
+        mode: '0755'
+      when: sksync.SYNC_DATA_EXTRA_MOUNT is defined
+
     - name: Ensure correct permissions on {{ app }} data directories (recursive fix)
       # UID 1000 = jz user on host, syncthing user in container
       shell: |

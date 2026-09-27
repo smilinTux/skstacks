@@ -92,6 +92,7 @@
         - { path: "/var/data/config/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/runtime/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/{{ app }}-{{ env }}/html", owner: "www-data", group: "www-data", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/html/data", owner: "www-data", group: "www-data", mode: "0755" }
         - { path: "/var/data/{{ app }}-{{ env }}/custom_apps", owner: "www-data", group: "www-data", mode: "0755" }
         - { path: "/var/data/{{ app }}-{{ env }}/config", owner: "www-data", group: "www-data", mode: "0755" }
         - { path: "/var/data/{{ app }}-{{ env }}/data", owner: "www-data", group: "www-data", mode: "0755" }
@@ -250,25 +251,58 @@
       tags:
         - post-deploy
 
+    - name: Wait for the swarm node running the Nextcloud task
+      # Instances pin skhub to workers (skhub.placement_constraints), so the
+      # Nextcloud container is usually NOT on the manager this play runs on.
+      # Resolve the node running the task (same approach as skstor's garage
+      # bootstrap) and delegate every docker exec below to it. Polls until a
+      # task reports Running; fails the play if none does.
+      shell: |
+        NODE=$(docker service ps "{{ app }}-{{ env }}_nextcloud" --filter "desired-state=running" --format "{{ '{{.Node}} {{.CurrentState}}' }}" | awk '$2 == "Running" {print $1; exit}')
+        if [ -z "$NODE" ]; then
+          echo "{{ app }}-{{ env }}_nextcloud has no Running task on any swarm node yet" >&2
+          exit 1
+        fi
+        echo "$NODE"
+      register: nextcloud_node
+      until: nextcloud_node.rc == 0 and (nextcloud_node.stdout | trim | length > 0)
+      retries: 60
+      delay: 5
+      changed_when: false
+      tags:
+        - post-deploy
+
     - name: Get Nextcloud container ID (any running container)
       shell: |
-        SERVICE_NAME="{{ app }}-{{ env }}_nextcloud"
-        TASK_ID=$(docker service ps ${SERVICE_NAME} --no-trunc --filter "desired-state=running" -q 2>/dev/null | head -1)
-        if [ -n "$TASK_ID" ]; then
-          CONTAINER_ID=$(docker ps -q --filter "label=com.docker.swarm.task.id=${TASK_ID}" | head -1)
-        fi
-        if [ -z "$CONTAINER_ID" ]; then
-          CONTAINER_ID=$(docker ps -q --filter "ancestor=nextcloud:31.0.14" | head -1)
-        fi
+        # Runs on the node hosting the task (often a worker), so no
+        # manager-only swarm service listing here: swarm names the container
+        # <service>.<slot>.<task id>, and the service label pins it exactly.
+        CONTAINER_ID=$(docker ps -q --filter "status=running" --filter "label=com.docker.swarm.service.name={{ app }}-{{ env }}_nextcloud" | head -1)
         if [ -n "$CONTAINER_ID" ]; then
           echo "$CONTAINER_ID"
         else
           echo "No Nextcloud container found" >&2
           exit 1
         fi
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
       register: nextcloud_container
       changed_when: false
-      ignore_errors: yes
+      tags:
+        - post-deploy
+
+    - name: Wait for Nextcloud to finish its first-run install
+      # On a fresh cluster the entrypoint is still installing Nextcloud when
+      # the task reaches Running, and occ app/config commands only print
+      # "Nextcloud is not installed" until it finishes (first install against
+      # MariaDB can take minutes). Poll up to 10 minutes, then fail.
+      shell: |
+        docker exec "{{ nextcloud_container.stdout | trim }}" php occ status --output=json 2>/dev/null | grep -q '"installed":true'
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
+      register: nextcloud_installed
+      until: nextcloud_installed.rc == 0
+      retries: 60
+      delay: 10
+      changed_when: false
       tags:
         - post-deploy
 
@@ -278,7 +312,7 @@
         if [ -n "$CONTAINER_ID" ]; then
           docker exec "$CONTAINER_ID" php -r "
             \$config_file = '/var/www/html/config/config.php';
-            \$config = include \$config_file;
+            include \$config_file; \$config = \$CONFIG;
             \$target_redis = array('host' => '{{ app }}-{{ env }}_redis', 'password' => '', 'port' => 6379, 'timeout' => 0.0, 'read_timeout' => 0.0);
             if (!isset(\$config['redis']) || \$config['redis'] !== \$target_redis) {
               \$config['redis'] = \$target_redis;
@@ -289,10 +323,10 @@
             }
           "
         fi
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
       register: redis_config_result
       changed_when: "'updated' in redis_config_result.stdout"
       when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
-      ignore_errors: yes
       tags:
         - post-deploy
         - redis
@@ -308,11 +342,11 @@
         done
         echo "Redis not ready after 60s" >&2
         exit 1
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
       register: redis_wait
       changed_when: false
       timeout: 70
       when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
-      ignore_errors: yes
       tags:
         - post-deploy
 
@@ -321,13 +355,13 @@
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
         docker exec "$CONTAINER_ID" php occ app:install notify_push 2>&1 || true
         docker exec "$CONTAINER_ID" php occ app:enable notify_push 2>&1
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
       register: notify_push_enable
       changed_when: "'enabled' in notify_push_enable.stdout"
       when: >-
         nextcloud_container is defined and nextcloud_container.stdout is defined
         and (nextcloud_container.stdout | trim | length > 0)
         and (redis_wait is not defined or redis_wait.rc | default(0) == 0)
-      ignore_errors: yes
       tags:
         - post-deploy
 
@@ -348,10 +382,10 @@
           docker exec "$CONTAINER_ID" chown www-data:www-data "$BIN"
         fi
         docker exec "$CONTAINER_ID" test -f "$BIN"
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
       register: notify_push_binary
       changed_when: false
       when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
-      ignore_errors: yes
       tags:
         - post-deploy
 
@@ -359,8 +393,8 @@
       shell: |
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
         docker exec "$CONTAINER_ID" php occ config:app:set notify_push base_endpoint --value="https://skhub.{{ skhub.CLUSTERNAME }}.{{ skhub.DOMAIN }}/push" 2>&1 || true
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
       when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
-      ignore_errors: yes
       tags:
         - post-deploy
 
@@ -368,7 +402,10 @@
       shell: |
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
         docker exec "$CONTAINER_ID" php occ config:system:set dbhost --value="db" 2>&1
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
       when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      # Best-effort: optional app/tuning step; a failure here must not block
+      # the deploy. Container lookup, Redis and notify_push are fatal above.
       ignore_errors: yes
       tags:
         - post-deploy
@@ -379,7 +416,10 @@
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
         docker exec "$CONTAINER_ID" php occ config:app:set whiteboard collabBackendUrl --value="wss://skhub.{{ skhub.CLUSTERNAME }}.{{ skhub.DOMAIN }}/whiteboard" 2>&1 || true
         docker exec "$CONTAINER_ID" php occ config:app:set whiteboard jwt_secret_key --value="{{ skhub.whiteboard_jwt_secret }}" 2>&1 || true
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
       when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      # Best-effort: optional app/tuning step; a failure here must not block
+      # the deploy. Container lookup, Redis and notify_push are fatal above.
       ignore_errors: yes
       no_log: true
       tags:
@@ -391,12 +431,15 @@
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
         docker exec "$CONTAINER_ID" php occ app:install richdocuments 2>&1 || true
         docker exec "$CONTAINER_ID" php occ app:enable richdocuments 2>&1
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
       register: richdocuments_enable
       changed_when: "'enabled' in richdocuments_enable.stdout"
       when: >-
         (skhub.enable_collabora | default(false))
         and nextcloud_container is defined and nextcloud_container.stdout is defined
         and (nextcloud_container.stdout | trim | length > 0)
+      # Best-effort: optional app/tuning step; a failure here must not block
+      # the deploy. Container lookup, Redis and notify_push are fatal above.
       ignore_errors: yes
       tags:
         - post-deploy
@@ -406,10 +449,13 @@
       shell: |
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
         docker exec "$CONTAINER_ID" php occ config:app:set richdocuments wopi_url --value="https://collabora.{{ skhub.CLUSTERNAME }}.{{ skhub.DOMAIN }}" 2>&1 || true
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
       when: >-
         (skhub.enable_collabora | default(false))
         and nextcloud_container is defined and nextcloud_container.stdout is defined
         and (nextcloud_container.stdout | trim | length > 0)
+      # Best-effort: optional app/tuning step; a failure here must not block
+      # the deploy. Container lookup, Redis and notify_push are fatal above.
       ignore_errors: yes
       tags:
         - post-deploy
@@ -420,12 +466,15 @@
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
         docker exec "$CONTAINER_ID" php occ app:install spreed 2>&1 || true
         docker exec "$CONTAINER_ID" php occ app:enable spreed 2>&1
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
       register: spreed_enable
       changed_when: "'enabled' in spreed_enable.stdout"
       when: >-
         (skhub.enable_talk_hpb | default(false))
         and nextcloud_container is defined and nextcloud_container.stdout is defined
         and (nextcloud_container.stdout | trim | length > 0)
+      # Best-effort: optional app/tuning step; a failure here must not block
+      # the deploy. Container lookup, Redis and notify_push are fatal above.
       ignore_errors: yes
       tags:
         - post-deploy
@@ -436,10 +485,13 @@
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
         docker exec "$CONTAINER_ID" php occ config:app:set spreed signaling_servers --value='{"servers":[{"server":"https://skhub.{{ skhub.CLUSTERNAME }}.{{ skhub.DOMAIN }}/standalone-signaling/","verify":true}],"secret":"{{ skhub.signaling_secret }}"}' 2>&1 || true
         docker exec "$CONTAINER_ID" php occ config:app:set spreed turn_servers --value='[{"schemes":"turn,turns","server":"skhub.{{ skhub.CLUSTERNAME }}.{{ skhub.DOMAIN }}:3478","secret":"{{ skhub.turn_secret }}","protocols":"udp,tcp"}]' 2>&1 || true
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
       when: >-
         (skhub.enable_talk_hpb | default(false))
         and nextcloud_container is defined and nextcloud_container.stdout is defined
         and (nextcloud_container.stdout | trim | length > 0)
+      # Best-effort: optional app/tuning step; a failure here must not block
+      # the deploy. Container lookup, Redis and notify_push are fatal above.
       ignore_errors: yes
       no_log: true
       tags:
@@ -451,9 +503,12 @@
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
         docker exec "$CONTAINER_ID" php occ app:install recognize 2>&1 || true
         docker exec "$CONTAINER_ID" php occ app:enable recognize 2>&1
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
       register: recognize_enable
       changed_when: "'enabled' in recognize_enable.stdout"
       when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      # Best-effort: optional app/tuning step; a failure here must not block
+      # the deploy. Container lookup, Redis and notify_push are fatal above.
       ignore_errors: yes
       tags:
         - post-deploy
@@ -463,9 +518,12 @@
       shell: |
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
         docker exec "$CONTAINER_ID" php occ recognize:download-models 2>&1 || true
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
       register: recognize_models
       changed_when: "'Downloading' in recognize_models.stdout"
       when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      # Best-effort: optional app/tuning step; a failure here must not block
+      # the deploy. Container lookup, Redis and notify_push are fatal above.
       ignore_errors: yes
       tags:
         - post-deploy
@@ -477,7 +535,10 @@
         docker exec "$CONTAINER_ID" php occ config:app:set files_antivirus av_host --value="{{ app }}-{{ env }}_clamav" 2>&1 || true
         docker exec "$CONTAINER_ID" php occ config:app:set files_antivirus av_port --value="3310" 2>&1 || true
         docker exec "$CONTAINER_ID" php occ config:app:set files_antivirus av_mode --value="daemon" 2>&1 || true
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
       when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      # Best-effort: optional app/tuning step; a failure here must not block
+      # the deploy. Container lookup, Redis and notify_push are fatal above.
       ignore_errors: yes
       tags:
         - post-deploy
@@ -486,9 +547,12 @@
       shell: |
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
         docker exec "$CONTAINER_ID" php occ db:add-missing-indices 2>&1 || true
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
       register: db_indices
       changed_when: "'No missing indices' not in db_indices.stdout"
       when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      # Best-effort: optional app/tuning step; a failure here must not block
+      # the deploy. Container lookup, Redis and notify_push are fatal above.
       ignore_errors: yes
       tags:
         - post-deploy
@@ -498,9 +562,12 @@
       shell: |
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
         docker exec "$CONTAINER_ID" php occ maintenance:repair --include-expensive 2>&1 || true
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
       register: maintenance_repair
       changed_when: "'Nothing to repair' not in maintenance_repair.stdout"
       when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      # Best-effort: optional app/tuning step; a failure here must not block
+      # the deploy. Container lookup, Redis and notify_push are fatal above.
       ignore_errors: yes
       tags:
         - post-deploy
@@ -510,7 +577,10 @@
       shell: |
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
         docker exec "$CONTAINER_ID" php occ config:system:set maintenance_window_start --value="2" --type="integer" 2>&1
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
       when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      # Best-effort: optional app/tuning step; a failure here must not block
+      # the deploy. Container lookup, Redis and notify_push are fatal above.
       ignore_errors: yes
       tags:
         - post-deploy
@@ -520,7 +590,10 @@
       shell: |
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
         docker exec "$CONTAINER_ID" php occ config:system:set memcache.locking --value="\\OC\\Memcache\\Redis" 2>&1
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
       when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      # Best-effort: optional app/tuning step; a failure here must not block
+      # the deploy. Container lookup, Redis and notify_push are fatal above.
       ignore_errors: yes
       tags:
         - post-deploy
@@ -531,7 +604,10 @@
       shell: |
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
         docker exec "$CONTAINER_ID" php occ config:system:set files.chunked_upload.max_size --value="10737418240" --type="integer" 2>&1
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
       when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      # Best-effort: optional app/tuning step; a failure here must not block
+      # the deploy. Container lookup, Redis and notify_push are fatal above.
       ignore_errors: yes
       tags:
         - post-deploy
@@ -542,7 +618,10 @@
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
         CURRENT=$(docker exec "$CONTAINER_ID" php occ config:system:get default_phone_region 2>/dev/null || echo "")
         [ -n "$CURRENT" ] || docker exec "$CONTAINER_ID" php occ config:system:set default_phone_region --value="{{ skhub.default_phone_region | default('US') }}" 2>&1
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
       when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      # Best-effort: optional app/tuning step; a failure here must not block
+      # the deploy. Container lookup, Redis and notify_push are fatal above.
       ignore_errors: yes
       tags:
         - post-deploy
@@ -559,7 +638,10 @@
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
         docker exec "$CONTAINER_ID" php occ config:system:set loglevel --value="2" --type="integer" 2>&1
         docker exec "$CONTAINER_ID" php occ config:system:set log_rotate_size --value="104857600" --type="integer" 2>&1
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
       when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+      # Best-effort: optional app/tuning step; a failure here must not block
+      # the deploy. Container lookup, Redis and notify_push are fatal above.
       ignore_errors: yes
       tags:
         - post-deploy

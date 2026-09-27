@@ -1,0 +1,61 @@
+# Traefik TLS options (dynamic/tls.yml).
+# This file is managed by Ansible - do not edit manually.
+#
+# TLS options only - no certificates here. Workers read the ACME master's
+# acme.json read-only; there is nothing for this file to add certificates to.
+# Generated from the Mozilla TLS Configuration Guidelines:
+# https://ssl-config.mozilla.org/
+
+tls:
+  options:
+    # traefik.http.routers.myrouter.tls.options=default@file
+    default:
+      minVersion: VersionTLS12
+      cipherSuites:
+        - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305
+        - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305
+
+    # traefik.http.routers.myrouter.tls.options=modern@file
+    modern:
+      minVersion: VersionTLS13
+      sniStrict: true
+
+    # traefik.http.routers.myrouter.tls.options=intermediate@file
+    intermediate:
+      cipherSuites:
+        - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305
+        - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305
+      minVersion: VersionTLS12
+      sniStrict: true
+
+    # traefik.http.routers.myrouter.tls.options=old@file
+    old:
+      cipherSuites:
+        - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305
+        - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305
+        - TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256
+        - TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256
+        - TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA
+        - TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA
+        - TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA
+        - TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA
+        - TLS_RSA_WITH_AES_128_GCM_SHA256
+        - TLS_RSA_WITH_AES_256_GCM_SHA384
+        - TLS_RSA_WITH_AES_128_CBC_SHA256
+        - TLS_RSA_WITH_AES_128_CBC_SHA
+        - TLS_RSA_WITH_AES_256_CBC_SHA
+        - TLS_RSA_WITH_3DES_EDE_CBC_SHA
+      minVersion: TLSv1
+      sniStrict: true

@@ -1,0 +1,169 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skmesh
+    env: prod
+    service_name: skmesh
+    service_type: optional
+  pre_tasks:
+    - name: Select vault file dynamically
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+      tags:
+        - config
+    - name: Load selected vault file
+      include_vars: "{{ vault_file_path }}"
+      tags:
+        - config
+
+    - name: Define default network variables when not provided in vault
+      set_fact:
+        app_networks: >-
+          {{ skmesh_prod_networks | default([{'name': 'skmesh-prod', 'subnet': '172.16.243.0/24'}, {'name': 'cloud-public-prod', 'subnet': '172.16.200.0/24'}]) }}
+      tags:
+        - networks
+        - config
+    - name: Deploying {{ app }}
+      debug:
+        msg: Running SKStacks deploy {{ app }} scripts...
+
+  tasks:
+    - name: Ensure overlay networks exist from app_networks variable
+      include_tasks: ../../shared/tasks/create_networks.yml
+      tags:
+        - networks
+
+    - name: Create the {{ app }} directories (direct bind mount structure)
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "/var/data/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/runtime/{{ app }}-{{ env }}/postgres", owner: "999", group: "999", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/database-dump", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/management", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/signal", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/relay", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/config/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
+
+    - name: Process {{ app }} environment templates
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: '0640'
+      loop:
+        - { src: "{{ app }}.sh.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env" }
+        - { src: "postgres.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/postgres.env" }
+        - { src: "postgres-backup.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/postgres-backup.env" }
+        - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env" }
+        - { src: "management.json.j2", dest: "/var/data/config/{{ app }}-{{ env }}/management.json" }
+        - { src: "turnserver.conf.j2", dest: "/var/data/config/{{ app }}-{{ env }}/turnserver.conf" }
+      tags:
+        - templates
+
+    - name: Process {{ app }} Docker Compose template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags:
+        - compose
+
+    - name: Create docker-compose.yml symlink
+      file:
+        src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags:
+        - compose
+
+    - name: Process deploy script template
+      template:
+        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/deploy"
+        owner: root
+        group: root
+        mode: '0755'
+      tags:
+        - deploy-script
+
+    - name: Create {{ app }} control script symlink
+      file:
+        src: /var/data/{{ app }}-{{ env }}/deploy
+        dest: /var/data/deploy_{{ app }}-{{ env }}
+        force: yes
+        owner: root
+        group: root
+        mode: '0755'
+        state: link
+      tags:
+        - deploy-script
+
+    - name: Deploy {{ app }} stack
+      shell: |
+        cd /var/data/{{ app }}-{{ env }}
+        ./deploy
+      register: deploy_output
+      tags:
+        - deploy
+
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags:
+        - deploy
+
+    - name: Wait for management container to start and fix permissions
+      shell: |
+        for i in {1..30}; do
+          if docker service ls --filter name={{ app }}-{{ env }}_management --format '{{ '{{' }}.Replicas{{ '}}' }}' | grep -q "1/1"; then
+            break
+          fi
+          sleep 2
+        done
+
+        chown -R root:root /var/data/{{ app }}-{{ env }}/management || true
+        chown -R root:root /var/data/{{ app }}-{{ env }}/signal || true
+        chown -R root:root /var/data/{{ app }}-{{ env }}/relay || true
+
+        chmod -R 755 /var/data/{{ app }}-{{ env }}/management || true
+      when: deploy_output.rc == 0
+      ignore_errors: yes
+      tags:
+        - post-deploy

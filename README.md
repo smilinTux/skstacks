@@ -9,9 +9,25 @@ Infrastructure-as-code configurations for the SKWorld sovereign stack.
 | Version | Status | Description |
 |---------|--------|-------------|
 | **[v2/](./v2/)** | 🟢 Active development | Multi-platform (Swarm + K8s + **RKE2**), pluggable secret backends |
-| *(v1 is private)* | Frozen | Docker Swarm only, ansible-vault secrets |
+| **[v1/](./v1/)** | 🟢 Published, one service at a time | Docker Swarm + Ansible, the framework current production clusters run on |
 
-See **[v2/README.md](./v2/README.md)** for the full v2 architecture and quick start.
+See **[v2/README.md](./v2/README.md)** for the full v2 architecture and quick
+start, or **[v1/README.md](./v1/README.md)** + the
+**[v1 service catalog](./docs/v1-service-catalog.md)** for v1.
+
+---
+
+## Framework / instance model (v1 and v2 alike)
+
+This repo is the **framework**: the Ansible roles/playbooks (v1) or
+Helm/Kustomize/Terraform (v2) that define each service, with no estate-specific
+values baked in. A separate, private **instance** repo pins this framework as
+a `framework/` git submodule at a released tag (`skstacks-vMAJOR.MINOR.PATCH`),
+and supplies everything specific to that estate: the inventory, the vault
+tree with real secrets, and which optional services it deploys. Upgrading an
+instance means bumping the submodule to a newer tag, not editing framework
+code in place. See **[v2/docs/INSTANCE-MODEL.md](./v2/docs/INSTANCE-MODEL.md)**
+for the full model (it predates v1's publication but applies the same way).
 
 ---
 

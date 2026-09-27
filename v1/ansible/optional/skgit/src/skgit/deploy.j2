@@ -102,9 +102,9 @@ docker stack deploy \
 sleep 5
 
 echo -e "${YELLOW}Updating services with new configuration...${NC}"
-docker service update --force --detach=false ${STACK_NAME}_forgejo || true
-docker service update --force --detach=false ${STACK_NAME}_postgres || true
-docker service update --force --detach=false ${STACK_NAME}_db-backup || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_forgejo || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_postgres || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_db-backup || true
 
 echo -e "${YELLOW}Waiting for services to stabilize...${NC}"
 sleep 10
@@ -113,7 +113,11 @@ echo -e "${GREEN}Service Status:${NC}"
 docker service ls | grep "${STACK_NAME}"
 
 echo -e "${YELLOW}Checking service health...${NC}"
-REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_forgejo" --format "{% raw %}{{.Replicas}}{% endraw %}")
+for _ in $(seq 1 36); do
+    REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_forgejo" --format "{% raw %}{{.Replicas}}{% endraw %}")
+    [[ "$REPLICAS" == "1/1" ]] && break
+    sleep 5
+done
 if [[ "$REPLICAS" == "1/1" ]]; then
     echo -e "${GREEN}${STACK_NAME} is healthy and running.${NC}"
     echo -e "${GREEN}Access at: ${INSTANCE_URL}${NC}"

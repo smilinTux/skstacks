@@ -19,7 +19,7 @@ services:
   # Provides an isolated Docker daemon for runner job containers.
   # =============================================================================
   dind:
-    image: docker:27-dind
+    image: docker:27.3.1-dind
     container_name: skgit-{{ env }}-dind
     hostname: skgit-{{ env }}-dind
     privileged: true
@@ -135,7 +135,7 @@ services:
   # Runs periodic cleanup to prevent the root FS from filling up with images.
   # =============================================================================
   dind-cleanup:
-    image: docker:27-cli
+    image: docker:27.3.1-cli
     container_name: skgit-{{ env }}-dind-cleanup
     restart: unless-stopped
     depends_on:

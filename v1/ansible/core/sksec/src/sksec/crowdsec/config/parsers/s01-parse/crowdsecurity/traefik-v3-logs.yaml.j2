@@ -1,0 +1,63 @@
+---
+# CrowdSec parser for Traefik v3.6.2 JSON logs
+# This parser correctly interprets Traefik v3.6.2's JSON log format
+# and maps fields to CrowdSec's expected meta fields
+# Location: /var/data/sksec-{{ sksec.APP_ENV }}/crowdsec/crowdsec-config/parsers/s01-parse/crowdsecurity/traefik-v3-logs.yaml
+
+type: parsers
+name: crowdsecurity/traefik-v3-logs
+stage: s01-parse
+description: Parse Traefik v3.6.2 access logs (JSON format)
+
+# Traefik v3.6.2 outputs JSON logs directly
+on_success: next_stage
+
+parse:
+  # Since logs are already JSON, we just need to unmarshal
+  - unmarshal:
+      target_field: traefik
+      format: json
+
+  # Extract client IP from ClientAddr (format: "IP:port" or just "IP")
+  - extract:
+      - type: grok
+        pattern: '(?P<client_ip>%{IP:ip}(?::%{INT:port})?)'
+        field: traefik.ClientAddr
+        on_error: skip
+        statics:
+          - meta: source_ip
+            expression: client_ip
+
+  # Extract HTTP version from RequestProtocol (format: "HTTP/1.1" -> "1.1")
+  - extract:
+      - type: grok
+        pattern: 'HTTP/(?P<http_version>%{BASE10NUM})'
+        field: traefik.RequestProtocol
+        on_error: skip
+
+  # Map Traefik v3.6.2 fields to expected meta fields
+  - statics:
+      - meta: log_type
+        value: http_access-log
+      - meta: service
+        expression: 'traefik.entryPointName'
+        on_error: skip
+      - meta: method
+        expression: 'traefik.RequestMethod'
+        on_error: skip
+      - meta: path
+        expression: 'traefik.RequestPath'
+        on_error: skip
+      - meta: status_code
+        expression: 'traefik.DownstreamStatus'
+        on_error: skip
+      - meta: duration_ms
+        expression: 'traefik.Duration'
+        on_error: skip
+      - meta: user_agent
+        expression: 'traefik.RequestUserAgent'
+        on_error: skip
+      - meta: host
+        expression: 'traefik.RequestHost'
+        on_error: skip
+

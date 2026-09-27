@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   n8n:
-    image: n8nio/n8n:latest
+    image: "{{ skorch_cfg.N8N_VERSION | default('n8nio/n8n@sha256:cae1f28d585a99d9ce9a56f82fbfc99fc100862ffef988d73fa2048d2687b0cc') }}"
     env_file: /var/data/config/skorch-{{ env }}/skorch.env
     logging:
       driver: json-file
@@ -21,6 +21,8 @@ services:
       - skorch-{{ env }}
       - cloud-public-{{ env }}
     deploy:
+      placement:
+        constraints: {{ (skorch_cfg.placement_constraints | default([])) | tojson }}
       update_config:
         parallelism: 1
         delay: 10s
@@ -35,7 +37,7 @@ services:
         - "traefik.enable=true"
         - "traefik.swarm.network=cloud-public-{{ env }}"
         # === TRAEFIK: ROUTERS ===
-        - "traefik.http.routers.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skorch{% if env != 'prod' %}-{{ env }}{% endif %}.{{ cluster_name | default(skorch_cfg.CLUSTERNAME | default('cluster1')) }}.{{ domain | default(skorch_cfg.DOMAIN | default('example.com')) }}`)"
+        - "traefik.http.routers.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skorch{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skorch_cfg.CLUSTERNAME | default(cluster_name) }}.{{ skorch_cfg.DOMAIN | default(domain) }}`)"
         - "traefik.http.routers.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
         - "traefik.http.routers.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
         - "traefik.http.routers.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
@@ -56,7 +58,7 @@ services:
         - "traefik.http.services.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie.sameSite=lax"
 
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg16@sha256:0a07c4114ba6d1d04effcce3385e9f5ce305eb02e56a3d35948a415a52f193ec
     env_file: /var/data/config/skorch-{{ env }}/postgres.env
     environment:
       - PGTEMP=/var/lib/postgresql/data/tmp
@@ -71,26 +73,31 @@ services:
       timeout: 5s
       retries: 10
     deploy:
+      placement:
+        constraints: {{ (skorch_cfg.placement_constraints | default([])) | tojson }}
       restart_policy:
         condition: on-failure
         delay: 5s
         max_attempts: 5
 
   redis:
-    image: redis:7-alpine
-    command: redis-server --dir /data --requirepass {{ skorch_cfg.REDIS_PASSWORD }}
+    image: redis:7.4.7-alpine
+    command: redis-server /usr/local/etc/redis/redis.conf
     networks:
       - skorch-{{ env }}
     volumes:
       - /var/data/runtime/skorch-{{ env }}/redis:/data
+      - /var/data/config/skorch-{{ env }}/redis.conf:/usr/local/etc/redis/redis.conf:ro
     deploy:
+      placement:
+        constraints: {{ (skorch_cfg.placement_constraints | default([])) | tojson }}
       restart_policy:
         condition: on-failure
         delay: 5s
         max_attempts: 5
 
   postgres-backup:
-    image: prodrigestivill/postgres-backup-local:16
+    image: prodrigestivill/postgres-backup-local:16-debian-d257e5d
     env_file: /var/data/config/skorch-{{ env }}/postgres-backup.env
     environment:
       POSTGRES_HOST: postgres
@@ -108,6 +115,8 @@ services:
     depends_on:
       - postgres
     deploy:
+      placement:
+        constraints: {{ (skorch_cfg.placement_constraints | default([])) | tojson }}
       restart_policy:
         condition: on-failure
 
@@ -139,6 +148,8 @@ services:
       start_period: 10s
       retries: 3
     deploy:
+      placement:
+        constraints: {{ (skorch_cfg.placement_constraints | default([])) | tojson }}
       restart_policy:
         # any, not on-failure: an unhealthy kill makes gunicorn exit 0, and
         # Swarm never restarts a clean exit under on-failure (service stuck 0/1).

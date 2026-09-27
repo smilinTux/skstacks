@@ -1,0 +1,9 @@
+# skorch redis auth config, rendered by Ansible from redis.conf.j2.
+# Do not edit by hand on the host -- rerun the deploy playbook instead.
+#
+# Keeps the Redis password off the container's own command line and out of
+# `docker service inspect` ContainerSpec.Args / /proc/<pid>/cmdline (both
+# readable by anyone with node or API read access). Mounted read-only, mode
+# 0640; redis-server reads the password from here instead of an argv flag.
+dir /data
+requirepass {{ skorch_cfg.REDIS_PASSWORD }}

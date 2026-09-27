@@ -1,0 +1,86 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+version: '3.8'
+
+# skbackup: Duplicati, the framework's own backup core service (see this
+# service's README.md for why it exists: v2's architecture already claims
+# a backup core service, but nothing implemented it, so every stack grew
+# its own DB-dump sidecar instead). Single replica, matching this
+# framework's single-manager Swarm pattern.
+#
+# skbackup-{{ env }}/{config,backups} are bind mounts onto this instance's
+# shared NFS filesystem (/var/data), not named Docker volumes, for the same
+# reason as every other v1 service: a named local-driver volume is
+# host-local, so a Swarm reschedule of this replicas=1 service would
+# silently start it on an empty volume on the new host.
+#
+# skbackup.source_path (default /var/data, the same shared filesystem every
+# service on this estate writes under) is bind-mounted read-only into
+# /source by default -- this service backs data up, it does not need write
+# access to it. See exclude.filter.j2 for what is excluded by default and
+# this service's README.md for the full design.
+
+networks:
+  skbackup-{{ env }}:
+    external: true
+  cloud-public-{{ env }}:
+    external: true
+
+services:
+  duplicati:
+    image: lscr.io/linuxserver/duplicati:{{ skbackup.DUPLICATI_VERSION | default('v2.4.0.0_stable_2026-09-03-ls309@sha256:e1fdac6133ad3579a4edbda69daa2ede1681b85a66f32a9ff668617e8e2d9326') }}
+    env_file: /var/data/config/skbackup-{{ env }}/skbackup.env
+    volumes:
+      - "{{ skbackup.source_path | default('/var/data') }}:/source:{{ 'ro' if (skbackup.source_read_only | default(true)) else 'rw' }}"
+      - /var/data/skbackup-{{ env }}/config:/config
+      - /var/data/skbackup-{{ env }}/backups:/backups
+      - /var/data/config/skbackup-{{ env }}/exclude.filter:/config/exclude.filter:ro
+    networks:
+      - cloud-public-{{ env }}
+      - skbackup-{{ env }}
+    deploy:
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          cpus: '{{ skbackup.CPU_LIMIT | default("1.0") }}'
+          memory: {{ skbackup.MEMORY_LIMIT | default("1024M") }}
+        reservations:
+          cpus: '{{ skbackup.CPU_RESERVATION | default("0.1") }}'
+          memory: {{ skbackup.MEMORY_RESERVATION | default("256M") }}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+
+        - "traefik.http.routers.skbackup{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skbackup{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skbackup.CLUSTERNAME }}.{{ skbackup.DOMAIN }}`)"
+        - "traefik.http.routers.skbackup{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
+        # TLS is always on (never a bare `tls:`/no-TLS router); the cert
+        # resolver is only attached when this instance has ACME enabled
+        # (skbackup.ACME_ENABLED, default false) -- with ACME off, Traefik
+        # falls back to its own default self-signed certificate, the same
+        # behaviour the house `tls: {}` dynamic-config idiom documents for
+        # skfence/skfenceha's own routers.
+        - "traefik.http.routers.skbackup{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
+{% if skbackup.ACME_ENABLED | default(false) %}
+        - "traefik.http.routers.skbackup{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
+{% endif %}
+        - "traefik.http.routers.skbackup{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
+        - "traefik.http.routers.skbackup{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares=default-no-crowdsec@file"
+        - "traefik.http.routers.skbackup{% if env != 'prod' %}-{{ env }}{% endif %}.service=skbackup{% if env != 'prod' %}-{{ env }}{% endif %}"
+        - "traefik.http.services.skbackup{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=8200"
+        - "traefik.http.services.skbackup{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.healthcheck.path=/"
+        - "traefik.http.services.skbackup{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.healthcheck.interval=30s"
+        - "traefik.http.services.skbackup{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.healthcheck.timeout=10s"

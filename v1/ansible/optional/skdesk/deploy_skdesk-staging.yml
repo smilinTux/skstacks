@@ -1,0 +1,187 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# skdesk: self-hosted RustDesk relay server (hbbs + hbbr).
+# TODO before deploy: set skdesk.PLACEMENT_HOSTNAME (REQUIRED, no default -
+# host networking means this service must be pinned to one real node
+# hostname, which a public template cannot guess) and optionally
+# skdesk.RELAY_HOSTNAME. The play below opens the RustDesk ports on that
+# node via UFW: 21115-21117/tcp, 21116/udp, 21118-21119/tcp.
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+# Step 1: Select manager node with failover
+# Run on all hosts to ensure it executes even with -l limit
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+# Step 2: Deploy to selected manager
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skdesk
+    env: staging
+    service_name: skdesk
+    service_type: optional
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Set skdesk default variables
+      # hbbs/hbbr attach to the host network (see skdesk.yml.j2), so unlike
+      # every other v1 service there is no app_networks fact here and
+      # nothing for this service to add to test_unique_subnets.py.
+      # skdesk.PLACEMENT_HOSTNAME has NO default here on purpose: it is
+      # per-instance node identity, not something safe to guess.
+      set_fact:
+        skdesk: "{{ skdesk_defaults | combine(skdesk | default({}), recursive=True) }}"
+      vars:
+        skdesk_defaults:
+          ENCRYPTED_ONLY: "1"
+          TZ: "Etc/UTC"
+          # RELAY_HOSTNAME, KEY, SERIAL, RENDEZVOUS_SERVERS are all optional
+          # and should be in vault if used (see skdesk.yml.j2 / skdesk.env.j2)
+      tags:
+        - always
+
+  tasks:
+    - name: Deploying {{ app }}
+      debug:
+        msg: Running SKStacks deploy {{ app }} scripts...
+
+    - name: Ensure {{ app }}-{{ env }} directories exist
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - /var/data/{{ app }}-{{ env }}
+        - /var/data/{{ app }}-{{ env }}/data
+        - /var/data/config/{{ app }}-{{ env }}
+
+    - name: Process {{ app }} environment templates
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: '{{ item.mode | default("0640") }}'
+      loop:
+        - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env" }
+        - { src: "{{ app }}.sh.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env" }
+      tags:
+        - templates
+
+    - name: Process {{ app }} Docker Compose template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags:
+        - compose
+
+    - name: Create {{ app }} docker-compose.yml symlink
+      file:
+        src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags:
+        - compose
+
+    - name: Process {{ app }} deploy script template
+      template:
+        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/deploy"
+        owner: root
+        group: root
+        mode: '0755'
+        force: yes
+      tags:
+        - templates
+        - deploy-script
+
+    - name: Create {{ app }} control script symlink
+      file:
+        src: /var/data/{{ app }}-{{ env }}/deploy
+        dest: /var/data/deploy_{{ app }}-{{ env }}
+        force: yes
+        owner: root
+        group: root
+        mode: '0755'
+        state: link
+        follow: no
+
+    - name: Open UFW for RustDesk hbbs/hbbr ports on the pinned node (idempotent)
+      ufw:
+        rule: allow
+        port: "{{ item.port }}"
+        proto: "{{ item.proto }}"
+        comment: "{{ app }}-{{ env }} (RustDesk)"
+      loop:
+        - { port: "21115", proto: "tcp" }   # hbbs NAT type test
+        - { port: "21116", proto: "tcp" }   # hbbs ID server (TCP punch)
+        - { port: "21116", proto: "udp" }   # hbbs ID server (UDP heartbeat)
+        - { port: "21117", proto: "tcp" }   # hbbr relay
+        - { port: "21118", proto: "tcp" }   # hbbs web client (optional)
+        - { port: "21119", proto: "tcp" }   # hbbr web client relay (optional)
+      delegate_to: "{{ skdesk.PLACEMENT_HOSTNAME }}"
+      tags:
+        - ufw
+
+    - name: Deploy {{ app }} stack
+      shell: |
+        cd /var/data/{{ app }}-{{ env }}
+        ./deploy
+      register: deploy_output
+      tags:
+        - deploy
+
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags:
+        - deploy
+
+    - name: Post-deploy Check SKDesk service health
+      shell: docker service ls --filter "name={{ app }}-{{ env }}_hbbs" --format "{{ '{{.Name}}\t{{.Replicas}}' }}"
+      register: skdesk_service_info
+      failed_when: false
+      changed_when: false
+      tags:
+        - deploy
+
+    - name: Print SKDesk service status
+      debug:
+        msg: "SKDesk service status: {{ skdesk_service_info.stdout | default('Service check completed') }}"
+      when: skdesk_service_info.stdout is defined
+      tags:
+        - deploy

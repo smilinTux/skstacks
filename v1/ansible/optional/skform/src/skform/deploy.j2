@@ -49,7 +49,7 @@ sleep 5
 
 # Force update services to pull latest images
 echo -e "${YELLOW}Forcing service updates to pull latest images...${NC}"
-docker service update --force --detach=false ${STACK_NAME}_opentofu || true
+timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_opentofu || true
 
 # Wait for services to stabilize
 echo -e "${YELLOW}Waiting for services to stabilize...${NC}"
@@ -61,7 +61,11 @@ docker service ls | grep "${STACK_NAME}"
 
 # Health check
 echo -e "${YELLOW}Checking service health...${NC}"
-REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_opentofu" --format "{% raw %}{{.Replicas}}{% endraw %}")
+for _ in $(seq 1 36); do
+    REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_opentofu" --format "{% raw %}{{.Replicas}}{% endraw %}")
+    [[ "$REPLICAS" == "1/1" ]] && break
+    sleep 5
+done
 if [[ "$REPLICAS" == "1/1" ]]; then
     echo -e "${GREEN}${STACK_NAME} is healthy and running!${NC}"
 

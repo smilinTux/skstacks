@@ -1,0 +1,115 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "baseBranches": [
+    "main"
+  ],
+  "dependencyDashboard": true,
+  "labels": [
+    "dependencies"
+  ],
+  "schedule": [
+    "before 6am on monday"
+  ],
+  "docker-compose": {
+    "enabled": false
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "v1/ansible compose templates (Jinja): literal image refs, digest-only refs, and Jinja default() pins, either as the tag or as the whole image reference",
+      "fileMatch": [
+        "^v1/ansible/.+\\.j2$"
+      ],
+      "matchStrings": [
+        "image:\\s*\"?(?<depName>[\\w.-]+(?:/[\\w.-]+)*):(?<currentValue>[\\w.-]+)(?:@(?<currentDigest>sha256:[a-f0-9]+))?\"?",
+        "image:\\s*\"?(?<depName>[\\w.-]+(?:/[\\w.-]+)*)@(?<currentDigest>sha256:[a-f0-9]+)\"?",
+        "image:\\s*\"?(?<depName>[\\w.-]+(?:/[\\w.-]+)*):\\{\\{\\s*[\\w.]+\\s*\\|\\s*default\\(\\s*'(?<currentValue>[\\w.-]+)(?:@(?<currentDigest>sha256:[a-f0-9]+))?'\\s*\\)\\s*\\}\\}\"?",
+        "image:\\s*\"?\\{\\{\\s*[\\w.]+\\s*\\|\\s*default\\(\\s*'(?<depName>[\\w.-]+(?:/[\\w.-]+)*)(?::(?<currentValue>[\\w.-]+))?(?:@(?<currentDigest>sha256:[a-f0-9]+))?'\\s*\\)\\s*\\}\\}\"?"
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "v2 plain-YAML app manifests, compose/swarm-compose files, and the 2 skfence Jinja compose templates: literal image refs (v2 has no Jinja default() image pins today; the one bash-style ${VERSION:-latest} reference in v2/apps/skfence is not extractable by this pattern and is called out in docs/dependency-updates.md)",
+      "fileMatch": [
+        "^v2/.+\\.ya?ml$",
+        "^v2/.+\\.ya?ml\\.j2$"
+      ],
+      "matchStrings": [
+        "image:\\s*\"?(?<depName>[\\w.-]+(?:/[\\w.-]+)*):(?<currentValue>[\\w.-]+)(?:@(?<currentDigest>sha256:[a-f0-9]+))?\"?",
+        "image:\\s*\"?(?<depName>[\\w.-]+(?:/[\\w.-]+)*)@(?<currentDigest>sha256:[a-f0-9]+)\"?"
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Group minor/patch/digest bumps per service directory (v1: the ansible role dir, v2: the app dir); majors are never grouped so each lands as its own reviewable PR",
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest"
+      ],
+      "groupName": "{{parentDir}}"
+    },
+    {
+      "description": "docker-mailserver majors need a human: prod was three majors behind what :latest resolved to before this framework started pinning (see test_skmail_dms_version_pinned.py)",
+      "matchPackageNames": [
+        "ghcr.io/docker-mailserver/docker-mailserver"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "postgres majors need a human: in-place major upgrades need a pg_upgrade/dump-restore step, never an unattended image swap",
+      "matchPackageNames": [
+        "postgres"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Authentik (sksso) majors need a human: config/schema migrations between majors are not always backward compatible",
+      "matchPackageNames": [
+        "ghcr.io/goauthentik/server"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Forgejo (skgit) majors need a human: git hosting is not something to auto-upgrade unattended",
+      "matchPackageNames": [
+        "codeberg.org/forgejo/forgejo",
+        "code.forgejo.org/forgejo/runner"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Nextcloud (skhub) majors need a human: app-store compatibility and data migrations across majors are not safe to automate",
+      "matchPackageNames": [
+        "nextcloud",
+        "nextcloud/aio-imaginary",
+        "ghcr.io/nextcloud-releases/whiteboard",
+        "ghcr.io/nextcloud-releases/aio-talk"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "dependencyDashboardApproval": true
+    }
+  ]
+}

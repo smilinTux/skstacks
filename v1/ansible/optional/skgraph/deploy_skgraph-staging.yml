@@ -47,16 +47,20 @@
     - name: Define network variables from vault (idempotent network creation)
       # ⚠️ IMPORTANT: Network subnets MUST match shared/networks registry
       # Reference: See shared/networks for all registered network subnets
-      # Networks are created idempotently by create_networks.yml shared task (included below)
-      # skgraph-staging: 172.16.173.0/24 (from shared/networks)
-      # cloud-public-staging: 172.16.201.0/24 (from shared/networks)
+      # Networks are created idempotently by:
+      #   1. create_networks.yml shared task (Ansible pre-deployment)
+      #   2. deploy.j2 script (runtime, enables rm stack && ./deploy workflow)
+      # Subnets from shared/networks:
+      #   skgraph-staging: 172.16.173.0/24
+      #   cloud-public-staging: 172.16.201.0/24
       set_fact:
-        app_networks: "{{ skgraph_staging_networks | default([
-          { 'name': 'skgraph-staging', 'subnet': '172.16.173.0/24' },
-          { 'name': 'cloud-public-staging', 'subnet': '172.16.201.0/24' }
+        app_networks: "{{ skgraph.networks | default([
+          { 'name': 'skgraph-staging', 'subnet': '172.16.173.0/24', 'driver': 'overlay', 'attachable': true },
+          { 'name': 'cloud-public-staging', 'subnet': '172.16.201.0/24', 'driver': 'overlay', 'attachable': true }
         ]) }}"
       tags:
         - networks
+        - config
 
   tasks:
     - name: Deploying {{ app }}

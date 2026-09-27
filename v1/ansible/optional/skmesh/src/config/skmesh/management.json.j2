@@ -1,0 +1,61 @@
+{%- if skmesh.CLOUDFLARED | default(false) -%}
+  {%- set _base_domain = skmesh.DOMAIN -%}
+{%- else -%}
+  {%- set _base_domain = skmesh.CLUSTERNAME ~ '.' ~ skmesh.DOMAIN -%}
+{%- endif -%}
+{
+  "Stuns": [
+    {
+      "Proto": "udp",
+      "URI": "stun:turn.{{ _base_domain }}:3478",
+      "Username": "",
+      "Password": null
+    }
+  ],
+  "TURNConfig": {
+    "Turns": [
+      {
+        "Proto": "udp",
+        "URI": "turn:turn.{{ _base_domain }}:3478",
+        "Username": "{{ skmesh.TURN_USER }}",
+        "Password": "{{ skmesh.TURN_PASSWORD }}"
+      }
+    ],
+    "CredentialsTTL": "12h",
+    "Secret": "{{ skmesh.TURN_SECRET }}",
+    "TimeBasedCredentials": false
+  },
+  "Relay": {
+    "Addresses": ["{{ skmesh.NETBIRD_RELAY_ENDPOINT }}"],
+    "CredentialsTTL": "24h",
+    "Secret": "{{ skmesh.NETBIRD_RELAY_AUTH_SECRET }}"
+  },
+  "Signal": {
+    "Proto": "https",
+    "URI": "skmesh.{{ _base_domain }}:443",
+    "Username": "",
+    "Password": null
+  },
+  "ReverseProxy": {
+    "TrustedHTTPProxies": [],
+    "TrustedHTTPProxiesCount": 0,
+    "TrustedPeers": ["0.0.0.0/0"]
+  },
+  "DisableDefaultPolicy": false,
+  "Datadir": "",
+  "DataStoreEncryptionKey": "{{ skmesh.NETBIRD_DATASTORE_ENC_KEY }}",
+  "StoreConfig": {
+    "Engine": "postgres"
+  },
+  "HttpConfig": {
+    "Address": "0.0.0.0:33073",
+    "AuthIssuer": "https://sso.{{ _base_domain }}/application/o/skmesh/",
+    "AuthAudience": "",
+    "AuthKeysLocation": "",
+    "AuthUserIDClaim": "sub",
+    "CertFile": "",
+    "CertKey": "",
+    "IdpSignKeyRefreshEnabled": false,
+    "OIDCConfigEndpoint": "https://sso.{{ _base_domain }}/application/o/skmesh/.well-known/openid-configuration"
+  }
+}

@@ -1,0 +1,102 @@
+#!/bin/bash
+# Certificate setup script for SKMail
+#
+# CERTIFICATE ARCHITECTURE:
+#   - Traefik has two certificate resolvers:
+#     1. 'main' - handles wildcards (*.example.com) - stored in acme.json
+#     2. 'mail' - handles mail.example.com specifically - stored in acme-mail.json
+#   - traefik-certs-dumper extracts from acme.json to /certs/
+#   - traefik-certs-dumper-mail extracts from acme-mail.json to /certs/
+#   - This creates a dedicated mail.example.com/ directory for DMS
+#
+# DMS/Postfix expects certificate files in /etc/dms/tls/
+# traefik-certs-dumper outputs 'certificate.crt' and 'privatekey.key'
+# This script verifies the certificates exist and are valid
+
+set -e
+
+CERTS_DIR="/var/data/runtime/{{ fence_service_name }}-{{ env }}/certs"
+
+# Default DOMAIN from env or fallback
+DOMAIN=$(grep '^DOMAIN=' /var/data/config/skmail-{{ env }}/skmail.sh.env 2>/dev/null | cut -d= -f2- || echo "example.com")
+HOSTNAME=$(grep '^HOSTNAME=' /var/data/config/skmail-{{ env }}/skmail.sh.env 2>/dev/null | cut -d= -f2- || echo "mail.${DOMAIN}")
+
+# Prefer dedicated mail certificate, fallback to wildcard
+MAIL_CERT_DIR="${CERTS_DIR}/${HOSTNAME}"
+WILDCARD_CERT_DIR="${CERTS_DIR}/*.${DOMAIN}"
+
+echo "Verifying certificates for ${HOSTNAME}..."
+echo ""
+
+# Function to verify certificate directory
+verify_cert_dir() {
+  local CERT_DIR="$1"
+  local CERT_TYPE="$2"
+  
+  if [ -d "$CERT_DIR" ]; then
+    echo "✓ Found ${CERT_TYPE} certificate directory: $CERT_DIR"
+    
+    if [ -f "$CERT_DIR/certificate.crt" ] && [ -f "$CERT_DIR/privatekey.key" ]; then
+      echo "✓ Certificate files present:"
+      ls -la "$CERT_DIR/"
+      
+      echo ""
+      echo "Certificate details:"
+      openssl x509 -in "$CERT_DIR/certificate.crt" -noout -subject -issuer -dates 2>/dev/null || echo "  (unable to read certificate details)"
+      return 0
+    else
+      echo "⚠ Certificate files missing in $CERT_DIR"
+      return 1
+    fi
+  else
+    echo "✗ ${CERT_TYPE} certificate directory not found: $CERT_DIR"
+    return 1
+  fi
+}
+
+# First, try the dedicated mail certificate (preferred)
+echo "=== Checking for dedicated mail certificate ==="
+if verify_cert_dir "$MAIL_CERT_DIR" "dedicated mail"; then
+  SELECTED_CERT_DIR="$MAIL_CERT_DIR"
+  echo ""
+  echo "✓ Using dedicated mail certificate from: $MAIL_CERT_DIR"
+else
+  echo ""
+  echo "=== Falling back to wildcard certificate ==="
+  if verify_cert_dir "$WILDCARD_CERT_DIR" "wildcard"; then
+    SELECTED_CERT_DIR="$WILDCARD_CERT_DIR"
+    echo ""
+    echo "✓ Using wildcard certificate from: $WILDCARD_CERT_DIR"
+    
+    # For wildcard, we need to create a symlink for Docker mount compatibility
+    # Docker can't mount paths with wildcards
+    echo ""
+    echo "Creating Docker mount-compatible symlink..."
+    if [ -L "$MAIL_CERT_DIR" ]; then
+      rm -f "$MAIL_CERT_DIR"
+    fi
+    ln -sfn "*.${DOMAIN}" "$MAIL_CERT_DIR"
+    echo "✓ Created symlink: ${HOSTNAME} -> *.${DOMAIN}"
+  else
+    echo ""
+    echo "✗ ERROR: No valid certificate found for ${HOSTNAME}"
+    echo ""
+    echo "Available certificate directories:"
+    ls -la "$CERTS_DIR/" 2>/dev/null || echo "  (certs directory not accessible)"
+    echo ""
+    echo "TROUBLESHOOTING:"
+    echo "  1. Ensure mail-web service is running:"
+    echo "     docker service ps skmail-{{ env }}_mail-web"
+    echo "  2. Check traefik-certs-dumper-mail logs:"
+    echo "     docker service logs {{ fence_service_name }}-{{ env }}_traefik-certs-dumper-mail --tail 50"
+    echo "  3. Check if acme-mail.json has the certificate:"
+    echo "     cat /var/data/runtime/{{ fence_service_name }}-{{ env }}/acme/acme-mail.json | jq '.mail.Certificates[].domain'"
+    echo "  4. Verify Traefik is routing to mail-web:"
+    echo "     curl -k https://${HOSTNAME}/"
+    exit 1
+  fi
+fi
+
+echo ""
+echo "Certificate setup verification complete"
+echo "Selected certificate directory: $SELECTED_CERT_DIR"

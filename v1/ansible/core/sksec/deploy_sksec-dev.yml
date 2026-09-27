@@ -1,0 +1,373 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+# Step 1: Select manager node with failover
+# Run on all hosts to ensure it executes even with -l limit
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+# Step 2: Deploy to selected manager
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: sksec
+    env: dev
+    service_name: sksec
+    service_type: core
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+    
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Define default network variables when not provided in vault
+      # ⚠️ IMPORTANT: Network subnets MUST match shared/networks registry
+      # Reference: See shared/networks for all registered network subnets
+      # Networks are created by create_networks.yml shared task (included below)
+      set_fact:
+        app_networks: "{{ sksec_dev_networks | default([
+          { 'name': 'sksec-dev', 'subnet': '172.16.240.0/24' },
+          { 'name': 'cloud-public-dev', 'subnet': '172.16.202.0/24' }
+        ]) }}"
+      tags:
+        - networks
+
+    - name: Remove ACME master label from all manager nodes (HA mode cleanup)
+      shell: |
+        for node in {{ (groups[target_manager_group | default('swarm_managers')] | default([])) | join(' ') }}; do
+          docker node inspect $node --format '{{'{{ .Spec.Labels }}'}}' | grep -q 'traefik.acme.master' && docker node update --label-rm traefik.acme.master $node || true
+        done
+      register: acme_label_remove_result
+      changed_when: acme_label_remove_result.rc == 0
+      failed_when: false
+      when: sksec.TRAEFIK_HA_MODE | default(false) | bool
+      delegate_to: >-
+        {{ selected_manager }}
+      tags:
+        - labels
+        - ha
+
+    - name: Label ACME master node for HA mode (if enabled)
+      shell: |
+        docker node update --label-add traefik.acme.master=true {{ selected_manager }}
+      register: acme_label_result
+      changed_when: "'Label added' in acme_label_result.stdout or acme_label_result.rc == 0"
+      failed_when: false
+      when: sksec.TRAEFIK_HA_MODE | default(false) | bool
+      delegate_to: >-
+        {{ selected_manager }}
+      tags:
+        - labels
+        - ha
+
+    - name: Check Traefik ACME master label presence (warn-only)
+      shell: |
+        for n in {{ (groups[target_manager_group | default('swarm_managers')] | default([])) | join(' ') }}; do
+          echo -n "$n: "; docker node inspect $n --format '{{'{{ .Spec.Labels }}'}}' | grep -q 'traefik.acme.master' && echo "✓ Has ACME master label" || echo "✗ Missing ACME master label"
+        done
+      register: label_check
+      changed_when: false
+      failed_when: false
+      tags:
+        - labels
+      delegate_to: >-
+        {{ selected_manager }}
+    - name: Show manual command to add ACME master label if missing (HA mode)
+      debug:
+        msg: |
+          {% if sksec.TRAEFIK_HA_MODE | default(false) | bool %}
+          HA Mode Enabled: One manager node must have the label: traefik.acme.master=true
+          Add it manually on the intended node, e.g.:
+          docker node update --label-add traefik.acme.master=true <node-hostname>
+          {% else %}
+          Single-Node Mode: No ACME master label required (only one manager node)
+          {% endif %}
+          Managers detected: {{ (groups[target_manager_group | default('swarm_managers')] | default([])) | join(', ') }}
+          Selected manager: {{ selected_manager }}
+      when: label_check is defined
+  tasks:
+    - name: deploying {{ app }}
+      debug:
+        msg: Running Skstack deploy {{ app }} scripts...
+
+    - name: Detect Traefik setup (skfence or skfenceha)
+      ansible.builtin.include_tasks: ../../shared/tasks/detect_traefik_setup.yml
+      tags:
+        - always
+        - traefik
+        - config
+
+    - name: Ensure logrotate is installed
+      apt:
+        name: logrotate
+        state: present
+        update_cache: yes
+
+    - name: Create the {{ app }} directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: 0755
+      loop:
+        - /var/data/{{ app }}-{{ env }}
+        - /var/data/config/{{ app }}-{{ env }}
+        - /var/data/runtime/{{ app }}-{{ env }}
+        - /var/data/{{ app }}-{{ env }}/crowdsec/config
+        - /var/data/{{ app }}-{{ env }}/crowdsec/crowdsec-config
+        - /var/data/runtime/{{ app }}-{{ env }}/crowdsec-db
+        - /var/data/runtime/{{ app }}-{{ env }}/crowdsec-config
+        # Log directories (HA-aware - created per-node at runtime if needed)
+        # Uses detected traefik_service_name (skfence or skfenceha)
+        - /var/data/logs/{{ traefik_service_name | default('skfence') }}-{{ env }}/traefik
+        - /var/data/logs/{{ traefik_service_name | default('skfence') }}-{{ env }}/traefik/acme-node
+        - /var/data/logs/{{ traefik_service_name | default('skfence') }}-{{ env }}/traefik/worker-base
+      # Note: worker-${HOSTNAME} and node-* subdirectories created per-node at runtime (not in playbook)
+
+    - name: Ensure secret directory exists
+      file:
+        path: /var/data/config/{{ app }}-{{ env }}/secret
+        state: directory
+        owner: root
+        group: root
+        mode: 0750
+
+    - name: Check if persisted bouncer key exists
+      stat:
+        path: /var/data/config/{{ app }}-{{ env }}/secret/bouncer.key
+      register: bouncer_key_file
+
+    - name: Generate and persist bouncer key if missing and not provided in vault
+      shell: |
+        umask 027
+        openssl rand -base64 32 | tr -d '\n' > /var/data/config/{{ app }}-{{ env }}/secret/bouncer.key
+      args:
+        executable: /bin/bash
+      when: not bouncer_key_file.stat.exists and ((sksec.CROWDSEC_BOUNCER_API_KEY | default('') | length) == 0)
+
+    - name: Read persisted bouncer key if present
+      slurp:
+        src: /var/data/config/{{ app }}-{{ env }}/secret/bouncer.key
+      register: persisted_bouncer_key
+      when: bouncer_key_file.stat.exists
+
+    - name: Set computed bouncer key (vault overrides persisted)
+      set_fact:
+        computed_bouncer_key: "{{ (sksec.CROWDSEC_BOUNCER_API_KEY | default('')) | ternary(sksec.CROWDSEC_BOUNCER_API_KEY, (persisted_bouncer_key.content | default('') | b64decode | trim)) }}"
+
+    - name: Fail if bouncer key still missing (safety)
+      fail:
+        msg: "CROWDSEC_BOUNCER_API_KEY could not be determined"
+      when: computed_bouncer_key | length == 0
+
+    - name: Copy {{ app }} config files except templates
+      copy:
+        src: "{{ item }}"
+        dest: /var/data/config/{{ app }}-{{ env }}/
+        owner: root
+        group: root
+        mode: 0644
+      with_fileglob:
+        - "src/config/{{ app }}/*"
+      when: "'.j2' not in item"
+      tags:
+        - config
+
+    - name: Copy {{ app }} base src files (excluding templates)
+      copy:
+        src: "{{ item }}"
+        dest: "/var/data/{{ app }}-{{ env }}/{{ item | basename }}"
+        owner: root
+        group: root
+        mode: '0644'
+      with_fileglob:
+        - "src/{{ app }}/*"
+      when: "'.j2' not in item"
+      tags:
+        - parentdir
+        - backup
+
+    - name: Check if {{ app }}.sh.env already exists on target
+      stat:
+        path: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env"
+      register: sh_env_exists
+      tags:
+        - templates
+
+    - name: Process {{ app }} environment templates from config directory (excluding .sh.env if it exists)
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: '{{ item.mode | default("0644") }}'
+      loop:
+        - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env", mode: "0640" }
+        - { src: "{{ app }}.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml", mode: "0644" }
+      when: item.src != "{{ app }}.sh.env.j2"
+      tags:
+        - templates
+
+    - name: Create {{ app }}.sh.env only if it doesn't exist
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.sh.env.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env"
+        owner: root
+        group: root
+        mode: '0640'
+      when: not sh_env_exists.stat.exists
+      tags:
+        - templates
+
+    - name: Ensure bouncer registered in CrowdSec LAPI with computed key (idempotent)
+      shell: |
+        set -euo pipefail
+        STACK_NAME={{ app }}-{{ env }}
+        CID=""
+        for i in {1..30}; do
+          CID=$(docker ps -q -f name=${STACK_NAME}_crowdsec | head -n1)
+          [ -n "$CID" ] && break || sleep 2
+        done
+        if [ -z "$CID" ]; then
+          echo "crowdsec container not found; skipping bouncer registration"
+          exit 0
+        fi
+        docker exec "$CID" cscli bouncers delete bouncer-traefik >/dev/null 2>&1 || true
+        docker exec "$CID" cscli bouncers add bouncer-traefik --key {{ computed_bouncer_key }}
+      args:
+        executable: /bin/bash
+      register: bouncer_add_output
+      changed_when: false
+      failed_when: false
+      tags:
+        - bouncer
+
+    - name: Process {{ app }} acquis.yaml template
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/src/{{ app }}/crowdsec/config/acquis.yaml.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/crowdsec/config/acquis.yaml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags:
+        - templates
+
+    - name: Copy acquis.yaml into crowdsec-config directory (for reference)
+      ansible.builtin.copy:
+        src: "/var/data/{{ app }}-{{ env }}/crowdsec/config/acquis.yaml"
+        dest: "/var/data/{{ app }}-{{ env }}/crowdsec/crowdsec-config/acquis.yaml"
+        owner: root
+        group: root
+        mode: '0644'
+        remote_src: yes
+      tags:
+        - templates
+
+    - name: Copy acquis.yaml into runtime config directory (for container)
+      ansible.builtin.copy:
+        src: "/var/data/{{ app }}-{{ env }}/crowdsec/config/acquis.yaml"
+        dest: "/var/data/runtime/{{ app }}-{{ env }}/crowdsec-config/acquis.yaml"
+        owner: root
+        group: root
+        mode: '0644'
+        remote_src: yes
+      tags:
+        - templates
+
+    # Traefik routing is now configured via Docker labels (Docker provider)
+    # No file provider deployment needed - all labels in compose file per new SOP
+    # Certificates: Provided by traefik-certs-dumper (runs on skfence/skfenceha ACME master node)
+
+    - name: Ensure Traefik dynamic directory exists
+      ansible.builtin.file:
+        path: "/var/data/config/{{ traefik_service_name | default('skfence') }}-{{ env }}/dynamic"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      tags:
+        - templates
+
+    - name: Deploy CrowdSec bouncer middleware configuration (flat structure)
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/sksec-dynamic.yml.j2"
+        dest: "/var/data/config/{{ traefik_service_name | default('skfence') }}-{{ env }}/dynamic/sksec.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags:
+        - templates
+
+    - name: Process {{ app }} deploy script template
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/deploy"
+        owner: root
+        group: root
+        mode: '0755'
+      tags:
+        - templates
+        - deploy-script
+
+    - name: create {{ app }} control script symlink
+      file:
+          src: /var/data/{{ app }}-{{ env }}/deploy 
+          dest: /var/data/deploy_{{ app }}-{{ env }}
+          force: yes
+          owner: root
+          group: root
+          mode: 0755
+          state: link 
+
+    - name: create {{ app }} docker-compose.yml symlink
+      file:
+        src: /var/data/config/{{ app }}-{{ env }}/{{ app }}.yml
+        dest: /var/data/config/{{ app }}-{{ env }}/docker-compose.yml
+        force: yes
+        owner: root
+        group: root
+        mode: 0755
+        state: link 
+
+    - name: Ensure overlay networks exist from sk_networks variable
+      include_tasks: ../../shared/tasks/create_networks.yml
+      tags:
+        - networks
+
+    - name: Deploy {{ app }} stack
+      shell: |
+        cd /var/data/{{ app }}-{{ env }}
+        ./deploy
+      register: deploy_output
+      tags:
+        - deploy
+
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags:
+        - deploy

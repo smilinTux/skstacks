@@ -1,6 +1,7 @@
 {% set base_domain = skfence.DOMAIN | default(domain) %}
 {% set base_cluster = skfence.CLUSTERNAME | default(cluster_name) %}
 {% set fqdn = 'skfence' + ('-' + env if env != 'prod' else '') + '.' + base_cluster + '.' + base_domain %}
+{% set dashboard_fqdn = skfence.DASHBOARD_HOST | default(fqdn) %}
 {% set acme_on = skfence.ACME_ENABLED | default(false) %}
 # Traefik HTTP routers (dynamic/routers.yml).
 # This file is managed by Ansible - do not edit manually.
@@ -12,7 +13,7 @@ http:
   routers:
     # Dashboard + API under one router so the browser only authenticates once.
     dashboard:
-      rule: Host(`{{ fqdn }}`) && (PathPrefix(`/api`) || PathPrefix(`/dashboard/`))
+      rule: Host(`{{ dashboard_fqdn }}`) && (PathPrefix(`/api`) || PathPrefix(`/dashboard/`))
       entryPoints:
         - websecure
       middlewares:
@@ -30,7 +31,7 @@ http:
 {% endif %}
 
     dashboard-redirect-http:
-      rule: Host(`{{ fqdn }}`) && Path(`/dashboard`)
+      rule: Host(`{{ dashboard_fqdn }}`) && Path(`/dashboard`)
       entryPoints:
         - web
       middlewares:
@@ -39,7 +40,7 @@ http:
       priority: 100
 
     dashboard-redirect-https:
-      rule: Host(`{{ fqdn }}`) && Path(`/dashboard`)
+      rule: Host(`{{ dashboard_fqdn }}`) && Path(`/dashboard`)
       entryPoints:
         - websecure
       middlewares:
