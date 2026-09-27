@@ -312,7 +312,7 @@
         if [ -n "$CONTAINER_ID" ]; then
           docker exec "$CONTAINER_ID" php -r "
             \$config_file = '/var/www/html/config/config.php';
-            \$config = include \$config_file;
+            include \$config_file; \$config = \$CONFIG;
             \$target_redis = array('host' => '{{ app }}-{{ env }}_redis', 'password' => '', 'port' => 6379, 'timeout' => 0.0, 'read_timeout' => 0.0);
             if (!isset(\$config['redis']) || \$config['redis'] !== \$target_redis) {
               \$config['redis'] = \$target_redis;
