@@ -151,8 +151,12 @@ serversTransport:
 {% endif %}
 
 {% if skfenceha.WORKER_TLS is defined and skfenceha.WORKER_TLS is mapping %}
-# skfenceha.WORKER_TLS instance var (map, rendered verbatim as a static tls:
-# block). Unset: none.
+# skfenceha.WORKER_TLS instance var (map, rendered verbatim). INERT: Traefik
+# ignores a top-level tls: block in static config (it silently drops unknown
+# keys), so this changes nothing at runtime. Kept only as a byte-parity
+# passthrough for a deploy whose static file already carries one. TLS options
+# and stores belong in the dynamic tls config (dynamic-tls.yml.j2, deployed as
+# tls.yml). Unset: none.
 tls: {{ skfenceha.WORKER_TLS | tojson }}
 
 {% endif %}

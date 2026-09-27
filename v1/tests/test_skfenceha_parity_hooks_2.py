@@ -181,3 +181,40 @@ def test_worker_global_custom():
 def test_worker_tls_block():
     tls = {"stores": {"default": {"acmeStorage": "/acme/acme.json"}}}
     assert worker(WORKER_TLS=tls)["tls"] == tls
+
+
+# WORKER_TLS is inert: Traefik's static config has no tls: section and
+# silently drops unknown top-level keys. The hook survives only as a
+# byte-parity passthrough, and both the template and the CHANGELOG must say
+# so, pointing at the dynamic tls config where TLS options actually live.
+
+def _worker_tls_comment():
+    lines = (SRC / "traefik-worker.yml.j2").read_text().splitlines()
+    idx = next(i for i, l in enumerate(lines) if l.startswith("tls: {{ skfenceha.WORKER_TLS"))
+    comment = []
+    for line in reversed(lines[:idx]):
+        if not line.startswith("#"):
+            break
+        comment.insert(0, line.lstrip("# ").strip())
+    return " ".join(comment)
+
+
+def test_worker_tls_template_comment_says_inert():
+    c = _worker_tls_comment()
+    assert "ignores" in c and "INERT" in c and "static" in c
+    assert "parity" in c
+    assert "dynamic-tls.yml.j2" in c and "tls.yml" in c
+
+
+def test_dynamic_tls_template_is_where_options_live():
+    d = yaml.safe_load((SRC / "dynamic-tls.yml.j2").read_text())
+    assert set(d) == {"tls"}
+    assert {"default", "modern", "intermediate", "old"} <= set(d["tls"]["options"])
+
+
+def test_changelog_says_worker_tls_is_inert():
+    changelog = (pathlib.Path(__file__).resolve().parents[2] / "CHANGELOG.md").read_text()
+    bullet = next(l for l in changelog.splitlines() if "skfenceha.WORKER_TLS" in l)
+    assert "a static `tls:` block; default none" not in bullet
+    assert "inert" in bullet.lower() and "parity" in bullet
+    assert "dynamic-tls.yml.j2" in bullet
