@@ -76,13 +76,17 @@
       exit 0
     fi
     echo "ERROR: network ${name} exists with subnet ${live}, but the configured subnet is ${subnet}."
-    echo "ERROR: refusing to delete it (other stacks may be attached). To adopt the live network, set the ${name} subnet to ${live} in the vault entry that feeds app_networks ({{ app | default('<app>') }}.networks or {{ app | default('<app>') }}_{{ env | default('<env>') }}_networks)."
+    echo "ERROR: refusing to delete it (other stacks may be attached). To adopt the live network, set the ${name} subnet to ${live} in the vault entry that feeds app_networks ({{ _vault_app }}.networks or {{ _vault_app }}_{{ env | default('<env>') }}_networks)."
     if [ "${name}" = "${owned}" ] && [ "${name#cloud-}" = "${name}" ]; then
       echo "ERROR: or, to recreate this service's own network with ${subnet}, remove the stack and rerun with -e network_recreate_on_mismatch=true."
     fi
     exit 1
   args:
     executable: /bin/bash
+  vars:
+    # Vault keys are Ansible variable names, so a hyphenated app (skmem-pg)
+    # is read as skmem_pg.networks / skmem_pg_<env>_networks.
+    _vault_app: "{{ (app | default('<app>')) | replace('-', '_') }}"
   loop: "{{ app_networks }}"
   loop_control:
     label: "{{ item.name }} ({{ item.subnet }})"

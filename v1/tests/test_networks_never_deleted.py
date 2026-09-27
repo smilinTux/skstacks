@@ -17,10 +17,15 @@ Rules now:
   * NETWORK_RECREATE_ON_MISMATCH=true  -> only the service's OWN network
     (<app>-<env>) may be recreated; shared cloud-* networks never are.
 
+skfence and skfenceha manage no networks in deploy.j2; their playbooks go
+through create_networks.yml, and the task's error must name the vault key each
+caller really reads (`<app>.networks` / `<app>_<env>_networks`, '-' as '_').
+
 Behavioural: every deploy.j2 with subnet-check logic is rendered and run, and
 the real create_networks.yml runs under ansible-playbook, both against a fake
 `docker` that keeps network state in a file and logs every call.
 """
+import json
 import os
 import pathlib
 import re
@@ -225,11 +230,9 @@ PLAY = """
 - hosts: localhost
   gather_facts: false
   vars:
-    app: zzsvc
-    env: dev
-    app_networks:
-      - {{name: zzsvc-dev, subnet: "172.16.77.0/24"}}
-      - {{name: cloud-public-dev, subnet: "172.16.202.0/24"}}
+    app: {app}
+    env: {env}
+    app_networks: {networks}
   environment:
     PATH: "{bindir}:{{{{ lookup('env', 'PATH') }}}}"
     DOCKERLOG: "{log}"
@@ -240,13 +243,18 @@ PLAY = """
 """
 
 
-def _run_play(tmp_path, live, knob=False):
+PLAY_NETS = {"zzsvc-dev": "172.16.77.0/24", "cloud-public-dev": "172.16.202.0/24"}
+
+
+def _run_play(tmp_path, live, knob=False, app="zzsvc", env="dev", nets=None):
+    nets = PLAY_NETS if nets is None else nets
     state = tmp_path / "netstate"
     state.write_text("".join(f"{n} {s}\n" for n, s in live.items()))
     log = tmp_path / "dockerlog"
     log.write_text("")
     play = tmp_path / "play.yml"
     play.write_text(PLAY.format(
+        app=app, env=env, networks=json.dumps([{"name": n, "subnet": v} for n, v in nets.items()]),
         bindir=_bin(tmp_path), log=log, state=state, reached=tmp_path / "reached",
         tasks=CREATE_NETWORKS,
     ))
@@ -262,9 +270,6 @@ def _run_play(tmp_path, live, knob=False):
         calls=log.read_text().splitlines(),
         state=dict(l.split(" ", 1) for l in state.read_text().splitlines() if l),
     )
-
-
-PLAY_NETS = {"zzsvc-dev": "172.16.77.0/24", "cloud-public-dev": "172.16.202.0/24"}
 
 
 def test_task_matching_subnet_is_reused(tmp_path):
@@ -305,6 +310,82 @@ def test_task_knob_never_recreates_shared_network(tmp_path):
     r = _run_play(tmp_path, {**PLAY_NETS, "cloud-public-dev": LIVE_OTHER}, knob=True)
     assert not _rm(r["calls"]), _rm(r["calls"])
     assert r["rc"] != 0, r["out"]
+    assert r["state"]["cloud-public-dev"] == LIVE_OTHER
+
+
+# --- every create_networks.yml caller: the error names the key it reads ------
+
+def _include_create_networks(path):
+    return re.search(r"include_tasks:\s*\S*shared/tasks/create_networks\.yml", path.read_text())
+
+
+TASK_PLAYBOOKS = sorted(
+    p for p in (V1 / "ansible").glob("*/*/deploy_*.yml") if _include_create_networks(p)
+)
+
+
+def _playbook_facts(path):
+    """(app, env, vault key feeding app_networks, default {net: subnet}) of a playbook."""
+    text = path.read_text()
+    app = re.search(r'^\s*app:\s*"?([\w.-]+)"?\s*$', text, re.M).group(1)
+    env = re.search(r'^\s*env:\s*"?([\w.-]+)"?\s*$', text, re.M).group(1)
+    m = re.search(r'app_networks:\s*(?:>-\s*)?"?\{\{\s*([\w.]+)\s*\|\s*default\((.*?)\)\s*\}\}', text, re.S)
+    assert m, f"{path}: no app_networks line"
+    nets = dict(re.findall(r"'name':\s*'([\w.-]+)',\s*'subnet':\s*'([\d./]+)'", m.group(2)))
+    return app, env, m.group(1), nets
+
+
+def test_discovered_create_networks_callers():
+    names = {p.parent.name for p in TASK_PLAYBOOKS}
+    assert {"skfence", "skfenceha", "skmem-pg"} <= names and len(TASK_PLAYBOOKS) >= 60, sorted(names)
+
+
+@pytest.mark.parametrize("pb", TASK_PLAYBOOKS, ids=lambda p: p.name)
+def test_task_callers_key_follows_the_named_convention(pb):
+    """create_networks.yml can only name `<app>.networks` / `<app>_<env>_networks`
+    (app with '-' as '_'); every caller must read one of those, or the error
+    would send an operator to a key nothing reads."""
+    app, env, key, _ = _playbook_facts(pb)
+    base = app.replace("-", "_")
+    assert key in (f"{base}.networks", f"{base}_{env}_networks"), (pb.name, key)
+
+
+# One playbook per shape: skfence/skfenceha (only shared cloud-* networks,
+# `<app>_<env>_networks`), skmem-pg (hyphenated app, `<app>.networks`).
+KEY_CASES = ["core/skfence", "core/skfenceha", "optional/skmem-pg"]
+
+
+@pytest.mark.parametrize("svc", KEY_CASES)
+def test_task_error_names_the_key_the_playbook_reads(svc, tmp_path):
+    name = svc.split("/")[1]
+    pb = V1 / f"ansible/{svc}/deploy_{name}-dev.yml"
+    app, env, key, nets = _playbook_facts(pb)
+    first = next(iter(nets))
+    r = _run_play(tmp_path, {**nets, first: LIVE_OTHER}, app=app, env=env, nets=nets)
+    assert not _rm(r["calls"]), _rm(r["calls"])
+    assert r["rc"] != 0, r["out"]
+    for needle in (first, LIVE_OTHER, nets[first], key):
+        assert needle in r["out"], f"{svc}: error does not mention {needle!r}:\n{r['out']}"
+
+
+@pytest.mark.parametrize("svc", ["skfence", "skfenceha"])
+def test_skfence_networks_only_via_create_networks(svc, tmp_path):
+    """skfence/skfenceha deploy.j2 must not manage networks itself (an older
+    copy removed and recreated them on a subnet mismatch); every env playbook
+    routes them through create_networks.yml, whose never-delete rules the
+    tests above cover. Their networks are all shared cloud-*, so the knob
+    cannot recreate any of them."""
+    deploy = (V1 / f"ansible/core/{svc}/src/{svc}/deploy.j2").read_text()
+    assert not re.search(r"\bdocker\s+network\s+(rm|create|remove)\b", deploy), svc
+    for env in ("dev", "staging", "prod"):
+        pb = V1 / f"ansible/core/{svc}/deploy_{svc}-{env}.yml"
+        assert _include_create_networks(pb), pb.name
+        _, _, _, nets = _playbook_facts(pb)
+        assert nets and all(n.startswith("cloud-") for n in nets), (pb.name, nets)
+    live = {"cloud-public-dev": LIVE_OTHER}
+    nets = _playbook_facts(V1 / f"ansible/core/{svc}/deploy_{svc}-dev.yml")[3]
+    r = _run_play(tmp_path, {**nets, **live}, knob=True, app=svc, env="dev", nets=nets)
+    assert not _rm(r["calls"]) and r["rc"] != 0, (r["calls"], r["out"])
     assert r["state"]["cloud-public-dev"] == LIVE_OTHER
 
 
