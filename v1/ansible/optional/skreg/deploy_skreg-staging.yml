@@ -83,7 +83,7 @@
         dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
         owner: root
         group: root
-        mode: '0644'
+        mode: '0600'
         trim_blocks: false
         lstrip_blocks: false
       tags:

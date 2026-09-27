@@ -187,7 +187,7 @@
         dest: "/var/data/{{ app }}-{{ env }}/config/app.ini"
         owner: "1000"
         group: "1000"
-        mode: "0644"
+        mode: "0600"
       tags:
         - config
 

@@ -74,7 +74,7 @@
         - { src: "{{ app }}-backup.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}-backup.env" }
       tags: [templates]
     - name: Process {{ app }} compose/stack template
-      template: { src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml", mode: '0644' }
+      template: { src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml", mode: '0600' }
       tags: [compose]
     - name: docker-compose.yml symlink
       file: { src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml", dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml", state: link, force: yes }
