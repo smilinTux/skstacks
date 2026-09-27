@@ -97,8 +97,10 @@
         group: root
         mode: '0644'
       vars:
-        log_path: "/var/data/logs/{{ app }}-{{ env }}/traefik/*/*.log"
-        retention_days: "{{ '7' if env == 'prod' else '3' }}"
+        log_dir: "/var/data/logs/{{ app }}-{{ env }}/traefik"
+        # traefik.yml.j2 names the log directory after this node
+        logrotate_node: "{{ NODE_HOSTNAME }}"
+        retention_days: "{{ skfence.LOGROTATE_ROTATE | default('7' if env == 'prod' else '3') }}"
 
     - name: Create the {{ app }} directories
       file:
