@@ -64,64 +64,51 @@ declare -A NETWORKS
 NETWORKS["{{ network.name }}"]="{{ network.subnet }}"
 {% endfor %}
 
-check_and_create_network() {
-    local network_name="$1"
-    local subnet="$2"
+# -----------------------------------------------------------------------------
+# Network safety: a deploy never deletes an existing network (same pattern in
+# every deploy.j2 and in shared/tasks/create_networks.yml).
+#   exists, same subnet      -> reused
+#   exists, other subnet     -> deploy stops; set the vault to the live subnet
+#   missing                  -> created
+# NETWORK_RECREATE_ON_MISMATCH=true (env, or vault network_recreate_on_mismatch)
+# may recreate only this service's own network; shared cloud-* never.
+# -----------------------------------------------------------------------------
+NETWORK_VAULT_KEY="skbook.networks"
+NETWORK_OWNED="{{ app }}-{{ env }}"
+NETWORK_RECREATE_ON_MISMATCH="${NETWORK_RECREATE_ON_MISMATCH:-{{ network_recreate_on_mismatch | default(false) | string | lower }}}"
 
-    echo -e "${BLUE}Checking network: ${network_name}${NC}"
-
-    if docker network ls --format "{% raw %}{{.Name}}{% endraw %}" | grep -q "^${network_name}$"; then
-        CURRENT_SUBNET=$(docker network inspect "${network_name}" --format '{% raw %}{{range .IPAM.Config}}{{.Subnet}}{{end}}{% endraw %}' 2>/dev/null | head -1)
-
-        if [ "${CURRENT_SUBNET}" = "${subnet}" ]; then
-            echo -e "${GREEN}Network ${network_name} exists with correct subnet ${subnet}${NC}"
-            return 0
-        else
-            echo -e "${YELLOW}Network ${network_name} has subnet ${CURRENT_SUBNET}, expected ${subnet}${NC}"
-            CONTAINERS=$(docker network inspect "${network_name}" --format '{% raw %}{{range .Containers}}{{.Name}} {{end}}{% endraw %}' 2>/dev/null)
-            if [ -n "${CONTAINERS}" ]; then
-                echo -e "${RED}Cannot update network ${network_name} - in use by: ${CONTAINERS}${NC}"
-                echo -e "${YELLOW}Please stop services using this network first${NC}"
-                return 1
-            fi
-
-            echo -e "${YELLOW}Recreating network ${network_name} with correct subnet...${NC}"
-            docker network rm "${network_name}" 2>/dev/null || true
-            sleep 2
-        fi
-    fi
-
-    echo -e "${YELLOW}Creating overlay network: ${network_name} (${subnet})${NC}"
-    if docker network create \
-        --driver overlay \
-        --attachable \
-        --subnet "${subnet}" \
-        "${network_name}"; then
-        echo -e "${GREEN}Network ${network_name} created successfully${NC}"
+ensure_network() {
+    local name="$1" subnet="$2" live
+    if ! docker network ls --format '{% raw %}{{.Name}}{% endraw %}' | grep -qx "${name}"; then
+        echo "Creating overlay network ${name} (${subnet})"
+        docker network create --driver overlay --attachable --subnet "${subnet}" "${name}" || return 1
         sleep 2
         return 0
-    else
-        echo -e "${RED}Failed to create network ${network_name}${NC}"
-        return 1
     fi
+    live=$(docker network inspect "${name}" --format '{% raw %}{{range .IPAM.Config}}{{.Subnet}} {{end}}{% endraw %}' 2>/dev/null | awk '{print $1}')
+    if [ -z "${live}" ] || [ "${live}" = "${subnet}" ]; then
+        echo "Network ${name} exists (subnet ${live:-unknown}), reusing it"
+        return 0
+    fi
+    if [ "${NETWORK_RECREATE_ON_MISMATCH}" = "true" ] && [ "${name}" = "${NETWORK_OWNED}" ] && [ "${name#cloud-}" = "${name}" ]; then
+        echo "NETWORK_RECREATE_ON_MISMATCH=true: recreating ${name} (${live} -> ${subnet})"
+        docker network rm "${name}" || return 1
+        sleep 2
+        docker network create --driver overlay --attachable --subnet "${subnet}" "${name}" || return 1
+        sleep 2
+        return 0
+    fi
+    echo "ERROR: network ${name} exists with subnet ${live}, but the configured subnet is ${subnet}." >&2
+    echo "ERROR: refusing to delete it (other stacks may be attached). To adopt the live network, set the ${name} subnet to ${live} in the vault (${NETWORK_VAULT_KEY})." >&2
+    if [ "${name}" = "${NETWORK_OWNED}" ] && [ "${name#cloud-}" = "${name}" ]; then
+        echo "ERROR: or, to recreate this service's own network with ${subnet}, remove the stack and rerun with NETWORK_RECREATE_ON_MISMATCH=true." >&2
+    fi
+    return 1
 }
 
-echo -e "${CYAN}=============================================================${NC}"
-echo -e "${CYAN}Network Configuration${NC}"
-echo -e "${CYAN}=============================================================${NC}"
-
-NETWORK_ERRORS=0
 for network_name in "${!NETWORKS[@]}"; do
-    subnet="${NETWORKS[$network_name]}"
-    if ! check_and_create_network "${network_name}" "${subnet}"; then
-        NETWORK_ERRORS=$((NETWORK_ERRORS + 1))
-    fi
+    ensure_network "${network_name}" "${NETWORKS[$network_name]}" || { echo "ERROR: network setup failed for ${network_name}" >&2; exit 1; }
 done
-
-if [ ${NETWORK_ERRORS} -gt 0 ]; then
-    echo -e "${RED}${NETWORK_ERRORS} network(s) failed to configure${NC}"
-    echo -e "${YELLOW}Attempting to continue deployment anyway...${NC}"
-fi
 
 echo -e "${CYAN}=============================================================${NC}"
 

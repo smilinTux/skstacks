@@ -43,43 +43,55 @@
     msg: "Creating networks: {{ app_networks | default([]) }}"
   run_once: true
 
-- name: Check existing network configuration
+# Network safety: never delete an existing network (same pattern as every
+# deploy.j2). Other stacks' services may be attached to it, so a delete would
+# cut them off. Exists with the configured subnet: reused. Exists with a
+# different subnet: this task fails and names the vault key to set to adopt
+# the live subnet. Missing: created by the next task.
+# network_recreate_on_mismatch=true (vault or -e) may recreate only this
+# service's own network ({{ app }}-{{ env }}); shared cloud-* networks never.
+- name: Check existing networks (never delete one whose subnet differs)
   shell: |
-    echo "Checking network {{ item.name }}..."
-    if docker network ls --format "{{ '{{' }}.Name{{ '}}' }}" | grep -q "^{{ item.name }}$"; then
-      echo "Network {{ item.name }} exists"
-      CURRENT_SUBNET=$(docker network inspect {{ item.name }} --format "{{ '{{' }}.IPAM.Config{{ '}}' }}" | grep -o '"Subnet":"[^"]*"' | cut -d'"' -f4 | head -1)
-      if [ "$CURRENT_SUBNET" != "{{ item.subnet }}" ]; then
-        echo "Network {{ item.name }} has subnet $CURRENT_SUBNET, updating to {{ item.subnet }}"
-        docker network rm {{ item.name }} 2>/dev/null || true
-        echo "update_required"
-      else
-        echo "Network {{ item.name }} already has correct subnet {{ item.subnet }}"
-        echo "no_update"
-      fi
-    else
-      echo "Network {{ item.name }} does not exist"
-      echo "create_required"
+    set -u
+    name="{{ item.name }}"
+    subnet="{{ item.subnet }}"
+    owned="{{ app | default('') }}-{{ env | default('') }}"
+    NETWORK_RECREATE_ON_MISMATCH="{{ network_recreate_on_mismatch | default(false) | bool | string | lower }}"
+    if ! docker network ls --format "{{ '{{' }}.Name{{ '}}' }}" | grep -qx "${name}"; then
+      echo "create_required: network ${name} does not exist"
+      exit 0
     fi
+    live=$(docker network inspect "${name}" --format "{{ '{{' }}range .IPAM.Config{{ '}}' }}{{ '{{' }}.Subnet{{ '}}' }} {{ '{{' }}end{{ '}}' }}" 2>/dev/null | awk '{print $1}')
+    if [ -z "${live}" ] || [ "${live}" = "${subnet}" ]; then
+      echo "no_update: network ${name} exists (subnet ${live:-unknown}), reusing it"
+      exit 0
+    fi
+    if [ "${NETWORK_RECREATE_ON_MISMATCH}" = "true" ] && [ "${name}" = "${owned}" ] && [ "${name#cloud-}" = "${name}" ]; then
+      echo "network_recreate_on_mismatch=true: recreating ${name} (${live} -> ${subnet})"
+      docker network rm "${name}" || exit 1
+      sleep 2
+      docker network create --driver overlay --attachable --subnet "${subnet}" "${name}" || exit 1
+      sleep 2
+      echo "recreated"
+      exit 0
+    fi
+    echo "ERROR: network ${name} exists with subnet ${live}, but the configured subnet is ${subnet}."
+    echo "ERROR: refusing to delete it (other stacks may be attached). To adopt the live network, set the ${name} subnet to ${live} in the vault entry that feeds app_networks ({{ app | default('<app>') }}.networks or {{ app | default('<app>') }}_{{ env | default('<env>') }}_networks)."
+    if [ "${name}" = "${owned}" ] && [ "${name#cloud-}" = "${name}" ]; then
+      echo "ERROR: or, to recreate this service's own network with ${subnet}, remove the stack and rerun with -e network_recreate_on_mismatch=true."
+    fi
+    exit 1
+  args:
+    executable: /bin/bash
   loop: "{{ app_networks }}"
   loop_control:
     label: "{{ item.name }} ({{ item.subnet }})"
   register: network_check
-  ignore_errors: true
+  changed_when: "'recreated' in network_check.stdout"
+  failed_when: network_check.rc != 0
   run_once: true
 
-- name: Remove networks that need subnet updates
-  shell: |
-    echo "Removing network {{ item.item.name }} for subnet update..."
-    docker network rm {{ item.item.name }}
-  loop: "{{ network_check.results | selectattr('stdout', 'match', 'update_required') | list }}"
-  loop_control:
-    label: "{{ item.item.name }} (removing for update)"
-  when: network_check is defined and network_check.results is defined
-  ignore_errors: true
-  run_once: true
-
-- name: Create or recreate networks with correct subnets
+- name: Create missing networks
   shell: |
     set -e
     echo "Creating/updating network {{ item.name }} with subnet {{ item.subnet }}..."
