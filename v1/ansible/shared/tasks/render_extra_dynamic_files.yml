@@ -1,0 +1,80 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# Render instance-owned Traefik dynamic config files (<svc>.EXTRA_DYNAMIC_FILES)
+# next to the framework's fixed ones. Included by the skfence/skfenceha env
+# playbooks right after their fixed dynamic config task, only when the list
+# is non-empty.
+#
+# Inputs:
+#   extra_dynamic_files          list of {src, dest[, acme]}
+#   extra_dynamic_config_dir     /var/data/config/<app>-<env>
+#   extra_dynamic_acme_supported true when a dynamic_acme/ dir exists (skfenceha)
+#   extra_dynamic_reserved       dest names owned by the framework
+#
+# src: an absolute path, or a path relative to the instance's inventory
+# directory (inventory_dir). The framework playbook's own playbook_dir is the
+# framework checkout, so it is never used as the base.
+# dest: a plain file name (no '/', ends .yml or .yaml) that does not shadow a
+# framework-owned file. acme: true also renders into dynamic_acme/.
+#
+# Every entry is validated before anything is rendered.
+
+- name: Validate EXTRA_DYNAMIC_FILES is a list
+  assert:
+    that:
+      - extra_dynamic_files is sequence
+      - extra_dynamic_files is not string
+      - extra_dynamic_files is not mapping
+    fail_msg: "EXTRA_DYNAMIC_FILES must be a list of {src, dest[, acme]} entries."
+    quiet: true
+
+- name: Validate EXTRA_DYNAMIC_FILES entries
+  assert:
+    that:
+      - item is mapping
+      - (item.src | default('') | string | length) > 0
+      - (item.dest | default('') | string) is match('^[A-Za-z0-9_][A-Za-z0-9._-]*\.ya?ml$')
+      - item.dest not in extra_dynamic_reserved
+      - (extra_dynamic_acme_supported | bool) or not (item.acme | default(false) | bool)
+    fail_msg: >-
+      EXTRA_DYNAMIC_FILES entry {{ item }} is invalid: it needs a non-empty src,
+      a dest that is a plain file name ending .yml or .yaml (no '/') and is not
+      one of {{ extra_dynamic_reserved | join(', ') }}, and acme: true only
+      where a dynamic_acme/ dir exists (skfenceha).
+    quiet: true
+  loop: "{{ extra_dynamic_files }}"
+  loop_control:
+    label: "{{ item.dest | default(item) }}"
+
+- name: Render EXTRA_DYNAMIC_FILES into dynamic/
+  template:
+    src: "{{ item.src if item.src is abs else inventory_dir ~ '/' ~ item.src }}"
+    dest: "{{ extra_dynamic_config_dir }}/dynamic/{{ item.dest }}"
+    mode: '0644'
+  loop: "{{ extra_dynamic_files }}"
+  loop_control:
+    label: "{{ item.dest }}"
+
+- name: Render EXTRA_DYNAMIC_FILES flagged acme into dynamic_acme/
+  template:
+    src: "{{ item.src if item.src is abs else inventory_dir ~ '/' ~ item.src }}"
+    dest: "{{ extra_dynamic_config_dir }}/dynamic_acme/{{ item.dest }}"
+    mode: '0644'
+  loop: "{{ extra_dynamic_files }}"
+  loop_control:
+    label: "{{ item.dest }}"
+  when: item.acme | default(false) | bool
