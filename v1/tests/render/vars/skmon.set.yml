@@ -7,3 +7,5 @@ skmon:
     - job_name: example-dns
       dns_sd_configs:
         - {names: [tasks.example], type: A, port: 9100}
+  replicas: 0
+  GRAFANA_PLUGINS: [grafana-clock-panel]
