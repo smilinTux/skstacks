@@ -65,7 +65,7 @@ tag yet.
 | [sksync](#sksync) | optional | Syncthing continuous file sync | Syncthing `2.0.13` (hardcoded) | none | `sksync[-env].<cluster>.<domain>`, `:22000` tcp/udp | `sksync-<env>/sync-data` | `SYNCWALLET`, `ENCRYPTION_TOKEN`, `UUID`, `TZ` | none | v2.16.0 |
 | [skvector](#skvector) | optional | Qdrant vector database | Qdrant `v1.17.0` | none | `skvector[-env].<cluster>.<domain>` (HTTP+gRPC) | `skvector-<env>/{storage,snapshots}` | `CLUSTERNAME`, `DOMAIN` | `QDRANT_API_KEY` (unset = no auth) | v2.12.0 |
 | [skwhoami](#skwhoami) | optional | traefik/whoami echo/test service | traefik/whoami `v1.12.0` | none | 3x `skwhoami0{1,2,3}[-env].<cluster>.<domain>` | none (stateless) | `CLUSTERNAME`, `DOMAIN` | none | v2.19.0 |
-| [skbackup](#skbackup) | optional | Duplicati framework-wide backup | linuxserver/duplicati `v2.4.0.0` (tag+digest) | none (destinations often point at skstor) | `skbackup[-env].<cluster>.<domain>` | reads `/var/data` read-only; `config/skbackup-<env>/jobs` | `settings_encryption_key`, `ui_password`, `CLUSTERNAME`, `DOMAIN` | `skbackup.jobs` ([]), `ACME_ENABLED` (false) | v2.19.0 |
+| [skbackup](#skbackup) | optional (host-level) | Snapshots, per-app copies, dump hooks, restic offsite, restore tests, alerts on the storage host | sanoid + rsync + restic (host packages) | a storage host in an inventory group (default `storage_hosts`), ideally ZFS | none (no web UI, no swarm stack) | `/etc/<short_name>`, `/var/lib/<short_name>` on the storage host | `data_target`; `offsite.repository` + `offsite.password` when offsite is on | every tier toggle, `branding` (white-label) | v2.23.0 (restic; the Duplicati app of v2.19.0 to v2.22.0 is retired) |
 
 ---
 
@@ -954,38 +954,50 @@ not just that one router works.
 
 ### skbackup
 
-Duplicati: the framework's own backup service. Reads `/var/data` read-only
-and ships encrypted, deduplicated snapshots to a destination you control
-(often skstor).
+Host-level backups for the storage host that serves the swarm's data. Not a
+swarm stack: the playbook targets a storage-host inventory group and installs
+a small engine, one config file, restic credentials, sanoid.conf and systemd
+timers there. Tiers (each toggled in the vault): 1 sanoid snapshots of the
+data dataset plus a pre-deploy snapshot helper, 2 per-app copy from a frozen
+snapshot into a second pool, 3 DB dump hooks and freshness gates, 4 restic to
+S3/B2, 5 a monthly restore test, 6 staleness alerts. Every customer-visible
+name comes from `skbackup.branding` (white-label).
 
-**Prerequisites**: none, but a destination (skstor, another S3, SFTP, local
-path) you already control.
+**Prerequisites**: the storage host in an inventory group (`storage_hosts` by
+default, `-e skbackup_hosts=<group>` otherwise) with the swarm's `domain` and
+`cluster_name` host vars; ZFS for the production backend (`dir` exists for
+hosts and test clusters without ZFS); the copy pool created by hand if tier 2
+is on; a restic repository target if tier 4 is on.
 
 **Minimal vault snippet**:
 
 ```yaml
 skbackup:
-  CLUSTERNAME: "<cluster>"
-  DOMAIN: "example.com"
-  settings_encryption_key: "changeme12"   # min 8 alphanumeric chars, no default
-  ui_password: "changeme"                  # no default. Upstream's own "changeme" fallback is never used
-  jobs: []   # declarative jobs are RENDERED, not imported (see gotcha)
+  data_target: tank/data          # the dataset the swarm's NFS data lives on
+  copy:
+    enabled: true
+    target: backup/copies         # a pool on ANOTHER disk
+    apps: [{name: app-one}, {name: app-two, retention: {daily: 14}}]
+  offsite:
+    enabled: true
+    repository: "s3:https://s3.<region>.backblazeb2.com/<bucket>/<host>"
+    password: "<restic repository password: keep an offline copy>"
+    env: {AWS_ACCESS_KEY_ID: "<key id>", AWS_SECRET_ACCESS_KEY: "<key>"}
+    sets: [{name: keep, source: copy, apps: [app-one, app-two]}]
+  restore_test: {enabled: true}
 ```
 
-**Deploy**: `deploy_skbackup-<env>.yml`, standard invocation.
+**Deploy**: `deploy_skbackup-<env>.yml` against the storage host group.
 
-**Health check**: `duplicati-cli test <destination_url> --passphrase=... all`
-verifies a destination end-to-end.
+**Health check**: `<short_name> status` and `<short_name> check` on the
+storage host (exit 0 = every tier fresh); `<short_name> restore-test` for the
+offsite chain.
 
-**Gotchas**: `skbackup.jobs` entries are **rendered** to JSON, never
-auto-imported. Duplicati has no reliable non-interactive import path, so
-each rendered job needs a one-time manual **Import from a file** in the web
-UI per instance. By default it backs up other services' own DB dump files
-(e.g. skorch's/skgallery's `postgres-backup` output), not their live
-database engine storage directly. Copying a live Postgres/MariaDB data
-directory mid-write is not a consistent backup. See the
-[README](../v1/ansible/optional/skbackup/README.md) for the full exclude-list
-and destination-URL conventions.
+**Gotchas**: the first copy and the first offsite seed read everything once:
+run them at night, capped. Snapshots pin deleted data, so decide on legacy
+data before retention starts. The deploy refuses the retired Duplicati vault
+keys. See the [README](../v1/ansible/optional/skbackup/README.md) (it is the
+backup pattern doc: tiers, B2 setup, app selection, restores, white-labelling).
 
 ---
 
