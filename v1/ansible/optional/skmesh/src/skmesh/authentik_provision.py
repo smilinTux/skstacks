@@ -14,6 +14,11 @@ What NetBird needs from Authentik (AUTH_MODE: authentik):
   NetBird's IdP manager (it lists users and resolves ids to emails);
 * optionally the default brand's device code flow, for `netbird up` on a
   machine with no browser.
+* optionally an authentication flow bound to this provider only
+  (`authentication_flow`, e.g. sksso's CapAuth login): a user who is not
+  logged in to Authentik yet goes through that flow when opening skmesh,
+  while every other application keeps the brand's default login. Empty =
+  the brand's default (and a bound flow is unbound again).
 
 Input: one JSON object on stdin (secrets included, so nothing is on a
 command line or in a process environment). Output: one status line per
@@ -176,6 +181,9 @@ def provision(api, cfg):
         provider["redirect_uris"] = [{"matching_mode": "strict", "url": u} for u in cfg["redirect_uris"]]
     else:
         provider["redirect_uris"] = "\n".join(cfg["redirect_uris"])
+    # Provider-only login flow (None = the brand's default authentication flow).
+    provider["authentication_flow"] = (
+        flow_pk(api, cfg["authentication_flow"]) if cfg.get("authentication_flow") else None)
     inval = flow_pk(api, cfg["invalidation_flow"], required=False)
     if inval:
         provider["invalidation_flow"] = inval

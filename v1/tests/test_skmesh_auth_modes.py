@@ -334,7 +334,8 @@ class FakeAuthentik:
         if p == "/admin/version/":
             return 200, {"version_current": self.version}
         if p == "/flows/instances/":
-            known = {"default-provider-authorization-implicit-consent": "f-auth"}
+            known = {"default-provider-authorization-implicit-consent": "f-auth",
+                     "capauth-authentication": "f-capauth"}
             if self.modern:
                 known["default-provider-invalidation-flow"] = "f-inval"
             return 200, {"results": [{"pk": known[q["slug"]], "slug": q["slug"]}] if q["slug"] in known else []}
@@ -551,3 +552,40 @@ def test_ensure_api_token_refuses_without_a_container(tmp_path):
     r = subprocess.run(["bash", str(ENSURE_TOKEN), "prod"], input="x" * 40, capture_output=True, text=True,
                        env={"PATH": f"{tmp_path}:/usr/bin:/bin"})
     assert r.returncode == 2 and "no sksso-prod worker/server container" in r.stderr
+
+
+# --- skmesh.AUTHENTIK_AUTHENTICATION_FLOW: bind a login flow to skmesh only ------
+
+def test_authentication_flow_knob_reaches_the_provisioner():
+    tasks = yaml.safe_load((SKMESH / "tasks/authentik.yml").read_text())
+    facts = next(t for t in tasks if t["name"] == "Build the Authentik provisioner input")
+    value = facts["set_fact"]["skmesh_authentik_input"]["authentication_flow"]
+    assert value == "{{ skmesh.AUTHENTIK_AUTHENTICATION_FLOW | default('') }}"
+
+
+def test_provider_keeps_the_brand_login_by_default(fake_authentik):
+    fake = fake_authentik()
+    out = _provision(_cfg(fake))
+    assert out.returncode == 0, out.stderr
+    assert fake.objects["provider"][0]["authentication_flow"] is None
+
+
+def test_provider_binds_the_authentication_flow_then_unbinds_it(fake_authentik):
+    fake = fake_authentik()
+    assert _provision(_cfg(fake)).returncode == 0
+    bind = _provision(_cfg(fake, authentication_flow="capauth-authentication"))
+    assert bind.returncode == 0, bind.stderr
+    assert "provider: updated (authentication_flow)" in bind.stdout
+    assert fake.objects["provider"][0]["authentication_flow"] == "f-capauth"
+    again = _provision(_cfg(fake, authentication_flow="capauth-authentication"))
+    assert "provider: unchanged" in again.stdout
+    unbind = _provision(_cfg(fake))  # knob removed: back to the brand's login (rollback)
+    assert "provider: updated (authentication_flow)" in unbind.stdout
+    assert fake.objects["provider"][0]["authentication_flow"] is None
+
+
+def test_unknown_authentication_flow_fails_loudly(fake_authentik):
+    fake = fake_authentik()
+    out = _provision(_cfg(fake, authentication_flow="no-such-login-flow"))
+    assert out.returncode == 1 and "no-such-login-flow" in out.stderr
+    assert fake.objects["provider"] == []
