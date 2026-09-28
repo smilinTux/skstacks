@@ -68,7 +68,10 @@ def test_capauth_service_when_enabled():
     assert "/var/data/sksso-dev/capauth:/data" in svc["volumes"]
     assert "/var/data/config/sksso-dev/capauth-oidc-clients.json:/config/oidc-clients.json:ro" in svc["volumes"]
     labels = svc["deploy"]["labels"]
-    assert "traefik.http.routers.sksso-dev-capauth.rule=Host(`capauth-dev.${BASE_DOMAIN}`)" in labels
+    # only what the login page and enrollment use; the admin API (keys,
+    # approve, revoke), bunker, authz and legacy endpoints stay cluster-internal
+    assert ("traefik.http.routers.sksso-dev-capauth.rule=Host(`capauth-dev.${BASE_DOMAIN}`) && "
+            "(PathPrefix(`/oidc/`) || Path(`/capauth/v1/challenge`) || Path(`/capauth/v1/verify`))") in labels
     assert "traefik.http.services.sksso-dev-capauth.loadbalancer.server.port=8420" in labels
     assert "traefik.swarm.network=cloud-public-dev" in labels
     assert "8420" in " ".join(svc["healthcheck"]["test"])
@@ -77,7 +80,8 @@ def test_capauth_service_when_enabled():
 def test_capauth_prod_host_has_no_env_suffix_and_placement_follows_server():
     svcs = _compose(env="prod", placement_exclude_nodes=["n2"], **ENABLED)
     labels = svcs["capauth"]["deploy"]["labels"]
-    assert "traefik.http.routers.sksso-capauth.rule=Host(`capauth.${BASE_DOMAIN}`)" in labels
+    assert any(lb.startswith("traefik.http.routers.sksso-capauth.rule=Host(`capauth.${BASE_DOMAIN}`) && ")
+               for lb in labels), labels
     assert svcs["capauth"]["deploy"]["placement"] == svcs["server"]["deploy"]["placement"]
 
 
@@ -190,7 +194,11 @@ def test_deploy_script_restarts_capauth_on_redeploy_only_when_enabled():
     on = jenv.from_string(src).render(env="dev", app="sksso", sksso=ENABLED)
     off = jenv.from_string(src).render(env="dev", app="sksso", sksso={})
     assert "preexisted ${STACK_NAME}_capauth &&" in on and '"${STACK_NAME}_capauth"' in on
-    assert "_capauth" not in off
+    assert 'docker service rm "${STACK_NAME}_capauth"' not in on
+    # docker stack deploy never removes a service dropped from the compose
+    # file: turning CapAuth off must remove it explicitly (rollback)
+    assert "preexisted ${STACK_NAME}_capauth" not in off
+    assert 'docker service rm "${STACK_NAME}_capauth"' in off
 
 
 # --- the provisioner, against a fake Authentik API ------------------------------

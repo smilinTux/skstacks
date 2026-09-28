@@ -120,6 +120,13 @@ preexisted ${STACK_NAME}_worker && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" dock
 # capauth reads its client registry from a bind-mounted file: restart it so a
 # changed registry (new callback URL, rotated client secret) takes effect
 preexisted ${STACK_NAME}_capauth && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_capauth || true
+{% else %}
+# sksso.CAPAUTH_ENABLED is off: docker stack deploy never removes a service
+# that left the compose file, so remove a capauth service left from before
+if docker service inspect "${STACK_NAME}_capauth" >/dev/null 2>&1; then
+    echo -e "${YELLOW}Removing ${STACK_NAME}_capauth (sksso.CAPAUTH_ENABLED is off)${NC}"
+    docker service rm "${STACK_NAME}_capauth"
+fi
 {% endif %}
 
 echo -e "${YELLOW}Waiting for services to stabilize...${NC}"

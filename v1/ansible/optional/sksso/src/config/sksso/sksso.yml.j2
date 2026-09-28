@@ -218,6 +218,8 @@ services:
   # offers (see README "CapAuth login"). The browser reaches it on its own
   # host through Traefik; Authentik's server calls its token and userinfo
   # endpoints on this stack's network. One replica: its state is SQLite.
+  # Only the login page (/oidc/) and key enrollment are routed publicly; the
+  # admin API (approve/revoke) is reached from inside the cluster.
   capauth:
     image: "{{ sksso.CAPAUTH_IMAGE }}"
     env_file: /var/data/config/{{ app }}-{{ env }}/capauth.env
@@ -243,7 +245,7 @@ services:
       labels:
         - "traefik.enable=true"
         - "traefik.swarm.network=cloud-public-{{ env }}"
-        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-capauth.rule=Host(`{{ sksso.CAPAUTH_HOST | default('capauth' ~ ('' if env == 'prod' else '-' ~ env) ~ '.${BASE_DOMAIN}') }}`)"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-capauth.rule=Host(`{{ sksso.CAPAUTH_HOST | default('capauth' ~ ('' if env == 'prod' else '-' ~ env) ~ '.${BASE_DOMAIN}') }}`) && (PathPrefix(`/oidc/`) || Path(`/capauth/v1/challenge`) || Path(`/capauth/v1/verify`))"
         - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-capauth.entrypoints=websecure"
         - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-capauth.tls=true"
         - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-capauth.tls.certresolver=main"
