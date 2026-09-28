@@ -139,14 +139,16 @@
         dest: "{{ item.dest }}"
         owner: root
         group: root
-        mode: '0640'
+        mode: "{{ item.mode | default('0640') }}"
       loop:
         - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env" }
         - { src: "postgres.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/postgres.env" }
         - { src: "postgres-backup.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/postgres-backup.env" }
         - { src: "{{ app }}-runners.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/.env" }
         - { src: "{{ app }}-runners.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}-runners.yml" }
-        - { src: "runner-config.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/runner-config.yml" }
+        # No secret; bind-mounted read-only into the non-root runner container,
+        # which must be able to read it (0640 root:root made the runner crash-loop).
+        - { src: "runner-config.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/runner-config.yml", mode: "0644" }
       tags:
         - templates
 
