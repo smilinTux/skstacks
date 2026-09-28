@@ -201,8 +201,9 @@ services:
 {% endif %}
       - /var/data/{{ app }}-{{ env }}/custom-templates:/templates
       - /etc/localtime:/etc/localtime:ro
-    # A worker is a process with a `worker` argument and a celery executable
-    # (Authentik up to 2025.8) or `manage` (2025.10+: python -m manage worker).
+    # A worker is a process with a `worker` argument and `manage` (`python -m
+    # manage worker`: 2024.x runs celery in it, 2025.10+ dramatiq) or a celery
+    # executable (older releases).
     # argv elements are compared exactly, so this check cannot match itself.
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import os; procs = [p for p in os.listdir('/proc') if p.isdigit()]; argvs = [open(f'/proc/{p}/cmdline').read().split(chr(0)) for p in procs if os.path.exists(f'/proc/{p}/cmdline')]; workers = [a for a in argvs if 'worker' in a and ('manage' in a or any(x.endswith('celery') for x in a))]; exit(0 if workers else 1)\" || exit 1"]

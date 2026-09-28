@@ -6,8 +6,9 @@ worker..."`, and the `sh -c` that CMD-SHELL wraps it in) contains both, so
 it always matched itself and passed whether or not a worker was running
 (prod: "healthy" on Authentik 2025.12.3, which has no celery at all). The
 check now matches argv elements exactly: a process with a `worker` argument
-and either a celery executable (Authentik up to 2025.8) or `manage`
-(2025.10+, `python -m manage worker`).
+and either `manage` (`python -m manage worker`, the worker of Authentik 2024.x
+with celery in-process and of 2025.10+ with dramatiq) or a celery executable
+(older releases).
 
 The test runs the rendered healthcheck's own Python against a fake /proc
 that also holds the checker's own processes."""
