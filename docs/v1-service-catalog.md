@@ -965,36 +965,39 @@ name comes from `skbackup.branding` (white-label).
 
 **Prerequisites**: the storage host in an inventory group (`storage_hosts` by
 default, `-e skbackup_hosts=<group>` otherwise) with the swarm's `domain` and
-`cluster_name` host vars; ZFS for the production backend (`dir` exists for
-hosts and test clusters without ZFS); the copy pool created by hand if tier 2
-is on; a restic repository target if tier 4 is on.
+`cluster_name` host vars; ZFS (the data must live on a ZFS dataset);
+the copy pool created by hand if tier 2 is on; a restic repository target if
+tier 4 is on.
 
 **Minimal vault snippet**:
 
 ```yaml
 skbackup:
-  data_target: tank/data          # the dataset the swarm's NFS data lives on
+  data_dataset: tank/data         # the ZFS dataset the swarm's NFS data lives on
   copy:
     enabled: true
     target: backup/copies         # a pool on ANOTHER disk
-    apps: [{name: app-one}, {name: app-two, retention: {daily: 14}}]
+    apps:
+      - {name: app-one, dump: database-dump, newest: [{dir: database-dump, keep: 2}]}
+      - {name: app-two, excludes: [/cache/], retention: {daily: 14}}
   offsite:
     enabled: true
-    repository: "s3:https://s3.<region>.backblazeb2.com/<bucket>/<host>"
+    repository: "s3:https://s3.<region>.backblazeb2.com/<bucket>"
     password: "<restic repository password: keep an offline copy>"
-    env: {AWS_ACCESS_KEY_ID: "<key id>", AWS_SECRET_ACCESS_KEY: "<key>"}
-    sets: [{name: keep, source: copy, apps: [app-one, app-two]}]
-  restore_test: {enabled: true}
+    env: {B2_ACCOUNT_ID: "<key id>", B2_ACCOUNT_KEY: "<key>"}
+    sets: [{name: kept-apps, kind: apps}, {name: photos, kind: paths, paths: [app-three/originals]}]
+  restore_test: {enabled: true, app: app-one, sample_set: photos}
 ```
 
 **Deploy**: `deploy_skbackup-<env>.yml` against the storage host group.
 
 **Health check**: `<short_name> status` and `<short_name> check` on the
-storage host (exit 0 = every tier fresh); `<short_name> restore-test` for the
-offsite chain.
+storage host (exit 0 = every tier fresh); `<short_name> restic restore-test`
+for the offsite chain.
 
 **Gotchas**: the first copy and the first offsite seed read everything once:
-run them at night, capped. Snapshots pin deleted data, so decide on legacy
+run them at night, capped (the copy defaults to 10000 KiB/s: 40000 slowed NFS
+writes to 45 s on a USB SSD pool). Snapshots pin deleted data, so decide on legacy
 data before retention starts. The deploy refuses the retired Duplicati vault
 keys. See the [README](../v1/ansible/optional/skbackup/README.md) (it is the
 backup pattern doc: tiers, B2 setup, app selection, restores, white-labelling).
