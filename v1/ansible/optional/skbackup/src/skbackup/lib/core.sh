@@ -53,7 +53,7 @@ now() {  # epoch seconds; BK_NOW overrides (tests, and "what would check say at 
   if [ -n "${BK_NOW:-}" ]; then printf '%s\n' "$BK_NOW"; else date -u +%s; fi
 }
 ts() { date -u -d "@${1:-$(now)}" +%Y%m%dT%H%M%SZ; }
-iso() { date -u -d "@${1:-$(now)}" +%Y-%m-%dT%H:%M:%SZ; }
+iso() { date -u -d "@$(now)" +%Y-%m-%dT%H:%M:%SZ; }
 hours() { printf '%s' $(( ($1 + 1800) / 3600 )); }
 
 log() { printf '%s %s\n' "$(iso)" "$*"; }
