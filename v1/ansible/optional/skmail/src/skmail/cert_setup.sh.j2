@@ -85,13 +85,18 @@ else
     ls -la "$CERTS_DIR/" 2>/dev/null || echo "  (certs directory not accessible)"
     echo ""
     echo "TROUBLESHOOTING:"
+{% if (skmail.MAIL_WEB_ENABLED | default(true) | string | lower) not in ["false", "no", "0", "off", ""] %}
     echo "  1. Ensure mail-web service is running:"
     echo "     docker service ps skmail-{{ env }}_mail-web"
+{% else %}
+    echo "  1. skmail.MAIL_WEB_ENABLED is false: nothing in skmail asks Traefik for this"
+    echo "     certificate; a router with certResolver and tls.domains for it must exist"
+{% endif %}
     echo "  2. Check traefik-certs-dumper-mail logs:"
     echo "     docker service logs {{ fence_service_name }}-{{ env }}_traefik-certs-dumper-mail --tail 50"
     echo "  3. Check if acme-mail.json has the certificate:"
     echo "     cat /var/data/runtime/{{ fence_service_name }}-{{ env }}/acme/acme-mail.json | jq '.mail.Certificates[].domain'"
-    echo "  4. Verify Traefik is routing to mail-web:"
+    echo "  4. Verify Traefik answers for the mail hostname:"
     echo "     curl -k https://${HOSTNAME}/"
     exit 1
   fi
