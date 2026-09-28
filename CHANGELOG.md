@@ -3,6 +3,12 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased (v2.23.0)
+
+### Changes
+
+- v1: **sksso**'s worker healthcheck can fail again. It looked for any command line containing the substrings `celery` and `worker`, and its own command line (the `python3 -c` source and the `sh -c` wrapping it) contains both, so it always matched itself and passed whether or not a worker ran: a production worker on Authentik 2025.12.3 (dramatiq, no celery at all) reports `healthy`. The check now compares argv elements exactly: a process with a `worker` argument and `manage` (`python -m manage worker`: Authentik 2024.x runs celery inside it, 2025.10+ dramatiq) or a celery executable (older releases). Test: `v1/tests/test_sksso_worker_healthcheck.py` runs the rendered check against a fake `/proc` that includes the checker's own processes (no worker, `manage migrate` or celery `beat` alone now fail; both worker generations pass). **Instance action**: none; the next sksso deploy changes the worker's healthcheck (a post-deploy parity diff on it is this fix) and restarts the worker.
+
 ## Unreleased (v2.22.0)
 
 ### Upgrade notes (instances)
