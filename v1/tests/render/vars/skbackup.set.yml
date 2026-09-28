@@ -1,10 +1,51 @@
-# Second render pass: merged over skbackup.example.yml to drive the optional
-# hooks down their "set" path. Fake values only.
+# Second render pass: merged over skbackup.example.yml. Every tier on and a
+# white-label brand, so the set path renders the customer-branded units,
+# config and restic credentials. Fake values only.
 skbackup:
-  passphrase: example-passphrase-not-a-secret
-  ACME_ENABLED: true
-  exclude: ["-*/cache/*"]
-  jobs:
-    - name: example-job
-      destination_url: "file:///backups/example"
-      sources: [/source/example/]
+  branding:
+    product_name: Example Vault
+    short_name: examplevault
+    tagline: Backups by Example IT
+    alert_prefix: EXAMPLE-VAULT
+    report_footer: Example IT managed backups
+    contact: support@example.test
+    logo_url: https://example.test/logo.png
+    credits: true
+  unit_prefix: example-
+  host_label: storage-1
+  copy:
+    enabled: true
+    target: backup/copies
+    apps:
+      - name: app-one
+        excludes: [/cache]
+        retention: {daily: 14}
+      - name: app-two
+  dumps:
+    enabled: true
+    hooks:
+      - name: app-one-db
+        command: /usr/local/bin/example-dump --out /tank/data/app-one/dump
+        timeout: 600
+    checks:
+      - {app: app-one, glob: dump/*.sql.gz, max_age_hours: 26}
+  offsite:
+    enabled: true
+    repository: s3:https://s3.example.test/example-bucket/storage-1
+    password: example-restic-password-not-a-secret
+    env:
+      AWS_ACCESS_KEY_ID: example-key-id
+      AWS_SECRET_ACCESS_KEY: example-key-not-a-secret
+    install: url
+    url: https://example.test/restic_0.18.1_linux_amd64.bz2
+    sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+    sets:
+      - {name: keep, source: copy, apps: [app-one, app-two], tags: [nightly]}
+      - {name: photos, source: data, apps: [app-three], excludes: [thumbs]}
+  restore_test:
+    enabled: true
+    hooks:
+      - {name: load-dump, command: /usr/local/bin/example-load-test, timeout: 900}
+  alerts:
+    notifier: command
+    command: /usr/local/bin/example-alert -l {level} -k {key} {message}

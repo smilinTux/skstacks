@@ -1,0 +1,9 @@
+[Unit]
+Description={{ skb.branding.product_name }}: {{ item.desc }} (timer)
+
+[Timer]
+OnCalendar={{ item.on }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target
