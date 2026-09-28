@@ -131,7 +131,9 @@
         - { path: "/var/data/{{ app }}-{{ env }}/html/data", owner: "www-data", group: "www-data", mode: "0755" }
         - { path: "/var/data/{{ app }}-{{ env }}/custom_apps", owner: "www-data", group: "www-data", mode: "0755" }
         - { path: "/var/data/{{ app }}-{{ env }}/config", owner: "www-data", group: "www-data", mode: "0755" }
-        - { path: "/var/data/{{ app }}-{{ env }}/data", owner: "www-data", group: "www-data", mode: "0755" }
+        # Nextcloud's data directory: Nextcloud requires 0770 (the user
+        # directory list must not be readable by other accounts).
+        - { path: "/var/data/{{ app }}-{{ env }}/data", owner: "www-data", group: "www-data", mode: "0770" }
         - { path: "/var/data/{{ app }}-{{ env }}/themes", owner: "www-data", group: "www-data", mode: "0755" }
         - { path: "/var/data/{{ app }}-{{ env }}/app-hooks/pre-installation", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/{{ app }}-{{ env }}/app-hooks/post-installation", owner: "root", group: "root", mode: "0755" }
@@ -570,10 +572,22 @@
         - post-deploy
         - recognize
 
-    - name: Download Recognize ML models
+    - name: Download Recognize ML models (only when missing)
+      # `occ recognize:download-models` deletes the whole models directory and
+      # downloads and extracts the model archive (over 1 GB) again, so running
+      # it on every deploy is gigabytes of shared-filesystem traffic, and a
+      # failed download leaves Recognize with no models. Recognize fetches its
+      # models itself on install and upgrade; the deploy only covers a missing
+      # or empty models directory. Force a refresh by hand with that command.
       shell: |
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
-        docker exec "$CONTAINER_ID" php occ recognize:download-models 2>&1 || true
+        MODELS=/var/www/html/custom_apps/recognize/models
+        PRESENT=$(docker exec "$CONTAINER_ID" find "$MODELS" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null || true)
+        if [ -n "$PRESENT" ]; then
+          echo "Recognize models already present in $MODELS: not re-downloading"
+        else
+          docker exec "$CONTAINER_ID" php occ recognize:download-models 2>&1 || true
+        fi
       delegate_to: "{{ nextcloud_node.stdout | trim }}"
       register: recognize_models
       changed_when: "'Downloading' in recognize_models.stdout"
