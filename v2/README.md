@@ -40,7 +40,7 @@ flowchart TD
         SKF["skfence\nTraefik v3"]
         SKS["sksec\nCrowdSec"]
         SSO["sksso\nAuthentik"]
-        SKB["skbackup\nDuplicati"]
+        SKB["skbackup\nRestic"]
         HA["skha\nKeepalived"]
     end
 

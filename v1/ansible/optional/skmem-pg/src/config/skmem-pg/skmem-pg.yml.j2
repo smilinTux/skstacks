@@ -42,7 +42,7 @@ services:
       retries: 10
 
   # Crash-consistent pg_dump backups (mirrors sksso/authentik postgres-db-backup).
-  # Dumps -> /var/data/{{ app }}-{{ env }}/database-dump ; offsite'd by skbackup/Duplicati.
+  # Dumps -> /var/data/{{ app }}-{{ env }}/database-dump ; inside the storage host's snapshots, copied offsite by skbackup (restic).
   skmem-pg-backup:
     image: postgres:17.11
     env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}-backup.env
