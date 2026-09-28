@@ -162,7 +162,7 @@
         chown -R root:root /var/data/{{ app }}-{{ env }}/signal || true
         chown -R root:root /var/data/{{ app }}-{{ env }}/relay || true
 
-        # Never a blanket `chmod -R 755` here: management/ is NetBird's
+        # Never a blanket `chmod -R 755` here: management/ is the NetBird
         # /var/lib/netbird (store, keys, GeoLite and IdP data). Management
         # runs as root, so owner-only: dirs 0700, files 0600 (x bits kept).
         M=/var/data/{{ app }}-{{ env }}/management
