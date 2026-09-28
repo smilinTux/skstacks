@@ -108,7 +108,10 @@ done
 
 echo -e "${YELLOW}Deploying stack configuration...${NC}"
 cd "${CONFIG_DIR}"
-record_preexisting "${STACK_NAME}_server" "${STACK_NAME}_worker"{% if sksso.CAPAUTH_ENABLED | default(false) %} "${STACK_NAME}_capauth"{% endif %}
+record_preexisting "${STACK_NAME}_server" "${STACK_NAME}_worker"
+{% if sksso.CAPAUTH_ENABLED | default(false) %}
+record_preexisting "${STACK_NAME}_capauth"
+{% endif %}
 docker stack deploy -c "${COMPOSE_FILE}" "${STACK_NAME}"
 
 sleep 10

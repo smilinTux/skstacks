@@ -434,3 +434,18 @@ def test_provisioner_fails_loudly(fake_authentik):
     assert flow.returncode == 1 and "no-such-flow" in flow.stderr
     missing = _provision(_cfg(fake, client_secret=""))
     assert missing.returncode == 2 and "client_secret" in missing.stderr
+
+
+@pytest.mark.parametrize("sksso", [ENABLED, {}])
+def test_deploy_script_still_runs_the_stack_deploy(sksso):
+    """An inline {% if %} whose {% endif %} ends a line swallows that newline
+    under trim_blocks (Ansible's default) and glued `docker stack deploy`
+    onto the record_preexisting line: valid bash, no stack deployed
+    (skstack06 lane 2). Every command must start its own line."""
+    import re
+    jenv = jinja2.Environment(undefined=jinja2.ChainableUndefined, trim_blocks=True)
+    out = jenv.from_string((SKSSO / "src/sksso/deploy.j2").read_text()).render(env="dev", app="sksso", sksso=sksso)
+    assert re.search(r'^docker stack deploy -c "\$\{COMPOSE_FILE\}" "\$\{STACK_NAME\}"$', out, re.M), out
+    for line in out.splitlines():
+        if line.startswith("record_preexisting "):
+            assert re.fullmatch(r'record_preexisting( "\$\{STACK_NAME\}_[a-z]+")+', line), line
