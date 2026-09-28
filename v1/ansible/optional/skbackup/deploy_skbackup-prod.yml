@@ -14,30 +14,17 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 ---
-# skbackup: Duplicati, the framework's backup core service. See this
-# service's README.md for the full vault contract and design.
-# TODO before deploy: register the prod overlay subnet below in
-# shared/networks if this estate tracks one; set the skbackup vault vars
-# (see README.md) -- in particular skbackup.settings_encryption_key and
-# skbackup.ui_password, which have no default and fail the deploy closed if
-# left empty, and skbackup.passphrase (or a per-job passphrase) for any
-# job listed in skbackup.jobs. Ensure the image is pullable on swarm nodes.
+# skbackup: host-level backups for the storage host that serves this
+# cluster's data (a Proxmox or any Linux host exporting the swarm's NFS
+# data, ideally from ZFS). NOT a swarm stack: this play targets the storage
+# host group and installs the engine, one config file, restic credentials,
+# sanoid.conf and systemd timers there. See README.md for the vault
+# contract, the tiers, restores and white-labelling.
 - import_playbook: ../../shared/meta/skstack-header.yml
 
-# Step 1: Select manager node with failover
-- hosts: all
-  gather_facts: false
-  connection: local
-  run_once: true
-  tasks:
-    - name: Select manager node from manager group
-      import_tasks: ../../shared/tasks/select_manager_node.yml
-      vars:
-        target_group: "{{ target_manager_group | default('swarm_managers') }}"
-
-# Step 2: Deploy to selected manager
-- hosts: selected_manager_group
+- hosts: "{{ skbackup_hosts | default('storage_hosts') }}"
   become: true
+  gather_facts: false
   vars:
     app: skbackup
     env: prod
@@ -51,196 +38,390 @@
       include_vars: "{{ vault_file_path }}"
       when: vault_file_path is defined
 
-    - name: Define network variables
-      # Networks are created idempotently by the create_networks.yml shared
-      # task below. Reference: See shared/networks for all registered
-      # network subnets.
+    - name: Load the skbackup defaults
+      include_vars: "{{ playbook_dir }}/vars/defaults.yml"
+      tags: [config]
+
+    - name: Merge the instance vault over the defaults
       set_fact:
-        app_networks: "{{ skbackup.networks | default([
-          { 'name': 'skbackup-prod', 'subnet': '172.16.255.0/24', 'driver': 'overlay', 'attachable': true },
-          { 'name': 'cloud-public-prod', 'subnet': '172.16.200.0/24', 'driver': 'overlay', 'attachable': true }
-        ]) }}"
-      tags:
-        - networks
-        - config
+        skb: "{{ skbackup_defaults | combine(skbackup | default({}), recursive=True) }}"
+      tags: [config]
+
+    - name: Derive install names and paths from the brand
+      set_fact:
+        skb_short: "{{ skb.branding.short_name | string }}"
+        skb_unit_base: "{{ (skb.unit_prefix | default('', true) | string) ~ (skb.branding.short_name | string) }}"
+        skb_libdir: "/usr/local/lib/{{ skb.branding.short_name }}"
+        skb_cli: "/usr/local/sbin/{{ skb.branding.short_name }}"
+        skb_confdir: "/etc/{{ skb.branding.short_name }}"
+        skb_conf: "/etc/{{ skb.branding.short_name }}/{{ skb.branding.short_name }}.conf"
+        skb_statedir: "{{ skb.state_dir | default('', true) or ('/var/lib/' ~ skb.branding.short_name) }}"
+        skb_host_label: "{{ skb.host_label | default('', true) or inventory_hostname }}"
+        skb_uses_sanoid: "{{ (skb.snapshots.enabled | bool) and skb.snapshots.engine == 'sanoid' }}"
+      tags: [config]
+
+    - name: Derive the snapshot root and the units of the enabled tiers
+      set_fact:
+        skb_snap_dir_root: "{{ skb.snap_dir_root | default('', true) or (skb_statedir ~ '/snapshots') }}"
+        skb_units: "{{ skb_units_all | selectattr('enabled') | list }}"
+      vars:
+        skb_units_all:
+          - name: run
+            command: run
+            desc: nightly dump hooks, frozen snapshot, per-app copy and offsite upload
+            "on": "{{ skb.schedule.run }}"
+            network: true
+            enabled: "{{ (skb['copy'].enabled | bool) or (skb.offsite.enabled | bool) or (skb.dumps.enabled | bool) }}"
+          - name: snapshot
+            command: snapshot
+            desc: snapshot of the data
+            "on": "{{ skb.snapshots.builtin_schedule }}"
+            network: false
+            enabled: "{{ (skb.snapshots.enabled | bool) and skb.snapshots.engine == 'builtin' }}"
+          - name: prune
+            command: prune
+            desc: offsite forget and prune
+            "on": "{{ skb.schedule.prune }}"
+            network: true
+            enabled: "{{ skb.offsite.enabled | bool }}"
+          - name: restore-test
+            command: restore-test
+            desc: restore test
+            "on": "{{ skb.schedule.restore_test }}"
+            network: true
+            enabled: "{{ (skb.restore_test.enabled | bool) and (skb.offsite.enabled | bool) }}"
+          - name: check
+            command: check
+            desc: backup staleness check
+            "on": "{{ skb.schedule.check }}"
+            network: true
+            enabled: "{{ skb.alerts.enabled | bool }}"
+      tags: [config]
 
   tasks:
-    - name: Deploying {{ app }}
-      debug:
-        msg: Running SKStacks deploy {{ app }} scripts...
-
-    - name: Fail closed if required skbackup secrets are empty or unset
+    - name: Refuse the retired Duplicati vault keys
+      # The Duplicati-based skbackup (v2.19.0 to v2.22.0) was never deployed
+      # anywhere. Its keys mean nothing to this app; failing beats ignoring.
       assert:
         that:
-          - (skbackup.settings_encryption_key | default('')) | length > 0
-          - (skbackup.ui_password | default('')) | length > 0
+          - (skbackup | default({})).keys() | intersect(['settings_encryption_key', 'ui_password', 'passphrase', 'jobs', 'exclude', 'DUPLICATI_VERSION', 'source_path', 'source_read_only', 'CLI_ARGS']) | length == 0
         fail_msg: >-
-          ERROR: skbackup.settings_encryption_key and skbackup.ui_password
-          are required and must not be empty. The upstream Duplicati image
-          defaults the UI password to the literal "changeme" when unset;
-          this framework refuses to deploy on that default instead of
-          shipping it.
-      tags:
-        - config
-        - secrets
+          ERROR: this skbackup vault still carries keys of the retired Duplicati
+          skbackup ({{ (skbackup | default({})).keys() | intersect(['settings_encryption_key', 'ui_password', 'passphrase', 'jobs', 'exclude', 'DUPLICATI_VERSION', 'source_path', 'source_read_only', 'CLI_ARGS']) | join(', ') }}).
+          Remove them; see README.md "Upgrading from the Duplicati skbackup".
+      tags: [config]
 
-    - name: Fail closed if any declared skbackup job has no encryption passphrase
+    - name: Validate the brand
       assert:
         that:
-          - (item.passphrase | default(skbackup.passphrase | default(''))) | length > 0
+          - skb.branding.product_name | default('', true) | string | length > 0
+          - skb.branding.alert_prefix | default('', true) | string | length > 0
+          - skb.branding.report_footer | default('', true) | string | length > 0
         fail_msg: >-
-          ERROR: skbackup job '{{ item.name | default('(unnamed)') }}' has no
-          encryption passphrase. Set skbackup.jobs[].passphrase for this job,
-          or skbackup.passphrase as an instance-wide default.
-      loop: "{{ skbackup.jobs | default([]) }}"
+          ERROR: skbackup.branding needs product_name, alert_prefix and
+          report_footer (the defaults are used when the keys are absent).
+      tags: [config]
+
+    - name: Validate the short name and unit prefix (they become paths and unit names)
+      assert:
+        that:
+          - skb_short is match('^[a-z][a-z0-9-]{1,30}$')
+          - (skb.unit_prefix | default('', true) | string) is match('^([a-z0-9][a-z0-9-]{0,20})?$')
+        fail_msg: >-
+          ERROR: skbackup.branding.short_name must match ^[a-z][a-z0-9-]{1,30}$
+          and skbackup.unit_prefix ^[a-z0-9][a-z0-9-]*$ (got '{{ skb_short }}'
+          and '{{ skb.unit_prefix }}').
+      tags: [config]
+
+    - name: Validate the data target and snapshot backend
+      assert:
+        that:
+          - skb.snapshot_backend in ['zfs', 'dir']
+          - skb.data_target | default('', true) | string | length > 0
+          - skb.snapshot_backend == 'zfs' or (skb.data_target | string).startswith('/')
+          - skb.snapshots.engine in ['sanoid', 'builtin']
+          - not (skb_uses_sanoid | bool) or skb.snapshot_backend == 'zfs'
+        fail_msg: >-
+          ERROR: skbackup.snapshot_backend must be zfs or dir and
+          skbackup.data_target is required (a dataset for zfs, an absolute
+          directory for dir). snapshots.engine sanoid needs the zfs backend;
+          use snapshots.engine builtin with dir.
+      tags: [config]
+
+    - name: Validate the copy tier
+      assert:
+        that:
+          - skb['copy'].target | default('', true) | string | length > 0
+          - skb['copy'].apps | length > 0
+          - skb['copy'].apps | map(attribute='name') | select('match', '^[A-Za-z0-9][A-Za-z0-9._-]*$') | list | length == skb['copy'].apps | length
+        fail_msg: >-
+          ERROR: skbackup.copy is enabled: copy.target (a parent dataset or a
+          directory on ANOTHER disk) and copy.apps (names of directories
+          under the data target) are required.
+      when: skb['copy'].enabled | bool
+      tags: [config]
+
+    - name: Validate the offsite tier
+      assert:
+        that:
+          - skb.offsite.repository | default('', true) | string | length > 0
+          - skb.offsite.password | default('', true) | string | length > 0
+          - skb.offsite.sets | length > 0
+          - skb.offsite.sets | map(attribute='source') | reject('in', ['copy', 'data']) | list | length == 0
+          - skb.offsite.env.keys() | reject('match', '^[A-Z_][A-Z0-9_]*$') | list | length == 0
+        fail_msg: >-
+          ERROR: skbackup.offsite is enabled: offsite.repository,
+          offsite.password (keep an offline copy: without it the repository
+          is unreadable) and offsite.sets are required; every set's source is
+          copy or data; offsite.env keys are environment variable names.
+      when: skb.offsite.enabled | bool
+      tags: [config]
+
+    - name: Validate that source=copy sets only name copied apps
+      assert:
+        that:
+          - skb['copy'].enabled | bool
+          - item.apps | difference(skb['copy'].apps | map(attribute='name') | list) | length == 0
+        fail_msg: >-
+          ERROR: offsite set '{{ item.name }}' has source copy, so every app in
+          it must be in skbackup.copy.apps and the copy tier enabled.
+      loop: "{{ skb.offsite.sets | selectattr('source', 'equalto', 'copy') | list }}"
       loop_control:
-        label: "{{ item.name | default('(unnamed)') }}"
-      tags:
-        - config
-        - secrets
+        label: "{{ item.name }}"
+      when: skb.offsite.enabled | bool
+      tags: [config]
 
-    - name: Ensure python3-pip is installed
-      apt:
-        name: python3-pip
-        state: present
+    - name: Validate a pinned restic download
+      assert:
+        that:
+          - skb.offsite.url | default('', true) | string | length > 0
+          - skb.offsite.sha256 | default('', true) | string | length == 64
+        fail_msg: >-
+          ERROR: skbackup.offsite.install is url: offsite.url and its sha256
+          (64 hex characters) are required.
+      when: (skb.offsite.enabled | bool) and skb.offsite.install == 'url'
+      tags: [config]
 
-    - name: Install Docker SDK for Python (required for docker_swarm_service_info)
+    - name: Validate the notifier
+      assert:
+        that:
+          - skb.alerts.notifier in ['log', 'command']
+          - skb.alerts.notifier != 'command' or (skb.alerts.command | default('', true) | string | length > 0)
+        fail_msg: >-
+          ERROR: skbackup.alerts.notifier is log or command, and command needs
+          skbackup.alerts.command.
+      tags: [config]
+
+    - name: Install the packages the enabled tiers need
       apt:
-        name: python3-docker
+        name: >-
+          {{ ['rsync', 'jq', 'util-linux']
+             + (['sanoid'] if (skb_uses_sanoid | bool) else [])
+             + (['restic'] if ((skb.offsite.enabled | bool) and skb.offsite.install == 'apt') else []) }}
         state: present
         update_cache: true
+        cache_valid_time: 3600
+      tags: [packages]
 
-    - name: Create the {{ app }} directories
+    - name: Create the install, config and state directories
       file:
         path: "{{ item.path }}"
         state: directory
-        owner: "{{ item.owner }}"
-        group: "{{ item.group }}"
-        mode: "{{ item.mode }}"
-      loop:
-        - { path: "/var/data/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/{{ app }}-{{ env }}/config", owner: "1000", group: "1000", mode: "0770" }
-        - { path: "/var/data/{{ app }}-{{ env }}/backups", owner: "1000", group: "1000", mode: "0770" }
-        - { path: "/var/data/config/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/config/{{ app }}-{{ env }}/jobs", owner: "root", group: "root", mode: "0750" }
-
-    - name: Copy {{ app }} config files except templates
-      copy:
-        src: "{{ item }}"
-        dest: /var/data/config/{{ app }}-{{ env }}/
-        owner: root
-        group: root
-        mode: '0644'
-      with_fileglob:
-        - "src/config/{{ app }}/*"
-      when: "'.j2' not in item"
-      tags:
-        - config
-
-    - name: Copy {{ app }} base src files (excluding templates)
-      copy:
-        src: "{{ playbook_dir }}/src/{{ app }}"
-        dest: "/var/data/{{ app }}-{{ env }}/"
-        force: yes
-        backup: yes
-      tags:
-        - parentdir
-        - backup
-
-    - name: Process {{ app }} environment templates
-      template:
-        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
-        dest: "{{ item.dest }}"
         owner: root
         group: root
         mode: "{{ item.mode }}"
       loop:
-        - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env", mode: "0640" }
-        - { src: "{{ app }}.sh.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env", mode: "0640" }
-        - { src: "exclude.filter.j2", dest: "/var/data/config/{{ app }}-{{ env }}/exclude.filter", mode: "0644" }
-      tags:
-        - templates
+        - { path: "{{ skb_libdir }}", mode: "0755" }
+        - { path: "{{ skb_confdir }}", mode: "0700" }
+        - { path: "{{ skb_statedir }}", mode: "0700" }
 
-    - name: Process {{ app }} Docker Compose template
-      template:
-        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
-        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
-        owner: root
-        group: root
-        mode: '0644'
-      tags:
-        - compose
+    - name: Download the pinned restic release
+      get_url:
+        url: "{{ skb.offsite.url }}"
+        dest: "{{ skb_libdir }}/restic.bz2"
+        checksum: "sha256:{{ skb.offsite.sha256 }}"
+        mode: "0644"
+      when: (skb.offsite.enabled | bool) and skb.offsite.install == 'url'
+      tags: [packages]
 
-    - name: Create docker-compose.yml symlink
-      file:
-        src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
-        dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml"
-        force: yes
-        owner: root
-        group: root
-        state: link
-      tags:
-        - compose
-
-    - name: Render declarative backup job configs
-      template:
-        src: "{{ playbook_dir }}/src/config/{{ app }}/job.json.j2"
-        dest: "/var/data/config/{{ app }}-{{ env }}/jobs/{{ item.name }}.json"
-        owner: root
-        group: root
-        mode: '0600'
-      vars:
-        job: "{{ item }}"
-      loop: "{{ skbackup.jobs | default([]) }}"
-      loop_control:
-        label: "{{ item.name | default('(unnamed)') }}"
-      tags:
-        - templates
-        - jobs
-
-    - name: Process {{ app }} deploy script template
-      template:
-        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
-        dest: "/var/data/{{ app }}-{{ env }}/deploy"
-        owner: root
-        group: root
-        mode: '0755'
-      tags:
-        - templates
-        - deploy-script
-
-    - name: Create {{ app }} control script symlink
-      file:
-        src: /var/data/{{ app }}-{{ env }}/deploy
-        dest: /var/data/deploy_{{ app }}-{{ env }}
-        force: yes
-        owner: root
-        group: root
-        mode: '0755'
-        state: link
-
-    - name: Ensure overlay networks exist from app_networks variable
-      include_tasks: ../../shared/tasks/create_networks.yml
-      tags:
-        - networks
-
-    - name: Deploy {{ app }} stack
+    - name: Install the pinned restic release
       shell: |
-        cd /var/data/{{ app }}-{{ env }}
-        timeout 600 ./deploy || (echo "Deploy script timed out or failed" >&2 && exit 1)
-      register: deploy_output
-      tags:
-        - deploy
+        set -euo pipefail
+        bunzip2 -c {{ skb_libdir }}/restic.bz2 > /usr/local/bin/restic.new
+        chmod 0755 /usr/local/bin/restic.new
+        mv /usr/local/bin/restic.new /usr/local/bin/restic
+      args:
+        executable: /bin/bash
+      when: (skb.offsite.enabled | bool) and skb.offsite.install == 'url'
+      tags: [packages]
 
-    - name: Show deploy output
-      debug: var=deploy_output.stdout_lines
-      tags:
-        - deploy
+    - name: Install the engine
+      copy:
+        src: "{{ playbook_dir }}/src/skbackup/"
+        dest: "{{ skb_libdir }}/"
+        owner: root
+        group: root
+        mode: "0755"
+        directory_mode: "0755"
 
-    - name: Post-deploy Check Duplicati service health
-      community.docker.docker_swarm_service_info:
-        name: "{{ app }}-{{ env }}_duplicati"
-      register: duplicati_service
-      ignore_errors: yes
-      tags:
-        - post-deploy
+    - name: Render the config file
+      template:
+        src: "{{ playbook_dir }}/src/config/skbackup/backup.conf.j2"
+        dest: "{{ skb_conf }}"
+        owner: root
+        group: root
+        mode: "0600"
+      tags: [config]
+
+    - name: Render the restic credentials
+      template:
+        src: "{{ playbook_dir }}/src/config/skbackup/{{ item.src }}"
+        dest: "{{ skb_confdir }}/{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "0600"
+      loop:
+        - { src: offsite.env.j2, dest: offsite.env }
+        - { src: offsite.pass.j2, dest: offsite.pass }
+      no_log: true
+      when: skb.offsite.enabled | bool
+      tags: [config, secrets]
+
+    - name: Remove restic credentials when the offsite tier is off
+      file:
+        path: "{{ skb_confdir }}/{{ item }}"
+        state: absent
+      loop: [offsite.env, offsite.pass]
+      when: not (skb.offsite.enabled | bool)
+      tags: [config, secrets]
+
+    - name: Install the command line wrapper
+      template:
+        src: "{{ playbook_dir }}/src/config/skbackup/cli.j2"
+        dest: "{{ skb_cli }}"
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Check whether sanoid.conf belongs to this deploy
+      stat:
+        path: /etc/sanoid/sanoid.conf
+      register: skb_sanoid_conf
+      when: skb_uses_sanoid | bool
+
+    - name: Read the existing sanoid.conf
+      slurp:
+        path: /etc/sanoid/sanoid.conf
+      register: skb_sanoid_conf_text
+      when: (skb_uses_sanoid | bool) and skb_sanoid_conf.stat.exists | default(false)
+
+    - name: Refuse to overwrite a sanoid.conf this deploy does not manage
+      assert:
+        that:
+          - "('managed-by: ' ~ skb_short) in (skb_sanoid_conf_text.content | b64decode)"
+        fail_msg: >-
+          ERROR: /etc/sanoid/sanoid.conf exists and was not written by this
+          deploy. Merge its datasets by hand or move it aside, then redeploy.
+      when: (skb_uses_sanoid | bool) and skb_sanoid_conf.stat.exists | default(false)
+
+    - name: Render sanoid.conf (tier 1 retention)
+      template:
+        src: "{{ playbook_dir }}/src/config/skbackup/sanoid.conf.j2"
+        dest: /etc/sanoid/sanoid.conf
+        owner: root
+        group: root
+        mode: "0644"
+      when: skb_uses_sanoid | bool
+      tags: [config]
+
+    - name: Enable the sanoid timer
+      systemd:
+        name: sanoid.timer
+        enabled: true
+        state: started
+      when: skb_uses_sanoid | bool
+
+    - name: Render the systemd services
+      template:
+        src: "{{ playbook_dir }}/src/config/skbackup/unit.service.j2"
+        dest: "/etc/systemd/system/{{ skb_unit_base }}-{{ item.name }}.service"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ skb_units }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags: [units]
+
+    - name: Render the systemd timers
+      template:
+        src: "{{ playbook_dir }}/src/config/skbackup/unit.timer.j2"
+        dest: "/etc/systemd/system/{{ skb_unit_base }}-{{ item.name }}.timer"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ skb_units }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags: [units]
+
+    - name: Find the timers of tiers that are now disabled
+      find:
+        paths: /etc/systemd/system
+        patterns: "{{ skb_unit_base }}-*.timer"
+      register: skb_unit_files
+      tags: [units]
+
+    - name: Stop and remove the timers of disabled tiers
+      systemd:
+        name: "{{ item.path | basename }}"
+        enabled: false
+        state: stopped
+      loop: "{{ skb_unit_files.files | default([]) }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      when: >-
+        (item.path | basename | regex_replace('^' ~ skb_unit_base ~ '-', '') | regex_replace('\\.timer$', ''))
+        not in (skb_units | map(attribute='name') | list)
+      tags: [units]
+
+    - name: Delete the unit files of disabled tiers
+      file:
+        path: "{{ item.0.path | regex_replace('\\.timer$', '') }}.{{ item.1 }}"
+        state: absent
+      loop: "{{ (skb_unit_files.files | default([])) | product(['timer', 'service']) | list }}"
+      loop_control:
+        label: "{{ item.0.path | basename }}"
+      when: >-
+        (item.0.path | basename | regex_replace('^' ~ skb_unit_base ~ '-', '') | regex_replace('\\.timer$', ''))
+        not in (skb_units | map(attribute='name') | list)
+      tags: [units]
+
+    - name: Enable the timers of the enabled tiers
+      systemd:
+        name: "{{ skb_unit_base }}-{{ item.name }}.timer"
+        enabled: true
+        state: started
+        daemon_reload: true
+      loop: "{{ skb_units }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags: [units]
+
+    - name: Create the restic repository if it does not exist yet
+      command: "{{ skb_cli }} init-offsite"
+      register: skb_init_offsite
+      changed_when: "'already initialised' not in skb_init_offsite.stdout"
+      when: skb.offsite.enabled | bool
+      tags: [post-deploy]
+
+    - name: Show the status
+      command: "{{ skb_cli }} status"
+      register: skb_status
+      changed_when: false
+      tags: [post-deploy]
+
+    - name: Status
+      debug:
+        var: skb_status.stdout_lines
+      tags: [post-deploy]

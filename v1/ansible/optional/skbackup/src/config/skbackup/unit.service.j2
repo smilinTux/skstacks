@@ -1,0 +1,10 @@
+[Unit]
+Description={{ skb.branding.product_name }}: {{ item.desc }}
+{% if item.network %}
+Wants=network-online.target
+After=network-online.target
+{% endif %}
+
+[Service]
+Type=oneshot
+ExecStart={{ skb_cli }} {{ item.command }}
