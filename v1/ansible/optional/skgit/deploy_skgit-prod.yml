@@ -312,7 +312,7 @@
         # only entries whose owner or mode is actually wrong, so a no-op
         # deploy writes nothing.
         #
-        # data/ is Forgejo's /data. Forgejo runs as the container user
+        # data/ is the Forgejo /data. Forgejo runs as the container user
         # 1000:1000 and creates everything under it as itself, so only the
         # top of the tree can be wrong (created by this playbook, a restore or
         # an older framework): data/ itself, git/ forgejo/ lfs/ log/ ssh/,
@@ -322,7 +322,7 @@
         # skgit.PERMS_FULL_WALK (vault, default false) walks all of data/
         # instead, for a tree copied in from elsewhere with foreign owners.
         #
-        # Modes: never a blanket `chmod -R 755` (#89): data/ holds Forgejo's
+        # Modes: never a blanket `chmod -R 755` (#89): data/ holds the Forgejo
         # private keys and every repository. Owner rwX (existing execute
         # bits such as git hooks kept), group rX, no group write, other
         # nothing; dirs end up 0750. data/ itself 0750 is what keeps other

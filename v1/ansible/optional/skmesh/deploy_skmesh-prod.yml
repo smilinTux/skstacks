@@ -169,7 +169,7 @@
           find "$S" \( ! -user 0 -o ! -group 0 \) -exec chown -h root:root {} + || true
         done
 
-        # Never a blanket `chmod -R 755` here: management/ is NetBird's
+        # Never a blanket `chmod -R 755` here: management/ is the NetBird
         # /var/lib/netbird (store, keys, GeoLite and IdP data). Management
         # runs as root, so owner-only: dirs 0700, files 0600 (x bits kept).
         M=/var/data/{{ app }}-{{ env }}/management
