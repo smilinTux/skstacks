@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from skbackup_support import (DEFAULT_BRAND_PATTERNS, WHITE_LABEL, Engine, ansible_render, full_vault,
+from skbackup_support import (DEFAULT_BRAND_PATTERNS, WHITE_LABEL, FakeHost, ansible_render, full_vault,
                               needs_ansible, rendered)
 
 LEAK = re.compile("|".join(re.escape(p) for p in DEFAULT_BRAND_PATTERNS), re.I)
@@ -47,7 +47,7 @@ def test_the_scan_finds_the_default_brand(tmp_path):
     res, out = ansible_render(tmp_path, full_vault())
     assert res["status"] == "PASS", res["findings"]
     found = leaks(rendered(out))
-    assert any("etc/systemd/system/skbackup-run.service" in f for f in found)
+    assert any("etc/systemd/system/skbackup-sync.service" in f for f in found)
     assert any("usr/local/sbin/skbackup" in f for f in found)
 
 
@@ -60,46 +60,50 @@ def test_engine_scripts_carry_no_brand_literal():
     assert leaks(texts) == []
 
 
-def engine_outputs(eng: Engine, day: int) -> dict[str, str]:
+def engine_outputs(host: FakeHost) -> dict[str, str]:
+    """Run every command a customer (or their alerts) would see output from."""
     outs = {}
-    t0 = 1_800_000_000
-    for args, now in ((("help",), None), (("--version",), None), (("run",), t0), (("status",), t0),
-                      (("predeploy", "upgrade"), t0), (("check",), t0 + day * 3)):
-        proc = eng.run(*args, now=now)
+    host.sanoid()
+    steps = [("help",), ("--version",), ("predeploy", "upgrade"), ("predeploy", "--list"), ("sync",),
+             ("status",), ("check", "--notify")]
+    if shutil.which("restic"):
+        steps[4:4] = [("restic", "init"), ("restic", "backup"), ("restic", "snapshots"),
+                      ("restic", "restore-test"), ("restic", "forget-prune")]
+    steps.append(("frobnicate",))
+    steps.append(("restic", "bogus"))
+    for args in steps:
+        proc = host.run(*args)
         outs[" ".join(args) + " stdout"] = proc.stdout
         outs[" ".join(args) + " stderr"] = proc.stderr
-    if shutil.which("restic"):
-        for args in (("offsite",), ("restore-test",), ("prune",)):
-            proc = eng.run(*args, now=t0)
-            outs[" ".join(args) + " stdout"] = proc.stdout
-            outs[" ".join(args) + " stderr"] = proc.stderr
-    outs["alerts.log"] = eng.alerts()
-    for p in (eng.state / "reports").glob("*"):
+    host.set_pool("tank", cap="95")          # force findings so alerts are produced
+    host.run("check", "--notify")
+    outs["alerts.log"] = host.alerts()
+    for p in (host.state / "reports").glob("*"):
         outs["report " + p.name] = p.read_text()
-    for p in eng.state.rglob("*"):
-        outs["state path " + str(p.relative_to(eng.root))] = ""
+    for p in host.state.rglob("*"):
+        outs["state path " + str(p.relative_to(host.root))] = ""
+    for p in (host.root / "lock").iterdir():
+        outs["lock path " + p.name] = ""
+    for ds in ("tank/data", "backup/copies/app1"):
+        for n in host.snaps(ds):
+            outs[f"snapshot {ds}@{n}"] = ""
     return outs
 
 
 def test_engine_output_under_white_label_leaks_nothing(tmp_path):
-    brand = dict(WHITE_LABEL)
-    eng = Engine(tmp_path, brand=brand, UNIT_BASE="acme-acmevault",
-                 OFFSITE_ENABLED=bool(shutil.which("restic")), RESTORE_TEST_ENABLED=bool(shutil.which("restic")),
-                 DUMPS_ENABLED=True, DUMP_CHECKS=["app1|dump/*.sql|26"])
-    eng.seed()
-    (eng.data / "app1" / "dump").mkdir()
-    (eng.data / "app1" / "dump" / "db.sql").write_text("-- dump\n")
-    if shutil.which("restic"):
-        eng.run("init-offsite", check=True)
-    outs = engine_outputs(eng, day=86400)
+    host = FakeHost(tmp_path, brand=dict(WHITE_LABEL), UNIT_BASE="acme-acmevault").seed()
+    outs = engine_outputs(host)
     # it did print and alert, in the customer's brand
-    assert "Acme Vault" in outs["help stdout"]
+    assert outs["help stdout"].startswith("Acme Vault\n")
     assert "ACME-VAULT" in outs["alerts.log"]
     assert "Acme IT managed backup service" in outs["alerts.log"]
+    if shutil.which("restic"):
+        assert "RESULT: PASS" in outs["restic restore-test stdout"]
     assert leaks(outs) == []
 
 
 def test_engine_output_scan_fires_on_default_brand(tmp_path):
-    eng = Engine(tmp_path).seed()
-    outs = engine_outputs(eng, day=86400)
+    host = FakeHost(tmp_path).seed()
+    outs = engine_outputs(host)
     assert any("SKBackup" in f for f in leaks(outs))
+    assert any("skbackup" in f for f in leaks(outs))

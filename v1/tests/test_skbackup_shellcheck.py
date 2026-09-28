@@ -8,12 +8,12 @@ import pytest
 
 from skbackup_support import ENGINE
 
-SCRIPTS = sorted([ENGINE / "backup", *ENGINE.glob("lib/*.sh")])
+SCRIPTS = sorted(p for p in ENGINE.iterdir() if p.is_file())
 
 
 def test_engine_files_exist():
     assert (ENGINE / "backup").exists()
-    assert len(SCRIPTS) >= 4
+    assert {p.name for p in SCRIPTS} >= {"backup", "lib.sh", "sync", "restic", "check", "predeploy", "alert-host-check"}
 
 
 @pytest.mark.parametrize("script", SCRIPTS, ids=lambda p: p.name)
@@ -24,14 +24,14 @@ def test_bash_parses(script):
 
 @pytest.mark.skipif(shutil.which("shellcheck") is None, reason="shellcheck not installed")
 def test_shellcheck_clean():
-    proc = subprocess.run(["shellcheck", "-x", "-s", "bash", "-P", str(ENGINE / "lib"), *map(str, SCRIPTS)],
+    proc = subprocess.run(["shellcheck", "-x", "-s", "bash", "-P", str(ENGINE), *map(str, SCRIPTS)],
                           capture_output=True, text=True, cwd=ENGINE)
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
 def test_engine_is_strict_mode_and_has_no_eval():
-    main = (ENGINE / "backup").read_text()
-    assert "set -euo pipefail" in main
+    for name in ("backup", "sync", "restic", "predeploy"):
+        assert "set -euo pipefail" in (ENGINE / name).read_text(), name
     for script in SCRIPTS:
         for n, line in enumerate(script.read_text().splitlines(), 1):
             code = line.split("#", 1)[0]

@@ -1,400 +1,355 @@
-"""Functional tests for the skbackup engine (src/skbackup/backup) on a scratch
-tree with the `dir` snapshot backend: no ZFS, no root, no network. restic
-tests use a local repository and skip where restic is not installed.
-
-Time is injected with BK_NOW (epoch seconds), so retention and staleness
-are tested without sleeping."""
+"""Functional tests for the skbackup engine (src/skbackup): the storage-host
+scripts lifted from the production setup (sync, restic, check, predeploy,
+lib.sh) behind the white-label dispatcher. They run for real against a
+scratch tree; only zfs, zpool, mount, umount and mountpoint are test doubles
+(fakezfs.py). restic tests use a local repository and skip where restic is
+not installed."""
 import fcntl
 import hashlib
+import json
 import os
 import stat
+import subprocess
+import time
 from pathlib import Path
 
 import pytest
 
-from skbackup_support import Engine, needs_restic
+from skbackup_support import LIB, FakeHost, needs_restic
 
-T0 = 1_800_000_000          # a fixed "now" (2027-01-15, a Friday)
-DAY = 86_400
+HOUR = 3600
+DAY = 86400
 
 
 def sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def tree(root: Path) -> dict[str, str]:
-    return {str(p.relative_to(root)): sha(p) for p in sorted(root.rglob("*")) if p.is_file()}
+def tree(root: Path, skip: tuple = ()) -> dict[str, str]:
+    return {str(p.relative_to(root)): sha(p) for p in sorted(root.rglob("*"))
+            if p.is_file() and not str(p.relative_to(root)).startswith(skip)}
+
+
+def lib(script: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["bash", "-c", f'. "{LIB}"; {script}'], capture_output=True, text=True)
 
 
 @pytest.fixture
-def eng(tmp_path):
-    return Engine(tmp_path).seed()
+def host(tmp_path):
+    return FakeHost(tmp_path).seed()
+
+
+# --- lib.sh helpers (ported from the production setup's own tests) ---------
+
+def test_parse_app_line():
+    out = lib("skb_parse_app_line 'skgit skgit-prod 14 4 3 --exclude=/packages/ dump=database-dump # c'").stdout
+    assert out == "skgit\tskgit-prod\t14\t4\t3\t--exclude=/packages/ dump=database-dump\n"
+    assert lib("skb_parse_app_line '# only a comment'").returncode == 1
+    assert lib("skb_parse_app_line 'a b 1 2'").returncode == 1
+    assert lib("skb_parse_app_line 'bad/name x 1 1 1'").returncode == 2
+    assert lib("skb_parse_app_line 'n /abs 1 1 1'").returncode == 2
+    assert lib("skb_parse_app_line 'n a/../b 1 1 1'").returncode == 2
+
+
+def test_prune_list():
+    assert lib("printf 'a\\nb\\nc\\nd\\n' | skb_prune_list 2").stdout == "a\nb\n"
+    assert lib("printf 'a\\nb\\n' | skb_prune_list 0").stdout == "a\n"
+    assert lib("printf 'a\\n' | skb_prune_list 3").stdout == ""
+
+
+def test_restic_excludes():
+    out = lib("skb_restic_excludes /m/app --exclude=/packages/ --exclude='index-v2*' newest=d:1 dump=d").stdout
+    assert out == "--exclude=/m/app/packages\n--exclude=index-v2*\n"
+
+
+def test_newest_excludes(tmp_path):
+    (tmp_path / "dump").mkdir()
+    for i in range(1, 5):
+        f = tmp_path / "dump" / f"f{i}"
+        f.write_text("x")
+        os.utime(f, (1_700_000_000 + i, 1_700_000_000 + i))
+    out = lib(f'skb_newest_excludes "{tmp_path}" newest=dump:2 newest=nodir:1 | sort').stdout
+    assert out == "--exclude=/dump/f1\n--exclude=/dump/f2\n"
 
 
 # --- CLI, banner, help -----------------------------------------------------
 
-def test_help_uses_brand_and_lists_commands(eng):
-    out = eng.run("help", check=True).stdout
-    assert out.splitlines()[0].startswith("SKBackup ")
+def test_help_uses_brand_and_lists_commands(host):
+    out = host.run("help", check=True).stdout
+    assert out.splitlines()[0] == "SKBackup"
     assert "Snapshots, local copies and offsite backups" in out
-    assert "usage: skbackup " in out
-    for cmd in ("run", "snapshot", "predeploy", "copy", "offsite", "prune", "restore-test", "restore", "check", "status"):
+    assert "usage: skbackup <command>" in out
+    for cmd in ("sync", "restic init", "restic backup", "restic forget-prune", "restic restore-test",
+                "check [--notify]", "predeploy PURPOSE", "status"):
         assert f"  {cmd}" in out, cmd
+    assert "SKBackup, part of SKStacks" in out
 
 
-def test_unknown_command_is_a_usage_error(eng):
-    proc = eng.run("frobnicate")
+def test_unknown_command_is_a_usage_error(host):
+    proc = host.run("frobnicate")
     assert proc.returncode == 2 and "unknown command" in proc.stderr
 
 
-def test_missing_config_fails_clearly(tmp_path):
-    eng = Engine(tmp_path)
-    eng.conf.unlink()
-    proc = eng.run("status")
+def test_missing_config_fails_clearly(host):
+    host.conf.unlink()
+    proc = host.run("status")
     assert proc.returncode == 2 and "config" in proc.stderr
 
 
 def test_credits_text_only_when_set(tmp_path):
-    assert "Powered by" not in Engine(tmp_path / "a").run("help").stdout
-    eng = Engine(tmp_path / "b", BRAND_CREDITS_TEXT="Powered by Something")
-    assert "Powered by Something" in eng.run("help").stdout
+    assert "Powered by" not in FakeHost(tmp_path / "a").run("help").stdout
+    h = FakeHost(tmp_path / "b", BRAND_CREDITS_TEXT="Powered by Something")
+    assert "Powered by Something" in h.run("help").stdout
 
 
-# --- tier 2: copy from a frozen snapshot ------------------------------------
+# --- tier 1: pre-deploy helper ---------------------------------------------
 
-def test_run_copies_each_app_from_a_frozen_snapshot_and_drops_the_transient_one(eng):
-    eng.run("run", now=T0, check=True)
-    copy1 = eng.copies / "app1"
+def test_predeploy_snapshot(host):
+    out = host.run("predeploy", "skgit-upgrade", check=True).stdout
+    assert "tank/data@pre-skgit-upgrade-" in out
+    assert any(n.startswith("pre-skgit-upgrade-") for n in host.snaps("tank/data"))
+    assert "pre-skgit-upgrade-" in host.run("predeploy", "--list", check=True).stdout
+
+
+def test_predeploy_prunes_old_ones_but_keeps_the_newest_two(host):
+    now = int(time.time())
+    for i, age in enumerate((60, 50, 40)):
+        host.zfs("snapshot", f"tank/data@pre-old{i}-2026", now=now - age * DAY)
+    host.run("predeploy", "fresh", check=True)
+    pre = [n for n in host.snaps("tank/data") if n.startswith("pre-")]
+    assert pre[0] == "pre-old2-2026" and pre[1].startswith("pre-fresh-") and len(pre) == 2
+
+
+def test_predeploy_rejects_unsafe_purpose(host):
+    assert host.run("predeploy", "../../etc").returncode == 2
+    assert host.run("predeploy", "Bad Name").returncode == 2
+
+
+# --- tiers 2 + 3: sync -----------------------------------------------------
+
+def test_sync_copies_each_app_from_a_frozen_snapshot(host):
+    out = host.run("sync", check=True).stdout
+    copy1 = host.copies / "app1"
     assert (copy1 / "a.txt").read_text() == "alpha\n"
-    assert sha(copy1 / "sub/b.bin") == sha(eng.data / "app1/sub/b.bin")
+    assert sha(copy1 / "sub/b.bin") == sha(host.data / "app1/sub/b.bin")
     assert not (copy1 / "cache").exists(), "per-app exclude ignored"
-    assert (eng.copies / "app2/c.txt").exists()
-    assert not (eng.copies / "app3").exists(), "app not selected was copied"
-    # history snapshot per app, transient data snapshot removed
-    assert [s for s in eng.snaps(copy1)] == ["skbackup-daily-20270115T080000Z"]
-    assert not [s for s in eng.snaps(eng.data) if "-run-" in s]
-    assert (eng.state / "last-ok-copy-app1").read_text().strip() == str(T0)
+    assert sorted(p.name for p in (copy1 / "dump").iterdir()) == ["db-1.sql", "db-2.sql"], "newest=dump:2 ignored"
+    assert (host.copies / "app2/c.txt").exists() and not (host.copies / "app3").exists()
+    assert [n.split("-")[0] for n in host.snaps("backup/copies/app1")] == ["daily"]
+    assert not [n for n in host.snaps("tank/data") if n.startswith("skbackup-")], "transient snapshot left"
+    assert (host.state / "last-ok-app1").exists()
+    assert "done: 2 app(s) copied, fail=0" in out
 
 
-def test_copy_deletes_what_the_source_deleted_but_history_keeps_it(eng):
-    eng.run("run", now=T0, check=True)
-    (eng.data / "app2/c.txt").unlink()
-    eng.run("run", now=T0 + DAY, check=True)
-    assert not (eng.copies / "app2/c.txt").exists()
-    snaps = eng.snaps(eng.copies / "app2")
-    assert len(snaps) == 2
-    first = eng.root / "snaps" / str(eng.copies / "app2").strip("/").replace("/", "_") / snaps[0]
-    assert (first / "c.txt").read_text() == "gamma\n"
+def test_sync_prunes_history_to_the_app_retention(tmp_path):
+    host = FakeHost(tmp_path, apps=["app1 app1 2 0 0"]).seed()
+    host.zfs("create", "-p", "backup/copies/app1")
+    for d in (3, 2, 1):
+        host.zfs("snapshot", f"backup/copies/app1@daily-old{d}", now=int(time.time()) - d * DAY)
+    host.run("sync", check=True)
+    daily = [n for n in host.snaps("backup/copies/app1") if n.startswith("daily-")]
+    assert len(daily) == 2 and daily[0] == "daily-old1"
 
 
-def test_copy_history_is_pruned_per_app_retention(tmp_path):
-    eng = Engine(tmp_path, COPY_APPS=["app1|2|0|0", "app2|4|0|0"]).seed()
-    for d in range(5):
-        eng.run("run", now=T0 + d * DAY, check=True)
-    assert len(eng.snaps(eng.copies / "app1")) == 2
-    assert len(eng.snaps(eng.copies / "app2")) == 4
-    assert eng.snaps(eng.copies / "app1")[-1].endswith("20270119T080000Z")
+def test_dump_hooks_run_before_the_freeze(tmp_path):
+    host = FakeHost(tmp_path, hooks=[
+        f"app2-db 60 mkdir -p {tmp_path}/tank/data/app2/dump && echo dumped > {tmp_path}/tank/data/app2/dump/db.sql"]).seed()
+    host.run("sync", check=True)
+    assert (host.copies / "app2/dump/db.sql").read_text() == "dumped\n"
 
 
-def test_weekly_and_monthly_history_on_their_days(tmp_path):
-    eng = Engine(tmp_path, COPY_APPS=["app1|7|4|3"]).seed()
-    sunday = T0 + 2 * DAY          # 2027-01-17
-    first_of_month = T0 + 17 * DAY  # 2027-02-01
-    eng.run("run", now=sunday, check=True)
-    eng.run("run", now=first_of_month, check=True)
-    names = eng.snaps(eng.copies / "app1")
-    assert any("-weekly-20270117" in n for n in names)
-    assert any("-monthly-20270201" in n for n in names)
+def test_failed_or_slow_hook_is_recorded_and_the_copy_still_runs(tmp_path):
+    host = FakeHost(tmp_path, hooks=["broken 60 false", "slow 1 sleep 30"]).seed()
+    host.run("sync", check=True)
+    assert (host.copies / "app1/a.txt").exists()
+    assert (host.state / "hook-failed-broken").exists() and (host.state / "hook-failed-slow").exists()
+    host.sanoid()
+    out = host.run("check").stdout
+    assert "WARN tier3: dump hook broken failed" in out and "WARN tier3: dump hook slow failed" in out
 
 
-# --- tier 3: dump hooks and freshness gates ---------------------------------
-
-def test_dump_hooks_run_before_the_snapshot(tmp_path):
-    eng = Engine(tmp_path, DUMPS_ENABLED=True).seed()
-    hook = f"sh -c 'mkdir -p {eng.data}/app1/dump && echo dumped > {eng.data}/app1/dump/db.sql'"
-    eng = Engine(tmp_path, DUMPS_ENABLED=True, DUMP_HOOKS=[f"app1-db|60|{hook}"],
-                 DUMP_CHECKS=["app1|dump/*.sql|26"])
-    eng.run("run", check=True)   # real time: the hook's dump gets a real mtime
-    assert (eng.copies / "app1/dump/db.sql").read_text() == "dumped\n"
-
-
-def test_failed_hook_aborts_the_run_and_alerts(tmp_path):
-    eng = Engine(tmp_path, DUMPS_ENABLED=True, DUMP_HOOKS=["broken|60|false"]).seed()
-    proc = eng.run("run", now=T0)
-    assert proc.returncode == 1
-    assert not (eng.copies / "app1").exists()
-    assert "crit" in eng.alerts() and "broken" in eng.alerts()
+def test_stale_dump_is_flagged_not_fatal(tmp_path):
+    host = FakeHost(tmp_path, apps=["app1 app1 7 4 3 dump=dump", "app2 app2 7 4 3"]).seed()
+    for f in (host.data / "app1/dump").iterdir():
+        os.utime(f, (time.time() - 40 * HOUR,) * 2)
+    host.run("sync", check=True)
+    assert (host.state / "dump-stale-app1").exists() and (host.copies / "app2/c.txt").exists()
+    host.sanoid()
+    assert "WARN tier3: app1 dump older than 26h" in host.run("check").stdout
 
 
-def test_failed_hook_does_not_abort_when_dumps_not_required(tmp_path):
-    eng = Engine(tmp_path, DUMPS_ENABLED=True, DUMPS_REQUIRED=False, DUMP_HOOKS=["broken|60|false"]).seed()
-    proc = eng.run("run", now=T0)
-    assert proc.returncode == 1          # still reported as a failed run
-    assert (eng.copies / "app1/a.txt").exists()
-
-
-def test_hook_timeout_is_enforced(tmp_path):
-    eng = Engine(tmp_path, DUMPS_ENABLED=True, DUMP_HOOKS=["slow|1|sleep 30"]).seed()
-    proc = eng.run("run", now=T0)
-    assert proc.returncode == 1 and "slow" in eng.alerts()
-
-
-def test_stale_or_empty_dump_refuses_the_snapshot(tmp_path):
-    eng = Engine(tmp_path, DUMPS_ENABLED=True, DUMP_CHECKS=["app1|dump/*.sql|26"]).seed()
-    d = eng.data / "app1/dump"
-    d.mkdir()
-    (d / "db.sql").write_text("x\n")
-    os.utime(d / "db.sql", (T0 - 30 * 3600, T0 - 30 * 3600))
-    proc = eng.run("run", now=T0)
-    assert proc.returncode == 1 and "stale" in eng.alerts().lower()
-    assert not (eng.copies / "app1").exists()
-    (d / "db.sql").write_text("")
-    os.utime(d / "db.sql", (T0, T0))
-    eng.run("run", now=T0)
-    assert "empty" in eng.alerts().lower()
-    (d / "db.sql").write_text("x\n")
-    os.utime(d / "db.sql", (T0 - 3600, T0 - 3600))
-    eng.run("run", now=T0, check=True)
-
-
-# --- tier 1: builtin snapshots and the pre-deploy helper ---------------------
-
-def test_builtin_snapshot_keeps_the_newest_n(eng):
-    for h in range(5):
-        eng.run("snapshot", now=T0 + h * 3600, check=True)
-    names = eng.snaps(eng.data)
-    auto = [n for n in names if "-auto-" in n]
-    assert len(auto) == 3 and auto[-1] == "skbackup-auto-20270115T120000Z"
-    snap = eng.root / "snaps" / str(eng.data).strip("/").replace("/", "_") / auto[-1]
-    assert tree(snap / "app1") == tree(eng.data / "app1")
-
-
-def test_dir_snapshot_is_frozen_against_later_writes(eng):
-    eng.run("snapshot", now=T0, check=True)
-    (eng.data / "app1/a.txt").write_text("changed in place\n")
-    snap = eng.root / "snaps" / str(eng.data).strip("/").replace("/", "_") / "skbackup-auto-20270115T080000Z"
-    assert (snap / "app1/a.txt").read_text() == "alpha\n"
-
-
-def test_predeploy_snapshot_and_age_prune_keeps_the_newest_two(eng):
-    for d in (0, 1, 40, 50):
-        eng.run("predeploy", f"deploy{d}", now=T0 - (60 - d) * DAY, check=True)
-    out = eng.run("predeploy", "upgrade-x", now=T0, check=True).stdout
-    assert "pre-upgrade-x-20270115T080000Z" in out
-    pre = [n for n in eng.snaps(eng.data) if n.startswith("pre-")]
-    # 60/59 days old pruned (>30d), 20/10 days old kept, plus the new one
-    assert pre == sorted(["pre-deploy40-20261226T080000Z", "pre-deploy50-20270105T080000Z",
-                          "pre-upgrade-x-20270115T080000Z"])
-
-
-def test_predeploy_never_prunes_below_the_minimum(tmp_path):
-    eng = Engine(tmp_path, PREDEPLOY_KEEP_DAYS=1, PREDEPLOY_KEEP_MIN=2).seed()
-    for d in (0, 1, 2):
-        eng.run("predeploy", f"p{d}", now=T0 - (90 - d) * DAY, check=True)
-    assert len([n for n in eng.snaps(eng.data) if n.startswith("pre-")]) == 2
-
-
-def test_predeploy_rejects_unsafe_purpose(eng):
-    proc = eng.run("predeploy", "../../etc", now=T0)
-    assert proc.returncode == 2
-
-
-# --- locking ----------------------------------------------------------------
-
-def test_a_second_run_is_refused_while_one_holds_the_lock(eng):
-    with open(eng.root / "lock", "w") as fh:
+def test_a_second_sync_is_refused_while_one_holds_the_lock(host):
+    with open(host.root / "lock" / "skbackup-sync.lock", "w") as fh:
         fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        proc = eng.run("run", now=T0)
-    assert proc.returncode == 75 and "another run" in proc.stderr
+        proc = host.run("sync")
+    assert proc.returncode == 1 and "holds the lock" in proc.stderr
 
 
-# --- tier 6: staleness checks -----------------------------------------------
+# --- tier 6: check ---------------------------------------------------------
 
-def test_check_is_quiet_when_fresh(eng):
-    eng.run("snapshot", now=T0, check=True)
-    eng.run("run", now=T0, check=True)
-    proc = eng.run("check", now=T0 + 3600)
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "crit" not in eng.alerts()
-    assert (eng.state / "reports/check-latest.txt").exists()
-
-
-def test_check_alerts_on_stale_snapshot_and_copy(eng):
-    eng.run("snapshot", now=T0, check=True)
-    eng.run("run", now=T0, check=True)
-    proc = eng.run("check", now=T0 + 2 * DAY)
-    assert proc.returncode == 2
-    alerts = eng.alerts()
-    assert "[SKBackup] crit: snapshot" in alerts
-    assert "copy app1" in alerts and "copy app2" in alerts
-    assert "SKBackup, part of SKStacks" in alerts   # footer in the body
+def test_check_is_quiet_when_fresh(host):
+    host.sanoid()
+    host.run("sync", check=True)
+    (host.state / "restic-last-ok-kept").write_text(str(int(time.time())))
+    (host.state / "restic-last-ok-photos").write_text(str(int(time.time())))
+    proc = host.run("check", "--notify")
+    assert proc.returncode == 0, proc.stdout
+    assert "STALE" not in proc.stdout and host.alerts() == ""
+    assert "RESULT: all fresh" in (host.state / "reports/check-latest.txt").read_text()
 
 
-def test_check_alerts_on_missing_copy(eng):
-    eng.run("snapshot", now=T0, check=True)
-    proc = eng.run("check", now=T0)
-    assert proc.returncode == 2 and "copy app1" in eng.alerts()
+def test_check_flags_stale_tiers(host):
+    host.sanoid(now=int(time.time()) - 3 * HOUR)
+    host.run("sync", check=True)
+    daily = host.snaps("backup/copies/app1")[-1]
+    host.set_creation(f"backup/copies/app1@{daily}", int(time.time()) - 30 * HOUR)
+    (host.state / "restic-last-ok-kept").write_text(str(int(time.time()) - 40 * HOUR))
+    out = host.run("check").stdout
+    assert "STALE tier1: newest tank/data@autosnap_" in out
+    assert "STALE tier2: app1 newest" in out
+    assert "STALE tier4: restic set kept last ok 40h ago" in out
+    assert "STALE tier4: restic set photos never completed" in out
 
 
-def test_check_alerts_on_stale_dump(tmp_path):
-    eng = Engine(tmp_path, DUMPS_ENABLED=True, DUMP_CHECKS=["app1|dump/*.sql|26"], COPY_ENABLED=False).seed()
-    eng.run("snapshot", now=T0, check=True)
-    (eng.data / "app1/dump").mkdir()
-    (eng.data / "app1/dump/x.sql").write_text("x")
-    os.utime(eng.data / "app1/dump/x.sql", (T0 - 40 * 3600,) * 2)
-    assert eng.run("check", now=T0).returncode == 2
-    assert "dump app1" in eng.alerts()
+def test_check_seed_grace_and_missing_copies(host):
+    host.sanoid()
+    (host.state / "restic-seed-started-kept").write_text(str(int(time.time())))
+    out = host.run("check").stdout
+    assert "PENDING tier4: kept first upload in progress" in out
+    assert "STALE tier2: app1 has no daily snapshot" in out
 
 
-def test_check_warns_on_pool_capacity(tmp_path):
-    eng = Engine(tmp_path, POOL_CAP_WARN_PCT=0, COPY_ENABLED=False).seed()
-    eng.run("snapshot", now=T0, check=True)
-    proc = eng.run("check", now=T0)
-    assert proc.returncode == 1 and "warn: capacity" in eng.alerts()
+def test_check_warns_on_pool_health_and_capacity(host):
+    host.sanoid()
+    host.set_pool("tank", cap="91")
+    host.set_pool("backup", health="DEGRADED")
+    out = host.run("check").stdout
+    assert "WARN pool tank 91% full" in out and "WARN pool backup health DEGRADED" in out
 
 
-def test_command_notifier_gets_one_argument_per_placeholder_word(tmp_path):
+def test_check_notify_sends_brand_prefixed_alerts(tmp_path):
     rec = tmp_path / "rec.sh"
     rec.write_text('#!/bin/sh\nfor a in "$@"; do printf "<%s>\\n" "$a"; done >> "$REC_OUT"\n')
     rec.chmod(rec.stat().st_mode | stat.S_IEXEC)
-    eng = Engine(tmp_path, NOTIFY_MODE="command", NOTIFY_COMMAND=f"{rec} -l {{level}} -k {{key}} {{message}}").seed()
+    host = FakeHost(tmp_path, NOTIFY_MODE="command", NOTIFY_COMMAND=f"{rec} -l {{level}} -k {{key}} {{message}}").seed()
     out = tmp_path / "rec.out"
-    eng.run("snapshot", now=T0, check=True)
-    eng.run("check", now=T0 + 2 * DAY, env={"REC_OUT": str(out)})
+    host.run("check", "--notify", env={"REC_OUT": str(out)})
     lines = out.read_text().splitlines()
-    assert lines[:4] == ["<-l>", "<crit>", "<-k>", "<skbackup-snapshot>"]
-    assert lines[4].startswith("<[SKBackup] crit: snapshot") and lines[4].endswith(">")
-    assert eng.alerts(), "the local alert log is always written too"
+    assert lines[:2] == ["<-l>", "<crit>"] and lines[2] == "<-k>" and lines[3].startswith("<skbackup-tier1-")
+    assert lines[4].startswith("<[SKBackup] crit: tier1: no autosnap_") and lines[4].endswith(">")
+    assert "SKBackup, part of SKStacks" in host.alerts(), "the local alert log always gets the footer"
 
 
-def test_notifier_failure_does_not_hide_the_finding(tmp_path):
-    eng = Engine(tmp_path, NOTIFY_MODE="command", NOTIFY_COMMAND="false {message}").seed()
-    eng.run("snapshot", now=T0, check=True)
-    proc = eng.run("check", now=T0 + 2 * DAY)
-    assert proc.returncode == 2 and "notifier failed" in proc.stderr
+def test_check_without_notify_sends_nothing(host):
+    host.run("check")
+    assert host.alerts() == ""
 
 
-# --- restore ----------------------------------------------------------------
-
-def test_restore_from_copy_history(eng, tmp_path):
-    eng.run("run", now=T0, check=True)
-    dest = tmp_path / "restored"
-    eng.run("restore", "copy", "app1", "skbackup-daily-20270115T080000Z", str(dest), check=True)
-    assert tree(dest) == {k: v for k, v in tree(eng.data / "app1").items() if not k.startswith("cache/")}
+def test_notifier_failure_is_reported(tmp_path):
+    host = FakeHost(tmp_path, NOTIFY_MODE="command", NOTIFY_COMMAND="false {message}").seed()
+    proc = host.run("check", "--notify")
+    assert proc.returncode == 1 and "not delivered" in proc.stderr
 
 
-def test_restore_from_a_data_snapshot(eng, tmp_path):
-    eng.run("snapshot", now=T0, check=True)
-    dest = tmp_path / "r"
-    eng.run("restore", "snapshot", "app3", "skbackup-auto-20270115T080000Z", str(dest), check=True)
-    assert tree(dest) == tree(eng.data / "app3")
+def test_status(host):
+    host.sanoid()
+    host.run("sync", check=True)
+    out = host.run("status", check=True).stdout
+    assert out.startswith("SKBackup\n") and "app1" in out and "last copy 0h ago" in out
+    assert "autosnap_" in out and "photos" in out
 
 
-def test_restore_refuses_the_live_data_path_and_non_empty_targets(eng, tmp_path):
-    eng.run("snapshot", now=T0, check=True)
-    proc = eng.run("restore", "snapshot", "app3", "skbackup-auto-20270115T080000Z", str(eng.data / "app3"))
-    assert proc.returncode == 2 and "live" in proc.stderr
-    busy = tmp_path / "busy"
-    busy.mkdir()
-    (busy / "x").write_text("x")
-    proc = eng.run("restore", "snapshot", "app3", "skbackup-auto-20270115T080000Z", str(busy))
-    assert proc.returncode == 2 and "not empty" in proc.stderr
-
-
-# --- tier 4 + 5: restic ------------------------------------------------------
+# --- tiers 4 + 5: restic -------------------------------------------------------
 
 @pytest.fixture
-def off(tmp_path):
-    eng = Engine(tmp_path, OFFSITE_ENABLED=True, RESTORE_TEST_ENABLED=True,
-                 OFFSITE_SETS=["keep|copy|app1,app2|nightly|", "photos|data|app3||"]).seed()
-    eng.run("init-offsite", check=True)
-    return eng
+def off(host):
+    host.run("restic", "init", check=True)
+    host.sanoid()
+    return host
 
 
 @needs_restic
-def test_init_offsite_is_idempotent(off):
-    assert off.run("init-offsite").returncode == 0
+def test_init_is_idempotent(off):
+    out = off.run("restic", "init", check=True).stdout
+    assert "already initialised" in out
 
 
 @needs_restic
-def test_offsite_backup_restore_roundtrip_matches_sha256(off, tmp_path):
-    off.run("run", now=T0, check=True)
-    for set_name, app, src in (("keep", "app1", off.copies / "app1"), ("photos", "app3", off.data / "app3")):
-        dest = tmp_path / f"r-{app}"
-        off.run("restore", "offsite", set_name, app, str(dest), check=True)
-        assert tree(dest) == tree(src), app
-    assert (off.state / "last-ok-offsite-keep-app1").exists()
+def test_backup_from_the_newest_snapshot_restores_byte_for_byte(off, tmp_path):
+    off.run("restic", "backup", check=True)
+    assert not off.mnt.is_symlink(), "the snapshot was left mounted"
+    dest = tmp_path / "restored"
+    env = off.env(extra={"RESTIC_REPOSITORY": str(off.repo), "RESTIC_PASSWORD": "test-restic-password"})
+    subprocess.run(["restic", "restore", "latest", "--tag", "kept", "--target", str(dest)], env=env,
+                   check=True, capture_output=True)
+    got = dest / str(off.mnt).lstrip("/")
+    assert tree(got / "app1") == tree(off.data / "app1", skip=("cache/", "dump/db-0"))
+    assert tree(got / "app2") == tree(off.data / "app2")
+    assert (off.state / "restic-last-ok-kept").exists() and (off.state / "restic-last-ok-photos").exists()
+    assert (off.state / "restic-src-kept").read_text().strip() == "tank/data@autosnap_2027-01-15_08:00:00_hourly"
 
 
 @needs_restic
-def test_offsite_snapshots_carry_brand_set_app_and_source_tags(off):
-    off.run("run", now=T0, check=True)
-    out = off.run("snapshots", check=True).stdout
-    assert "skbackup" in out and "set:keep" in out and "app:app1" in out and "nightly" in out
-    assert "src:skbackup-daily-20270115T080000Z" in out
-    assert "test-host" in out
+def test_snapshots_carry_set_and_brand_tags_and_host(off):
+    off.run("restic", "backup", check=True)
+    out = off.run("restic", "snapshots", check=True).stdout
+    assert "kept" in out and "photos" in out and "skbackup" in out and "test-host" in out
 
 
 @needs_restic
-def test_second_offsite_run_uses_a_parent(off):
-    off.run("run", now=T0, check=True)
-    proc = off.run("run", now=T0 + DAY, check=True)
-    assert "using parent snapshot" in (proc.stdout + proc.stderr)
+def test_second_backup_uses_the_parent(off):
+    off.run("restic", "backup", check=True)
+    off.sanoid(name="autosnap_2027-01-15_09:00:00_hourly")
+    proc = off.run("restic", "backup", "kept", check=True)
+    assert "using parent snapshot" in proc.stdout + proc.stderr
 
 
 @needs_restic
-def test_restore_test_passes_and_reports(off):
-    off.run("run", now=T0, check=True)
-    proc = off.run("restore-test", now=T0, check=True)
-    reports = sorted((off.state / "reports").glob("restore-test-*.txt"))
-    assert reports
-    text = reports[-1].read_text()
-    assert "RESULT: PASS" in text and "SKBackup" in text and "SKBackup, part of SKStacks" in text
-    assert "restore-test" in off.alerts() and "info" in off.alerts()
-    assert (off.state / "last-ok-restore-test").exists()
+def test_restore_test_passes_reports_and_notifies(off):
+    off.run("restic", "backup", check=True)
+    proc = off.run("restic", "restore-test", check=True)
+    assert "RESULT: PASS" in proc.stdout
+    report = sorted((off.state / "reports").glob("restore-test-*.txt"))[-1].read_text()
+    assert report.startswith("SKBackup: restore test") and "SKBackup, part of SKStacks" in report
+    assert "info skbackup-restore-test [SKBackup] info: restore test passed" in off.alerts()
+    assert (off.state / "restic-restoretest-ok").exists()
 
 
 @needs_restic
 def test_restore_test_catches_a_mismatch(off):
-    off.run("run", now=T0, check=True)
-    snapdir = off.root / "snaps" / str(off.copies / "app1").strip("/").replace("/", "_") / "skbackup-daily-20270115T080000Z"
-    target = snapdir / "a.txt"
-    target.chmod(0o644)
-    target.write_text("tampered\n")
-    proc = off.run("restore-test", now=T0)
-    assert proc.returncode == 1
-    assert "RESULT: FAIL" in sorted((off.state / "reports").glob("restore-test-*.txt"))[-1].read_text()
-    assert "crit" in off.alerts()
+    off.run("restic", "backup", check=True)
+    ref = off.data / ".zfs/snapshot/autosnap_2027-01-15_08:00:00_hourly/app1/a.txt"
+    ref.write_text("tampered\n")
+    proc = off.run("restic", "restore-test")
+    assert proc.returncode == 1 and "RESULT: FAIL" in proc.stdout and "MISMATCH app1/a.txt" in proc.stdout
+    assert "crit skbackup-restore-test [SKBackup] crit: restore test FAILED" in off.alerts()
 
 
 @needs_restic
-def test_check_alerts_on_a_stale_offsite_repo(off):
-    off.run("snapshot", now=T0, check=True)
-    off.run("run", now=T0, check=True)
-    off.run("restore-test", now=T0, check=True)
-    assert off.run("check", now=T0 + 3600).returncode == 0, off.alerts()
-    proc = off.run("check", now=T0 + 3 * DAY)
-    assert proc.returncode == 2
-    assert "offsite keep/app1" in off.alerts()
+def test_check_asks_the_repository_when_configured(tmp_path):
+    host = FakeHost(tmp_path, CHECK_RESTIC_REPO=1).seed()
+    host.run("restic", "init", check=True)
+    host.sanoid()
+    host.run("restic", "backup", check=True)
+    assert "OK tier4: repository kept 0h" in host.run("check").stdout
+    stale = FakeHost(tmp_path, CHECK_RESTIC_REPO=1, MAX_AGE_RESTIC_H=0)
+    assert "STALE tier4: repository newest snapshot of set kept is 0h old" in stale.run("check").stdout
+    host.env_file.write_text(f"RESTIC_REPOSITORY={tmp_path}/nope\nRESTIC_PASSWORD=x\n")
+    out = host.run("check")
+    assert out.returncode == 1 and "STALE tier4: repository unreachable for set kept" in out.stdout
 
 
 @needs_restic
-def test_check_alerts_when_the_repo_is_unreachable(off):
-    off.run("snapshot", now=T0, check=True)
-    off.run("run", now=T0, check=True)
-    off.env_file.write_text(f"RESTIC_REPOSITORY={off.root}/nope\nRESTIC_PASSWORD_FILE={off.pass_file}\n")
-    assert off.run("check", now=T0 + 3600).returncode == 2
-    assert "offsite" in off.alerts()
-
-
-@needs_restic
-def test_prune_applies_forget_per_set_and_app(tmp_path):
-    eng = Engine(tmp_path, OFFSITE_ENABLED=True, OFFSITE_FORGET_ARGS=["--keep-last", "1"],
-                 OFFSITE_SETS=["keep|copy|app1||"]).seed()
-    eng.run("init-offsite", check=True)
-    for d in range(3):
-        (eng.data / "app1/a.txt").write_text(f"v{d}\n")
-        eng.run("run", now=T0 + d * DAY, check=True)
-    eng.run("prune", now=T0 + 3 * DAY, check=True)
-    out = eng.run("snapshots", check=True).stdout
-    assert out.count("app:app1") == 1
+def test_forget_prune_keeps_the_retention(tmp_path):
+    host = FakeHost(tmp_path, RESTIC_KEEP_DAILY=1, RESTIC_KEEP_WEEKLY=0, RESTIC_KEEP_MONTHLY=0,
+                    sets=["kept apps"]).seed()
+    host.run("restic", "init", check=True)
+    for h in range(3):
+        (host.data / "app2/c.txt").write_text(f"v{h}\n")
+        host.sanoid(name=f"autosnap_2027-01-1{h}_08:00:00_daily")
+        host.run("restic", "backup", check=True)
+    host.run("restic", "forget-prune", check=True)
+    env = host.env(extra={"RESTIC_REPOSITORY": str(host.repo), "RESTIC_PASSWORD": "test-restic-password"})
+    snaps = json.loads(subprocess.run(["restic", "snapshots", "--json"], env=env, capture_output=True,
+                                      text=True, check=True).stdout)
+    assert len(snaps) == 1

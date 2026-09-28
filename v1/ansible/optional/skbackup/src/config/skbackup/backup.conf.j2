@@ -1,99 +1,67 @@
 # {{ skb.branding.product_name }} configuration, rendered by the deploy. Edits are overwritten on
-# the next deploy: change the instance vault instead. Sourced by bash.
-{% macro recs(items) %}({% for r in items %}{{ r | string | quote }}{% if not loop.last %} {% endif %}{% endfor %}){% endmacro %}
-{% macro flag(v) %}{{ 1 if (v | bool) else 0 }}{% endmacro %}
+# the next deploy: change the instance vault instead. Shell syntax, sourced as root.
+# No secrets here: the restic repository and password live in RESTIC_ENV_FILE (0600).
+{% macro q(v) %}{{ v | default('', true) | string | quote }}{% endmacro %}
 
 # brand
-BRAND_PRODUCT={{ skb.branding.product_name | string | quote }}
-BRAND_SHORT={{ skb_short | quote }}
-BRAND_TAGLINE={{ skb.branding.tagline | default('', true) | string | quote }}
-BRAND_ALERT_PREFIX={{ skb.branding.alert_prefix | string | quote }}
-BRAND_FOOTER={{ skb.branding.report_footer | string | quote }}
-BRAND_CONTACT={{ skb.branding.contact | default('', true) | string | quote }}
-BRAND_LOGO_URL={{ skb.branding.logo_url | default('', true) | string | quote }}
-BRAND_CREDITS_TEXT={{ (skb.branding.credits_text if (skb.branding.credits | bool) else '') | string | quote }}
-UNIT_BASE={{ skb_unit_base | quote }}
-HOST_LABEL={{ skb_host_label | string | quote }}
+BRAND_PRODUCT={{ q(skb.branding.product_name) }}
+BRAND_SHORT={{ q(skb_short) }}
+BRAND_TAGLINE={{ q(skb.branding.tagline) }}
+BRAND_ALERT_PREFIX={{ q(skb.branding.alert_prefix) }}
+BRAND_FOOTER={{ q(skb.branding.report_footer) }}
+BRAND_CONTACT={{ q(skb.branding.contact) }}
+BRAND_LOGO_URL={{ q(skb.branding.logo_url) }}
+BRAND_CREDITS_TEXT={{ q(skb.branding.credits_text if (skb.branding.credits | bool) else '') }}
+UNIT_BASE={{ q(skb_unit_base) }}
+{% if skb.host_label %}
+RESTIC_HOST={{ q(skb.host_label) }}
+{% endif %}
 
-# paths
-STATE_DIR={{ skb_statedir | quote }}
-REPORT_DIR={{ (skb_statedir ~ '/reports') | quote }}
-LOCK_FILE={{ ('/run/' ~ skb_short ~ '.lock') | quote }}
-IONICE={{ flag(skb.ionice) }}
-
-# snapshots (tier 1) and the data target
-SNAP_BACKEND={{ skb.snapshot_backend | quote }}
-SNAP_DIR_ROOT={{ skb_snap_dir_root | quote }}
-SNAP_PREFIX={{ skb_short | quote }}
-DATA_TARGET={{ skb.data_target | string | quote }}
-SNAPSHOTS_ENABLED={{ flag(skb.snapshots.enabled) }}
-SNAPSHOTS_ENGINE={{ skb.snapshots.engine | quote }}
-SNAPSHOTS_KEEP={{ skb.snapshots.builtin_keep | int }}
+# tier 1: the data dataset (sanoid snapshots it) and the pre-deploy helper
+SRC_DATASET={{ q(skb.data_dataset) }}
+SANOID_PREFIX="autosnap_"
 PREDEPLOY_KEEP_DAYS={{ skb.snapshots.predeploy_keep_days | int }}
 PREDEPLOY_KEEP_MIN={{ skb.snapshots.predeploy_keep_min | int }}
 
-# per-app copy (tier 2): name|keep_daily|keep_weekly|keep_monthly|exclude...
-COPY_ENABLED={{ flag(skb['copy'].enabled) }}
-COPY_TARGET={{ skb['copy'].target | default('', true) | string | quote }}
-COPY_BWLIMIT_KBPS={{ skb['copy'].bwlimit_kbps | int }}
-{% set copy_recs = [] %}
-{% for a in skb['copy'].apps %}
-{% set r = skb['copy'].retention | combine(a.retention | default({})) %}
-{% set _ = copy_recs.append(([a.name, r.daily | int, r.weekly | int, r.monthly | int] + (a.excludes | default([]))) | join('|')) %}
-{% endfor %}
-COPY_APPS={{ recs(copy_recs) }}
+# tier 2: per-app copy into the backup pool
+BAK_ROOT={{ q(skb['copy'].target if (skb['copy'].enabled | bool) else '') }}
+APPS_FILE={{ q(skb_confdir ~ '/apps.conf') }}
+SNAP_PREFIX_SYNC={{ q(skb_short) }}
+RSYNC_BWLIMIT={{ skb['copy'].bwlimit_kbps | int }}
 
-# dumps (tier 3): hooks name|timeout|command, checks app|glob|max_age_hours
-DUMPS_ENABLED={{ flag(skb.dumps.enabled) }}
-DUMPS_REQUIRED={{ flag(skb.dumps.required) }}
-{% set hook_recs = [] %}
-{% for h in skb.dumps.hooks %}
-{% set _ = hook_recs.append([h.name, h.timeout | default(1800) | int, h.command] | join('|')) %}
-{% endfor %}
-DUMP_HOOKS={{ recs(hook_recs) }}
-{% set check_recs = [] %}
-{% for c in skb.dumps.checks %}
-{% set _ = check_recs.append([c.app, c.glob, c.max_age_hours | default(skb.alerts.max_age_hours.dumps) | int] | join('|')) %}
-{% endfor %}
-DUMP_CHECKS={{ recs(check_recs) }}
+# tier 3: dump hooks and freshness
+HOOKS_FILE={{ q(skb_confdir ~ '/hooks.conf') }}
+DUMP_MAX_AGE_H={{ skb.dumps.max_age_hours | int }}
 
-# offsite (tier 4): sets name|source|apps|tags|excludes (lists comma-separated)
-OFFSITE_ENABLED={{ flag(skb.offsite.enabled) }}
-OFFSITE_ENV_FILE={{ (skb_confdir ~ '/offsite.env') | quote }}
-OFFSITE_LIMIT_UPLOAD_KBPS={{ skb.offsite.limit_upload_kbps | int }}
-OFFSITE_IGNORE_INODE={{ flag(skb.offsite.ignore_inode) }}
-OFFSITE_TAGS={{ recs([skb_short] + skb.offsite.tags) }}
-{% set set_recs = [] %}
-{% for s in skb.offsite.sets %}
-{% set _ = set_recs.append([s.name, s.source, s.apps | join(','), s.tags | default([]) | join(','), s.excludes | default([]) | join(',')] | join('|')) %}
-{% endfor %}
-OFFSITE_SETS={{ recs(set_recs) }}
-{% set forget_args = [] %}
-{% for k in ['last', 'hourly', 'daily', 'weekly', 'monthly', 'yearly'] %}
-{% if k in skb.offsite.forget %}
-{% set _ = forget_args.extend(['--keep-' ~ k, skb.offsite.forget[k] | int]) %}
-{% endif %}
-{% endfor %}
-OFFSITE_FORGET_ARGS={{ recs(forget_args) }}
+# tier 4: restic
+RESTIC_ENV_FILE={{ q(skb_confdir ~ '/offsite.env') }}
+RESTIC_SETS_FILE={{ q((skb_confdir ~ '/restic-sets.conf') if (skb.offsite.enabled | bool) else '') }}
+RESTIC_LIMIT_UPLOAD={{ skb.offsite.limit_upload_kbps | int }}
+RESTIC_KEEP_DAILY={{ skb.offsite.forget.daily | int }}
+RESTIC_KEEP_WEEKLY={{ skb.offsite.forget.weekly | int }}
+RESTIC_KEEP_MONTHLY={{ skb.offsite.forget.monthly | int }}
+RESTIC_CACHE_DIR="/var/cache/restic"
+RESTIC_SRC_MNT={{ q(skb.offsite.mount_path or ('/run/' ~ skb_short ~ '/src')) }}
+RESTIC_SEED_GRACE_D={{ skb.offsite.seed_grace_days | int }}
 
-# restore test (tier 5)
-RESTORE_TEST_ENABLED={{ flag(skb.restore_test.enabled) }}
+# tier 5: restore test
+RESTORE_TEST_APP={{ q(skb.restore_test.app if (skb.restore_test.enabled | bool) else '') }}
+RESTORE_TEST_SAMPLE_TAG={{ q(skb.restore_test.sample_set if (skb.restore_test.enabled | bool) else '') }}
 RESTORE_TEST_SAMPLES={{ skb.restore_test.samples | int }}
-RESTORE_TEST_READ_SUBSET={{ skb.restore_test.read_data_subset | string | quote }}
-{% set rt_recs = [] %}
-{% for h in skb.restore_test.hooks %}
-{% set _ = rt_recs.append([h.name, h.timeout | default(1800) | int, h.command] | join('|')) %}
-{% endfor %}
-RESTORE_TEST_HOOKS={{ recs(rt_recs) }}
 
-# alerts (tier 6)
-ALERTS_ENABLED={{ flag(skb.alerts.enabled) }}
-NOTIFY_MODE={{ skb.alerts.notifier | quote }}
-NOTIFY_LOG={{ (skb_statedir ~ '/alerts.log') | quote }}
-NOTIFY_COMMAND={{ skb.alerts.command | default('', true) | string | quote }}
-MAX_AGE_SNAPSHOT_H={{ skb.alerts.max_age_hours.snapshot | int }}
-MAX_AGE_COPY_H={{ skb.alerts.max_age_hours['copy'] | int }}
-MAX_AGE_DUMP_H={{ skb.alerts.max_age_hours.dumps | int }}
-MAX_AGE_OFFSITE_H={{ skb.alerts.max_age_hours.offsite | int }}
-MAX_AGE_RESTORE_TEST_H={{ skb.alerts.max_age_hours.restore_test | int }}
-POOL_CAP_WARN_PCT={{ skb.alerts.pool_capacity_pct | int }}
+# state
+STATE_DIR={{ q(skb_statedir) }}
+REPORT_DIR={{ q(skb_statedir ~ '/reports') }}
+LOCK_DIR="/run/lock"
+
+# tier 6: staleness and health thresholds, notifications
+MAX_AGE_SANOID_MIN={{ skb.alerts.max_age.snapshot_minutes | int }}
+MAX_AGE_SKBAK_H={{ skb.alerts.max_age.copy_hours | int }}
+MAX_AGE_RESTIC_H={{ skb.alerts.max_age.offsite_hours | int }}
+CHECK_RESTIC_REPO={{ 1 if (skb.alerts.check_repo | bool) else 0 }}
+POOL_CAP_WARN={{ skb.alerts.pool_capacity_pct | int }}
+THINPOOL={{ q(skb.alerts.thinpool) }}
+THINPOOL_WARN={{ skb.alerts.thinpool_pct | int }}
+NOTIFY_MODE={{ q(skb.alerts.notifier) }}
+NOTIFY_LOG={{ q(skb_statedir ~ '/alerts.log') }}
+NOTIFY_COMMAND={{ q(skb.alerts.command) }}

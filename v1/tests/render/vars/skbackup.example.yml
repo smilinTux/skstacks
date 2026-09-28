@@ -1,5 +1,5 @@
 # Public, obviously fake example vault for the real-Ansible render gate
-# (v1/tests/render/render_playbooks.py). Minimal: the default brand, the
-# zfs backend with sanoid, and the check timer. No real secrets.
+# (v1/tests/render/render_playbooks.py). Minimal: the default brand, sanoid
+# snapshots of the data dataset, and the check timer. No real secrets.
 skbackup:
-  data_target: tank/data
+  data_dataset: tank/data

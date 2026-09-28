@@ -1,0 +1,12 @@
+# {{ skb.branding.product_name }}: the copied apps (tier 2, and the restic "apps" sets). Rendered by the deploy.
+#   NAME  SRC_RELPATH  KEEP_DAILY KEEP_WEEKLY KEEP_MONTHLY  [OPT...]
+# OPT: --exclude=PATTERN (leading "/" = anchored at the app root), newest=DIR:N, dump=DIR
+{% for a in skb['copy'].apps %}
+{% set r = skb['copy'].retention | combine(a.retention | default({})) %}
+{% set opts = [] %}
+{% for e in a.excludes | default([]) %}{% set _ = opts.append('--exclude=' ~ e) %}{% endfor %}
+{% for n in a.newest | default([]) %}{% set _ = opts.append('newest=' ~ n.dir ~ ':' ~ (n.keep | int)) %}{% endfor %}
+{% if a.dump | default('') %}{% set _ = opts.append('dump=' ~ a.dump) %}{% endif %}
+{{ a.name }} {{ a.src | default(a.name) }} {{ r.daily | int }} {{ r.weekly | int }} {{ r.monthly | int }}{% if opts %} {{ opts | join(' ') }}{% endif %}
+
+{% endfor %}
