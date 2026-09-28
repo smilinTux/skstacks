@@ -305,24 +305,58 @@
 
     - name: Fix Forgejo data permissions and start runners
       shell: |
-        chown -R 1000:1000 /var/data/{{ app }}-{{ env }}/data || true
-        chown -R 1000:1000 /var/data/{{ app }}-{{ env }}/config || true
-        # Never a blanket `chmod -R 755` on data/: it is Forgejo's /data and
-        # holds its private keys (ssh/ssh_host_*_key, forgejo/ssh/gitea.*,
-        # forgejo/jwt/private.pem) and every repository. Forgejo runs as the
-        # owner (container user 1000:1000), so: owner rwX (existing execute
-        # bits such as git hooks are kept), group read, other nothing; dirs
-        # end up 0750. Then private keys 0600 and ~git/.ssh 0700, the modes
-        # ssh-keygen / Forgejo create them with and OpenSSH StrictModes wants.
+        # Bounded and incremental. This used to be `chown -R` + `chmod -R`
+        # over all of data/: on a 60G Forgejo (repositories, LFS) on NFS that
+        # was 40+ minutes of one SETATTR per file, changing nothing, and it
+        # saturated NFS for every other service. Every `find` below selects
+        # only entries whose owner or mode is actually wrong, so a no-op
+        # deploy writes nothing.
+        #
+        # data/ is Forgejo's /data. Forgejo runs as the container user
+        # 1000:1000 and creates everything under it as itself, so only the
+        # top of the tree can be wrong (created by this playbook, a restore or
+        # an older framework): data/ itself, git/ forgejo/ lfs/ log/ ssh/,
+        # and the roots of the bulk stores (forgejo/forgejo-repositories,
+        # lfs/<shard>, forgejo/attachments, forgejo/packages, ...). That is
+        # -maxdepth 2; the contents of the bulk stores are never walked.
+        # skgit.PERMS_FULL_WALK (vault, default false) walks all of data/
+        # instead, for a tree copied in from elsewhere with foreign owners.
+        #
+        # Modes: never a blanket `chmod -R 755` (#89): data/ holds Forgejo's
+        # private keys and every repository. Owner rwX (existing execute
+        # bits such as git hooks kept), group rX, no group write, other
+        # nothing; dirs end up 0750. data/ itself 0750 is what keeps other
+        # users out of everything below it, so repository files an older
+        # `chmod -R 755` left 0644/0755 are unreachable for "other" and are
+        # left alone (rewriting them is the 60G walk this avoids; the full
+        # walk knob strips them if wanted). The key dirs are owner-only:
+        # dir 0700, private keys 0600 (what ssh-keygen / Forgejo create and
+        # OpenSSH StrictModes wants), public keys without group write or
+        # other bits. They are pruned from the general pass so it does not
+        # flip them to 0750/0640 and back on every deploy.
+        U=1000; G=1000
         D=/var/data/{{ app }}-{{ env }}/data
-        chmod -R u+rwX,g+rX,g-w,o-rwx "$D" || true
+        C=/var/data/{{ app }}-{{ env }}/config
+        DEPTH=2
+        [ "$SKGIT_PERMS_FULL_WALK" = 1 ] && DEPTH=1000000
+        find "$D" -maxdepth "$DEPTH" \( ! -user "$U" -o ! -group "$G" \) -exec chown -h "$U:$G" {} + || true
+        find "$D" -maxdepth "$DEPTH" \
+          \( -path "$D/ssh" -o -path "$D/forgejo/ssh" -o -path "$D/forgejo/jwt" -o -path "$D/git/.ssh" \) -prune -o \
+          \( \( -type d \( ! -perm -0750 -o -perm /0027 \) \) \
+          -o \( -type f \( ! -perm -0640 -o -perm /0027 -o \( -perm /0111 ! -perm -0110 \) \) \) \) \
+          -exec chmod u+rwX,g+rX,g-w,o-rwx {} + || true
         for K in "$D/ssh" "$D/forgejo/ssh" "$D/forgejo/jwt" "$D/git/.ssh"; do
-          [ -d "$K" ] && find "$K" -type f ! -name '*.pub' -exec chmod 0600 {} + || true
+          [ -d "$K" ] || continue
+          find "$K" -maxdepth 1 \( ! -user "$U" -o ! -group "$G" \) -exec chown -h "$U:$G" {} + || true
+          find "$K" -maxdepth 0 ! -perm 0700 -exec chmod 0700 {} + || true
+          find "$K" -maxdepth 1 -type f ! -name '*.pub' ! -perm 0600 -exec chmod 0600 {} + || true
+          find "$K" -maxdepth 1 -type f -name '*.pub' -perm /0027 -exec chmod g-w,o-rwx {} + || true
         done
-        [ -d "$D/git/.ssh" ] && chmod 0700 "$D/git/.ssh" || true
-        # The config dir only, never -R: app.ini is 0600 (secret key, tokens,
-        # DB and mail passwords) and must stay that way.
-        chmod 755 /var/data/{{ app }}-{{ env }}/config || true
+        # config/ is small (app.ini and friends), so its owner is fixed all
+        # the way down, incrementally. Its mode: the dir only, never -R:
+        # app.ini is 0600 (secret key, tokens, DB and mail passwords).
+        find "$C" \( ! -user "$U" -o ! -group "$G" \) -exec chown -h "$U:$G" {} + || true
+        find "$C" -maxdepth 0 ! -perm 0755 -exec chmod 755 {} + || true
 
         if [ -f /var/data/{{ app }}-{{ env }}/start-runners.sh ]; then
           echo "Starting runners..."
@@ -330,6 +364,7 @@
         fi
       environment:
         SKGIT_DIND_NODE: "{{ skgit.DIND_NODE | default('') }}"
+        SKGIT_PERMS_FULL_WALK: "{{ '1' if (skgit.PERMS_FULL_WALK | default(false) | bool) else '' }}"
       when: deploy_output.rc == 0
       ignore_errors: yes
       tags:
