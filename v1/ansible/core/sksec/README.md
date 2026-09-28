@@ -67,7 +67,7 @@ CrowdSec whitelist parser into
 `/var/data/runtime/sksec-<env>/crowdsec-config/parsers/s02-enrich/sksec-allowlist.yaml`.
 Events from those sources are dropped before any scenario sees them, so
 they never raise an alert or a local ban. List the operator's own ranges:
-LAN, VPN (e.g. tailscale `100.64.0.0/10`), the cluster nodes, the overlay
+LAN, any VPN address range, the cluster nodes, the overlay
 and ingress networks, and the site's own public IP (clients that reach the
 edge through hairpin NAT arrive from it). Manual `cscli decisions add` and
 blocklist decisions are not filtered. Emptying the list removes the file.
