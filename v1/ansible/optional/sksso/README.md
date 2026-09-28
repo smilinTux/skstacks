@@ -110,6 +110,58 @@ It creates (or keeps) the service account `skstacks-automation` in the
 rotation updates the key). The token never appears on a command line or in
 the output.
 
+## CapAuth login (optional)
+
+`sksso.CAPAUTH_ENABLED: true` adds a **CapAuth OIDC identity provider** (PGP-signed login, from the capauth project) to this stack and registers it in Authentik as an OAuth source, with its own login flow. It needs **stock** Authentik 2025.2 or newer (OAuth sources have PKCE from 2025.2, and CapAuth refuses a code flow without PKCE S256); no custom Authentik image.
+
+What the deploy does:
+
+- runs a `capauth` service (one replica: its key registry, OIDC state and RS256 signing key are SQLite/files under `/var/data/sksso-<env>/capauth`), routed by Traefik at `capauth[-<env>].<base>` (`sksso.CAPAUTH_HOST` to override) for `/oidc/` (login page, OIDC endpoints), `/capauth/v1/challenge` and `/capauth/v1/verify` (key enrollment) only. The admin API, the phone-signer (bunker) and the other CapAuth endpoints are not routed. That host needs DNS and a certificate like `sso[-<env>]`. Authentik's server calls the token and userinfo endpoints on the stack network.
+- renders `capauth.env` and `capauth-oidc-clients.json` (both `0600`): one client, `authentik`, whose only redirect URI is `https://sso[-<env>].<base>/source/oauth/callback/<source slug>/` (`sksso.CAPAUTH_SSO_HOST` if users reach Authentik on another host).
+- after the stack is up (`tasks/capauth_provision.yml`, idempotent, via `sksso.api_token`): an OAuth source `CapAuth` (`capauth`), an identification stage that offers only that source (no username or password field), a user login stage, and the flow `capauth-authentication` (title "Sign in with CapAuth"). Users are matched by the OIDC `sub` (the PGP fingerprint) only and the source has **no enrollment flow**: a CapAuth key that is not linked to an Authentik user is refused. Each `sksso.CAPAUTH_USERS` entry links a fingerprint to an existing Authentik user (never created).
+
+The flow is not bound to anything. An application opts in by using it as its provider's authentication flow (skmesh: `skmesh.AUTHENTIK_AUTHENTICATION_FLOW: capauth-authentication`). Every other application keeps the brand's default password login.
+
+```yaml
+sksso:
+  api_token: "..."                    # required (see "Automation API token")
+  CAPAUTH_ENABLED: true
+  CAPAUTH_IMAGE: "<registry>/capauth:<version>@sha256:<digest>"   # required, digest-pinned
+  CAPAUTH_CLIENT_SECRET: "..."        # required, openssl rand -hex 32 (CapAuth <-> Authentik)
+  CAPAUTH_ADMIN_TOKEN: "..."          # required, openssl rand -hex 32 (approves keys)
+  CAPAUTH_USERS:                      # optional: fingerprint -> existing Authentik user
+    - {username: alice, fingerprint: 0123456789ABCDEF0123456789ABCDEF01234567}
+  # optional
+  CAPAUTH_HOST: capauth.example.org   # default capauth[-<env>].<base>
+  CAPAUTH_SSO_HOST: sso.example.org   # default sso[-<env>].<base>
+  CAPAUTH_REQUIRE_APPROVAL: true      # default true: new keys wait for an admin
+  CAPAUTH_SOURCE_SLUG: capauth
+  CAPAUTH_FLOW_SLUG: capauth-authentication
+  CAPAUTH_SOURCE_AUTHENTICATION_FLOW: default-source-authentication
+```
+
+There is no public, digest-pinned CapAuth image yet, so `CAPAUTH_IMAGE` has no default and the deploy refuses a value without `@sha256:`. The image must include CapAuth's per-client `require_nonce` (Authentik's source sends no OIDC nonce).
+
+Enrolling a user (once per key):
+
+1. The user proves the key to CapAuth: `POST https://<capauth host>/capauth/v1/challenge` with the fingerprint, sign the returned canonical `CAPAUTH_NONCE_V1` payload, then `POST /capauth/v1/verify` with the fingerprint, nonce, signature and the ASCII-armored **public** key. With approval required this answers `403 enrollment_pending`.
+2. An admin approves it from inside the cluster (the admin API is not routed publicly), on a manager, token on stdin:
+
+   ```bash
+   ansible-vault view --vault-password-file <pass> <sksso vault> \
+     | python3 -c 'import sys,yaml; print("Authorization: Bearer " + yaml.safe_load(sys.stdin)["sksso"]["CAPAUTH_ADMIN_TOKEN"])' \
+     | ssh <manager> 'docker run --rm -i --network sksso-<env> curlimages/curl:8.10.1 -fsS -H @- \
+         -H "Content-Type: application/json" -d "{\"fingerprint\": \"<FP>\"}" \
+         http://sksso-<env>_capauth:8420/capauth/v1/keys/approve'
+   ```
+3. Add `{username, fingerprint}` to `sksso.CAPAUTH_USERS` and redeploy sksso (links the fingerprint to the Authentik user).
+
+Authentik keeps one CapAuth link per user: changing a user's fingerprint in `CAPAUTH_USERS` (key rotation) updates that link on the next deploy. A fingerprint already linked to a different user is refused; remove that link in the admin UI first.
+
+Login: the application sends the user to the CapAuth flow, the user picks "CapAuth", signs the challenge on CapAuth's page, and returns to Authentik logged in as the linked user.
+
+Rollback: unbind the flow in every application that uses it first (skmesh: remove `AUTHENTIK_AUTHENTICATION_FLOW` and redeploy it), then set `CAPAUTH_ENABLED: false` and redeploy sksso: the deploy removes the `capauth` service (a stack deploy alone would leave it running). The Authentik objects (source, stages, flow, links) stay until deleted in the admin UI; the source is useless without the service, and nothing is bound to the flow.
+
 ## Deployment
 
 ```bash

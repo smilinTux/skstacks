@@ -211,3 +211,59 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+{% if sksso.CAPAUTH_ENABLED | default(false) %}
+
+  # CapAuth OIDC identity provider (sksso.CAPAUTH_ENABLED): PGP-signed login,
+  # registered in Authentik as the OAuth source that the CapAuth login flow
+  # offers (see README "CapAuth login"). The browser reaches it on its own
+  # host through Traefik; Authentik's server calls its token and userinfo
+  # endpoints on this stack's network. One replica: its state is SQLite.
+  # Only the login page (/oidc/) and key enrollment are routed publicly; the
+  # admin API (approve/revoke) is reached from inside the cluster.
+  capauth:
+    image: "{{ sksso.CAPAUTH_IMAGE }}"
+    env_file: /var/data/config/{{ app }}-{{ env }}/capauth.env
+    deploy:
+      mode: replicated
+      replicas: 1
+{% set sksso_pl = namespace(c=(["node.role == worker"] if (sksso.placement_use_worker_constraint | default(true)) else [])) %}
+{% for node in sksso.placement_exclude_nodes | default([]) %}
+{% set sksso_pl.c = sksso_pl.c + ["node.hostname != " ~ node] %}
+{% endfor %}
+      placement:
+        constraints: {{ sksso_pl.c | tojson }}
+      resources:
+        reservations:
+          memory: 128M
+          cpus: '.1'
+        limits:
+          memory: 512M
+          cpus: '1.0'
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-capauth.rule=Host(`{{ sksso.CAPAUTH_HOST | default('capauth' ~ ('' if env == 'prod' else '-' ~ env) ~ '.${BASE_DOMAIN}') }}`) && (PathPrefix(`/oidc/`) || Path(`/capauth/v1/challenge`) || Path(`/capauth/v1/verify`))"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-capauth.entrypoints=websecure"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-capauth.tls=true"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-capauth.tls.certresolver=main"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-capauth.tls.options=intermediate@file"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-capauth.service={{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-capauth"
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-capauth.loadbalancer.server.scheme=http"
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-capauth.loadbalancer.server.port=8420"
+    volumes:
+      - /var/data/{{ app }}-{{ env }}/capauth:/data
+      - /var/data/config/{{ app }}-{{ env }}/capauth-oidc-clients.json:/config/oidc-clients.json:ro
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - cloud-public-{{ env }}
+      - {{ app }}-{{ env }}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://localhost:8420/capauth/v1/status || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+{% endif %}

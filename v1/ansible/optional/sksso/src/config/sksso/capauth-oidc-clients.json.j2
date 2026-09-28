@@ -1,0 +1,10 @@
+{% set capauth_base = sksso.DOMAIN if (sksso.CLOUDFLARED | default(false)) else (sksso.CLUSTERNAME ~ '.' ~ sksso.DOMAIN) %}
+{% set sso_host = sksso.CAPAUTH_SSO_HOST | default('sso' ~ ('' if env == 'prod' else '-' ~ env) ~ '.' ~ capauth_base) %}
+{{ [{
+  "client_id": "authentik",
+  "client_secret": sksso.CAPAUTH_CLIENT_SECRET,
+  "name": "Authentik (sksso)",
+  "redirect_uris": ["https://" ~ sso_host ~ "/source/oauth/callback/" ~ (sksso.CAPAUTH_SOURCE_SLUG | default('capauth')) ~ "/"],
+  "scopes": ["openid", "profile", "email"],
+  "require_nonce": false
+}] | to_json }}
