@@ -2,3 +2,12 @@
 # hooks down their "set" path. Fake values only.
 skmesh:
   DASHBOARD_IMAGE: registry.example.test/skmesh-dashboard:1.0.0
+  TURN_URI: turn:turn.shared.example.test:3478
+  STUN_URIS:
+    - stun:stun.example.test:3478
+  TURN_TIME_BASED_CREDENTIALS: true
+  MANAGEMENT_IMAGE: registry.example.test/netbird-management:1.0.0
+  SIGNAL_IMAGE: registry.example.test/netbird-signal:1.0.0
+  RELAY_IMAGE: registry.example.test/netbird-relay:1.0.0
+  POSTGRES_IMAGE: registry.example.test/postgres:16.0.0
+  POSTGRES_BACKUP_IMAGE: registry.example.test/postgres:16.0.0
