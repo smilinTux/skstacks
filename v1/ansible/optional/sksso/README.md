@@ -156,6 +156,8 @@ Enrolling a user (once per key):
    ```
 3. Add `{username, fingerprint}` to `sksso.CAPAUTH_USERS` and redeploy sksso (links the fingerprint to the Authentik user).
 
+Authentik keeps one CapAuth link per user: changing a user's fingerprint in `CAPAUTH_USERS` (key rotation) updates that link on the next deploy. A fingerprint already linked to a different user is refused; remove that link in the admin UI first.
+
 Login: the application sends the user to the CapAuth flow, the user picks "CapAuth", signs the challenge on CapAuth's page, and returns to Authentik logged in as the linked user.
 
 Rollback: unbind the flow in every application that uses it first (skmesh: remove `AUTHENTIK_AUTHENTICATION_FLOW` and redeploy it), then set `CAPAUTH_ENABLED: false` and redeploy sksso: the deploy removes the `capauth` service (a stack deploy alone would leave it running). The Authentik objects (source, stages, flow, links) stay until deleted in the admin UI; the source is useless without the service, and nothing is bound to the flow.

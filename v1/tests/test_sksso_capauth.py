@@ -274,6 +274,9 @@ class FakeAuthentik:
                 keys = {k: v for k, v in q.items() if k in ("name", "target", "stage")}
                 return 200, {"results": [o for o in store if all(str(o.get(k)) == v for k, v in keys.items())]}
             if method == "POST":
+                if prefix == "/sources/user_connections/oauth/" and any(
+                        c["user"] == body["user"] and c["source"] == body["source"] for c in store):
+                    return 400, {"non_field_errors": ["The fields user, source must make a unique set."]}
                 obj = dict(body, pk=self._pk())
                 store.append(obj)
                 return 201, obj
@@ -449,3 +452,26 @@ def test_deploy_script_still_runs_the_stack_deploy(sksso):
     for line in out.splitlines():
         if line.startswith("record_preexisting "):
             assert re.fullmatch(r'record_preexisting( "\$\{STACK_NAME\}_[a-z]+")+', line), line
+
+
+FP2 = "89ABCDEF0123456789ABCDEF0123456789ABCDEF"
+
+
+def test_provisioner_rotates_a_users_key_in_place(fake_authentik):
+    """Authentik allows one connection per (user, source): a new fingerprint
+    for a linked user (key rotation) must update that link, not add one."""
+    fake = fake_authentik()
+    assert _provision(_cfg(fake, users=[{"username": "alice", "fingerprint": FP}])).returncode == 0
+    out = _provision(_cfg(fake, users=[{"username": "alice", "fingerprint": FP2}]))
+    assert out.returncode == 0, out.stderr
+    assert f"link alice <- {FP2[-16:]}: updated (identifier)" in out.stdout
+    assert [(c["user"], c["identifier"]) for c in fake.conns] == [(7, FP2)]
+
+
+def test_provisioner_refuses_to_move_a_key_to_another_user(fake_authentik):
+    fake = fake_authentik()
+    fake.users.append({"pk": 8, "username": "bob"})
+    assert _provision(_cfg(fake, users=[{"username": "alice", "fingerprint": FP}])).returncode == 0
+    out = _provision(_cfg(fake, users=[{"username": "bob", "fingerprint": FP}]))
+    assert out.returncode == 1 and "already linked to another Authentik user" in out.stderr
+    assert [(c["user"], c["identifier"]) for c in fake.conns] == [(7, FP)]

@@ -184,7 +184,11 @@ def provision(api, cfg):
     if not cfg.get("users"):
         return
     conns = api.get("/sources/user_connections/oauth/", source__slug=cfg["source_slug"], page_size=1000)
-    by_ident = {c["identifier"]: c for c in conns.get("results", [])}
+    conns = conns.get("results", [])
+    # Authentik allows ONE connection per (user, source): a new fingerprint
+    # for a linked user is a key rotation and updates that link in place.
+    by_ident = {c["identifier"]: c for c in conns}
+    by_user = {c["user"]: c for c in conns}
     for entry in cfg["users"]:
         username, fp = entry["username"], str(entry["fingerprint"]).replace(" ", "").upper()
         if len(fp) not in (40, 64) or any(ch not in "0123456789ABCDEF" for ch in fp):
@@ -192,7 +196,12 @@ def provision(api, cfg):
         user = api.first("/core/users/", username=username)
         if user is None:
             raise ApiError(f"users: Authentik user '{username}' does not exist (create it first)")
-        ensure(api, "/sources/user_connections/oauth/", lambda fp=fp: by_ident.get(fp),
+        other = by_ident.get(fp)
+        if other is not None and other["user"] != user["pk"]:
+            # moving a key between accounts must be a deliberate admin act
+            raise ApiError(f"users: fingerprint ...{fp[-16:]} is already linked to another Authentik user "
+                           f"(pk {other['user']}); unlink it there first")
+        ensure(api, "/sources/user_connections/oauth/", lambda u=user["pk"]: by_user.get(u),
                {"user": user["pk"], "source": source_pk, "identifier": fp},
                f"link {username} <- {fp[-16:]}")
 
