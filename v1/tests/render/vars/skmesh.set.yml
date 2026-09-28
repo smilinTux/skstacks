@@ -1,6 +1,16 @@
 # Second render pass: merged over skmesh.example.yml to drive the optional
-# hooks down their "set" path. Fake values only.
+# hooks down their "set" path. Fake values only. AUTH_MODE: authentik
+# (reads sksso's vault: skmesh.with.sksso.yml).
 skmesh:
+  AUTH_MODE: authentik
+  NETBIRD_AUTH_CLIENT_ID: skmesh
+  IDP_MANAGER_PASSWORD: example-idp-manager-app-password-not-a-secret
+  SSO_HOST_IP: 192.0.2.5
+  DEVICE_AUTH_FLOW: true
+  EXTRA_CA_CERT: |
+    -----BEGIN CERTIFICATE-----
+    ZXhhbXBsZSBDQSwgbm90IGEgcmVhbCBjZXJ0aWZpY2F0ZQ==
+    -----END CERTIFICATE-----
   DASHBOARD_IMAGE: registry.example.test/skmesh-dashboard:1.0.0
   TURN_URI: turn:turn.shared.example.test:3478
   STUN_URIS:
@@ -11,3 +21,4 @@ skmesh:
   RELAY_IMAGE: registry.example.test/netbird-relay:1.0.0
   POSTGRES_IMAGE: registry.example.test/postgres:16.0.0
   POSTGRES_BACKUP_IMAGE: registry.example.test/postgres:16.0.0
+  PROVISIONER_IMAGE: registry.example.test/python:3.0.0

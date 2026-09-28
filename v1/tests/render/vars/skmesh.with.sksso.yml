@@ -1,0 +1,4 @@
+# sksso's fake vault, read by skmesh's deploy in AUTH_MODE: authentik for
+# the Authentik automation token (render gate: staged as sksso-<env>_vault.yml).
+sksso:
+  api_token: example-authentik-api-token-not-a-secret-0123456789

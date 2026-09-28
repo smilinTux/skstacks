@@ -3,6 +3,20 @@
 {%- else -%}
   {%- set _base_domain = skmesh.CLUSTERNAME ~ '.' ~ skmesh.DOMAIN -%}
 {%- endif -%}
+{#- AUTH_MODE (see README "Authentication"):
+    standalone: NetBird's embedded IdP (Dex, local email/password users),
+      served by management itself at https://<skmesh host>/oauth2. No
+      external IdP. The first visit to the dashboard creates the owner.
+    authentik: the cluster's sksso (Authentik) is the IdP: OIDC provider +
+      application <AUTHENTIK_APP_SLUG> (public client, PKCE), and NetBird's
+      Authentik IdP manager (service account IDP_MANAGER_USERNAME with an
+      app-password token) to resolve users. The deploy creates/updates the
+      Authentik side before the stack starts. -#}
+{%- set _mode = skmesh.AUTH_MODE | default('standalone') | string | lower -%}
+{%- set _host = 'skmesh' ~ ('' if env == 'prod' else '-' ~ env) ~ '.' ~ _base_domain -%}
+{%- set _sso = skmesh.SSO_HOST | default('sso' ~ ('' if env == 'prod' else '-' ~ env) ~ '.' ~ _base_domain) -%}
+{%- set _issuer = 'https://' ~ _sso ~ '/application/o/' ~ (skmesh.AUTHENTIK_APP_SLUG | default('skmesh')) ~ '/' -%}
+{%- set _cid = skmesh.NETBIRD_AUTH_CLIENT_ID | default('skmesh') -%}
 {#- TURN_URI / STUN_URIS / TURN_TIME_BASED_CREDENTIALS let NetBird use a
     TURN server this stack does not run (for example one shared with another
     app). With TURN_TIME_BASED_CREDENTIALS management mints TURN REST
@@ -42,7 +56,7 @@
   },
   "Signal": {
     "Proto": "https",
-    "URI": "skmesh.{{ _base_domain }}:443",
+    "URI": "{{ _host }}:443",
     "Username": "",
     "Password": null
   },
@@ -57,15 +71,65 @@
   "StoreConfig": {
     "Engine": "postgres"
   },
+{% if _mode == 'authentik' %}
   "HttpConfig": {
     "Address": "0.0.0.0:33073",
-    "AuthIssuer": "https://sso.{{ _base_domain }}/application/o/skmesh/",
-    "AuthAudience": "",
-    "AuthKeysLocation": "",
+    "AuthIssuer": "{{ _issuer }}",
+    "AuthAudience": "{{ _cid }}",
+    "AuthKeysLocation": "{{ _issuer }}jwks/",
     "AuthUserIDClaim": "sub",
     "CertFile": "",
     "CertKey": "",
     "IdpSignKeyRefreshEnabled": false,
-    "OIDCConfigEndpoint": "https://sso.{{ _base_domain }}/application/o/skmesh/.well-known/openid-configuration"
+    "OIDCConfigEndpoint": "{{ _issuer }}.well-known/openid-configuration"
+  },
+  "IdpManagerConfig": {
+    "ManagerType": "authentik",
+    "ClientConfig": {
+      "Issuer": "{{ _issuer[:-1] }}",
+      "TokenEndpoint": "https://{{ _sso }}/application/o/token/",
+      "ClientID": "{{ _cid }}",
+      "ClientSecret": "",
+      "GrantType": "client_credentials"
+    },
+    "ExtraConfig": {
+      "Username": "{{ skmesh.IDP_MANAGER_USERNAME | default('skmesh-idp-manager') }}",
+      "Password": "{{ skmesh.IDP_MANAGER_PASSWORD }}"
+    }
+  },
+{% if (skmesh.DEVICE_AUTH_FLOW | default(false) | string | lower) in ['true', 'yes', '1'] %}
+  "DeviceAuthorizationFlow": {
+    "Provider": "hosted",
+    "ProviderConfig": {
+      "Audience": "{{ _cid }}",
+      "ClientID": "{{ _cid }}",
+      "Scope": "openid",
+      "UseIDToken": false
+    }
+  },
+{% endif %}
+  "PKCEAuthorizationFlow": {
+    "ProviderConfig": {
+      "Audience": "{{ _cid }}",
+      "ClientID": "{{ _cid }}",
+      "ClientSecret": "",
+      "Scope": "openid profile email offline_access",
+      "RedirectURLs": ["http://localhost:53000"],
+      "UseIDToken": false
+    }
   }
+{% else %}
+  "EmbeddedIdP": {
+    "Enabled": true,
+    "Issuer": "https://{{ _host }}/oauth2",
+    "SignKeyRefreshEnabled": true,
+    "DashboardRedirectURIs": [
+      "https://{{ _host }}/nb-auth",
+      "https://{{ _host }}/nb-silent-auth"
+    ],
+    "CLIRedirectURIs": [
+      "http://localhost:53000/"
+    ]
+  }
+{% endif %}
 }

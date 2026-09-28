@@ -3,6 +3,8 @@
 {%- else -%}
   {%- set _base_domain = skmesh.CLUSTERNAME ~ '.' ~ skmesh.DOMAIN -%}
 {%- endif -%}
+{%- set _mode = skmesh.AUTH_MODE | default('standalone') | string | lower -%}
+{%- set _sso = skmesh.SSO_HOST | default('sso' ~ ('' if env == 'prod' else '-' ~ env) ~ '.' ~ _base_domain) -%}
 version: "3.9"
 
 x-logging: &logging
@@ -80,8 +82,12 @@ services:
     image: {{ skmesh.MANAGEMENT_IMAGE | default('netbirdio/management:0.79.0') }}
     container_name: skmesh-management
     env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
+{% if _mode == 'authentik' %}
+    # Management fetches the OIDC discovery document and JWKS from sksso,
+    # and its IdP manager calls the Authentik API, all at this hostname.
     extra_hosts:
-      - "sso.{{ _base_domain }}:{{ skmesh.SSO_HOST_IP }}"
+      - "{{ _sso }}:{{ skmesh.SSO_HOST_IP }}"
+{% endif %}
     networks:
       - skmesh-{{ env }}
       - cloud-public-{{ env }}
@@ -91,6 +97,12 @@ services:
     volumes:
       - /var/data/config/skmesh-{{ env }}/management.json:/etc/netbird/management.json:ro
       - /var/data/skmesh-{{ env }}/management:/var/lib/netbird
+{% if skmesh.EXTRA_CA_CERT | default('') %}
+      # EXTRA_CA_CERT: a CA management must trust for HTTPS to the IdP (a
+      # private CA in front of sksso). Go reads /etc/ssl/certs/* in addition
+      # to the system bundle.
+      - /var/data/config/skmesh-{{ env }}/extra-ca.pem:/etc/ssl/certs/skmesh-extra-ca.pem:ro
+{% endif %}
     command:
       - "--log-file=console"
       - "--log-level=info"
@@ -113,7 +125,14 @@ services:
         - "traefik.http.routers.skmesh-mgmt-grpc.service=skmesh-mgmt-grpc-svc"
         - "traefik.http.services.skmesh-mgmt-grpc-svc.loadbalancer.server.port=33073"
         - "traefik.http.services.skmesh-mgmt-grpc-svc.loadbalancer.server.scheme=h2c"
-        - "traefik.docker.network=cloud-public-{{ env }}"
+{% if _mode != 'authentik' %}
+        # embedded IdP (Dex) is served by management's HTTP port at /oauth2
+        - "traefik.http.routers.skmesh-mgmt-oauth2.rule=Host(`skmesh{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && PathPrefix(`/oauth2`)"
+        - "traefik.http.routers.skmesh-mgmt-oauth2.entrypoints=websecure"
+        - "traefik.http.routers.skmesh-mgmt-oauth2.tls.certresolver=main"
+        - "traefik.http.routers.skmesh-mgmt-oauth2.service=skmesh-mgmt-api-svc"
+{% endif %}
+        - "traefik.swarm.network=cloud-public-{{ env }}"
     logging: *logging
     ports:
       - "33073:33073/tcp"
@@ -141,7 +160,7 @@ services:
         - "traefik.http.routers.skmesh-signal.service=skmesh-signal-svc"
         - "traefik.http.services.skmesh-signal-svc.loadbalancer.server.port=10000"
         - "traefik.http.services.skmesh-signal-svc.loadbalancer.server.scheme=h2c"
-        - "traefik.docker.network=cloud-public-{{ env }}"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
     logging: *logging
     ports:
       - "10000:10000/tcp"
@@ -171,7 +190,7 @@ services:
         - "traefik.http.routers.skmesh-relay.service=skmesh-relay-svc"
         - "traefik.http.services.skmesh-relay-svc.loadbalancer.server.port=33080"
         - "traefik.http.services.skmesh-relay-svc.loadbalancer.server.scheme=http"
-        - "traefik.docker.network=cloud-public-{{ env }}"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
     logging: *logging
     depends_on:
       - management
@@ -197,10 +216,11 @@ services:
           - node.role == manager
       labels:
         - "traefik.enable=true"
-        - "traefik.http.routers.skmesh-dash.rule=Host(`skmesh{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && !PathPrefix(`/api`) && !PathPrefix(`/management`) && !PathPrefix(`/signalexchange.SignalExchange`) && !PathPrefix(`/relay`)"
+        - "traefik.http.routers.skmesh-dash.rule=Host(`skmesh{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && !PathPrefix(`/api`) && !PathPrefix(`/management`) && !PathPrefix(`/signalexchange.SignalExchange`) && !PathPrefix(`/relay`){% if _mode != 'authentik' %} && !PathPrefix(`/oauth2`){% endif %}"
         - "traefik.http.routers.skmesh-dash.entrypoints=websecure"
         - "traefik.http.routers.skmesh-dash.tls.certresolver=main"
         - "traefik.http.services.skmesh-dash.loadbalancer.server.port=80"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
     logging: *logging
     depends_on:
       - management
