@@ -112,6 +112,7 @@ PREFIXES = ("ansible.builtin.", "ansible.legacy.")
 FAKE_STDOUT = {
     "fence_service_detection": "skfenceha",
     "traefik_detection": "skfenceha",
+    "socket_proxy_detection": "skfenceha",
     "actual_cert_dir": "/var/data/runtime/skfenceha-dev/certs/mail.example.test",
     "skfenceha_logrotate_nodes": "render-node-1",
     "skfence_logrotate_nodes": "render-node-1",

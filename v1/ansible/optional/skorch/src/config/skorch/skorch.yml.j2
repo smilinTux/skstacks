@@ -76,9 +76,8 @@ services:
       placement:
         constraints: {{ (skorch_cfg.placement_constraints | default([])) | tojson }}
       restart_policy:
-        condition: on-failure
+        condition: any
         delay: 5s
-        max_attempts: 5
 
   redis:
     image: redis:7.4.7-alpine
@@ -92,9 +91,8 @@ services:
       placement:
         constraints: {{ (skorch_cfg.placement_constraints | default([])) | tojson }}
       restart_policy:
-        condition: on-failure
+        condition: any
         delay: 5s
-        max_attempts: 5
 
   postgres-backup:
     image: prodrigestivill/postgres-backup-local:16-debian-d257e5d
@@ -155,7 +153,6 @@ services:
         # Swarm never restarts a clean exit under on-failure (service stuck 0/1).
         condition: any
         delay: 5s
-        max_attempts: 5
       resources:
         limits:
           memory: 256M

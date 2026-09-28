@@ -69,7 +69,6 @@ services:
       restart_policy:
         condition: any
         delay: 5s
-        max_attempts: 3
       resources:
         limits:
           cpus: '0.1'
@@ -111,7 +110,12 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      # DMS chowns every mailbox (chown -R) at each start, before postfix
+      # listens; over a loaded NFS server that has taken ~17 minutes. Failed
+      # probes inside start_period do not count and the first passing probe
+      # marks the task healthy at once, so a long value never delays a fast
+      # start. See README.md "Healthcheck and slow starts".
+      start_period: {{ skmail.HEALTHCHECK_START_PERIOD | default('1800s') }}
     # HOST MODE: Ports bind directly to host network (no NAT/overlay)
     ports:
       - target: 25
@@ -178,8 +182,6 @@ services:
       restart_policy:
         condition: any
         delay: 10s
-        max_attempts: 5
-        window: 120s
       # skmail.RESOURCES_* (skdash's naming); defaults are the historical
       # values. An empty reservation value is omitted; both empty drops the
       # reservations block entirely.

@@ -161,6 +161,10 @@ check_node() {
   raw=$(ssh $ssh_opts "${user}@${ip}" 'bash -s' <<'REMOTE' 2>&1 || true
 set -uo pipefail
 
+# Installed per dpkg? Capture, then match: `dpkg -l | grep -q` under
+# pipefail can report "not installed" when grep exits early (SIGPIPE).
+dpkg_ii() { local out; out=$(dpkg -l "$1" 2>/dev/null) || return 1; grep -q "^ii" <<<"$out"; }
+
 # --- OS family detection ---
 os_family=unknown
 if [[ -f /etc/os-release ]]; then
@@ -179,11 +183,11 @@ iscsi_pkg_name=unknown
 if [[ "$os_family" == rhel ]]; then
   rpm -q iscsi-initiator-utils &>/dev/null && iscsi_pkg=1 && iscsi_pkg_name=iscsi-initiator-utils
 elif [[ "$os_family" == debian ]]; then
-  dpkg -l open-iscsi 2>/dev/null | grep -q "^ii" && iscsi_pkg=1 && iscsi_pkg_name=open-iscsi
+  dpkg_ii open-iscsi && iscsi_pkg=1 && iscsi_pkg_name=open-iscsi
 else
   if rpm -q iscsi-initiator-utils &>/dev/null; then
     iscsi_pkg=1; iscsi_pkg_name=iscsi-initiator-utils
-  elif dpkg -l open-iscsi 2>/dev/null | grep -q "^ii"; then
+  elif dpkg_ii open-iscsi; then
     iscsi_pkg=1; iscsi_pkg_name=open-iscsi
   fi
 fi
@@ -234,9 +238,9 @@ nfs_ok=0
 if [[ "$os_family" == rhel ]]; then
   rpm -q nfs-utils &>/dev/null && nfs_ok=1
 elif [[ "$os_family" == debian ]]; then
-  dpkg -l nfs-common 2>/dev/null | grep -q "^ii" && nfs_ok=1
+  dpkg_ii nfs-common && nfs_ok=1
 else
-  (rpm -q nfs-utils &>/dev/null || dpkg -l nfs-common 2>/dev/null | grep -q "^ii") && nfs_ok=1
+  (rpm -q nfs-utils &>/dev/null || dpkg_ii nfs-common) && nfs_ok=1
 fi
 echo "nfs_ok=${nfs_ok}"
 REMOTE

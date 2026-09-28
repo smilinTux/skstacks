@@ -35,11 +35,47 @@ If `sksso` enforces CSRF-trusted origins, add this stack's `skmesh.*`
 hostname to `sksso.csrf_extra_origins` in sksso's vault so login redirects
 are not rejected.
 
-## Coturn
+## TURN / STUN
 
 Set `skmesh.DEPLOY_COTURN: true` to run coturn as part of this stack;
 leave it `false` (default) if the cluster already runs a shared TURN
-server (e.g. eturnal) that Netbird's `TURNConfig` should point at instead.
+server (e.g. eturnal, or another app's coturn) that Netbird's `TURNConfig`
+should point at instead.
+
+To use a shared TURN server that authenticates with a shared secret
+(coturn `use-auth-secret` + `static-auth-secret`, eturnal `secret`, the
+"TURN REST API" scheme that Nextcloud Talk also uses):
+
+```yaml
+skmesh:
+  TURN_URI: "turn:<turn-host>:3478"          # default: turn:turn.<base>:3478
+  STUN_URIS: ["stun:<stun-host>:3478"]       # default: [stun:turn.<base>:3478]
+  TURN_TIME_BASED_CREDENTIALS: true          # default: false (static TURN_USER/TURN_PASSWORD)
+  TURN_SECRET: "<that server's shared secret>"
+```
+
+Management then hands each peer HMAC-SHA1, time-limited TURN credentials
+(`CredentialsTTL` 12h) derived from `TURN_SECRET`; `TURN_USER` and
+`TURN_PASSWORD` are unused and may be omitted. The other app's credentials
+are untouched: both derive from the same secret. Point `STUN_URIS` at a
+STUN server that sees the client's real source address: a TURN server
+published through Docker Swarm's ingress routing mesh answers STUN with the
+ingress SNAT address, which is useless as a server-reflexive candidate.
+
+## Relay
+
+The NetBird relay listens on `:33080` inside the stack and is routed by
+Traefik at `PathPrefix(/relay)` on the `skmesh` host (the WebSocket path
+NetBird clients dial). Set `NETBIRD_RELAY_ENDPOINT` to
+`rels://skmesh.<base>:443` (keep the `rels://` scheme: TLS ends at Traefik).
+Peers whose relay support is on use the relay, not TURN relay candidates,
+for traffic that cannot go peer to peer.
+
+## Images
+
+`MANAGEMENT_IMAGE`, `SIGNAL_IMAGE`, `RELAY_IMAGE`, `POSTGRES_IMAGE` and
+`POSTGRES_BACKUP_IMAGE` (optional) override the framework defaults, e.g. to
+pin `tag@sha256:digest`.
 
 ## Required instance vars (vault)
 
@@ -55,9 +91,9 @@ skmesh:
   NETBIRD_DATASTORE_ENC_KEY: "CHANGE_ME"   # openssl rand -base64 32
   NETBIRD_RELAY_AUTH_SECRET: "CHANGE_ME"   # openssl rand -base64 32
   POSTGRES_PASSWORD: "CHANGE_ME"           # openssl rand -base64 32
-  TURN_PASSWORD: "CHANGE_ME"               # openssl rand -base64 32
-  TURN_SECRET: "CHANGE_ME"                 # openssl rand -base64 32
-  TURN_USER: ""
+  TURN_PASSWORD: "CHANGE_ME"               # openssl rand -base64 32 (unused with TURN_TIME_BASED_CREDENTIALS)
+  TURN_SECRET: "CHANGE_ME"                 # openssl rand -base64 32, or the shared TURN server's secret
+  TURN_USER: ""                            # unused with TURN_TIME_BASED_CREDENTIALS
   COTURN_EXTERNAL_IP: ""
   NETBIRD_RELAY_ENDPOINT: ""     # e.g. rels://skmesh.yourdomain.com:443
   SSO_HOST_IP: ""                # IP where the management container reaches sksso
@@ -66,6 +102,10 @@ skmesh:
   CLOUDFLARED: false             # true: BASE_DOMAIN = DOMAIN (no cluster prefix)
   DEPLOY_COTURN: false           # true to bundle coturn in this stack
   DASHBOARD_IMAGE: ""            # pin your own dashboard image; default: upstream netbirdio/dashboard (see "Dashboard image" above)
+  TURN_URI: ""                   # default turn:turn.<base>:3478 (see "TURN / STUN")
+  STUN_URIS: []                  # default [stun:turn.<base>:3478]
+  TURN_TIME_BASED_CREDENTIALS: false
+  MANAGEMENT_IMAGE: ""           # SIGNAL_IMAGE, RELAY_IMAGE, POSTGRES_IMAGE, POSTGRES_BACKUP_IMAGE likewise
   TURN_MAX_PORT: "65535"
   TURN_MIN_PORT: "49152"
   TURN_REALM: "skmesh."

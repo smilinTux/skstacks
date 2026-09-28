@@ -21,7 +21,8 @@ cleanup(){ log "removing stack…"; docker stack rm "$STACK" >/dev/null 2>&1 || 
 trap cleanup EXIT
 
 # confirm we're on a swarm manager (retry once — `docker info` can blip on a busy host)
-is_mgr(){ docker info 2>/dev/null | grep -q "Swarm: active" || docker node ls >/dev/null 2>&1; }
+# capture, then match: `docker info | grep -q` under pipefail can fail on SIGPIPE
+is_mgr(){ local info; info="$(docker info 2>/dev/null)"; grep -q "Swarm: active" <<<"$info" || docker node ls >/dev/null 2>&1; }
 is_mgr || { sleep 3; is_mgr; } || { log "host is not a swarm manager"; exit 1; }
 
 log "1) render skwhoami (swarm) + pin a test host port"
@@ -51,8 +52,8 @@ else
 fi
 # real HTTP on the published port
 body="$(curl -s -m 8 "http://127.0.0.1:${HOSTPORT}/" 2>/dev/null)"
-echo "$body" | grep -q "Hostname:" && ok "HTTP 200 — whoami: $(echo "$body" | grep Hostname: | tr -d '\r')" \
-                                   || bad "no valid HTTP response: $(echo "$body" | head -1)"
+grep -q "Hostname:" <<<"$body" && ok "HTTP 200, whoami: $(echo "$body" | grep Hostname: | tr -d '\r')" \
+                                    || bad "no valid HTTP response: $(echo "$body" | head -1)"
 
 echo
 [ "$FAILED" -eq 0 ] && log "✅ SWARM DEPLOY LOOP PASSED — deployed, verified working, removing." \
