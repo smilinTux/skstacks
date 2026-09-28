@@ -54,16 +54,11 @@ services:
         max_failure_ratio: {{ _rollback_max_failure_ratio }}
 {% endif %}
       restart_policy:
-        condition: {{ skdash.restart_policy_condition | default('on-failure') }}
+        # No max_attempts/window: a restart budget runs out for good after a
+        # single-node outage and the service then sits at 0/1. `any`, not
+        # `on-failure`: a healthcheck kill usually ends in a clean exit 0.
+        condition: {{ skdash.restart_policy_condition | default('any') }}
         delay: {{ skdash.restart_policy_delay | default('10s') }}
-{% set _restart_max_attempts = skdash.restart_policy_max_attempts | default(5) %}
-{% if _restart_max_attempts %}
-        max_attempts: {{ _restart_max_attempts | int }}
-{% endif %}
-{% set _restart_window = skdash.restart_policy_window | default('120s') %}
-{% if _restart_window %}
-        window: {{ _restart_window }}
-{% endif %}
       resources:
         limits:
           cpus: '{{ skdash.RESOURCES_LIMITS_CPUS | default("0.5") }}'

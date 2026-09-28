@@ -55,10 +55,8 @@ services:
         delay: 10s
         order: start-first
       restart_policy:
-        condition: {{ skbook.restart_policy_condition | default('on-failure') }}
+        condition: {{ skbook.restart_policy_condition | default('any') }}
         delay: 10s
-        max_attempts: 5
-        window: 120s
       placement:
         constraints: {{ (skbook.placement_constraints | default(['node.role == worker'])) | tojson }}
       resources:

@@ -52,6 +52,19 @@
       include_vars: "{{ vault_file_path }}"
       when: vault_file_path is defined
 
+    - name: Refuse restart-budget keys the framework no longer honours
+      # A restart budget (max_attempts, counted per window) runs out for good
+      # after one outage of a pinned node: the service then sits at 0/1.
+      assert:
+        that:
+          - (skdash | default({})).restart_policy_max_attempts is not defined
+          - (skdash | default({})).restart_policy_window is not defined
+        fail_msg: >-
+          skdash.restart_policy_max_attempts and skdash.restart_policy_window were removed in skstacks v2.22.0
+          (a spent restart budget left the service at 0 replicas for good).
+          Delete them from the vault.
+        quiet: true
+
     - name: Define network variables (TODO, register subnet in shared/networks, placeholder for now)
       set_fact:
         app_networks: "{{ skdash.networks | default([

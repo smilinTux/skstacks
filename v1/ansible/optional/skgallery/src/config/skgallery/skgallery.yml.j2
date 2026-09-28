@@ -75,10 +75,8 @@ services:
         parallelism: 1
         delay: 10s
       restart_policy:
-        condition: on-failure
+        condition: any
         delay: 10s
-        max_attempts: 20
-        window: 600s
       placement:
         constraints:
           - node.role == worker
@@ -151,10 +149,8 @@ services:
         parallelism: 1
         delay: 10s
       restart_policy:
-        condition: on-failure
+        condition: any
         delay: 15s
-        max_attempts: 5
-        window: 180s
       placement:
         constraints:
           - node.role == worker
@@ -195,10 +191,8 @@ services:
         delay: 5s
         order: stop-first
       restart_policy:
-        condition: on-failure
+        condition: any
         delay: 5s
-        max_attempts: 5
-        window: 60s
       placement:
         constraints:
           - node.role == worker
@@ -245,10 +239,8 @@ services:
         delay: 10s
         order: stop-first
       restart_policy:
-        condition: on-failure
+        condition: any
         delay: 10s
-        max_attempts: 20
-        window: 600s
       placement:
         constraints:
           - node.role == worker

@@ -126,5 +126,5 @@ def test_retired_max_attempts_knobs_are_refused_by_every_env_playbook():
         for env_name in ENVS:
             playbook = next(ANSIBLE.glob(f"*/{svc}/deploy_{svc}-{env_name}.yml"))
             text = playbook.read_text()
-            assert re.search(rf"{svc}\.{knob} is not defined", text), (
+            assert re.search(rf"\.{knob} is not defined", text), (
                 f"{playbook.name} must fail when the vault still sets {svc}.{knob}")

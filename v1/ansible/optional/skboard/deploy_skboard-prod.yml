@@ -44,6 +44,19 @@
       include_vars: "{{ vault_file_path }}"
       when: vault_file_path is defined
 
+    - name: Refuse restart-budget keys the framework no longer honours
+      # A restart budget (max_attempts, counted per window) runs out for good
+      # after one outage of a pinned node: the service then sits at 0/1.
+      assert:
+        that:
+          - (skboard | default({})).RESTART_POLICY_MAX_ATTEMPTS is not defined
+          - (skboard | default({})).RESTART_POLICY_WINDOW is not defined
+        fail_msg: >-
+          skboard.RESTART_POLICY_MAX_ATTEMPTS and skboard.RESTART_POLICY_WINDOW were removed in skstacks v2.22.0
+          (a spent restart budget left the service at 0 replicas for good).
+          Delete them from the vault.
+        quiet: true
+
     - name: Define network variables from vault (idempotent network creation)
       # ⚠️ IMPORTANT: Network subnets MUST match shared/networks registry
       # Reference: See shared/networks for all registered network subnets
