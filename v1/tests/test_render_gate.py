@@ -105,3 +105,21 @@ def test_unsafe_vault_values_survive_the_merge(tmp_path):
     dumped = yaml.dump(merged, Dumper=rp.VarsDumper)
     assert "!unsafe" in dumped and "{{QUERY}}" in dumped
     assert yaml.load(dumped, Loader=rp.VarsLoader) == {"svc": {"A": 1, "S": "cmd: '{{QUERY}}'\n"}}
+
+
+def test_companion_vaults_are_staged_beside_the_services_own(tmp_path):
+    vars_dir = tmp_path / "vars"
+    vars_dir.mkdir()
+    (vars_dir / "svc.example.yml").write_text("svc: {}\n")
+    (vars_dir / "svc.with.other.yml").write_text("other:\n  api_token: fake\n")
+    (vars_dir / "svcx.with.nope.yml").write_text("nope: {}\n")
+    vault_dir = tmp_path / "vaults"
+    vault_dir.mkdir()
+    assert rp.stage_companion_vaults("svc", "prod", vault_dir, vars_dir) == ["other"]
+    assert (vault_dir / "other-prod_vault.yml").read_text() == "other:\n  api_token: fake\n"
+    assert not (vault_dir / "nope-prod_vault.yml").exists()
+
+
+def test_skmesh_authentik_pass_has_its_sksso_vault():
+    assert (rp.VARS / "skmesh.with.sksso.yml").exists()
+    assert "api_token" in rp.load_vars(rp.VARS / "skmesh.with.sksso.yml")["sksso"]

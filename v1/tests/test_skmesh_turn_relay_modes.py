@@ -136,7 +136,7 @@ def test_relay_is_routed_by_traefik_at_the_websocket_path():
     env = dict(e.split("=", 1) for e in relay["environment"])
     port = env["NB_LISTEN_ADDRESS"].rsplit(":", 1)[1]
     assert f"loadbalancer.server.port={port}" in " ".join(labels)
-    assert "traefik.docker.network=cloud-public-prod" in labels
+    assert "traefik.swarm.network=cloud-public-prod" in labels
 
 
 def test_dashboard_does_not_swallow_the_relay_path():

@@ -81,7 +81,34 @@ sksso:
   # GeoIP - optional, only rendered if both geoip vars below are set
   geoip_account_id: "..."
   geoip_license_key: "..."
+
+  # Authentik automation API token - optional; read by the deploys of other
+  # services that register themselves with Authentik (skmesh AUTH_MODE:
+  # authentik). Not rendered into sksso itself; see "Automation API token".
+  api_token: "..."                 # openssl rand -hex 32
 ```
+
+## Automation API token
+
+Deploys that create their own Authentik objects (today: skmesh in
+`AUTH_MODE: authentik`, which creates its OAuth2 provider, application and
+an IdP-manager service account) call the Authentik API with
+`sksso.api_token` from this vault. Register that token in Authentik once
+per cluster, idempotently, with `src/sksso/ensure-api-token.sh` on a node
+that runs an sksso worker (or server) task, token on stdin:
+
+```bash
+scp framework/v1/ansible/optional/sksso/src/sksso/ensure-api-token.sh <node>:/tmp/
+ansible-vault view --vault-password-file <pass> <sksso vault> \
+  | python3 -c 'import sys,yaml; print(yaml.safe_load(sys.stdin)["sksso"]["api_token"])' \
+  | ssh <node> "sudo bash /tmp/ensure-api-token.sh <env>"
+```
+
+It creates (or keeps) the service account `skstacks-automation` in the
+`authentik Admins` group and the non-expiring API token
+`skstacks-automation-api` with exactly the vault's key (re-running after a
+rotation updates the key). The token never appears on a command line or in
+the output.
 
 ## Deployment
 

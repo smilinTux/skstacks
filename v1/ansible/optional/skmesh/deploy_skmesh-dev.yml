@@ -30,7 +30,7 @@
   become: true
   vars:
     app: skmesh
-    env: prod
+    env: dev
     service_name: skmesh
     service_type: optional
   pre_tasks:
@@ -71,7 +71,7 @@
     - name: Define default network variables when not provided in vault
       set_fact:
         app_networks: >-
-          {{ skmesh_prod_networks | default([{'name': 'skmesh-prod', 'subnet': '172.16.243.0/24'}, {'name': 'cloud-public-prod', 'subnet': '172.16.200.0/24'}]) }}
+          {{ skmesh_dev_networks | default([{'name': 'skmesh-dev', 'subnet': '172.16.244.0/24'}, {'name': 'cloud-public-dev', 'subnet': '172.16.202.0/24'}]) }}
       tags:
         - networks
         - config
