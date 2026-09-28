@@ -82,7 +82,7 @@ VAL="$(kubectl get secret skwhoami-secrets -n "$NS" -o jsonpath='{.data.DUMMY_TO
 # 6b) the service answers real HTTP from inside the cluster (DNS + routing + pod)
 BODY="$(kubectl run curltest --image=curlimages/curl:8.10.1 --restart=Never -n "$NS" --rm -i --quiet \
         --command -- curl -s -m 8 "http://skwhoami.${NS}.svc.cluster.local/" 2>/dev/null)"
-if echo "$BODY" | grep -q "Hostname:"; then
+if grep -q "Hostname:" <<<"$BODY"; then
   ok "HTTP 200 from the service — whoami replied: $(echo "$BODY" | grep Hostname: | head -1 | tr -d '\r')"
 else
   bad "service did not answer correctly. body: $(echo "$BODY" | head -2)"

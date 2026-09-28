@@ -79,8 +79,10 @@ SSH="ssh -i $KEY -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o 
 log "5) wait for SSH + k3s ready…"
 for i in $(seq 1 60); do $SSH true >/dev/null 2>&1 && break; sleep 5; done
 $SSH true >/dev/null 2>&1 && ok "SSH up" || { bad "SSH never came up"; exit 1; }
-for i in $(seq 1 60); do $SSH "test -f /tmp/k3s-ready && sudo k3s kubectl get node | grep -q Ready" >/dev/null 2>&1 && break; sleep 5; done
-$SSH "sudo k3s kubectl get node 2>/dev/null | grep -q Ready" && ok "k3s node Ready" || { bad "k3s not ready"; exit 1; }
+# capture, then match (no `| grep -q` under pipefail); -w so NotReady does not count
+for i in $(seq 1 60); do nodes="$($SSH "test -f /tmp/k3s-ready && sudo k3s kubectl get node" 2>/dev/null)" && grep -qw Ready <<<"$nodes" && break; sleep 5; done
+nodes="$($SSH "sudo k3s kubectl get node" 2>/dev/null)"
+grep -qw Ready <<<"$nodes" && ok "k3s node Ready" || { bad "k3s not ready"; exit 1; }
 
 log "6) deploy skwhoami onto the VM node (no ESO — secret pre-created)"
 # render workload only (drop the ExternalSecret); the secret is created directly here
@@ -97,8 +99,8 @@ $SSH "sudo k3s kubectl rollout status deploy/skwhoami -n skwhoami --timeout=120s
 # curl the pod IP directly from the VM host (k3s node reaches pod net — no image pull / DNS)
 podip="$($SSH "sudo k3s kubectl get pod -n skwhoami -l app=skwhoami -o jsonpath='{.items[0].status.podIP}'" 2>/dev/null)"
 body="$($SSH "curl -s -m 8 http://${podip}/" 2>/dev/null)"
-echo "$body" | grep -q "Hostname:" && ok "HTTP 200 on VM node (pod $podip) — whoami: $(echo "$body" | grep Hostname: | tr -d '\r')" \
-                                   || bad "no valid HTTP from the VM service (podip=$podip)"
+grep -q "Hostname:" <<<"$body" && ok "HTTP 200 on VM node (pod $podip), whoami: $(echo "$body" | grep Hostname: | tr -d '\r')" \
+                                    || bad "no valid HTTP from the VM service (podip=$podip)"
 
 echo
 [ "$FAILED" -eq 0 ] && log "✅ VM DEPLOY LOOP PASSED — provisioned a fresh node, deployed, verified, destroying." \
