@@ -64,10 +64,8 @@ skboard:
   RESOURCES_LIMITS_MEMORY: "512M"
   RESOURCES_RESERVATIONS_CPUS: "0.10"
   RESOURCES_RESERVATIONS_MEMORY: "128M"
-  RESTART_POLICY_CONDITION: "on-failure"
+  RESTART_POLICY_CONDITION: "any"
   RESTART_POLICY_DELAY: "10s"
-  RESTART_POLICY_MAX_ATTEMPTS: 3
-  RESTART_POLICY_WINDOW: "120s"
 ```
 
 `MAILER_ENABLED` only toggles the `VIKUNJA_MAILER_ENABLED` env var; the
@@ -75,17 +73,21 @@ actual SMTP block (`MAILER_HOST`/`MAILER_USERNAME`/`MAILER_PASSWORD`/...) is
 only rendered into `skboard.env` when `MAILER_HOST` is set, so an instance
 that never sets it gets no dangling, empty mailer config.
 
-## Restart policy footgun
+## Restart policy
 
-The default restart policy (`on-failure`, 10s delay, 3 max attempts, 120s
-window) matches the live reference deployment exactly, including its known
-failure mode: if `vikunja` crash-loops more than 3 times inside the 120s
-window, Swarm stops retrying and the service silently sits at 0 replicas
-until someone notices and re-runs `docker service update --force` or the
-`deploy` script. This is a known Vikunja/Swarm interaction, not something
-this role tries to fix architecturally (no watchdog is invented here); an
-instance that wants different behavior can override
-`RESTART_POLICY_MAX_ATTEMPTS` / `RESTART_POLICY_WINDOW` in its own vault.
+`vikunja` restarts on any exit (`condition: any`, 10s delay) with no
+`max_attempts` and no `window`. Until skstacks v2.22.0 the default was
+`on-failure` with 3 attempts in a 120s window, copied from the reference
+deployment, and that deployment's vikunja then sat at 0/1 for about four
+months: the service is pinned to a manager, an outage of the node it ran on
+spent the whole budget, and Swarm never scheduled it again. A restart
+budget is lifetime state per task slot, not a crash-loop brake, so the
+framework no longer sets one on any long-running service
+(`v1/tests/test_restart_policy_never_gives_up.py`).
+
+`RESTART_POLICY_MAX_ATTEMPTS` and `RESTART_POLICY_WINDOW` are gone. A vault
+that still sets either one stops the deploy with a message naming them:
+delete them.
 
 ## Upgrading Vikunja
 

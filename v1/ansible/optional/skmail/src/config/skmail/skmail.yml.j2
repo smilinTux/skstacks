@@ -69,7 +69,6 @@ services:
       restart_policy:
         condition: any
         delay: 5s
-        max_attempts: 3
       resources:
         limits:
           cpus: '0.1'
@@ -178,8 +177,6 @@ services:
       restart_policy:
         condition: any
         delay: 10s
-        max_attempts: 5
-        window: 120s
       # skmail.RESOURCES_* (skdash's naming); defaults are the historical
       # values. An empty reservation value is omitted; both empty drops the
       # reservations block entirely.
