@@ -6,6 +6,7 @@ skmail:
   RESOURCES_RESERVATIONS_CPUS: ""
   RESOURCES_RESERVATIONS_MEMORY: ""
   SSL_DOMAIN: mail.example.test
+  HEALTHCHECK_START_PERIOD: 3600s
   TLS_DOMAINS:
     - mail.example.test
     - {main: example.test, sans: [imap.example.test, smtp.example.test]}

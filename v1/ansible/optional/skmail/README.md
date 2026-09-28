@@ -51,6 +51,7 @@ skmail:
   ENABLE_RSPAMD: "1"                     # default: 1
   ENABLE_CLAMAV: "1"                     # default: 1
   ENABLE_FAIL2BAN: "1"                   # default: 1
+  HEALTHCHECK_START_PERIOD: "1800s"      # default: 1800s - see "Healthcheck and slow starts" below
 
   # SSL_TYPE: default: letsencrypt - see "Certificates" below for manual/self-signed
   SSL_TYPE: "letsencrypt"
@@ -75,6 +76,38 @@ skmail:
     A:      { name: "mail",             type: A,   value: "<your WAN IP>" }
     MX:     { name: "@",                type: MX,  value: "mail.example.com", priority: 10 }
 ```
+
+## Healthcheck and slow starts
+
+At every container start docker-mailserver runs `chown -R` over each
+account's mailbox (`helpers/accounts.sh:_create_accounts`) and fixes
+ownership under `/var/mail` (`_chown_var_mail`) before postfix listens on
+port 25. On NFS every file costs a SETATTR round trip: one production start
+with 22 mailboxes (~2.5k files) took about 17 minutes while the NFS server
+was busy with an unrelated bulk copy. The old healthcheck (60s
+`start_period`, then 3 failed probes 30s apart) gave up after ~2.5 minutes,
+Swarm killed the task as unhealthy, and the replacement started the same
+chown from the top: a kill loop, and no mail, until `start_period` was
+raised by hand.
+
+`skmail.HEALTHCHECK_START_PERIOD` (default `1800s`) sets that window. The
+default is the observed worst case (~17 min) with about 75% headroom, and
+still bounded: a container that never becomes healthy is replaced after
+roughly 32 minutes (`start_period` plus 3 x 30s). A long value does not
+slow a normal start: failed probes inside the window are not counted, and
+the first passing probe marks the task healthy immediately (the mail ports
+are published in host mode, so nothing waits on the health state to route
+traffic). An instance whose NFS is slower, or which has many more
+mailboxes, should raise it; time a restart
+(`docker service logs skmail-<env>_skmail` from "Welcome to
+docker-mailserver" to "is up and running") and leave generous headroom.
+
+DMS 16.0.1 has no environment option that skips or limits this ownership
+fix: the per-mailbox `chown -R` in `_create_accounts` is unconditional for
+the default FILE account provisioner, and `_chown_var_mail` runs on every
+start. So there is no knob here to turn it off; the durable fixes are
+keeping heavy I/O off the NFS server while mail restarts, and keeping
+mailbox counts and file counts in mind when sizing this window.
 
 ## First mail account (fresh install)
 
