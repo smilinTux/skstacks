@@ -89,8 +89,6 @@
         mode: 0755
       loop:
         - /var/data/{{ app }}-{{ env }}
-        - /var/data/{{ app }}-{{ env }}/data
-        - /var/data/{{ app }}-{{ env }}/data/files
         - /var/data/config/{{ app }}-{{ env }}
 
     - name: Set data directory ownership
@@ -98,15 +96,20 @@
       # /etc/passwd beyond that uid) and needs write access to create the
       # sqlite journal/WAL files next to vikunja.db; root:root 0755 here
       # makes the container fail with "permission denied" opening the db.
+      # Not recursive: the deploy creates data/ and data/files/ owned right
+      # here; vikunja.db and every attachment under files/ are created by
+      # the container as 1000 itself. `recurse: yes` walked every
+      # attachment over NFS on every deploy (and its 0755 marked every file
+      # executable).
       file:
         path: "{{ item }}"
         state: directory
         owner: "1000"
         group: "0"
         mode: 0755
-        recurse: yes
       loop:
         - /var/data/{{ app }}-{{ env }}/data
+        - /var/data/{{ app }}-{{ env }}/data/files
 
     - name: Process {{ app }} environment templates
       template:

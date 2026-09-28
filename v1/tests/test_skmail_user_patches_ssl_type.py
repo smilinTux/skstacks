@@ -36,4 +36,4 @@ def test_manual_keeps_the_wait_and_the_dovecot_paths():
 
 @pytest.mark.parametrize("ssl_type", [None, "letsencrypt", "self-signed", "manual"])
 def test_common_permission_fixes_always_run(ssl_type):
-    assert "chown -R amavis:clamav /var/lib/amavis/" in render(ssl_type)
+    assert "-exec chown -h amavis:clamav {} +" in render(ssl_type)

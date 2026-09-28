@@ -129,7 +129,7 @@ def test_budget_announced_before_waiting(playbook):
 def test_permissions_and_runners_run_only_after_forgejo_is_up(playbook):
     tasks = _tasks(playbook)
     wait_idx = tasks.index(_by_register(playbook, "forgejo_node"))
-    perm = [t for t in tasks if "chown -R 1000:1000" in _shell(t)]
+    perm = [t for t in tasks if t.get("name") == "Fix Forgejo data permissions and start runners"]
     assert len(perm) == 1
     assert tasks.index(perm[0]) > wait_idx
     assert "start-runners.sh" in _shell(perm[0])

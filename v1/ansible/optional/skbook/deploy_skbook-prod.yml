@@ -63,13 +63,19 @@
       file: { path: "{{ item }}", state: directory, owner: root, group: root, mode: '0755' }
       loop:
         - /var/data/{{ app }}-{{ env }}
-        - /var/data/{{ app }}-{{ env }}/bookstack
-        - /var/data/{{ app }}-{{ env }}/bookstack/config
         - /var/data/{{ app }}-{{ env }}/database-dump
         - /var/data/runtime/{{ app }}-{{ env }}/db
         - /var/data/config/{{ app }}-{{ env }}
-    - name: Set BookStack config directory ownership
-      file: { path: "/var/data/{{ app }}-{{ env }}/bookstack", state: directory, owner: "{{ skbook.PUID | default(1000) }}", group: "{{ skbook.PGID | default(1000) }}", mode: '0755', recurse: yes }
+    - name: Create the BookStack config directories owned by PUID/PGID
+      # Not recursive. bookstack/config is the linuxserver image's /config
+      # (uploads, storage, logs), which the container writes as PUID/PGID
+      # itself, so the deploy only owns the two directories it creates.
+      # `recurse: yes` walked every upload over NFS on every deploy, and its
+      # mode 0755 marked every file executable.
+      file: { path: "{{ item }}", state: directory, owner: "{{ skbook.PUID | default(1000) }}", group: "{{ skbook.PGID | default(1000) }}", mode: '0755' }
+      loop:
+        - /var/data/{{ app }}-{{ env }}/bookstack
+        - /var/data/{{ app }}-{{ env }}/bookstack/config
     - name: Process {{ app }} env templates
       template: { src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}", dest: "{{ item.dest }}", mode: '0640' }
       loop:

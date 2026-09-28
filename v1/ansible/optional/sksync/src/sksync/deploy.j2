@@ -100,7 +100,9 @@ for DIR in "${DIRS[@]}"; do
         mkdir -p "$DIR"
     fi
     # Ensure correct ownership (UID 1000 = jz user on host, syncthing in container)
-    chown -R 1000:1000 "$DIR"
+    # of the directory itself, only if wrong. Never -R: sync-data holds every
+    # synced file, and the playbook already fixes syncthing_config.
+    find "$DIR" -maxdepth 0 \( ! -user 1000 -o ! -group 1000 \) -exec chown 1000:1000 {} +
     chmod 755 "$DIR"
 done
 echo -e "${GREEN}✓ Directory setup complete${NC}"
