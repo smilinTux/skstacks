@@ -99,7 +99,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: {{ skmon.GRAFANA_HEALTH_START_PERIOD | default('60s') }}
 
   loki:
     image: grafana/loki:3.5.4

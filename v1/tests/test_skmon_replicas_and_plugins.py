@@ -34,6 +34,8 @@ DEFAULT_PLUGINS = ("grafana-clock-panel,grafana-simple-json-datasource,grafana-p
 
 def _text(tpl, **extra):
     env = jinja2.Environment(undefined=jinja2.StrictUndefined, trim_blocks=True)
+    # Same as the Ansible bool filter: strings like "false", "no", "0" are false.
+    env.filters["bool"] = lambda v: v if isinstance(v, bool) else str(v).strip().lower() in ("1", "true", "yes", "on", "y")
     return env.from_string(tpl.read_text()).render(app="skmon", env="prod", skmon={**BASE, **extra})
 
 
@@ -89,3 +91,26 @@ def test_plugins_override_and_empty():
     assert _env_lines(GRAFANA_PLUGINS=["grafana-clock-panel", "marcusolsson-json-datasource"]) == [
         "GF_INSTALL_PLUGINS=grafana-clock-panel,marcusolsson-json-datasource"]
     assert _env_lines(GRAFANA_PLUGINS=[]) == []
+
+
+def _env_all(**extra):
+    return _text(ENV, **extra).splitlines()
+
+
+def test_grafana_basic_auth_default_unchanged_and_can_be_disabled():
+    # Behind the edge basic-auth middleware the browser Authorization header
+    # reaches Grafana, which tries it as a Grafana login: with the same user
+    # name as the Grafana admin, every request is a failed admin login and
+    # Grafana locks the admin out. GRAFANA_BASIC_AUTH: false stops that.
+    assert not any(l.startswith("GF_AUTH_BASIC_ENABLED") for l in _env_all())
+    assert "GF_AUTH_BASIC_ENABLED=false" in _env_all(GRAFANA_BASIC_AUTH=False)
+    assert "GF_AUTH_BASIC_ENABLED=false" in _env_all(GRAFANA_BASIC_AUTH="false")
+    assert not any(l.startswith("GF_AUTH_BASIC_ENABLED") for l in _env_all(GRAFANA_BASIC_AUTH=True))
+
+
+def test_grafana_health_start_period_knob():
+    # First boot on a slow shared filesystem (hundreds of SQLite migrations,
+    # plugin signature checks) outlasts 60s + 3 x 30s and swarm kills the
+    # task as unhealthy before it ever listens.
+    assert _services()["grafana"]["healthcheck"]["start_period"] == "60s"
+    assert _services(GRAFANA_HEALTH_START_PERIOD="10m")["grafana"]["healthcheck"]["start_period"] == "10m"

@@ -52,7 +52,7 @@ tag yet.
 | [skmail](#skmail) | optional | Full SMTP/IMAP mail server | docker-mailserver `16.0.1` | skfence/skfenceha (for ACME cert) | host ports 25/587/465/143/993 | `skmail-<env>/docker-data/dms/{maildata,mailstate}` | `CLUSTERNAME`, `DOMAIN` | `DMS_VERSION` (16.0.1), Rspamd/ClamAV/Fail2ban (all on) | v2.19.0 |
 | [skmem-pg](#skmem-pg) | optional | Postgres 17 + pgvector + pg_search + AGE | Postgres 17 custom image `pg17-bm25-age` | none | internal only, no Traefik | `runtime/skmem-pg-<env>/postgres` | `skmem_pg_password` | `skmem_pg_default_agent`/`skmem_pg_graph` | v2.14.0 |
 | [skmesh](#skmesh) | optional | Netbird self-hosted WireGuard mesh VPN | netbird `0.79.0` (mgmt/signal/relay) | sksso (OIDC app) | `skmesh.<cluster>.<domain>` (path-routed) | `skmesh-<env>/database-dump` | `NETBIRD_*` secrets, `POSTGRES_PASSWORD`, `SSO_HOST_IP` | `DEPLOY_COTURN` (false) | v2.19.0 |
-| [skmon](#skmon) | optional | Observability stack (metrics/logs/tracing) | Prometheus `v3.15.0`, Grafana `13.2.2`, Loki `3.5.4`, Jaeger `1.76.0` | none | `prometheus\|skmon\|alertmanager\|jaeger[-env].<cluster>.<domain>` | `skmon-<env>/{prometheus,grafana,loki-data,...}` | `GRAFANA_ADMIN_USER/_PASSWORD`, `GRAFANA_SECRET_KEY`, `CLUSTERNAME`, `DOMAIN` | `SMTP_ENABLED` (false), `EXTRA_SCRAPE_CONFIGS`, `replicas` (1; 0 = parked), `GRAFANA_PLUGINS` | v2.15.0 |
+| [skmon](#skmon) | optional | Observability stack (metrics/logs/tracing) | Prometheus `v3.15.0`, Grafana `13.2.2`, Loki `3.5.4`, Jaeger `1.76.0` | none | `prometheus\|skmon\|alertmanager\|jaeger[-env].<cluster>.<domain>` | `skmon-<env>/{prometheus,grafana,loki-data,...}` | `GRAFANA_ADMIN_USER/_PASSWORD`, `GRAFANA_SECRET_KEY`, `CLUSTERNAME`, `DOMAIN` | `SMTP_ENABLED` (false), `EXTRA_SCRAPE_CONFIGS`, `replicas` (1; 0 = parked), `GRAFANA_PLUGINS`, `GRAFANA_BASIC_AUTH` (true), `GRAFANA_HEALTH_START_PERIOD` (60s) | v2.15.0 |
 | [skorch](#skorch) | optional | n8n workflow automation | n8n (digest-pinned) + pgvector Postgres | none | `skorch[-env].<cluster>.<domain>` | `skorch-<env>/{n8n_data,database-backup,gpg-keys}` | `POSTGRES_USER/_PASSWORD/_DB`, `REDIS_PASSWORD` | `enable_gpg_signer` (false) | v2.18.0 |
 | [skpdf](#skpdf) | optional | Stirling-PDF toolkit | Stirling-PDF `2.14.3` | none | `skpdf[-env].<cluster>.<domain>` | `skpdf-<env>/{trainingData,customFiles}` | `CLUSTERNAME`, `DOMAIN`; `SECURITY_INITIAL_PASSWORD` if login on | `SECURITY_ENABLELOGIN` (false) | v2.13.0 |
 | [skpeek](#skpeek) | optional | SearXNG metasearch engine | SearXNG (digest-pinned) + Valkey `8-alpine` | none | `skpeek[-env].<cluster>.<domain>` | `skpeek-<env>/etc` | `SECRET_KEY` | none notable | v2.16.0 |
@@ -622,6 +622,14 @@ data stays on disk. `skmon.GRAFANA_PLUGINS` replaces the default plugin
 list: current Grafana refuses the Angular ones in it
 (`grafana-simple-json-datasource`, `grafana-piechart-panel`,
 `grafana-worldmap-panel`), so drop them there.
+The edge `traefikAuth` middleware forwards the browser's `Authorization`
+header to Grafana, which tries it as a Grafana login; when the edge user
+name equals the Grafana admin name every request is a failed admin login
+and Grafana's brute-force protection locks the admin out. Set
+`skmon.GRAFANA_BASIC_AUTH: false` behind that middleware (API clients then
+use service-account tokens or a login session). On a slow shared
+filesystem Grafana's first boot can outlast the 60s health start period;
+raise `skmon.GRAFANA_HEALTH_START_PERIOD` (for example `5m`).
 
 ### skorch
 

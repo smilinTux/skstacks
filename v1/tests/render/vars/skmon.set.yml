@@ -9,3 +9,5 @@ skmon:
         - {names: [tasks.example], type: A, port: 9100}
   replicas: 0
   GRAFANA_PLUGINS: [grafana-clock-panel]
+  GRAFANA_BASIC_AUTH: false
+  GRAFANA_HEALTH_START_PERIOD: 5m
