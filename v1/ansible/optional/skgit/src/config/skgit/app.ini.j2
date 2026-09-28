@@ -1,6 +1,10 @@
 {%- set _base_domain = skgit.CLUSTERNAME ~ '.' ~ skgit.DOMAIN %}
 {%- set _metrics_token = skgit.METRICS_TOKEN | default('') %}
 {%- set _metrics_enabled = (skgit.METRICS_ENABLED if skgit.METRICS_ENABLED is defined else (_metrics_token | length > 0)) | bool %}
+# Forgejo reads WORK_PATH only from the root section (before any [section]);
+# under [server] it is ignored and Forgejo writes it back here at startup.
+WORK_PATH = /data/gitea
+
 [server]
 DOMAIN = {{ skgit.SUBDOMAIN_PREFIX | default('git') }}{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}
 ROOT_URL = https://{{ skgit.SUBDOMAIN_PREFIX | default('git') }}{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}/
@@ -15,7 +19,6 @@ APP_DATA_PATH = /data/forgejo
 REPOSITORY_ROOT = /data/git/repositories
 ENABLE_PUSH_CREATE_USER = true
 ENABLE_PUSH_CREATE_ORG = true
-WORK_PATH = /data/gitea
 # Both of these default to FALSE in Forgejo. They were present in a live app.ini but
 # absent from an earlier version of this template, so a run of this playbook would
 # have silently turned off the built-in SSH server (killing git+ssh on :222, which the
