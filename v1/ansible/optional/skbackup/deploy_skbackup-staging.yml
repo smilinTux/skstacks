@@ -15,9 +15,9 @@
 
 ---
 # skbackup: host-level backups for the storage host that serves this
-# cluster's data (a Proxmox or any Linux host exporting the swarm's NFS
-# data, ideally from ZFS). NOT a swarm stack: this play targets the storage
-# host group and installs the engine, one config file, restic credentials,
+# cluster's data (a Proxmox or any Linux host exporting the swarm's NFS data
+# from a ZFS dataset). NOT a swarm stack: this play targets the storage host
+# group and installs the engine, its config files, restic credentials,
 # sanoid.conf and systemd timers there. See README.md for the vault
 # contract, the tiers, restores and white-labelling.
 # skstacks: storage-host - runs on the host that serves /var/data, not on a swarm manager
@@ -57,49 +57,54 @@
         skb_confdir: "/etc/{{ skb.branding.short_name }}"
         skb_conf: "/etc/{{ skb.branding.short_name }}/{{ skb.branding.short_name }}.conf"
         skb_statedir: "{{ skb.state_dir | default('', true) or ('/var/lib/' ~ skb.branding.short_name) }}"
-        skb_host_label: "{{ skb.host_label | default('', true) or inventory_hostname }}"
-        skb_uses_sanoid: "{{ (skb.snapshots.enabled | bool) and skb.snapshots.engine == 'sanoid' }}"
       tags: [config]
 
     - name: Describe every tier's unit
       set_fact:
-        skb_snap_dir_root: "{{ skb.snap_dir_root | default('', true) or (skb_statedir ~ '/snapshots') }}"
         skb_units_all:
-          - name: run
-            command: run
-            desc: nightly dump hooks, frozen snapshot, per-app copy and offsite upload
-            "on": "{{ skb.schedule.run }}"
-            network: true
-            enabled: "{{ (skb['copy'].enabled | bool) or (skb.offsite.enabled | bool) or (skb.dumps.enabled | bool) }}"
-          - name: snapshot
-            command: snapshot
-            desc: snapshot of the data
-            "on": "{{ skb.snapshots.builtin_schedule }}"
+          - name: sync
+            command: sync
+            desc: dump hooks and per-app copy from a frozen snapshot into the backup pool
+            "on": "{{ skb.schedule.sync }}"
             network: false
-            enabled: "{{ (skb.snapshots.enabled | bool) and skb.snapshots.engine == 'builtin' }}"
+            extra: [TimeoutStartSec=6h]
+            enabled: "{{ (skb['copy'].enabled | bool) or (skb.dumps.hooks | length > 0) }}"
+          - name: offsite
+            command: restic backup
+            desc: restic upload of the newest data snapshot to the offsite repository
+            "on": "{{ skb.schedule.offsite }}"
+            network: true
+            after: sync
+            # a first seed spans nights: stop before the next night, the next run resumes (dedup)
+            extra: [RuntimeMaxSec=22h]
+            enabled: "{{ skb.offsite.enabled | bool }}"
           - name: prune
-            command: prune
+            command: restic forget-prune
             desc: offsite forget and prune
             "on": "{{ skb.schedule.prune }}"
             network: true
             enabled: "{{ skb.offsite.enabled | bool }}"
           - name: restore-test
-            command: restore-test
-            desc: restore test
+            command: restic restore-test
+            desc: restore test from the offsite repository
             "on": "{{ skb.schedule.restore_test }}"
             network: true
             enabled: "{{ (skb.restore_test.enabled | bool) and (skb.offsite.enabled | bool) }}"
           - name: check
-            command: check
-            desc: backup staleness check
+            command: check --notify
+            desc: backup staleness and health check
             "on": "{{ skb.schedule.check }}"
-            network: true
-            enabled: "{{ skb.alerts.enabled | bool }}"
+            network: false
+            enabled: "{{ skb.alerts.notifier != 'none' }}"
       tags: [config]
 
     - name: Keep the units of the enabled tiers
       set_fact:
         skb_units: "{{ skb_units_all | selectattr('enabled') | list }}"
+        skb_app_names: "{{ skb['copy'].apps | map(attribute='name') | list }}"
+        skb_app_srcs: >-
+          {{ (skb['copy'].apps | selectattr('src', 'defined') | map(attribute='src') | list)
+             + (skb['copy'].apps | rejectattr('src', 'defined') | map(attribute='name') | list) }}
       tags: [config]
 
   tasks:
@@ -137,19 +142,15 @@
           and '{{ skb.unit_prefix }}').
       tags: [config]
 
-    - name: Validate the data target and snapshot backend
+    - name: Validate the data dataset
       assert:
         that:
-          - skb.snapshot_backend in ['zfs', 'dir']
-          - skb.data_target | default('', true) | string | length > 0
-          - skb.snapshot_backend == 'zfs' or (skb.data_target | string).startswith('/')
-          - skb.snapshots.engine in ['sanoid', 'builtin']
-          - not (skb_uses_sanoid | bool) or skb.snapshot_backend == 'zfs'
+          - skb.data_dataset | default('', true) | string | length > 0
+          - skb.data_dataset is match('^[A-Za-z0-9][A-Za-z0-9_.:/-]*$')
+          - not (skb.data_dataset | string).startswith('/')
         fail_msg: >-
-          ERROR: skbackup.snapshot_backend must be zfs or dir and
-          skbackup.data_target is required (a dataset for zfs, an absolute
-          directory for dir). snapshots.engine sanoid needs the zfs backend;
-          use snapshots.engine builtin with dir.
+          ERROR: skbackup.data_dataset is required: the ZFS dataset (pool/path,
+          not a mount path) the swarm's NFS data lives on.
       tags: [config]
 
     - name: Validate the copy tier
@@ -157,12 +158,27 @@
         that:
           - skb['copy'].target | default('', true) | string | length > 0
           - skb['copy'].apps | length > 0
-          - skb['copy'].apps | map(attribute='name') | select('match', '^[A-Za-z0-9][A-Za-z0-9._-]*$') | list | length == skb['copy'].apps | length
+          - skb_app_names | select('match', '^[A-Za-z0-9][A-Za-z0-9._-]*$') | list | length == skb_app_names | length
+          - skb_app_srcs | reject('match', '^[A-Za-z0-9][^\s]*$') | list | length == 0
+          - skb_app_srcs | select('search', '\.\.') | list | length == 0
+          - skb['copy'].apps | selectattr('excludes', 'defined') | map(attribute='excludes') | flatten | select('search', '\s') | list | length == 0
         fail_msg: >-
-          ERROR: skbackup.copy is enabled: copy.target (a parent dataset or a
-          directory on ANOTHER disk) and copy.apps (names of directories
-          under the data target) are required.
+          ERROR: skbackup.copy is enabled: copy.target (a parent dataset on a
+          pool on ANOTHER disk) and copy.apps are required; app names are
+          [A-Za-z0-9._-], src paths are relative without "..", and excludes
+          carry no whitespace.
       when: skb['copy'].enabled | bool
+      tags: [config]
+
+    - name: Validate the dump hooks
+      assert:
+        that:
+          - skb.dumps.hooks | map(attribute='name') | select('match', '^[A-Za-z0-9][A-Za-z0-9._-]*$') | list | length == skb.dumps.hooks | length
+          - skb.dumps.hooks | rejectattr('command', 'defined') | list | length == 0
+          - skb.dumps.hooks | map(attribute='command') | reject('search', '\S') | list | length == 0
+        fail_msg: >-
+          ERROR: every skbackup.dumps.hooks entry needs a name ([A-Za-z0-9._-])
+          and a command.
       tags: [config]
 
     - name: Validate the offsite tier
@@ -171,28 +187,45 @@
           - skb.offsite.repository | default('', true) | string | length > 0
           - skb.offsite.password | default('', true) | string | length > 0
           - skb.offsite.sets | length > 0
-          - skb.offsite.sets | map(attribute='source') | reject('in', ['copy', 'data']) | list | length == 0
+          - skb.offsite.sets | map(attribute='kind') | reject('in', ['apps', 'paths']) | list | length == 0
+          - skb.offsite.sets | map(attribute='name') | select('match', '^[A-Za-z0-9][A-Za-z0-9._-]*$') | list | length == skb.offsite.sets | length
           - skb.offsite.env.keys() | reject('match', '^[A-Z_][A-Z0-9_]*$') | list | length == 0
         fail_msg: >-
           ERROR: skbackup.offsite is enabled: offsite.repository,
           offsite.password (keep an offline copy: without it the repository
-          is unreadable) and offsite.sets are required; every set's source is
-          copy or data; offsite.env keys are environment variable names.
+          is unreadable) and offsite.sets are required; every set has a name
+          and a kind of apps or paths; offsite.env keys are environment
+          variable names.
       when: skb.offsite.enabled | bool
       tags: [config]
 
-    - name: Validate that source=copy sets only name copied apps
+    - name: Validate every offsite set
       assert:
         that:
-          - skb['copy'].enabled | bool
-          - item.apps | difference(skb['copy'].apps | map(attribute='name') | list) | length == 0
+          - item.kind != 'apps' or ((skb['copy'].enabled | bool) and skb_app_names | length > 0)
+          - item.kind != 'paths' or (item.paths | default([]) | length > 0)
+          - item.paths | default([]) | select('search', '[\s,]|\.\.') | list | length == 0
+          - item.excludes | default([]) | select('search', '\s') | list | length == 0
         fail_msg: >-
-          ERROR: offsite set '{{ item.name }}' has source copy, so every app in
-          it must be in skbackup.copy.apps and the copy tier enabled.
-      loop: "{{ skb.offsite.sets | selectattr('source', 'equalto', 'copy') | list }}"
+          ERROR: offsite set '{{ item.name }}': kind apps needs the copy tier
+          (it backs up every copied app), kind paths needs paths (relative,
+          no "..", "," or whitespace); excludes carry no whitespace.
+      loop: "{{ skb.offsite.sets if (skb.offsite.enabled | bool) else [] }}"
       loop_control:
-        label: "{{ item.name }}"
-      when: skb.offsite.enabled | bool
+        label: "{{ item.name | default('?') }}"
+      tags: [config]
+
+    - name: Validate the restore test
+      assert:
+        that:
+          - skb.offsite.enabled | bool
+          - (skb.restore_test.app | default('', true) | length > 0) or (skb.restore_test.sample_set | default('', true) | length > 0)
+          - not skb.restore_test.app or skb.restore_test.app in skb_app_srcs
+          - not skb.restore_test.sample_set or skb.restore_test.sample_set in (skb.offsite.sets | selectattr('kind', 'equalto', 'paths') | map(attribute='name') | list)
+        fail_msg: >-
+          ERROR: skbackup.restore_test needs the offsite tier and an app (the
+          src of a copied app) and/or a sample_set (the name of a paths set).
+      when: skb.restore_test.enabled | bool
       tags: [config]
 
     - name: Validate a pinned restic download
@@ -209,23 +242,12 @@
     - name: Validate the notifier
       assert:
         that:
-          - skb.alerts.notifier in ['log', 'command']
+          - skb.alerts.notifier in ['none', 'log', 'command']
           - skb.alerts.notifier != 'command' or (skb.alerts.command | default('', true) | string | length > 0)
         fail_msg: >-
-          ERROR: skbackup.alerts.notifier is log or command, and command needs
-          skbackup.alerts.command.
+          ERROR: skbackup.alerts.notifier is none, log or command, and command
+          needs skbackup.alerts.command.
       tags: [config]
-
-    - name: Install the packages the enabled tiers need
-      apt:
-        name: >-
-          {{ ['rsync', 'jq', 'util-linux']
-             + (['sanoid'] if (skb_uses_sanoid | bool) else [])
-             + (['restic'] if ((skb.offsite.enabled | bool) and skb.offsite.install == 'apt') else []) }}
-        state: present
-        update_cache: true
-        cache_valid_time: 3600
-      tags: [packages]
 
     - name: Create the install, config and state directories
       file:
@@ -238,6 +260,59 @@
         - { path: "{{ skb_libdir }}", mode: "0755" }
         - { path: "{{ skb_confdir }}", mode: "0700" }
         - { path: "{{ skb_statedir }}", mode: "0700" }
+
+    # Config before package: the Debian/Ubuntu sanoid package enables and
+    # starts its timer on install, and Ubuntu's ships no /etc/sanoid.
+    - name: Create the sanoid config directory
+      file:
+        path: /etc/sanoid
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      when: skb.snapshots.enabled | bool
+
+    - name: Check whether sanoid.conf belongs to this deploy
+      stat:
+        path: /etc/sanoid/sanoid.conf
+      register: skb_sanoid_conf
+      when: skb.snapshots.enabled | bool
+
+    - name: Read the existing sanoid.conf
+      slurp:
+        path: /etc/sanoid/sanoid.conf
+      register: skb_sanoid_conf_text
+      when: (skb.snapshots.enabled | bool) and skb_sanoid_conf.stat.exists | default(false)
+
+    - name: Refuse to overwrite a sanoid.conf this deploy does not manage
+      assert:
+        that:
+          - "('managed-by: ' ~ skb_short) in (skb_sanoid_conf_text.content | b64decode)"
+        fail_msg: >-
+          ERROR: /etc/sanoid/sanoid.conf exists and was not written by this
+          deploy. Merge its datasets by hand or move it aside, then redeploy.
+      when: (skb.snapshots.enabled | bool) and skb_sanoid_conf.stat.exists | default(false)
+
+    - name: Render sanoid.conf (tier 1 retention)
+      template:
+        src: "{{ playbook_dir }}/src/config/skbackup/sanoid.conf.j2"
+        dest: /etc/sanoid/sanoid.conf
+        owner: root
+        group: root
+        mode: "0644"
+      when: skb.snapshots.enabled | bool
+      tags: [config]
+
+    - name: Install the packages the enabled tiers need
+      apt:
+        name: >-
+          {{ ['rsync', 'util-linux', 'python3']
+             + (['sanoid'] if (skb.snapshots.enabled | bool) else [])
+             + (['restic'] if ((skb.offsite.enabled | bool) and skb.offsite.install == 'apt') else []) }}
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+      tags: [packages]
 
     - name: Download the pinned restic release
       get_url:
@@ -259,6 +334,13 @@
       when: (skb.offsite.enabled | bool) and skb.offsite.install == 'url'
       tags: [packages]
 
+    - name: Enable the sanoid timer
+      systemd:
+        name: sanoid.timer
+        enabled: true
+        state: started
+      when: skb.snapshots.enabled | bool
+
     - name: Install the engine
       copy:
         src: "{{ playbook_dir }}/src/skbackup/"
@@ -268,34 +350,37 @@
         mode: "0755"
         directory_mode: "0755"
 
-    - name: Render the config file
-      template:
-        src: "{{ playbook_dir }}/src/config/skbackup/backup.conf.j2"
-        dest: "{{ skb_conf }}"
-        owner: root
-        group: root
-        mode: "0600"
-      tags: [config]
-
-    - name: Render the restic credentials
+    - name: Render the config files
       template:
         src: "{{ playbook_dir }}/src/config/skbackup/{{ item.src }}"
-        dest: "{{ skb_confdir }}/{{ item.dest }}"
+        dest: "{{ item.dest }}"
         owner: root
         group: root
         mode: "0600"
       loop:
-        - { src: offsite.env.j2, dest: offsite.env }
-        - { src: offsite.pass.j2, dest: offsite.pass }
+        - { src: backup.conf.j2, dest: "{{ skb_conf }}" }
+        - { src: apps.conf.j2, dest: "{{ skb_confdir }}/apps.conf" }
+        - { src: hooks.conf.j2, dest: "{{ skb_confdir }}/hooks.conf" }
+        - { src: restic-sets.conf.j2, dest: "{{ skb_confdir }}/restic-sets.conf" }
+      loop_control:
+        label: "{{ item.src }}"
+      tags: [config]
+
+    - name: Render the restic credentials
+      template:
+        src: "{{ playbook_dir }}/src/config/skbackup/offsite.env.j2"
+        dest: "{{ skb_confdir }}/offsite.env"
+        owner: root
+        group: root
+        mode: "0600"
       no_log: true
       when: skb.offsite.enabled | bool
       tags: [config, secrets]
 
-    - name: Remove restic credentials when the offsite tier is off
+    - name: Remove the restic credentials when the offsite tier is off
       file:
-        path: "{{ skb_confdir }}/{{ item }}"
+        path: "{{ skb_confdir }}/offsite.env"
         state: absent
-      loop: [offsite.env, offsite.pass]
       when: not (skb.offsite.enabled | bool)
       tags: [config, secrets]
 
@@ -306,53 +391,6 @@
         owner: root
         group: root
         mode: "0755"
-
-    - name: Create the sanoid config directory (the Ubuntu package ships none)
-      file:
-        path: /etc/sanoid
-        state: directory
-        owner: root
-        group: root
-        mode: "0755"
-      when: skb_uses_sanoid | bool
-
-    - name: Check whether sanoid.conf belongs to this deploy
-      stat:
-        path: /etc/sanoid/sanoid.conf
-      register: skb_sanoid_conf
-      when: skb_uses_sanoid | bool
-
-    - name: Read the existing sanoid.conf
-      slurp:
-        path: /etc/sanoid/sanoid.conf
-      register: skb_sanoid_conf_text
-      when: (skb_uses_sanoid | bool) and skb_sanoid_conf.stat.exists | default(false)
-
-    - name: Refuse to overwrite a sanoid.conf this deploy does not manage
-      assert:
-        that:
-          - "('managed-by: ' ~ skb_short) in (skb_sanoid_conf_text.content | b64decode)"
-        fail_msg: >-
-          ERROR: /etc/sanoid/sanoid.conf exists and was not written by this
-          deploy. Merge its datasets by hand or move it aside, then redeploy.
-      when: (skb_uses_sanoid | bool) and skb_sanoid_conf.stat.exists | default(false)
-
-    - name: Render sanoid.conf (tier 1 retention)
-      template:
-        src: "{{ playbook_dir }}/src/config/skbackup/sanoid.conf.j2"
-        dest: /etc/sanoid/sanoid.conf
-        owner: root
-        group: root
-        mode: "0644"
-      when: skb_uses_sanoid | bool
-      tags: [config]
-
-    - name: Enable the sanoid timer
-      systemd:
-        name: sanoid.timer
-        enabled: true
-        state: started
-      when: skb_uses_sanoid | bool
 
     - name: Render the systemd services
       template:
@@ -422,7 +460,7 @@
       tags: [units]
 
     - name: Create the restic repository if it does not exist yet
-      command: "{{ skb_cli }} init-offsite"
+      command: "{{ skb_cli }} restic init"
       register: skb_init_offsite
       changed_when: "'already initialised' not in skb_init_offsite.stdout"
       when: skb.offsite.enabled | bool

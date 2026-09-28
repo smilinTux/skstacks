@@ -1,7 +1,7 @@
 ---
 # skbackup defaults. The deploy merges the instance vault's `skbackup:` block
-# over this (recursively), so an instance sets only what differs. Every key
-# is documented in README.md ("Vault contract").
+# over this (recursively; lists replace), so an instance sets only what
+# differs. Every key is documented in README.md ("Vault contract").
 skbackup_defaults:
   # White-label layer (README "White-labelling"). Everything a customer sees
   # on the storage host comes from here: CLI banner and help, alert subjects
@@ -18,83 +18,81 @@ skbackup_defaults:
     credits: false
     credits_text: Powered by SKStacks (https://github.com/smilinTux/skstacks)
   # Optional prefix for the systemd unit NAMES: "acme-" gives
-  # acme-<short_name>-run.timer. Descriptions always use product_name.
+  # acme-<short_name>-sync.timer. Descriptions always use product_name.
   unit_prefix: ""
-  # restic --host for every offsite snapshot. Empty: the inventory hostname.
+  # restic --host and the host named in alerts and reports. Empty: the
+  # storage host's short hostname.
   host_label: ""
 
-  # Where the swarm's data lives on the storage host.
-  #   zfs: data_target is a dataset (tank/data); snapshots are ZFS snapshots.
-  #   dir: data_target is a directory; snapshots are rsync --link-dest trees
-  #        under snap_dir_root. For hosts and test clusters without ZFS only:
-  #        the first snapshot is a full copy.
-  snapshot_backend: zfs
-  data_target: ""
+  # The ZFS dataset the swarm's NFS data lives on (required).
+  data_dataset: ""
   state_dir: ""        # default /var/lib/<short_name>
-  snap_dir_root: ""    # dir backend only; default <state_dir>/snapshots
-  ionice: true         # run copies and restic under ionice -c3 nice -n19
 
-  # Tier 1: snapshots of the whole data dataset, plus the pre-deploy helper.
+  # Tier 1: sanoid snapshots of data_dataset, plus the pre-deploy helper.
   snapshots:
     enabled: true
-    # sanoid (zfs only, installs sanoid and manages /etc/sanoid/sanoid.conf)
-    # or builtin (count-based, any backend; the only choice for dir).
-    engine: sanoid
     retention: {hourly: 36, daily: 30, weekly: 8, monthly: 6}
-    builtin_keep: 48
-    builtin_schedule: "hourly"
     predeploy_keep_days: 30
     predeploy_keep_min: 2
 
-  # Tier 2: per-app copy from a frozen snapshot into a second pool/disk.
+  # Tier 2: per-app copy from a frozen snapshot into a second pool.
   copy:
     enabled: false
-    target: ""          # parent dataset (zfs) or directory (dir)
-    bwlimit_kbps: 40000
+    target: ""          # parent dataset on the backup pool, one child per app
+    # KiB/s. 40000 on a USB SSD pool pushed NFS writes from a node to 45 s;
+    # 10000 kept them under 1.4 s. Raise only with measurements.
+    bwlimit_kbps: 10000
     retention: {daily: 7, weekly: 4, monthly: 3}
-    apps: []            # [{name, excludes: [], retention: {daily: 14}}]
+    # [{name, src (default: name), retention: {daily: 14},
+    #   excludes: [rsync patterns, "/x/" anchored at the app root],
+    #   newest: [{dir: database-dump, keep: 2}], dump: database-dump}]
+    apps: []
 
-  # Tier 3: DB dump hooks and freshness gates, run before the snapshot.
+  # Tier 3: dump hooks (run by sync before the snapshot) and freshness.
   dumps:
-    enabled: false
-    required: true      # a failed hook or stale dump aborts the run
+    max_age_hours: 26
     hooks: []           # [{name, command, timeout: 1800}]
-    checks: []          # [{app, glob, max_age_hours: 26}]
 
-  # Tier 4: restic to an S3/B2 (or any restic) repository.
+  # Tier 4: restic from the newest sanoid snapshot, mounted at a stable path.
   offsite:
     enabled: false
-    repository: ""      # s3:https://s3.<region>.backblazeb2.com/<bucket>/<path>
+    repository: ""      # s3:https://s3.<region>.backblazeb2.com/<bucket>, b2:..., rest:..., /path
     password: ""        # the restic repository password (keep an offline copy)
-    env: {}             # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY, B2_*, ...
+    env: {}             # B2_ACCOUNT_ID/B2_ACCOUNT_KEY (mapped to AWS_* for s3:), AWS_*, B2_REGION ...
     limit_upload_kbps: 8000
-    tags: []            # extra tags on every snapshot (short_name is always added)
-    ignore_inode: true
-    sets: []            # [{name, source: copy|data, apps: [], tags: [], excludes: []}]
-    forget: {daily: 14, weekly: 8, monthly: 12}
+    mount_path: ""      # default /run/<short_name>/src
+    # [{name, kind: apps}] = every copied app with its excludes;
+    # [{name, kind: paths, paths: [rel, ...], excludes: [...]}] = anything else.
+    # Run in list order: small sets first so a multi-night seed finishes them first.
+    sets: []
+    forget: {daily: 7, weekly: 4, monthly: 6}
+    seed_grace_days: 7
     install: apt        # apt | url | none
     url: ""             # install: url -> a restic_<ver>_linux_<arch>.bz2 release asset
     sha256: ""          # of that .bz2, required with install: url
 
-  # Tier 5: restore test (sampled restic dump vs the frozen source + check).
+  # Tier 5: restore test.
   restore_test:
     enabled: false
-    samples: 20
-    read_data_subset: "5%"
-    hooks: []           # [{name, command, timeout}] extra checks, e.g. load a dump
+    app: ""             # src path of one copied app restored whole from the apps set
+    sample_set: ""      # a paths set to draw random files from
+    samples: 10
 
   # Tier 6: staleness checks and alerts.
   alerts:
-    enabled: true
-    notifier: log       # log | command
-    # command: one line, split on whitespace, placeholders substituted per
-    # word: {level} {key} {subject} {body} {message}. Never run by a shell.
+    notifier: log       # none | log | command
+    # command: one line, split on whitespace, never run by a shell;
+    # placeholders per word: {level} {key} {subject} {message} {body}.
     command: ""
-    max_age_hours: {snapshot: 2, copy: 26, dumps: 26, offsite: 26, restore_test: 840}
+    check_repo: false   # also ask the repository hourly (B2 class C calls)
+    max_age: {snapshot_minutes: 120, copy_hours: 26, offsite_hours: 36}
     pool_capacity_pct: 80
+    thinpool: ""        # an LVM thin pool under the backup pool, e.g. pve/data
+    thinpool_pct: 85
 
   schedule:
-    run: "*-*-* 05:30:00"
-    prune: "Sun *-*-* 07:00:00"
-    restore_test: "Sun *-*-01..07 08:00:00"
+    sync: "*-*-* 05:30:00"
+    offsite: "*-*-* 06:30:00"
+    prune: "Sun *-*-* 13:00:00"
+    restore_test: "*-*-01 14:00:00"
     check: "*-*-* *:17:00"

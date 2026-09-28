@@ -4,19 +4,25 @@ Host-level backups for the storage host that serves a cluster's data, and the
 framework's backup pattern doc. skbackup is **not a swarm stack**: it is an
 Ansible playbook (`deploy_skbackup-<env>.yml`) that targets a storage-host
 inventory group (a Proxmox node or any Linux host that exports the swarm's
-`/var/data` over NFS, ideally from ZFS) and installs there:
+`/var/data` over NFS from a **ZFS dataset**) and installs there:
 
 - a small bash engine (`/usr/local/lib/<short_name>/`) and its CLI
   (`/usr/local/sbin/<short_name>`),
-- ONE config file (`/etc/<short_name>/<short_name>.conf`, mode 0600),
-- restic credentials (`/etc/<short_name>/offsite.env` and `offsite.pass`, 0600),
-- `/etc/sanoid/sanoid.conf` when sanoid runs tier 1,
+- its config (`/etc/<short_name>/`: `<short_name>.conf`, `apps.conf`,
+  `restic-sets.conf`, `hooks.conf`, all 0600) and the restic credentials
+  (`offsite.env`, 0600),
+- `/etc/sanoid/sanoid.conf` for tier 1,
 - one systemd service + timer per enabled tier.
 
 Every tier is toggled in the vault. Every name a customer sees (CLI banner and
 help, alerts, reports, unit names and descriptions, install paths, restic
 tags) comes from a brand block, so an MSP can ship it under its own name
 (see "White-labelling").
+
+The engine is the storage-host setup proven in production on a Proxmox NAS
+(single USB SSD data pool, NVMe backup pool, restic to Backblaze B2), lifted
+with its names and behaviour kept, de-branded, and extended with dump hooks,
+the notifier and reports.
 
 `<short_name>` below is `skbackup` unless the brand says otherwise.
 
@@ -29,78 +35,66 @@ cluster it protected, read live files (torn copies of anything mid-write), and
 pushed every read of the data through NFS while prod was using it. This app
 replaces it (see "Upgrading from the Duplicati skbackup").
 
-The design comes from a real estate where one physical box held both the
+The design comes from an estate where one physical box held both the
 single-disk NFS pool and every swarm VM. Everything below is ordered by what
 survives what:
 
 | Tier | What | Survives | Does not survive |
 |---|---|---|---|
-| 1 | ZFS snapshots of the whole data dataset (sanoid), plus a pre-deploy snapshot helper | deletes, bad deploys, fat fingers, ransomware on NFS clients (they cannot destroy snapshots) | loss of the data disk or the box |
-| 2 | per-app copy from a frozen snapshot into a second pool on ANOTHER disk, with daily/weekly/monthly history | loss or corruption of the data disk, a bad rollback | loss of the box |
-| 3 | DB dump hooks and dump freshness gates, before the snapshot | makes tiers 1, 2 and 4 hold a consistent, portable dump, not only crash-consistent engine files | |
+| 1 | sanoid snapshots of the whole data dataset, plus a pre-deploy snapshot helper | deletes, bad deploys, fat fingers, ransomware on NFS clients (they cannot destroy snapshots) | loss of the data disk or the box |
+| 2 | per-app copy from a frozen snapshot into a second pool on ANOTHER disk, daily/weekly/monthly history | loss or corruption of the data disk, a bad rollback | loss of the box |
+| 3 | DB dump hooks and dump freshness checks, before the snapshots | makes tiers 1, 2 and 4 hold a consistent, portable dump, not only crash-consistent engine files | |
 | 4 | restic (client-side encrypted, deduplicated) to S3/B2 or any restic backend | loss of the box, the house, the site | loss of the repository password |
-| 5 | monthly restore test: sampled restore from the OFFSITE copy vs the frozen source, plus `restic check` | a backup that exists but cannot be restored | |
-| 6 | staleness and capacity checks with alerts | silent failure of any tier | |
+| 5 | monthly restore test: one app plus random sample files restored from the OFFSITE copy, sha256 against the exact snapshot they came from | a backup that exists but cannot be restored | |
+| 6 | staleness and health checks with alerts | silent failure of any tier | |
 
 ## Architecture
 
 ```
-            NFS clients (swarm nodes) read and write /var/data
-                                  |
- storage host  +------------------+-------------------------------------+
-               |  data dataset (tank/data)  <-- sanoid: hourly..monthly  |  tier 1
-               |        |                        pre-<purpose>-<ts>      |
-   05:30 run:  |  [3] dump hooks -> dumps land INSIDE the dataset        |
-               |  [3] dump checks: newest dump per app fresh, non-empty  |
-               |      (a failure aborts the run: no stale dump is saved) |
-               |  zfs snapshot tank/data@<short>-run-<ts>  (frozen)      |
-               |        |                                                |
-               |  [2] rsync .zfs/snapshot/<run>/<app>/ -> backup/<app>   |  tier 2
-               |      (local, throttled, no network hop, never torn)     |
-               |      zfs snapshot backup/<app>@<short>-daily-<ts> ...   |
-               |        |                                                |
-               |  [4] cd <newest copy snapshot> && restic backup .       |  tier 4
-               |      --parent <previous> --tag set:,app:,src:          |
-               |  destroy the transient run snapshot                     |
-               +---------------------------------------------------------+
-                                  |  upload limit
-                                  v
-                    S3 / B2 bucket (private, encrypted by restic)
+               NFS clients (swarm nodes) read and write /var/data
+                                   |
+ storage host  +-------------------+---------------------------------------+
+               | data dataset tank/data <-- sanoid: autosnap_* hourly..monthly | tier 1
+               |                           <-- predeploy: pre-<purpose>-<ts>   |
+   05:30 sync  | [3] hooks.conf: dumps land INSIDE the dataset              |
+               | [3] dump=DIR freshness check (warn, never blocks)          |
+               |     zfs snapshot tank/data@<short>-<ts>   (frozen, all apps)|
+               | [2] rsync .zfs/snapshot/<ts>/<src>/ -> backup/copies/<app> |  tier 2
+               |     (local, --bwlimit 10000, ionice idle; newest=DIR:N)    |
+               |     zfs snapshot backup/copies/<app>@daily-<ts> ...        |
+               |     destroy the frozen snapshot                            |
+ 06:30 restic  | [4] mount the NEWEST autosnap_* read-only at /run/<short>/src |  tier 4
+               |     restic backup per set: "apps" (every copied app, same  |
+               |     excludes) and "paths" sets (big data, offsite only)    |
+               +------------------------------------------------------------+
+                                   |  --limit-upload
+                                   v
+                     S3 / B2 bucket (private, encrypted by restic)
 ```
 
-- **Frozen source.** Copies and uploads never read the live tree. They read a
-  snapshot taken after the dumps, so every app is copied as of one instant.
-- **Runs locally on the storage host.** No NFS hop, no load on the swarm. The
-  per-app copy is capped (`copy.bwlimit_kbps`) and runs under
-  `ionice -c3 nice -n19`. ZFS does not honour ionice; the cap, the 05:30 slot
-  and the incremental rsync (metadata plus changed files after the first run)
-  are what protect prod.
-- **Offsite reads the copy, not the data disk**, for `source: copy` sets. A
-  `source: data` set (for data too big for the copy pool, like photo
-  originals) reads the run's frozen snapshot of the data dataset.
-- **One restic snapshot per set and app**, taken inside the frozen directory
-  (`restic backup .`), so the tree always starts at the app's root and the
-  previous snapshot of the same set/app is passed as `--parent`. Tags:
-  `<short_name>`, `offsite.tags`, the set's `tags`, `set:<set>`, `app:<app>`,
-  `src:<frozen snapshot name>` (the restore test uses it to find the exact
-  source). `--host` is `host_label`.
-- **One lock** (`/run/<short_name>.lock`): run, copy, offsite, prune,
-  restore-test and the builtin snapshot never overlap. `predeploy` does not
-  take it (a snapshot is safe beside a running copy). `check` does not either.
-
-### Snapshot backends
-
-`snapshot_backend: zfs` (production): snapshots are ZFS snapshots (atomic, no
-I/O), read through `<mountpoint>/.zfs/snapshot/<name>` (works with
-`snapdir=hidden`). Copy targets are child datasets, created on demand under
-`copy.target` (the pool itself must exist).
-
-`snapshot_backend: dir` (hosts and test clusters without ZFS): a snapshot is
-an `rsync --link-dest` tree under `snap_dir_root`. Unchanged files are hard
-links to the PREVIOUS snapshot, never to the live tree, so a snapshot is frozen
-against later in-place writes. The first snapshot of a target is a full copy,
-so this is for small data and tests, not terabytes. Tier 1 then uses the
-`builtin` engine (count-based retention), since sanoid is ZFS-only.
+- **Frozen source.** Copies and uploads never read the live tree. The copy
+  reads a snapshot taken after the dump hooks; restic reads the newest sanoid
+  snapshot. Every app is copied as of one instant.
+- **Stable snapshot path for restic.** The snapshot is mounted read-only at
+  the same path every night (`offsite.mount_path`, default
+  `/run/<short_name>/src`). restic picks its parent snapshot by path; with a
+  path that changes every night (`.zfs/snapshot/<name>`) it would re-read
+  every file every night.
+- **Runs locally on the storage host.** No NFS hop, no load on the swarm.
+  The per-app copy is capped (`copy.bwlimit_kbps`) and runs under
+  `ionice -c3 nice -n19` in units with `IOSchedulingClass=idle`. ZFS does not
+  honour ionice; the cap and the night slot are what protect prod (see
+  "Lessons learned").
+- **Sets.** `kind: apps` backs up every copied app with the same excludes
+  and `newest=` rules as the copy (small, the important set). `kind: paths`
+  backs up anything else, typically data too big for the copy pool (photo
+  originals, a user's cloud drive). Sets run in list order: put small ones
+  first so a multi-night first seed finishes them first.
+- **Tags and host.** Each restic snapshot carries the set's name and
+  `<short_name>`; `--host` is `host_label` (default: the short hostname).
+  `forget` groups by host and tags.
+- **Locks.** `sync` and the restic commands each hold a lock under
+  `/run/lock/<short_name>-*.lock`; `predeploy` and `check` take none.
 
 ## Deploy
 
@@ -108,30 +102,38 @@ so this is for small data and tests, not terabytes. Tier 1 then uses the
    override with `-e skbackup_hosts=<group>`). Give it the same `domain` and
    `cluster_name` host vars as the swarm managers so the vault resolves to
    `optional/group_vars/<env>/skbackup-<env>-<domain-dashed>-<cluster>_vault.yml`
-   (without them the legacy `skbackup-<env>_vault.yml` is used).
+   (without them the legacy `skbackup-<env>_vault.yml` is used). The play
+   never touches the swarm: never limit it to a manager group.
 2. Create the copy pool if tier 2 is on (the playbook never creates pools or
-   formats disks). For example, on a second disk:
-   `zpool create -o ashift=12 -o autotrim=on -O compression=zstd -O atime=off -O xattr=sa -O acltype=posixacl -m /backup backup /dev/<disk>`.
-   Do not add it to Proxmox's storage.cfg (keeps VM disks off it).
+   formats disks), on a DIFFERENT disk from the data pool, for example:
+   `zpool create -o ashift=12 -o autotrim=on -O compression=zstd -O atime=off -O xattr=sa -O acltype=posixacl -m /backup backup /dev/<disk>`
+   and `zfs create backup/copies`. Do not add it to Proxmox's storage.cfg
+   (keeps VM disks off it). The engine creates one child dataset per app.
 3. Write the vault (below). Keep an offline copy of `offsite.password`.
 4. Deploy:
 
    ```bash
    ansible-playbook -i <inventory> v1/ansible/optional/skbackup/deploy_skbackup-prod.yml \
-     --vault-password-file <file>
+     --vault-password-file <file> -e skbackup_hosts=<storage group>
    ```
 
-   The play installs packages (`rsync jq util-linux`, `sanoid` when tier 1
-   uses it, `restic` from apt or a pinned release), the engine, config, units
-   and timers, removes the timers of tiers that were switched off, creates the
-   restic repository if it does not exist, and prints `<short_name> status`.
-5. Prove it before scheduling trust: `<short_name> run` once by hand for a
-   small app (`copy.apps` with one entry), then `restore copy` and
-   `restore offsite` it beside the original and compare sha256 sums.
+   The play writes `/etc/sanoid/sanoid.conf` FIRST and only then installs
+   the packages (`rsync util-linux python3`, `sanoid`, `restic` from apt or
+   a pinned release): the sanoid package enables and starts its timer on
+   install, and must find the policy already there. It then installs the
+   engine, config files and timers, removes the timers of tiers that were
+   switched off, creates the restic repository if it does not exist
+   (`<short_name> restic init` is idempotent), and prints `<short_name> status`.
+5. Prove it before trusting it: `<short_name> sync --app <small app>`, compare
+   file count, bytes and a sha256 sample with the source snapshot; then
+   `<short_name> restic backup` a small set, `restic check`, run it again
+   (the second run must report a parent and unmodified files), and restore
+   one file by hand.
 
 The first full copy and the first offsite seed read everything once. Run them
 at night, capped, and if your estate serialises heavy I/O on the data pool,
-under that lock.
+under that lock. A first seed of hundreds of GB spans nights: the offsite
+unit stops after 22h and the next night resumes where it left off (dedup).
 
 ## Vault contract
 
@@ -142,29 +144,24 @@ Required:
 
 | Key | Notes |
 |---|---|
-| `skbackup.data_target` | The data: a dataset (`tank/data`) with `zfs`, an absolute directory with `dir`. |
+| `skbackup.data_dataset` | The ZFS dataset the swarm's NFS data lives on (`pool/path`, not a mount path). |
 
 Top level:
 
 | Key | Default | Notes |
 |---|---|---|
 | `skbackup.branding` | SKBackup brand | See "White-labelling". |
-| `skbackup.unit_prefix` | `""` | Prefix for systemd unit NAMES: `acme-` gives `acme-<short_name>-run.timer`. |
-| `skbackup.host_label` | inventory hostname | restic `--host` and the host shown in alerts and reports. |
-| `skbackup.snapshot_backend` | `zfs` | `zfs` or `dir`. |
-| `skbackup.state_dir` | `/var/lib/<short_name>` | Stamps, reports, `alerts.log`, `dir` snapshots. |
-| `skbackup.snap_dir_root` | `<state_dir>/snapshots` | `dir` backend only. |
-| `skbackup.ionice` | `true` | Copies and uploads under `ionice -c3 nice -n19`. |
-| `skbackup.schedule` | see defaults | systemd `OnCalendar` for `run` (05:30), `prune` (Sunday 07:00), `restore_test` (first Sunday 08:00), `check` (hourly at :17). |
+| `skbackup.unit_prefix` | `""` | Prefix for systemd unit NAMES: `acme-` gives `acme-<short_name>-sync.timer`. |
+| `skbackup.host_label` | short hostname | restic `--host` and the host named in alerts and reports. |
+| `skbackup.state_dir` | `/var/lib/<short_name>` | Stamps (`last-ok-<app>`, `restic-last-ok-<set>`), rsync logs, reports, `alerts.log`. |
+| `skbackup.schedule` | see defaults | systemd `OnCalendar` for `sync` (05:30), `offsite` (06:30), `prune` (Sunday 13:00), `restore_test` (1st of the month 14:00), `check` (hourly at :17). |
 
 Tier 1, `skbackup.snapshots`:
 
 | Key | Default | Notes |
 |---|---|---|
-| `enabled` | `true` | |
-| `engine` | `sanoid` | `sanoid` (zfs only; manages `/etc/sanoid/sanoid.conf` and refuses to overwrite one it did not write) or `builtin`. |
+| `enabled` | `true` | Installs sanoid and manages `/etc/sanoid/sanoid.conf` (refuses to overwrite one it did not write). |
 | `retention` | 36 hourly, 30 daily, 8 weekly, 6 monthly | sanoid template (`hourly`, `daily`, `weekly`, `monthly`, `yearly`). |
-| `builtin_keep` / `builtin_schedule` | `48` / `hourly` | builtin engine: keep the newest N `<short_name>-auto-<ts>` snapshots. |
 | `predeploy_keep_days` / `predeploy_keep_min` | `30` / `2` | `predeploy` prunes `pre-*` snapshots older than this, always keeping the newest N. |
 
 Tier 2, `skbackup.copy`:
@@ -172,33 +169,31 @@ Tier 2, `skbackup.copy`:
 | Key | Default | Notes |
 |---|---|---|
 | `enabled` | `false` | |
-| `target` | | Parent dataset (zfs) or directory (dir) on ANOTHER disk. Required when enabled. |
-| `bwlimit_kbps` | `40000` | rsync `--bwlimit` (KiB/s); `0` = unlimited. |
-| `retention` | 7 daily, 4 weekly, 3 monthly | History snapshots per app; weekly on Sundays, monthly on the 1st (UTC). |
-| `apps` | `[]` | `[{name, excludes: [rsync patterns], retention: {daily: 14}}]`; `name` is a directory under the data target. |
+| `target` | | Parent dataset on the backup pool (one child per app). Required when enabled. |
+| `bwlimit_kbps` | `10000` | rsync `--bwlimit` in KiB/s. Measured: 40000 on a USB SSD pool pushed NFS writes from a node to 45 s; 10000 kept them under 1.4 s. Raise only with your own measurement. |
+| `retention` | 7 daily, 4 weekly, 3 monthly | History snapshots per app; weekly on Sundays, monthly on the 1st. |
+| `apps` | `[]` | `[{name, src, retention, excludes, newest, dump}]`: `name` names the copy dataset; `src` (default `name`) is the path under the data dataset; `retention` overrides per app (`{daily: 14}`); `excludes` are rsync patterns (`/x/` anchored at the app root, no whitespace); `newest: [{dir, keep}]` keeps only the newest N files of a dump dir; `dump: DIR` flags the app when DIR has no non-empty file newer than `dumps.max_age_hours`. |
 
 Tier 3, `skbackup.dumps`:
 
 | Key | Default | Notes |
 |---|---|---|
-| `enabled` | `false` | |
-| `required` | `true` | A failed hook or a failed check aborts the run (nothing is snapshotted, copied or uploaded). |
-| `hooks` | `[]` | `[{name, command, timeout: 1800}]`, run in order with `bash -c` (operator-trusted, like a cron line), for example a `docker exec ... pg_dump` on a manager over ssh. |
-| `checks` | `[]` | `[{app, glob, max_age_hours: 26}]`: the newest file matching `<data>/<app>/<glob>` must exist, be non-empty and fresh. |
+| `max_age_hours` | `26` | Freshness limit for every app's `dump` dir. A stale dump is a WARN, never a blocker: one stale sidecar must not stop every other app from being copied. |
+| `hooks` | `[]` | `[{name, command, timeout: 1800}]`, run in order by `sync` before it freezes the data (`bash -c`, operator-trusted like a cron line), for example a `docker exec ... pg_dump` on a manager over ssh. A failed hook is recorded and reported by `check`; the copy still runs. |
 
 Tier 4, `skbackup.offsite`:
 
 | Key | Default | Notes |
 |---|---|---|
 | `enabled` | `false` | |
-| `repository` | | Any restic repository: `s3:https://s3.<region>.backblazeb2.com/<bucket>/<host>`, `b2:<bucket>:<path>`, `rest:https://...`, a local path. Required. |
-| `password` | | The restic repository password. Required. **Losing it makes the repository unreadable: keep an offline copy.** |
-| `env` | `{}` | Backend credentials: `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` (S3 API), or `B2_ACCOUNT_ID` + `B2_ACCOUNT_KEY` (native b2). Written only to `offsite.env` (0600). |
+| `repository` | | Any restic repository: `s3:https://s3.<region>.backblazeb2.com/<bucket>`, `b2:<bucket>:<path>`, `rest:https://...`, a local path. Required. |
+| `password` | | The restic repository password, written to `offsite.env` (0600). Required. **Losing it makes the repository unreadable: keep an offline copy.** |
+| `env` | `{}` | Backend credentials. For the `s3:` backend, `B2_ACCOUNT_ID` / `B2_ACCOUNT_KEY` are mapped to `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (and `B2_REGION` to `AWS_DEFAULT_REGION`) unless the `AWS_*` names are set; restic's S3 backend reads only the `AWS_*` names. |
 | `limit_upload_kbps` | `8000` | restic `--limit-upload` (KiB/s). Leave half the uplink to everything else. |
-| `tags` | `[]` | Extra tags on every snapshot; `<short_name>` is always added. |
-| `ignore_inode` | `true` | `--ignore-inode`: the frozen path changes every night. |
-| `sets` | `[]` | `[{name, source: copy or data, apps: [...], tags: [...], excludes: [...]}]`. A `copy` set may only name apps in `copy.apps`. |
-| `forget` | 14 daily, 8 weekly, 12 monthly | `restic forget --keep-<k>` per set and app (`last`, `hourly`, `daily`, `weekly`, `monthly`, `yearly`), grouped by host only. |
+| `mount_path` | `/run/<short_name>/src` | The stable read-only mount of the snapshot restic reads. Paths inside the repository start with it. |
+| `sets` | `[]` | `[{name, kind: apps}]` and/or `[{name, kind: paths, paths: [rel, ...], excludes: [...]}]`. `kind: apps` needs the copy tier. Path excludes starting with `/` are anchored at the snapshot root (`/app/data/tmp`). |
+| `forget` | 7 daily, 4 weekly, 6 monthly | `restic forget --prune`, weekly, grouped by host and tags. |
+| `seed_grace_days` | `7` | A set whose first upload started less than this ago reports PENDING, not STALE. |
 | `install` | `apt` | `apt`, `url` (a pinned upstream release: set `url` and `sha256` of the `.bz2`) or `none`. Debian bookworm's restic is 0.14; prefer a pinned 0.18.x release. |
 | `url` / `sha256` | | For `install: url`: the `restic_<ver>_linux_<arch>.bz2` asset and its sha256 from the release's `SHA256SUMS`. |
 
@@ -207,194 +202,214 @@ Tier 5, `skbackup.restore_test`:
 | Key | Default | Notes |
 |---|---|---|
 | `enabled` | `false` | Needs the offsite tier. |
-| `samples` | `20` | Files per set/app streamed back with `restic dump` and compared by sha256 with the frozen source. |
-| `read_data_subset` | `5%` | `restic check --read-data-subset`. |
-| `hooks` | `[]` | `[{name, command, timeout}]`: extra checks, for example loading a restored dump into a throwaway database container. |
+| `app` | | The `src` of one copied app, restored whole from the `apps` set. |
+| `sample_set` | | A `paths` set to draw random files from (large sets are sampled, not restored). |
+| `samples` | `10` | Sample size. |
 
 Tier 6, `skbackup.alerts`:
 
 | Key | Default | Notes |
 |---|---|---|
-| `enabled` | `true` | The check timer, and delivery through the notifier. `alerts.log` is always written. |
-| `notifier` | `log` | `log` (only `<state_dir>/alerts.log`) or `command`. |
-| `command` | | One line, split on whitespace, never run by a shell. Placeholders per word: `{level}` (info, warn, crit), `{key}`, `{subject}`, `{message}` (`[<alert_prefix>] <level>: <subject>`), `{body}`. The command also gets `BK_LEVEL`, `BK_KEY`, `BK_SUBJECT`, `BK_BODY`, `BK_BRAND_PRODUCT`, `BK_BRAND_LOGO_URL`, `BK_BRAND_CONTACT` in its environment. |
-| `max_age_hours` | snapshot 2, copy 26, dumps 26, offsite 26, restore_test 840 | Staleness thresholds. |
-| `pool_capacity_pct` | `80` | Warn when the data or copy pool is this full. |
+| `notifier` | `log` | `none` (no check timer: an alert host runs `check` over ssh, see below), `log` (the local check timer writes `<state_dir>/alerts.log`) or `command`. |
+| `command` | | One line, split on whitespace, never run by a shell. Placeholders per word: `{level}` (info, warn, crit), `{key}`, `{subject}`, `{message}` (`[<alert_prefix>] <level>: <subject>`), `{body}`. The command also gets `BK_LEVEL`, `BK_KEY`, `BK_SUBJECT`, `BK_BODY`, `BK_BRAND_PRODUCT`, `BK_BRAND_LOGO_URL`, `BK_BRAND_CONTACT`. |
+| `check_repo` | `false` | Also ask the repository for the newest snapshot of each set. Catches a repository that lost snapshots or became unreachable, at the cost of B2 class C calls every hour. |
+| `max_age` | snapshot 120 min, copy 26 h, offsite 36 h | Staleness thresholds. |
+| `pool_capacity_pct` | `80` | Warn when the data or backup pool is this full (or not ONLINE). |
+| `thinpool` / `thinpool_pct` | `""` / `85` | An LVM thin pool under the backup pool (for example `pve/data`): if it fills, every VM on it pauses. |
 
-The deploy fails closed on: an empty `data_target`, an unknown backend,
-sanoid without zfs, copy on without a target or apps, offsite on without a
-repository, password or sets, a `copy` set naming an app that is not copied,
-`install: url` without a 64-character sha256, a `command` notifier without a
-command, a short name or unit prefix that is not a safe path/unit component,
-and any key of the retired Duplicati skbackup.
+The deploy fails closed on: an empty or path-shaped `data_dataset`; copy on
+without a target or apps, an app name or path that is not safe, an exclude
+with whitespace; a hook without a name or command; offsite on without a
+repository, password or sets, a set with an unknown kind, an `apps` set
+without the copy tier, a `paths` set without paths; a restore test naming an
+app that is not copied or a set that is not a `paths` set; `install: url`
+without a 64-character sha256; a `command` notifier without a command; a
+short name or unit prefix that is not a safe path/unit component; and any key
+of the retired Duplicati skbackup.
 
 ## Tiers in practice
 
 ### Tier 1: snapshots and the pre-deploy helper
 
-sanoid snapshots the data dataset hourly and prunes it (`autosnap_*`). Space
-used is churn: a daily-dump-heavy estate might pin 5 to 15 GB a day.
-Snapshots also pin DELETED data: decide what to do with legacy data BEFORE
-retention starts, or the space only comes back when the last monthly
-snapshot that holds it expires.
+sanoid snapshots the data dataset (`autosnap_*`) and prunes its own
+snapshots only. Space used is churn: a daily-dump-heavy estate might pin 5
+to 15 GB a day. Snapshots also pin DELETED data: decide what to do with
+legacy data BEFORE retention starts, or the space only comes back when the
+last monthly snapshot that holds it expires.
 
 Before any deploy, take a snapshot instead of copying data:
 
 ```bash
 ssh <storage-host> <short_name> predeploy skgit-upgrade
-# snapshot: tank/data@pre-skgit-upgrade-20270115T080000Z
+# tank/data@pre-skgit-upgrade-20270115T080000Z
+ssh <storage-host> <short_name> predeploy --list
 ```
 
-It prunes `pre-*` snapshots older than `predeploy_keep_days` (keeping the
-newest `predeploy_keep_min`); sanoid never touches them. Turn on
-`autotrim=on` for SSD pools.
+Instant and zero I/O. Plus a small DB dump OFF the storage host when the
+service has a database. It prunes `pre-*` snapshots older than
+`predeploy_keep_days` (keeping the newest `predeploy_keep_min`). For a
+one-off delayed destroy (a safety snapshot to drop in 7 days), use a
+systemd one-shot timer (`OnCalendar=<date>`, `ExecStart=zfs destroy
+<exactly one snapshot>`, `ExecStartPost=systemctl disable <timer>`), not
+`at`: `at` is often not installed and leaves no unit to inspect.
 
 ### Tier 2: per-app copy
 
 Pick apps by what they hold, not by size (see "Choosing apps"). The copy pool
 sits on a different disk. If it is a thin LV on the hypervisor's own NVMe,
-keep an eye on the thin pool: if it fills, every VM on it pauses. Alert on
-its `Data%` separately.
+set `alerts.thinpool`: if the thin pool fills, every VM on it pauses.
 
 ### Tier 3: dumps
 
-The snapshot is atomic and the NFS export is `sync`, so raw database files in
-it are crash-consistent (they restore like a power loss). Dumps are what is
-portable and testable. Either let each stack's dump sidecar write into its app
-directory and gate on freshness with `checks`, or produce the dump in a
-`hook`. Schedule the run after the sidecars. Watch for sidecars that keep a
-single generation (overwrite one file forever): a failed write then
-truncates the only copy. A check alerting on "same filename as yesterday" is
-cheap insurance.
+The snapshots are atomic and the NFS export is `sync`, so raw database files
+in them are crash-consistent (they restore like a power loss). Dumps are
+what is portable and testable. Either let each stack's dump sidecar write
+into its app directory and flag staleness with `dump: DIR`, or produce the
+dump in a `hook`. Schedule `sync` after the sidecars, and keep the newest 2
+dumps (`newest: [{dir, keep: 2}]`) of any sidecar that might still be
+writing when the snapshot is taken, so the copy always holds one complete
+dump. Watch the sidecars' own schedules: a sidecar whose schedule drifts
+(one measured drifting about 13 minutes a day) will eventually cross the
+sync slot; pin its schedule to a fixed time. And watch for sidecars that
+keep a single generation (overwrite one file forever): a failed write then
+truncates the only copy.
 
 ### Tier 4: offsite
 
-`source: copy` sets read the tier 2 history (fast, no load on the data disk).
-Data too big for the copy pool (photo originals, a user's cloud drive) goes
-in a `source: data` set, read from the run's frozen snapshot. The first seed
-of a large set takes nights at a sane upload limit: seed it over several
-nights, then the daily increment is small. gzip defeats restic dedup; dump
-with `gzip --rsyncable` (or not compressed) where you can.
-
-`<short_name> prune` (weekly) runs `restic forget` per set and app grouped by
-host (the frozen path differs every night, so the default host+paths grouping
-would keep every snapshot forever), then `restic prune`.
+`<short_name> restic backup` mounts the newest `autosnap_*` snapshot at the
+stable path and backs up every set. The first seed of a large set takes
+nights at a sane upload limit; the daily increment is then small. gzip
+defeats restic dedup; dump with `gzip --rsyncable` (or uncompressed) where
+you can. `<short_name> restic forget-prune` runs weekly (B2 class B/C
+calls cost money). `<short_name> restic check 5%` reads a data subset (B2
+download cost).
 
 ### Tier 5: restore test
 
-Monthly (first Sunday): for every set/app, the newest offsite snapshot is
-streamed back file by file (`restic dump`, no disk used) for `samples`
-random files, and each sha256 is compared with the SAME file in the frozen
-snapshot it was taken from (`src:` tag). If that snapshot has been pruned
-the files are restored but not compared (reported as a note). Then
-`restic check --read-data-subset`, then the `hooks`. The report lands in
-`<state_dir>/reports/restore-test-<ts>.txt` and is sent as `info` (pass) or
-`crit` (fail).
+Monthly: restores `restore_test.app` whole from the `apps` set and
+`samples` random files from `sample_set`, and compares each file's sha256
+with the SAME file in the ZFS snapshot it was backed up from (or, if that
+snapshot has expired, the live file when size and mtime still match;
+otherwise it is counted as skipped). Any mismatch, or nothing compared, is a
+failure. The report lands in `<state_dir>/reports/restore-test-<ts>.txt` and
+is sent as `info` (pass) or `crit` (fail).
 
 ### Tier 6: checks and alerts
 
-`<short_name> check` (hourly) reads the artifacts, not the engine's own
-success stamps: the newest tier 1 snapshot, the newest history snapshot per
-copied app, the newest dump per check, the newest restic snapshot per
-set/app AS THE REPOSITORY REPORTS IT (an unreachable repository is a crit),
-the age of the last passing restore test, and pool capacity. One alert per
-finding, keyed `<short_name>-<check>[-<item>]` for de-duplication. Exit 0 all
-fresh, 1 warnings, 2 critical (the unit then shows failed). The report is in
-`<state_dir>/reports/check-latest.txt`.
+`<short_name> check` prints one line per check (`OK`, `STALE`, `WARN`,
+`PENDING`) and exits 1 if anything is STALE or WARN: the newest sanoid
+snapshot, the newest `daily-*` copy per app, dump freshness and failed
+hooks at the last sync, the last good restic run per set (state files;
+`check_repo` also asks the repository), pool health and capacity, the thin
+pool. The report is in `<state_dir>/reports/check-latest.txt`.
 
-An existing alert CLI plugs in as a command, for example:
+Two ways to alert:
 
-```yaml
-alerts:
-  notifier: command
-  command: /opt/alerts/bin/send-alert -l {level} -k {key} {message}
-```
+- **On the storage host**: the check timer runs `check --notify`, one alert
+  per finding through the notifier (`log` or `command`), keyed for
+  de-duplication.
+- **From an alerting host** (where your alert CLI lives, with key-based ssh
+  to the storage host): set `alerts.notifier: none` and schedule
+  `/usr/local/lib/<short_name>/alert-host-check` there (copy it over):
 
-Use absolute paths: timers do not have your login PATH.
+  ```
+  17 * * * * /opt/backup/alert-host-check <storage-host> /usr/local/sbin/<short_name> <alert_prefix> /opt/alerts/bin/send-alert -l {level} -k {key} {message}
+  ```
+
+  It pages on any STALE/WARN line and when the storage host cannot be
+  reached over ssh. The alert host needs ssh access to the storage host
+  (BatchMode, a dedicated key; the command it runs is read-only).
+
+Use absolute paths in anything a scheduler runs: cron and systemd have no
+login PATH.
 
 ## CLI
 
 ```
-<short_name> run                  nightly pipeline (the run timer)
-<short_name> snapshot             tier 1, builtin engine
-<short_name> predeploy PURPOSE    pre-deploy snapshot
-<short_name> copy | offsite       one tier alone
-<short_name> prune                restic forget + prune
-<short_name> restore-test         tier 5
-<short_name> restore ...          see below
-<short_name> check                tier 6
-<short_name> status               what is on and how old each tier is
-<short_name> snapshots            offsite snapshots of this host
-<short_name> init-offsite         create the restic repository if missing
+<short_name> sync [--app NAME]... [--dry-run]   tier 2 (+ dump hooks)
+<short_name> restic init                        create the repository (idempotent)
+<short_name> restic backup [SET]...             tier 4
+<short_name> restic forget-prune                retention + prune
+<short_name> restic check [SUBSET]              repository check (SUBSET like 5% reads data)
+<short_name> restic restore-test                tier 5
+<short_name> restic snapshots                   newest snapshot per set
+<short_name> check [--notify]                   tier 6
+<short_name> predeploy PURPOSE | --list         pre-deploy snapshots
+<short_name> status                             what is configured and when each tier last succeeded
 ```
 
-Exit codes: 0 ok, 1 failure, 2 usage or config error (and crit findings for
-`check`), 75 another run holds the lock.
+```bash
+systemctl list-timers '<prefix><short_name>-*' sanoid.timer
+journalctl -u '<prefix><short_name>-sync' -u '<prefix><short_name>-offsite' --since today
+```
 
 ## Restore procedures
 
-Restore BESIDE the live data, check it, then swap it in under maintenance
-with the app stopped. The `restore` command refuses a target inside the
-live data path and a non-empty target.
+Restore BESIDE the live data or with the app's stack stopped; a restore into
+the data dataset is a heavy NFS write, so throttle it.
 
-**Tier 1 (a file or an app from a data snapshot):**
+**Tier 1 (a file or an app from a data snapshot)**, on the storage host as
+root (`.zfs` is hidden but reachable by path):
 
 ```bash
 zfs list -t snapshot -o name,creation tank/data | tail
-<short_name> restore snapshot <app> autosnap_2027-01-15_08:00:01_hourly /restore/<app>
-# or by hand: rsync -a /tank/data/.zfs/snapshot/<snap>/<app>/ /restore/<app>/
+cp -a /tank/data/.zfs/snapshot/<snap>/<app>/<path> /tank/data/<app>/<path>
 ```
 
-For a large restore, `zfs clone tank/data@<snap> tank/restore` is instant.
-Never `zfs rollback` the whole data dataset: it rolls back every app.
+For a big restore, `zfs clone tank/data@<snap> tank/restore-tmp` is instant;
+copy from there. **Never `zfs rollback` the data dataset**: it rolls back
+every app.
 
-**Tier 2 (the data disk is gone or corrupt):**
+**Tier 2 (the data disk is gone or corrupt)**, with the app's stack stopped:
 
 ```bash
-zfs list -t snapshot -o name backup/<app>
-<short_name> restore copy <app> <short_name>-daily-20270115T053000Z /restore/<app>
+zfs list -t snapshot -r backup/copies/<app>          # daily-/weekly-/monthly-<ts>
+ionice -c3 rsync -aHAX --numeric-ids --bwlimit=10000 \
+  /backup/copies/<app>/.zfs/snapshot/daily-<ts>/ /tank/data/<src>/
 ```
 
-The copy pool holds the per-app trees; with the data disk replaced, restore
-each app into the new data dataset and restart its stack.
+No `--delete` unless you mean it; excluded paths (previews, caches) are not
+in the copy and are rebuilt by the app.
 
-**Tier 3 (a database):** restore the app's dump directory with tier 1, 2 or 4,
-then load the dump with that service's own restore procedure (`pg_restore`,
-`mysql <`). Raw database files from a snapshot are a fallback (crash
-recovery on start).
+**Tier 3 (a database)**: restore the app's dump directory with tier 1, 2 or
+4, then load the dump with that service's own restore procedure
+(`pg_restore`, `mysql <`). Raw database files from a snapshot are a fallback
+(crash recovery on start).
 
-**Tier 4 (the box is gone):** on any machine with restic, the repository
-URL, the credentials and the password:
+**Tier 4 (the box is gone)**, on any machine with restic and the
+credentials:
 
 ```bash
-export RESTIC_REPOSITORY=... RESTIC_PASSWORD_FILE=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...
-restic snapshots --host <host_label> --tag set:<set>,app:<app>
-restic restore <id> --target /restore/<app>      # the tree starts at the app's root
+set -a; . ./offsite.env; set +a            # RESTIC_REPOSITORY, RESTIC_PASSWORD, B2_*
+export AWS_ACCESS_KEY_ID=$B2_ACCOUNT_ID AWS_SECRET_ACCESS_KEY=$B2_ACCOUNT_KEY   # s3: backend
+restic snapshots --latest 1 --group-by host,tags
+restic restore latest --tag <apps set> --include /run/<short_name>/src/<app> --target /var/tmp/restore
+restic restore latest --tag <paths set> --target /mnt/<big disk>/restore
 ```
 
-On a rebuilt storage host with the deploy re-run:
-`<short_name> restore offsite <set> <app> /restore/<app> [<id>]`.
+Paths inside the repository start with `mount_path` (default
+`/run/<short_name>/src/`).
 
-**Tier 5** is the rehearsal of tier 4: read its report monthly.
+**Tier 5** is the monthly rehearsal of tier 4: read its report.
 
 ## Choosing apps
 
-- **Keep (tier 2 and 4):** app config and secrets (rendered env, keys, TLS
-  state such as an ACME store: losing it can mean nothing re-obtains a
-  wildcard certificate), the newest DB dump per app, mail, git repositories
-  and LFS, user files, anything a person made.
-- **Offsite only:** irreplaceable data too big for the copy pool: photo
-  originals, a user's cloud drive. If there is NO other copy, it must be
-  offsite.
+- **Copy and offsite:** app config and secrets (rendered env, keys, TLS state
+  such as an ACME store: losing it can mean nothing re-obtains a wildcard
+  certificate), the newest DB dumps, mail, git repositories and LFS, user
+  files, anything a person made.
+- **Offsite only (`kind: paths`):** irreplaceable data too big for the copy
+  pool: photo originals, a user's cloud drive. If there is NO other copy, it
+  must be offsite.
 - **Skip:** anything regenerable: thumbnails, previews, transcoded video,
   model caches, package registries a CI re-publishes, runner caches, search
-  indexes, the old dump generations tier 1 already holds, logs and metrics
-  you would not restore.
-- **Raw database directories:** skip in tier 2/4 when a dump exists (tier 1
-  still holds them crash-consistent). A database on a node-local volume is
-  NOT in the data snapshot at all: only its dump is.
-- **Config directories contain secrets:** the copy pool must be root-only
-  (0700) and offsite must be encrypted (restic is).
+  indexes, repo archives, trash and old file versions you would not restore,
+  logs and metrics.
+- **Raw database directories:** skip in tiers 2 and 4 when a dump exists
+  (tier 1 still holds them crash-consistent). A database on a node-local
+  volume is NOT in the data snapshots at all: only its dump is.
+- **Config directories contain secrets:** the copy pool must be root-only and
+  offsite must be encrypted (restic is).
 
 ## B2 setup (Backblaze, S3 API)
 
@@ -404,20 +419,19 @@ On a rebuilt storage host with the deploy re-run:
    objects on prune; with the default "keep all versions", deleted objects
    stay billable forever. (A longer "days before hiding/deleting" gives an
    undo window against a compromised key, at a storage cost.)
-3. **Application key scoped to that one bucket**, read and write, no
-   `listAllBucketNames` needed. Never use the master key on a host. Put the
-   key ID and key in `offsite.env` as `AWS_ACCESS_KEY_ID` /
-   `AWS_SECRET_ACCESS_KEY` and use the bucket's S3 endpoint:
-   `repository: s3:https://s3.<region>.backblazeb2.com/<bucket>/<host>`.
-4. **Raise the caps before the first seed.** A new account has a free tier
-   with daily caps: storage, download bandwidth, AND transactions (class B:
-   downloads/gets, class C: list and other calls). restic's `check`, `prune`
-   and `snapshots` are transaction-heavy; hitting a cap makes the backend
-   return errors mid-run. Set caps above expected use (or remove them) and
-   enable the cap alerts.
+3. **Application key scoped to that one bucket**, read and write. Never use
+   the master key on a host. Put the key ID and key in `offsite.env` as
+   `B2_ACCOUNT_ID` / `B2_ACCOUNT_KEY` (the engine maps them to `AWS_*` for
+   the S3 backend) and use the bucket's S3 endpoint:
+   `repository: s3:https://s3.<region>.backblazeb2.com/<bucket>`.
+4. **Raise the caps before the first seed.** A new account has daily caps on
+   storage, download bandwidth AND transactions (class B: downloads/gets,
+   class C: list and other calls). restic's `check`, `prune` and
+   `snapshots` are transaction-heavy; hitting a cap makes the backend return
+   errors mid-run. Set caps above expected use (or remove them) and turn on
+   the cap alerts.
 5. Store the repository password and the key in your secret store with an
-   offline copy. Test `restore offsite` from a machine that is not the
-   storage host.
+   offline copy. Test a restore from a machine that is not the storage host.
 
 Any S3-compatible target (a self-hosted object store on ANOTHER site, Wasabi,
 S3) works the same way; a same-site object store protects against deletion,
@@ -430,11 +444,11 @@ not against losing the site.
 
 | Key | Default | Where it shows |
 |---|---|---|
-| `product_name` | `SKBackup` | CLI banner, help, status, reports, unit `Description=`, config header. |
-| `short_name` | `skbackup` | The command, `/usr/local/lib/<short_name>`, `/etc/<short_name>`, `/var/lib/<short_name>`, unit names, alert keys, snapshot names, the always-on restic tag. `^[a-z][a-z0-9-]{1,30}$`. |
+| `product_name` | `SKBackup` | CLI banner, help, status, reports, unit `Description=`, config headers. |
+| `short_name` | `skbackup` | The command, `/usr/local/lib/<short_name>`, `/etc/<short_name>`, `/var/lib/<short_name>`, `/run/<short_name>/src` (restic paths), unit names, lock files, alert keys, the frozen snapshot names, a restic tag. `^[a-z][a-z0-9-]{1,30}$`. |
 | `tagline` | the SKStacks tagline | Banner and help. |
 | `alert_prefix` | `SKBackup` | Every alert subject: `[<alert_prefix>] crit: ...`. |
-| `report_footer` | `SKBackup, part of SKStacks` | Footer of every alert body and report. |
+| `report_footer` | `SKBackup, part of SKStacks` | Footer of every alert body, report and the help and status text. |
 | `contact` | `""` | `Contact:` line under the footer. |
 | `logo_url` | `""` | Report header, and `BK_BRAND_LOGO_URL` for notifier commands (webhooks, e-mail). |
 | `credits` / `credits_text` | `false` / Powered by SKStacks | When `credits: true`, the credits line is added to the banner, footer and reports. |
@@ -455,15 +469,17 @@ skbackup:
   unit_prefix: acme-
 ```
 
-The host then has `/usr/local/sbin/acmevault`, `acme-acmevault-run.timer`
-("Acme Vault: nightly dump hooks, ..."), alerts `[ACME-VAULT] crit: ...` and
-reports signed by Acme IT. The engine carries no brand string of its own
-(it prints only what the config says), and the test suite renders the
+The host then has `/usr/local/sbin/acmevault`, `acme-acmevault-sync.timer`
+("Acme Vault: dump hooks and per-app copy ..."), alerts `[ACME-VAULT] crit:
+...` and reports signed by Acme IT. The engine carries no brand string of its
+own (it prints only what the config says), and the test suite renders the
 deploy in white-label mode and fails if any default brand string appears in
 any rendered file, install path, shell body, or anything the engine prints,
-alerts or reports (`v1/tests/test_skbackup_whitelabel.py`). Changing
-`short_name` on an existing host installs under the new name: remove the old
-units (`systemctl disable --now <old>-*.timer`) and paths by hand.
+alerts, reports or names on disk (`v1/tests/test_skbackup_whitelabel.py`).
+Changing `short_name` on an existing host installs under the new name:
+disable the old units (`systemctl disable --now <old>-*.timer`) and remove
+the old paths by hand; restic paths change with it, so the next upload of
+each set re-reads everything once.
 
 ## Upgrading from the Duplicati skbackup
 
@@ -474,45 +490,65 @@ there is nothing to migrate. On instances whose vault still carries its keys
 them: the deploy refuses them rather than ignore them. `CLUSTERNAME`,
 `DOMAIN`, `ACME_ENABLED` and `networks` are simply unused now. If an old
 private Duplicati copy left state on NFS (`/var/data/skbackup-<env>`,
-`/var/data/config/skbackup-<env>`) and no job ever wrote to a target, archive
-it once and delete it. No overlay network or swarm stack is needed.
+`/var/data/config/skbackup-<env>`) and no job ever wrote to a target from
+it, delete it once a tier 1 snapshot holds it. No overlay network or swarm
+stack is needed.
 
 ## Lessons learned
 
+- **The bandwidth cap is the prod safety, and 40 MB/s was too much.** On a
+  single USB SSD data pool, a copy at 40000 KiB/s pushed an NFS write from a
+  swarm node to 45 s; at 10000 KiB/s the worst probe was 1.4 s with every
+  service healthy. The default is 10000; measure before raising it (time an
+  NFS `touch`+`rm` from a node while the copy runs).
 - **A copy on the same disk is not a backup.** Bulk copies into a backups
   directory on the NFS pool doubled the space and protected against nothing
   that loses the disk. A snapshot gives the same point-in-time safety
-  instantly, at zero I/O.
-- **Heavy I/O on the shared pool is a prod change.** An unthrottled bulk copy
-  of one app's data saturated the NFS server and outran another service's
-  health check (a long outage). Backups read from snapshots, run locally on
-  the storage host, capped, at a fixed night slot, never during deploys.
-- **One box can be all of prod.** When the NFS pool and every swarm VM share a
-  host, only an off-box copy survives that host. And a single-disk pool can
+  instantly, at zero I/O. Heavy I/O on the shared pool is a prod change: an
+  unthrottled bulk copy of one app's data once outran another service's
+  health check and caused a long outage.
+- **restic needs a stable path.** Backing up the snapshot from its
+  `.zfs/snapshot/<name>` path, which changes every night, makes restic find
+  no parent and re-read everything. Mount the snapshot at the same path.
+- **S3 means `AWS_*`.** restic's S3 backend reads `AWS_ACCESS_KEY_ID` and
+  `AWS_SECRET_ACCESS_KEY` only; B2 key names in the env file do nothing for
+  an `s3:` repository unless mapped.
+- **Config before package.** The sanoid package enables and starts its timer
+  on install; write `/etc/sanoid/sanoid.conf` first (and create
+  `/etc/sanoid`: Ubuntu's package ships none).
+- **No `at`.** Delayed one-off actions (dropping a safety snapshot in 7 days)
+  are systemd one-shot timers naming exactly one target.
+- **The alert host needs a way in.** An hourly check driven from an alerting
+  host needs key-based ssh to the storage host; test the ssh failure path (it
+  must page too).
+- **Dumps drift.** A dump sidecar's schedule can drift (about 13 min a day
+  measured) until it crosses the sync slot. Pin sidecar schedules, keep the
+  newest 2 dumps, and let the dump check flag staleness.
+- **One box can be all of prod.** When the NFS pool and every swarm VM share
+  a host, only an off-box copy survives that host. A single-disk pool can
   detect corruption but not repair it: a mirror is not a backup, but it
   removes the largest single risk cheaply.
 - **Snapshots pin deleted data.** Decide on legacy data before retention
   starts.
-- **Dumps: check the artifact.** Sidecars that expand the date once at start
-  overwrote one file forever; a dump failing mid-write then destroys the only
-  copy. Freshness plus non-empty plus "a new file" catches it. A database on
-  a node-local volume is invisible to the storage host's snapshots.
-- **"Succeeded" is not "exists".** The check reads the repository, not the
-  engine's stamps; the restore test reads the offsite copy, not the local one.
-- **Prune must group by host.** With a changing frozen path, restic's default
-  host+paths grouping keeps every snapshot forever.
-- **Schedulers have no PATH.** Notifier commands use absolute paths.
+- **"Succeeded" is not "restorable".** The restore test reads the offsite
+  copy and compares it with the exact snapshot it came from.
 - **Keep the password offline.** A restic repository without its password is
   noise.
 
 ## Testing
 
-- `v1/tests/test_skbackup_render.py`: the real deploy playbook through Ansible
-  (default and white-label), fail-closed validation.
+- `v1/tests/test_skbackup_render.py`: the real deploy playbook through
+  Ansible (default and white-label), the records the engine reads, unit
+  ordering, fail-closed validation.
 - `v1/tests/test_skbackup_whitelabel.py`: the brand-leak scan.
-- `v1/tests/test_skbackup_engine.py`: the engine on a scratch tree with the
-  `dir` backend and a local restic repository (backup, restore, sha256,
-  retention, locking, dump gates, staleness, notifier).
+- `v1/tests/test_skbackup_engine.py`: the engine on a scratch tree, with
+  zfs/zpool/mount as test doubles (`v1/tests/fakezfs.py`, via
+  `BACKUP_TEST_PATH`) and a real local restic repository: copy, excludes,
+  newest-N, hooks, locking, pre-deploy pruning, backup and byte-exact
+  restore, parent reuse, restore test pass and mismatch, repository checks,
+  staleness, notifier.
 - `v1/tests/test_skbackup_shellcheck.py`: `bash -n` and shellcheck.
 - The render gate renders `vars/skbackup.example.yml` (default brand) and
   `vars/skbackup.set.yml` (every tier, white-label brand).
+- skstack06 has a `skbackup` stage that deploys it on a test node with
+  loopback ZFS pools and a local restic repository.

@@ -8,17 +8,21 @@ Two ways to get skbackup artifacts:
   keyed by its destination path, plus the engine tree the deploy copies
   (under ``_copy/``) and every shell task body (under ``_shell/``). The
   playbook, not a re-implementation of it, decides names, paths and units.
-* ``Engine`` drives the static engine (src/skbackup/backup) against a
-  scratch tree with the ``dir`` snapshot backend: no ZFS, no root.
+* ``FakeHost`` drives the engine (src/skbackup) against a scratch tree:
+  zfs, zpool, mount, umount and mountpoint are test doubles (fakezfs.py)
+  put first on the engine's PATH through BACKUP_TEST_PATH; everything else
+  (rsync, restic, flock, find, sha256sum) is real.
 """
 from __future__ import annotations
 
 import copy
+import json
 import os
 import shlex
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -29,6 +33,7 @@ V1 = TESTS.parent
 APP = V1 / "ansible" / "optional" / "skbackup"
 ENGINE = APP / "src" / "skbackup"
 BACKUP = ENGINE / "backup"
+LIB = ENGINE / "lib.sh"
 DEFAULTS = yaml.safe_load((APP / "vars" / "defaults.yml").read_text())["skbackup_defaults"]
 
 sys.path.insert(0, str(TESTS / "render"))
@@ -67,22 +72,22 @@ def deep_merge(base: dict, over: dict) -> dict:
 
 
 def full_vault(**over) -> dict:
-    """Every tier on, zfs backend, placeholder secrets."""
+    """Every tier on, placeholder secrets."""
     vault = {
-        "data_target": "tank/data",
+        "data_dataset": "tank/data",
         "copy": {"enabled": True, "target": "backup/copies",
-                 "apps": [{"name": "app-one", "excludes": ["/cache"], "retention": {"daily": 14}},
-                          {"name": "app-two"}]},
-        "dumps": {"enabled": True,
-                  "hooks": [{"name": "app-one-db", "command": "/usr/local/bin/dump-app-one --out /data/app-one/dump"}],
-                  "checks": [{"app": "app-one", "glob": "dump/*.sql.gz", "max_age_hours": 26}]},
-        "offsite": {"enabled": True, "repository": "s3:https://s3.example.test/bucket/host",
+                 "apps": [{"name": "app-one", "excludes": ["/cache/"], "retention": {"daily": 14},
+                           "newest": [{"dir": "database-dump", "keep": 2}], "dump": "database-dump"},
+                          {"name": "app-two", "src": "runtime/app-two"}]},
+        "dumps": {"hooks": [{"name": "app-one-db", "command": "/usr/local/bin/dump-app-one --out /tank/data/app-one/database-dump"}]},
+        "offsite": {"enabled": True, "repository": "s3:https://s3.example.test/bucket",
                     "password": "example-restic-password-not-a-secret",
-                    "env": {"AWS_ACCESS_KEY_ID": "example-key-id", "AWS_SECRET_ACCESS_KEY": "example-key-not-a-secret"},
-                    "sets": [{"name": "keep", "source": "copy", "apps": ["app-one", "app-two"], "tags": ["nightly"]},
-                             {"name": "photos", "source": "data", "apps": ["app-three"], "excludes": ["thumbs"]}]},
-        "restore_test": {"enabled": True},
-        "alerts": {"enabled": True},
+                    "env": {"B2_ACCOUNT_ID": "example-key-id", "B2_ACCOUNT_KEY": "example-key-not-a-secret"},
+                    "sets": [{"name": "kept-apps", "kind": "apps"},
+                             {"name": "photos", "kind": "paths", "paths": ["app-three/originals", "app-three/raw"],
+                              "excludes": ["/app-three/originals/tmp"]}]},
+        "restore_test": {"enabled": True, "app": "app-one", "sample_set": "photos"},
+        "alerts": {"notifier": "log"},
     }
     return deep_merge(vault, over)
 
@@ -150,85 +155,129 @@ def conf_text(**values) -> str:
     for k, v in values.items():
         if isinstance(v, bool):
             lines.append(f"{k}={1 if v else 0}")
-        elif isinstance(v, (list, tuple)):
-            lines.append(f"{k}=(" + " ".join(shlex.quote(str(x)) for x in v) + ")")
         else:
             lines.append(f"{k}={shlex.quote(str(v))}")
     return "\n".join(lines) + "\n"
 
 
-class Engine:
-    """The static engine against a scratch tree (dir backend)."""
+FAKEZFS = TESTS / "fakezfs.py"
 
-    def __init__(self, root: Path, brand: dict | None = None, **conf):
+
+class FakeHost:
+    """A storage host on a scratch tree: pool `tank` with dataset tank/data
+    (the swarm's data) and pool `backup` with backup/copies (the copy
+    pool). zfs/zpool/mount are fakezfs.py; the engine is the real one."""
+
+    def __init__(self, root: Path, brand: dict | None = None, apps: list[str] | None = None,
+                 sets: list[str] | None = None, hooks: list[str] | None = None, **conf):
         self.root = root
-        self.data = root / "data"
-        self.copies = root / "copies"
+        self.data = root / "tank" / "data"
+        self.copies = root / "backup" / "copies"
         self.state = root / "state"
         self.repo = root / "repo"
-        for d in (self.data, self.copies, self.state):
+        self.mnt = root / "run" / "src"
+        self.bin = root / "fakebin"
+        for d in (self.data, self.copies, self.state, self.bin, root / "etc", root / "lock", root / "cache"):
             d.mkdir(parents=True, exist_ok=True)
-        (root / "etc").mkdir(exist_ok=True)
-        self.pass_file = root / "etc" / "offsite.pass"
-        self.pass_file.write_text("test-restic-password\n")
-        self.env_file = root / "etc" / "offsite.env"
-        self.env_file.write_text(conf_text(RESTIC_REPOSITORY=str(self.repo), RESTIC_PASSWORD_FILE=str(self.pass_file)))
+        for name in ("zfs", "zpool", "mount", "umount", "mountpoint"):
+            shim = self.bin / name
+            shim.write_text(f'#!/bin/sh\nexec {sys.executable} {FAKEZFS} "$0" "$@"\n')
+            shim.chmod(0o755)
+        self.zstate = root / "fakezfs.json"
+        self.zstate.write_text(json.dumps({
+            "datasets": {"tank": str(root / "tank"), "tank/data": str(self.data),
+                         "backup": str(root / "backup"), "backup/copies": str(self.copies)},
+            "snaps": {},
+            "pools": {"tank": {"health": "ONLINE", "cap": "12"}, "backup": {"health": "ONLINE", "cap": "9"}},
+        }))
+        etc = root / "etc"
+        (etc / "apps.conf").write_text("\n".join(apps if apps is not None else [
+            "app1 app1 7 4 3 --exclude=/cache/ newest=dump:2",
+            "app2 app2 7 4 3",
+        ]) + "\n")
+        (etc / "restic-sets.conf").write_text("\n".join(sets if sets is not None else [
+            "kept apps", "photos paths app3",
+        ]) + "\n")
+        (etc / "hooks.conf").write_text("\n".join(hooks or []) + "\n")
+        self.env_file = etc / "offsite.env"
+        self.env_file.write_text(conf_text(RESTIC_REPOSITORY=str(self.repo), RESTIC_PASSWORD="test-restic-password"))
         b = deep_merge(DEFAULTS["branding"], brand or {})
         base = dict(
             BRAND_PRODUCT=b["product_name"], BRAND_SHORT=b["short_name"], BRAND_TAGLINE=b["tagline"],
             BRAND_ALERT_PREFIX=b["alert_prefix"], BRAND_FOOTER=b["report_footer"], BRAND_CONTACT=b["contact"],
             BRAND_LOGO_URL=b["logo_url"], BRAND_CREDITS_TEXT=b["credits_text"] if b["credits"] else "",
-            UNIT_BASE=b["short_name"], HOST_LABEL="test-host",
-            STATE_DIR=str(self.state), LOCK_FILE=str(root / "lock"), REPORT_DIR=str(self.state / "reports"),
-            SNAP_BACKEND="dir", SNAP_DIR_ROOT=str(root / "snaps"), SNAP_PREFIX=b["short_name"],
-            DATA_TARGET=str(self.data), IONICE=False,
-            SNAPSHOTS_ENABLED=True, SNAPSHOTS_ENGINE="builtin", SNAPSHOTS_KEEP=3,
-            PREDEPLOY_KEEP_DAYS=30, PREDEPLOY_KEEP_MIN=2,
-            COPY_ENABLED=True, COPY_TARGET=str(self.copies), COPY_BWLIMIT_KBPS=0,
-            COPY_APPS=["app1|7|4|3|/cache", "app2|7|4|3"],
-            DUMPS_ENABLED=False, DUMPS_REQUIRED=True, DUMP_HOOKS=[], DUMP_CHECKS=[],
-            OFFSITE_ENABLED=False, OFFSITE_ENV_FILE=str(self.env_file), OFFSITE_LIMIT_UPLOAD_KBPS=0,
-            OFFSITE_TAGS=[b["short_name"]], OFFSITE_SETS=["keep|copy|app1,app2||"], OFFSITE_IGNORE_INODE=True,
-            OFFSITE_FORGET_ARGS=["--keep-daily", "14"],
-            RESTORE_TEST_ENABLED=False, RESTORE_TEST_SAMPLES=20, RESTORE_TEST_READ_SUBSET="100%", RESTORE_TEST_HOOKS=[],
-            ALERTS_ENABLED=True, NOTIFY_MODE="log", NOTIFY_LOG=str(self.state / "alerts.log"), NOTIFY_COMMAND="",
-            MAX_AGE_SNAPSHOT_H=2, MAX_AGE_COPY_H=26, MAX_AGE_DUMP_H=26, MAX_AGE_OFFSITE_H=26,
-            MAX_AGE_RESTORE_TEST_H=840, POOL_CAP_WARN_PCT=101,
+            UNIT_BASE=b["short_name"], RESTIC_HOST="test-host",
+            SRC_DATASET="tank/data", BAK_ROOT="backup/copies", APPS_FILE=str(etc / "apps.conf"),
+            HOOKS_FILE=str(etc / "hooks.conf"), SNAP_PREFIX_SYNC=b["short_name"], RSYNC_BWLIMIT=0,
+            DUMP_MAX_AGE_H=26, RESTIC_ENV_FILE=str(self.env_file), RESTIC_SETS_FILE=str(etc / "restic-sets.conf"),
+            RESTIC_LIMIT_UPLOAD=0, RESTIC_CACHE_DIR=str(root / "cache"), RESTIC_SRC_MNT=str(self.mnt),
+            RESTORE_TEST_APP="app1", RESTORE_TEST_SAMPLE_TAG="photos", RESTORE_TEST_SAMPLES=5,
+            STATE_DIR=str(self.state), REPORT_DIR=str(self.state / "reports"), LOCK_DIR=str(root / "lock"),
+            MAX_AGE_SANOID_MIN=120, MAX_AGE_SKBAK_H=26, MAX_AGE_RESTIC_H=36, CHECK_RESTIC_REPO=0,
+            POOL_CAP_WARN=80, THINPOOL="", NOTIFY_MODE="log", NOTIFY_LOG=str(self.state / "alerts.log"),
+            NOTIFY_COMMAND="",
         )
         base.update(conf)
-        self.conf = root / "etc" / "backup.conf"
+        self.conf = etc / "backup.conf"
         self.conf.write_text(conf_text(**base))
-        self.values = base
 
-    def seed(self):
-        """Two apps with a few files, one excluded dir, one binary blob."""
-        (self.data / "app1" / "sub").mkdir(parents=True, exist_ok=True)
-        (self.data / "app1" / "cache").mkdir(exist_ok=True)
-        (self.data / "app1" / "a.txt").write_text("alpha\n")
-        (self.data / "app1" / "sub" / "b.bin").write_bytes(os.urandom(200_000))
-        (self.data / "app1" / "cache" / "junk").write_text("regenerable\n")
-        (self.data / "app2").mkdir(exist_ok=True)
-        (self.data / "app2" / "c.txt").write_text("gamma\n")
-        (self.data / "app3").mkdir(exist_ok=True)
-        (self.data / "app3" / "photo.jpg").write_bytes(os.urandom(50_000))
-        return self
+    def env(self, now: int | None = None, extra: dict | None = None) -> dict:
+        e = dict(os.environ, BACKUP_TEST_PATH=str(self.bin), FAKEZFS_STATE=str(self.zstate))
+        e.pop("FAKEZFS_NOW", None)
+        if now is not None:
+            e["FAKEZFS_NOW"] = str(now)
+        e.update(extra or {})
+        return e
 
     def run(self, *args, now: int | None = None, check: bool = False, env: dict | None = None):
-        e = dict(os.environ)
-        e.pop("BK_NOW", None)
-        if now is not None:
-            e["BK_NOW"] = str(now)
-        e.update(env or {})
         proc = subprocess.run(["bash", str(BACKUP), "--conf", str(self.conf), *args],
-                              capture_output=True, text=True, env=e, timeout=300)
+                              capture_output=True, text=True, env=self.env(now, env), timeout=300)
         if check and proc.returncode != 0:
             raise AssertionError(f"{args} rc={proc.returncode}\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}")
         return proc
+
+    def zfs(self, *args, now: int | None = None):
+        return subprocess.run([str(self.bin / "zfs"), *args], capture_output=True, text=True,
+                              env=self.env(now), check=True).stdout
+
+    def sanoid(self, now: int | None = None, name: str = "autosnap_2027-01-15_08:00:00_hourly"):
+        self.zfs("snapshot", f"tank/data@{name}", now=now)
+
+    def snaps(self, dataset: str) -> list[str]:
+        st = json.loads(self.zstate.read_text())
+        return sorted((s.split("@", 1)[1] for s in st["snaps"] if s.split("@")[0] == dataset),
+                      key=lambda n: st["snaps"][f"{dataset}@{n}"])
+
+    def set_creation(self, snap: str, epoch: int):
+        st = json.loads(self.zstate.read_text())
+        st["snaps"][snap] = epoch
+        self.zstate.write_text(json.dumps(st))
+
+    def set_pool(self, pool: str, **kv):
+        st = json.loads(self.zstate.read_text())
+        st["pools"][pool].update(kv)
+        self.zstate.write_text(json.dumps(st))
 
     def alerts(self) -> str:
         p = self.state / "alerts.log"
         return p.read_text() if p.exists() else ""
 
-    def snaps(self, target: Path) -> list[str]:
-        d = self.root / "snaps" / str(target).strip("/").replace("/", "_")
-        return sorted(p.name for p in d.iterdir() if p.is_dir() and not p.name.startswith(".")) if d.exists() else []
+    def seed(self):
+        """Three apps: files, a cache dir app1 excludes, three dumps (newest 2 kept), photos."""
+        (self.data / "app1" / "sub").mkdir(parents=True, exist_ok=True)
+        (self.data / "app1" / "cache").mkdir(exist_ok=True)
+        (self.data / "app1" / "dump").mkdir(exist_ok=True)
+        (self.data / "app1" / "a.txt").write_text("alpha\n")
+        (self.data / "app1" / "sub" / "b.bin").write_bytes(os.urandom(200_000))
+        (self.data / "app1" / "cache" / "junk").write_text("regenerable\n")
+        for i, age in enumerate((3, 2, 1)):
+            f = self.data / "app1" / "dump" / f"db-{i}.sql"
+            f.write_text(f"dump {i}\n")
+            t = time.time() - age * 3600
+            os.utime(f, (t, t))
+        (self.data / "app2").mkdir(exist_ok=True)
+        (self.data / "app2" / "c.txt").write_text("gamma\n")
+        (self.data / "app3").mkdir(exist_ok=True)
+        for i in range(8):
+            (self.data / "app3" / f"p{i}.jpg").write_bytes(os.urandom(20_000))
+        return self

@@ -1,6 +1,6 @@
 # Second render pass: merged over skbackup.example.yml. Every tier on and a
 # white-label brand, so the set path renders the customer-branded units,
-# config and restic credentials. Fake values only.
+# config files and restic credentials. Fake values only.
 skbackup:
   branding:
     product_name: Example Vault
@@ -18,34 +18,37 @@ skbackup:
     target: backup/copies
     apps:
       - name: app-one
-        excludes: [/cache]
+        excludes: [/cache/]
+        newest: [{dir: database-dump, keep: 2}]
+        dump: database-dump
         retention: {daily: 14}
-      - name: app-two
+      - name: app-two-edge
+        src: runtime/app-two
   dumps:
-    enabled: true
     hooks:
       - name: app-one-db
-        command: /usr/local/bin/example-dump --out /tank/data/app-one/dump
+        command: /usr/local/bin/example-dump --out /tank/data/app-one/database-dump
         timeout: 600
-    checks:
-      - {app: app-one, glob: dump/*.sql.gz, max_age_hours: 26}
   offsite:
     enabled: true
-    repository: s3:https://s3.example.test/example-bucket/storage-1
+    repository: s3:https://s3.example.test/example-bucket
     password: example-restic-password-not-a-secret
     env:
-      AWS_ACCESS_KEY_ID: example-key-id
-      AWS_SECRET_ACCESS_KEY: example-key-not-a-secret
+      B2_ACCOUNT_ID: example-key-id
+      B2_ACCOUNT_KEY: example-key-not-a-secret
+      B2_REGION: example-region-1
     install: url
     url: https://example.test/restic_0.18.1_linux_amd64.bz2
     sha256: "0000000000000000000000000000000000000000000000000000000000000000"
     sets:
-      - {name: keep, source: copy, apps: [app-one, app-two], tags: [nightly]}
-      - {name: photos, source: data, apps: [app-three], excludes: [thumbs]}
+      - {name: kept-apps, kind: apps}
+      - {name: photos, kind: paths, paths: [app-three/originals], excludes: [/app-three/originals/tmp]}
   restore_test:
     enabled: true
-    hooks:
-      - {name: load-dump, command: /usr/local/bin/example-load-test, timeout: 900}
+    app: app-one
+    sample_set: photos
   alerts:
     notifier: command
     command: /usr/local/bin/example-alert -l {level} -k {key} {message}
+    check_repo: true
+    thinpool: vg0/data
