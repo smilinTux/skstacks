@@ -146,7 +146,7 @@ def _run(pb, root, uid=None, gid=None, full_walk="", stub_chown=None):
         tool.chmod(0o755)
         path = f"{stub_chown}:{path}"
     r = subprocess.run(
-        ["bash", "-c", script], capture_output=True, text=True,
+        ["sh", "-c", script], capture_output=True, text=True,
         env={**os.environ, "PATH": path, "SKGIT_DIND_NODE": "", "SKGIT_PERMS_FULL_WALK": full_walk},
     )
     assert r.returncode == 0, r.stderr
