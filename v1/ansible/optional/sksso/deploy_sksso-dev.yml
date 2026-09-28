@@ -124,6 +124,18 @@
         mode: '0644'
       when: sksso.user_settings_py | default('') | length > 0
 
+    - name: CapAuth IdP env file and client registry (sksso.CAPAUTH_ENABLED)
+      include_tasks:
+        file: tasks/capauth_config.yml
+        apply:
+          tags:
+            - templates
+            - deploy
+      when: sksso.CAPAUTH_ENABLED | default(false) | bool
+      tags:
+        - templates
+        - deploy
+
     - name: Process {{ app }} Docker Compose template
       template:
         src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
@@ -170,6 +182,16 @@
 
     - name: Show deploy output
       debug: var=deploy_output.stdout_lines
+      tags:
+        - deploy
+
+    - name: CapAuth source, login flow and user links in Authentik (sksso.CAPAUTH_ENABLED)
+      include_tasks:
+        file: tasks/capauth_provision.yml
+        apply:
+          tags:
+            - deploy
+      when: sksso.CAPAUTH_ENABLED | default(false) | bool
       tags:
         - deploy
 

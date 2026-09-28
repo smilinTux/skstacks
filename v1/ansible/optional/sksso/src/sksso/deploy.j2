@@ -108,7 +108,7 @@ done
 
 echo -e "${YELLOW}Deploying stack configuration...${NC}"
 cd "${CONFIG_DIR}"
-record_preexisting "${STACK_NAME}_server" "${STACK_NAME}_worker"
+record_preexisting "${STACK_NAME}_server" "${STACK_NAME}_worker"{% if sksso.CAPAUTH_ENABLED | default(false) %} "${STACK_NAME}_capauth"{% endif %}
 docker stack deploy -c "${COMPOSE_FILE}" "${STACK_NAME}"
 
 sleep 10
@@ -116,6 +116,11 @@ sleep 10
 echo -e "${YELLOW}Forcing service updates to pull latest images...${NC}"
 preexisted ${STACK_NAME}_server && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_server || true
 preexisted ${STACK_NAME}_worker && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_worker || true
+{% if sksso.CAPAUTH_ENABLED | default(false) %}
+# capauth reads its client registry from a bind-mounted file: restart it so a
+# changed registry (new callback URL, rotated client secret) takes effect
+preexisted ${STACK_NAME}_capauth && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_capauth || true
+{% endif %}
 
 echo -e "${YELLOW}Waiting for services to stabilize...${NC}"
 sleep 15

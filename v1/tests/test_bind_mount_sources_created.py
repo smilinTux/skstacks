@@ -147,13 +147,24 @@ def _play_ctx(play):
     return ctx
 
 
-def _iter_tasks(tasks):
+def _iter_tasks(tasks, base=None):
+    """Tasks, depth first, including block/rescue/always and, when `base`
+    (the playbook dir) is given, the tasks of a static include_tasks /
+    import_tasks file (a path with no Jinja in it)."""
     for task in tasks or []:
         if not isinstance(task, dict):
             continue
         yield task
         for key in ("block", "rescue", "always"):
-            yield from _iter_tasks(task.get(key))
+            yield from _iter_tasks(task.get(key), base)
+        if base is None:
+            continue
+        for key in ("include_tasks", "import_tasks", "ansible.builtin.include_tasks",
+                    "ansible.builtin.import_tasks"):
+            inc = task.get(key)
+            inc = inc.get("file") if isinstance(inc, dict) else inc
+            if isinstance(inc, str) and "{{" not in inc and (base / inc).is_file():
+                yield from _iter_tasks(yaml.safe_load((base / inc).read_text()), base)
 
 
 def _args(task, modules):
@@ -213,7 +224,7 @@ def _playbook_created(path):
         if "app" in ctx:
             ctx_out = ctx
         for section in ("pre_tasks", "tasks", "post_tasks", "handlers"):
-            for task in _iter_tasks(play.get(section)):
+            for task in _iter_tasks(play.get(section), path.parent):
                 tctx = {**ctx, **_render(task.get("vars") or {}, ctx)}
                 items = task.get("loop", task.get("with_items"))
                 if isinstance(items, str):
