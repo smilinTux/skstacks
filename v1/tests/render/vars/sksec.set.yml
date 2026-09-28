@@ -1,0 +1,10 @@
+# Second render pass for sksec (merged over sksec.example.yml): drives the
+# optional hooks down their set path. Documentation ranges only.
+sksec:
+  TRAEFIK_HA_MODE: true
+  ALLOWLIST_CIDRS:
+    - 192.0.2.0/24
+    - 198.51.100.7
+    - 2001:db8::/32
+  CROWDSEC_IMAGE: crowdsecurity/crowdsec:v1.6.11@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  BOUNCER_IMAGE: docker.io/fbonalair/traefik-crowdsec-bouncer:0.5.0@sha256:1111111111111111111111111111111111111111111111111111111111111111

@@ -33,7 +33,7 @@ services:
   # In HA mode: Pinned to ACME master node (exclusive database write access)
   # In single-node: Runs on any manager node
   crowdsec:
-    image: crowdsecurity/crowdsec:v1.6.11
+    image: {{ sksec.CROWDSEC_IMAGE | default('crowdsecurity/crowdsec:v1.6.11', true) }}
     env_file: /var/data/config/sksec{{ env_suffix }}/sksec.env
     logging:
       driver: json-file
@@ -50,11 +50,9 @@ services:
       # CrowdSec acquis.yaml uses wildcard patterns to read from all node-specific directories
       # Uses detected traefik_service_name (skfence or skfenceha) - auto-detected during deployment
 {% if (traefik_service_name | default('skfence')) == 'skfenceha' or (sksec.TRAEFIK_HA_MODE | default(false) | bool) %}
-      # HA mode (skfenceha): Mount acme-node and worker-base directories
-      # ACME master logs: /var/data/logs/skfenceha-{env}/traefik/acme-node/ → /var/log/traefik/acme-node/
-      - /var/data/logs/{{ traefik_service_name | default('skfence') }}{{ env_suffix }}/traefik/acme-node:/var/log/traefik/acme-node:ro
-      # Worker logs: /var/data/logs/skfenceha-{env}/traefik/worker-base/ → /var/log/traefik/worker-base/
-      - /var/data/logs/{{ traefik_service_name | default('skfence') }}{{ env_suffix }}/traefik/worker-base:/var/log/traefik/worker-base:ro
+      # HA mode (skfenceha): entrypoint.sh writes <log_dir>/{worker,acme}/access-<node>.log
+      # (see skfenceha logrotate.conf.j2); mount the whole log dir read-only.
+      - /var/data/logs/{{ traefik_service_name | default('skfence') }}{{ env_suffix }}/traefik:/var/log/traefik:ro
 {% else %}
       # Single-node mode (skfence): Mount traefik log directory directly
       # skfence logs: /var/data/logs/skfence-{env}/traefik/{NODE_HOSTNAME}/access.log
@@ -102,7 +100,7 @@ services:
       start_period: {{ sksec.HEALTH_CHECK_START_PERIOD | default('10s') }}
 
   bouncer-traefik:
-    image: docker.io/fbonalair/traefik-crowdsec-bouncer:0.5.0
+    image: {{ sksec.BOUNCER_IMAGE | default('docker.io/fbonalair/traefik-crowdsec-bouncer:0.5.0', true) }}
     env_file: /var/data/config/sksec{{ env_suffix }}/sksec.env
     logging:
       driver: json-file
