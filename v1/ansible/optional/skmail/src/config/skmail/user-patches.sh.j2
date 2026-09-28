@@ -41,12 +41,16 @@ if [ ! -f "/etc/dms/tls/certificate.crt" ] || [ ! -f "/etc/dms/tls/privatekey.ke
 fi
 {% endif %}
 
-# Fix ownership and permissions for amavis directory structure
-chown -R amavis:clamav /var/lib/amavis/
-find /var/lib/amavis/ -type d -exec chmod 775 {} +
-find /var/lib/amavis/ -type f -exec chmod 664 {} +
-# Ensure new directories inherit the group
-find /var/lib/amavis/ -type d -exec chmod g+s {} +
+# Fix ownership and permissions for amavis directory structure, only where
+# they are wrong: dirs 2775 (setgid, so new dirs inherit the group), files
+# 0664. This runs at every container start, inside the window the healthcheck
+# waits on, and /var/lib/amavis lives on the mail-state bind mount (NFS): a
+# plain chown -R / chmod over it is one SETATTR per entry at every start. The
+# quarantine (virusmails) is written by amavis itself and grows without
+# bound, so it is not walked.
+find /var/lib/amavis/ -path /var/lib/amavis/virusmails -prune -o \( ! -user amavis -o ! -group clamav \) -exec chown -h amavis:clamav {} +
+find /var/lib/amavis/ -path /var/lib/amavis/virusmails -prune -o -type d ! -perm 2775 -exec chmod 2775 {} +
+find /var/lib/amavis/ -path /var/lib/amavis/virusmails -prune -o -type f ! -perm 0664 -exec chmod 0664 {} +
 
 # Fix Postfix mailbox ownership issues
 # Ensure strict_mailbox_ownership is set to no in Postfix main.cf

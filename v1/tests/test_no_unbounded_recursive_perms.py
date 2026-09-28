@@ -45,13 +45,10 @@ ALLOWED = {
     ("optional/skmesh/deploy_skmesh-*.yml", "find \"$S\" \\( ! -user"):
         "NetBird management/signal/relay state: a store db, GeoLite files and"
         " IdP data, tens of files; incremental, so a no-op run writes nothing",
-    ("optional/skmesh/deploy_skmesh-*.yml", 'find "$M" \\( -perm'):
+    ("optional/skmesh/deploy_skmesh-*.yml", 'find "$M" ! -type l'):
         "same small NetBird management dir: modes, incremental",
     ("optional/sksync/deploy_sksync-*.yml", 'find "$C" \\( ! -user'):
         "syncthing_config only (config.xml, keys, index db); never sync-data",
-    ("optional/skmail/src/config/skmail/user-patches.sh.j2", "find /var/lib/amavis/"):
-        "amavis state (db, tmp) inside the container; the quarantine"
-        " (virusmails) is pruned, which amavis writes as itself",
 }
 
 

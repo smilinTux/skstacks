@@ -158,15 +158,22 @@
           sleep 2
         done
 
-        chown -R root:root /var/data/{{ app }}-{{ env }}/management || true
-        chown -R root:root /var/data/{{ app }}-{{ env }}/signal || true
-        chown -R root:root /var/data/{{ app }}-{{ env }}/relay || true
+        # Incremental, never `chown -R` / `chmod -R`: those rewrite every
+        # entry on every deploy even when nothing is wrong (on NFS, one
+        # SETATTR round trip each). These three dirs are NetBird state (a
+        # store db, keys, GeoLite and IdP data: tens of files, no bulk
+        # data), so walking them is cheap; the finds only change entries
+        # whose owner or mode is actually wrong.
+        for S in /var/data/{{ app }}-{{ env }}/management /var/data/{{ app }}-{{ env }}/signal /var/data/{{ app }}-{{ env }}/relay; do
+          [ -d "$S" ] || continue
+          find "$S" \( ! -user 0 -o ! -group 0 \) -exec chown -h root:root {} + || true
+        done
 
         # Never a blanket `chmod -R 755` here: management/ is NetBird's
         # /var/lib/netbird (store, keys, GeoLite and IdP data). Management
         # runs as root, so owner-only: dirs 0700, files 0600 (x bits kept).
         M=/var/data/{{ app }}-{{ env }}/management
-        chmod -R u+rwX,go-rwx "$M" || true
+        find "$M" ! -type l \( -perm /0077 -o \( -type d ! -perm -0700 \) -o \( -type f ! -perm -0600 \) \) -exec chmod u+rwX,go-rwx {} + || true
       when: deploy_output.rc == 0
       ignore_errors: yes
       tags:

@@ -27,6 +27,7 @@ import os
 import pathlib
 import stat
 import subprocess
+import time
 
 import jinja2
 import pytest
@@ -241,3 +242,13 @@ def test_fix_script_leaves_management_private(tmp_path):
     for p in mgmt.rglob("*"):
         assert mode(p) & 0o077 == 0, f"{p.relative_to(root)} is {oct(mode(p))}"
         assert mode(p) & 0o600 == 0o600, f"{p.relative_to(root)} lost owner access"
+
+    # a second deploy over the now-correct tree rewrites nothing: the fix is
+    # incremental, not a chmod -R that touches every entry (ctime unchanged)
+    before = {p: p.lstat().st_ctime_ns for p in [mgmt, *mgmt.rglob("*")]}
+    time.sleep(0.05)
+    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                       env={**os.environ, "PATH": f"{stub}:{os.environ['PATH']}"})
+    assert r.returncode == 0, r.stderr
+    after = {p: p.lstat().st_ctime_ns for p in before}
+    assert after == before, [str(p.relative_to(root)) for p in before if after[p] != before[p]]

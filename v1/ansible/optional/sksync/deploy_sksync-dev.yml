@@ -102,16 +102,27 @@
         mode: '0755'
       when: sksync.SYNC_DATA_EXTRA_MOUNT is defined
 
-    - name: Ensure correct permissions on {{ app }} data directories (recursive fix)
-      # UID 1000 = jz user on host, syncthing user in container
+    - name: Ensure correct ownership on {{ app }} data directories (bounded, incremental)
+      # UID 1000 = jz user on host, syncthing user in container.
+      # This was `chown -R` plus a find that chmod-ed every dir 755 and every
+      # file 644 (one exec per file) over all of sync-data, i.e. every synced
+      # file, on every deploy: on NFS that is metadata I/O proportional to
+      # the data, even when nothing is wrong. Syncthing (uid 1000) creates
+      # what it syncs as itself, so sync-data needs only its top level (the
+      # folder roots); the synced contents are never walked. syncthing_config
+      # is small (config.xml, keys, index db), so its owner is fixed all the
+      # way down, but only on entries that are wrong. No blanket modes: the
+      # old 644 made Syncthing's private keys (created 0600) world-readable,
+      # so those are put back to 0600.
       shell: |
-        chown -R 1000:1000 "{{ item }}"
-        find "{{ item }}" -type d -exec chmod 755 {} \;
-        find "{{ item }}" -type f -exec chmod 644 {} \;
-      loop:
-        - /var/data/{{ app }}-{{ env }}/sync-data
-        - /var/data/{{ app }}-{{ env }}/syncthing_config
-      changed_when: true
+        U=1000; G=1000
+        S=/var/data/{{ app }}-{{ env }}/sync-data
+        C=/var/data/{{ app }}-{{ env }}/syncthing_config
+        find "$S" -maxdepth 1 \( ! -user "$U" -o ! -group "$G" \) -print -exec chown -h "$U:$G" {} +
+        find "$C" \( ! -user "$U" -o ! -group "$G" \) -print -exec chown -h "$U:$G" {} +
+        find "$C" -maxdepth 1 -type f -name '*key.pem' ! -perm 0600 -print -exec chmod 0600 {} +
+      register: sksync_perms
+      changed_when: sksync_perms.stdout | length > 0
 
     - name: Check if {{ app }}.sh.env already exists on target
       stat:
