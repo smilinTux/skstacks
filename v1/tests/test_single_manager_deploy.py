@@ -17,10 +17,13 @@ import yaml
 
 ANSIBLE = pathlib.Path(__file__).resolve().parents[1] / "ansible"
 PER_HOST_MARKER = "# skstacks: per-host"
+# A host-level optional app that runs on the storage host serving /var/data
+# (skbackup), not on the swarm: no manager, no shared-storage race.
+STORAGE_HOST_MARKER = "# skstacks: storage-host"
 
 
 def _is_per_host(text):
-    return PER_HOST_MARKER in text
+    return PER_HOST_MARKER in text or STORAGE_HOST_MARKER in text
 
 
 def test_deploy_playbooks_run_on_one_selected_manager():
@@ -49,7 +52,7 @@ def test_per_host_exemption_is_documented_and_scoped_to_core():
     problems = []
     for p in sorted(ANSIBLE.glob("*/*/deploy_*.yml")):
         text = p.read_text()
-        if not _is_per_host(text):
+        if PER_HOST_MARKER not in text:
             continue
         rel = p.relative_to(ANSIBLE)
         if rel.parts[0] != "core":
@@ -61,4 +64,27 @@ def test_per_host_exemption_is_documented_and_scoped_to_core():
         ]
         if not any(len(r) >= 10 for r in reasons):
             problems.append(f"{rel}: per-host marker has no documented reason")
+    assert not problems, "\n".join(problems)
+
+
+def test_storage_host_exemption_is_documented_and_never_touches_the_swarm():
+    """`# skstacks: storage-host` must carry a reason, and such a playbook
+    must not aim a play at a manager group or drive Docker: it exists for
+    apps that run beside the data, on the storage host."""
+    problems = []
+    for p in sorted(ANSIBLE.glob("*/*/deploy_*.yml")):
+        text = p.read_text()
+        if STORAGE_HOST_MARKER not in text:
+            continue
+        rel = p.relative_to(ANSIBLE)
+        reasons = [line.split(STORAGE_HOST_MARKER, 1)[1].strip(" -")
+                   for line in text.splitlines() if STORAGE_HOST_MARKER in line]
+        if not any(reasons):
+            problems.append(f"{rel}: storage-host marker without a reason")
+        for pl in yaml.safe_load(text):
+            hosts = str(pl.get("hosts", "")) if isinstance(pl, dict) else ""
+            if "manager" in hosts:
+                problems.append(f"{rel}: play on {hosts!r}")
+        if "docker stack" in text or "docker_swarm" in text:
+            problems.append(f"{rel}: drives the swarm")
     assert not problems, "\n".join(problems)

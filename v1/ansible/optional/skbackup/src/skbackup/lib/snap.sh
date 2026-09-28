@@ -101,7 +101,6 @@ snap_destroy() {  # snap_destroy TARGET NAME
     local root
     root=$(_dir_root "$1")
     rm -f "$root/.meta/$2"
-    chmod -R u+w "$root/$2" 2>/dev/null || true
     rm -rf "${root:?}/${2:?}"
   fi
 }

@@ -20,6 +20,7 @@
 # host group and installs the engine, one config file, restic credentials,
 # sanoid.conf and systemd timers there. See README.md for the vault
 # contract, the tiers, restores and white-labelling.
+# skstacks: storage-host - runs on the host that serves /var/data, not on a swarm manager
 - import_playbook: ../../shared/meta/skstack-header.yml
 
 - hosts: "{{ skbackup_hosts | default('storage_hosts') }}"
@@ -60,11 +61,9 @@
         skb_uses_sanoid: "{{ (skb.snapshots.enabled | bool) and skb.snapshots.engine == 'sanoid' }}"
       tags: [config]
 
-    - name: Derive the snapshot root and the units of the enabled tiers
+    - name: Describe every tier's unit
       set_fact:
         skb_snap_dir_root: "{{ skb.snap_dir_root | default('', true) or (skb_statedir ~ '/snapshots') }}"
-        skb_units: "{{ skb_units_all | selectattr('enabled') | list }}"
-      vars:
         skb_units_all:
           - name: run
             command: run
@@ -96,6 +95,11 @@
             "on": "{{ skb.schedule.check }}"
             network: true
             enabled: "{{ skb.alerts.enabled | bool }}"
+      tags: [config]
+
+    - name: Keep the units of the enabled tiers
+      set_fact:
+        skb_units: "{{ skb_units_all | selectattr('enabled') | list }}"
       tags: [config]
 
   tasks:
