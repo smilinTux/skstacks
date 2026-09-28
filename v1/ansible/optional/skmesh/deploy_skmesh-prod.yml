@@ -71,7 +71,7 @@
         - { path: "/var/data/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/runtime/{{ app }}-{{ env }}/postgres", owner: "999", group: "999", mode: "0755" }
         - { path: "/var/data/{{ app }}-{{ env }}/database-dump", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/{{ app }}-{{ env }}/management", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/management", owner: "root", group: "root", mode: "0700" }
         - { path: "/var/data/{{ app }}-{{ env }}/signal", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/{{ app }}-{{ env }}/relay", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/config/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
@@ -162,7 +162,11 @@
         chown -R root:root /var/data/{{ app }}-{{ env }}/signal || true
         chown -R root:root /var/data/{{ app }}-{{ env }}/relay || true
 
-        chmod -R 755 /var/data/{{ app }}-{{ env }}/management || true
+        # Never a blanket `chmod -R 755` here: management/ is NetBird's
+        # /var/lib/netbird (store, keys, GeoLite and IdP data). Management
+        # runs as root, so owner-only: dirs 0700, files 0600 (x bits kept).
+        M=/var/data/{{ app }}-{{ env }}/management
+        chmod -R u+rwX,go-rwx "$M" || true
       when: deploy_output.rc == 0
       ignore_errors: yes
       tags:
