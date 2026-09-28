@@ -43,6 +43,10 @@ networks:
     external: true
 
 services:
+{# skmail.MAIL_WEB_ENABLED (default true): false drops mail-web and its router.
+   Written without the Ansible-only bool filter so plain jinja2 renders it too. #}
+{% set _mail_web_enabled = (skmail.MAIL_WEB_ENABLED | default(true) | string | lower) not in ["false", "no", "0", "off", ""] %}
+{% if _mail_web_enabled %}
   # === MAIL-WEB: Certificate Generation Trigger ===
   # Simple web service that triggers Traefik ACME to generate mail.example.com certificate
   # The certificate is then dumped by traefik-certs-dumper for DMS to use
@@ -98,6 +102,7 @@ services:
         - "traefik.http.routers.mail-web-{{ env }}.tls.domains[{{ loop.index0 }}].sans={{ _tls_sans | join(',') }}"
 {% endif %}
 {% endfor %}
+{% endif %}
 
   skmail:
     image: "ghcr.io/docker-mailserver/docker-mailserver:{{ skmail.DMS_VERSION | default('16.0.1') }}"
