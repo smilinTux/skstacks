@@ -3,27 +3,37 @@
 {%- else -%}
   {%- set _base_domain = skmesh.CLUSTERNAME ~ '.' ~ skmesh.DOMAIN -%}
 {%- endif -%}
+{#- TURN_URI / STUN_URIS / TURN_TIME_BASED_CREDENTIALS let NetBird use a
+    TURN server this stack does not run (for example one shared with another
+    app). With TURN_TIME_BASED_CREDENTIALS management mints TURN REST
+    (HMAC-SHA1, time-limited) credentials from TURN_SECRET, the scheme of
+    coturn use-auth-secret and eturnal secret; TURN_USER/TURN_PASSWORD are
+    then unused. Unset, this renders exactly as before. -#}
+{%- set _tbc = (skmesh.TURN_TIME_BASED_CREDENTIALS | default(false) | string | lower) in ['true', 'yes', '1'] -%}
+{%- set _stuns = skmesh.STUN_URIS | default(['stun:turn.' ~ _base_domain ~ ':3478']) -%}
 {
   "Stuns": [
+{% for _stun in _stuns %}
     {
       "Proto": "udp",
-      "URI": "stun:turn.{{ _base_domain }}:3478",
+      "URI": "{{ _stun }}",
       "Username": "",
       "Password": null
-    }
+    }{{ "," if not loop.last else "" }}
+{% endfor %}
   ],
   "TURNConfig": {
     "Turns": [
       {
         "Proto": "udp",
-        "URI": "turn:turn.{{ _base_domain }}:3478",
-        "Username": "{{ skmesh.TURN_USER }}",
-        "Password": "{{ skmesh.TURN_PASSWORD }}"
+        "URI": "{{ skmesh.TURN_URI | default('turn:turn.' ~ _base_domain ~ ':3478') }}",
+        "Username": "{{ skmesh.TURN_USER | default('') if _tbc else skmesh.TURN_USER }}",
+        "Password": "{{ skmesh.TURN_PASSWORD | default('') if _tbc else skmesh.TURN_PASSWORD }}"
       }
     ],
     "CredentialsTTL": "12h",
     "Secret": "{{ skmesh.TURN_SECRET }}",
-    "TimeBasedCredentials": false
+    "TimeBasedCredentials": {{ 'true' if _tbc else 'false' }}
   },
   "Relay": {
     "Addresses": ["{{ skmesh.NETBIRD_RELAY_ENDPOINT }}"],

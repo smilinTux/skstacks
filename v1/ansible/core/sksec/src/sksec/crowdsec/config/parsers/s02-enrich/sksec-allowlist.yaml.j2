@@ -1,0 +1,27 @@
+# CrowdSec allowlist (rendered from sksec.ALLOWLIST_CIDRS by the sksec playbook).
+# Events whose source IP matches are discarded at s02-enrich, so these ranges
+# never produce an alert or a local ban. Decisions added by hand
+# (cscli decisions add) or pulled from a blocklist are not filtered here.
+{% set entries = sksec.ALLOWLIST_CIDRS | default([]) %}
+{% set ns = namespace(cidrs=[], ips=[]) %}
+{% for e in entries %}
+{% if '/' in (e | string) %}{% set ns.cidrs = ns.cidrs + [e | string] %}{% else %}{% set ns.ips = ns.ips + [e | string] %}{% endif %}
+{% endfor %}
+{% set cidrs = ns.cidrs %}
+{% set ips = ns.ips %}
+name: sksec/allowlist
+description: "Operator-owned ranges that CrowdSec must never ban"
+whitelist:
+  reason: "sksec.ALLOWLIST_CIDRS (operator-owned)"
+{% if ips %}
+  ip:
+{% for ip in ips %}
+    - "{{ ip }}"
+{% endfor %}
+{% endif %}
+{% if cidrs %}
+  cidr:
+{% for c in cidrs %}
+    - "{{ c }}"
+{% endfor %}
+{% endif %}
