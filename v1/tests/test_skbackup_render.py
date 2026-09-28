@@ -177,3 +177,17 @@ def test_deploy_fails_closed_on_bad_vault(tmp_path, vault, needle):
     res, _ = ansible_render(tmp_path, vault)
     assert res["status"] == "FAIL"
     assert needle in res["log"], res["log"][-3000:]
+
+
+def test_sanoid_config_dir_is_created_before_the_config():
+    """Ubuntu's sanoid package ships no /etc/sanoid (skstack06, 2026-09-28:
+    "Destination directory /etc/sanoid does not exist")."""
+    import yaml
+    from skbackup_support import APP
+    for env in ("dev", "staging", "prod"):
+        tasks = yaml.safe_load((APP / f"deploy_skbackup-{env}.yml").read_text())[1]["tasks"]
+        names = [t.get("name", "") for t in tasks]
+        mk = [i for i, t in enumerate(tasks) if (t.get("file") or {}).get("path") == "/etc/sanoid"
+              and t["file"].get("state") == "directory"]
+        conf = names.index("Render sanoid.conf (tier 1 retention)")
+        assert mk and mk[0] < conf, env
