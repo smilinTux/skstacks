@@ -52,6 +52,7 @@ skmail:
   ENABLE_CLAMAV: "1"                     # default: 1
   ENABLE_FAIL2BAN: "1"                   # default: 1
   HEALTHCHECK_START_PERIOD: "1800s"      # default: 1800s - see "Healthcheck and slow starts" below
+  MAIL_WEB_ENABLED: true                 # default: true - see "The mail-web sidecar" below
 
   # SSL_TYPE: default: letsencrypt - see "Certificates" below for manual/self-signed
   SSL_TYPE: "letsencrypt"
@@ -198,6 +199,33 @@ for the full reference on every value below.
   already-mounted `docker-data/dms/config/ssl/` directory (skipped once the
   files exist) - no vault keys needed beyond `SSL_TYPE: self-signed` itself.
   The Traefik-acme preflight above is skipped for this type too.
+
+### The mail-web sidecar
+
+`mail-web` (a `traefik/whoami` container behind a Traefik router for
+`HOSTNAME` with `certresolver=main`) exists only so that Traefik's ACME
+resolver OBTAINS a certificate for the mail hostname on an instance that does
+not hold one yet. It is not what renews it: Traefik's ACME provider renews
+every certificate stored in `acme.json` on its own timer
+(`renewCertificates` in `pkg/provider/acme/provider.go`, Traefik v3.6.2),
+whether or not any router still references it. A router whose domain is
+already covered by a stored certificate, a wildcard included, never obtains a
+new one (`getUncheckedDomains`), so on an instance whose skmail uses a
+wildcard (`SSL_DOMAIN: "*.example.com"`) mail-web does nothing for TLS at all.
+It does, however, publish each visitor's request headers and client IP at
+`https://HOSTNAME`, because that is what whoami does.
+
+Set `skmail.MAIL_WEB_ENABLED: false` to drop it: the compose file then has no
+mail-web service and no Traefik router, and the deploy script removes a
+mail-web service left over from an earlier deploy (`docker stack deploy`
+never removes a service that disappeared from the file). `https://HOSTNAME`
+then falls through to the fence's catch-all. Before you disable it, check
+that the certificate docker-mailserver reads is already in `acme.json`.
+Neither setting covers a lost `acme.json`: only a router that names the
+certificate's exact domain (for a wildcard, `tls.domains[n].main=*.example.com`
+on some router using a DNS-01 resolver) makes Traefik obtain it again, and
+mail-web asks for `HOSTNAME`, not a wildcard, unless `TLS_DOMAINS` says
+otherwise.
 
 ## Estate data
 
