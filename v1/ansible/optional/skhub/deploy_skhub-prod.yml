@@ -51,6 +51,42 @@
       include_vars: "{{ vault_file_path }}"
       when: vault_file_path is defined
 
+    - name: Validate the Talk HPB TURN settings
+      # See README "Talk HPB TURN". A relay range needs host mode (through the
+      # ingress, relayed peers arrive SNATed and are refused as private), host
+      # mode needs a talk-hpb pin (host ports open only on the task's node,
+      # which is where the router must forward), and an advertised relay
+      # address is only useful with a published range. The range is capped at
+      # 200 ports: each is a host-mode port (iptables rules + a docker-proxy).
+      vars:
+        _talk_sk: "{{ skhub | default({}) }}"
+        _talk_mode: "{{ _talk_sk.TALK_TURN_PUBLISH_MODE | default('ingress') }}"
+        _talk_min: "{{ _talk_sk.TALK_TURN_RELAY_MIN_PORT | default('') | string }}"
+        _talk_max: "{{ _talk_sk.TALK_TURN_RELAY_MAX_PORT | default('') | string }}"
+        _talk_ip: "{{ _talk_sk.TALK_TURN_RELAY_IPV4 | default('') | string }}"
+        _talk_pin: "{{ _talk_sk.TALK_HPB_PLACEMENT_CONSTRAINTS | default([]) }}"
+      assert:
+        that:
+          - _talk_mode in ['ingress', 'host']
+          - _talk_mode == 'ingress' or (_talk_pin | length) > 0
+          - (_talk_min | string | length > 0) == (_talk_max | string | length > 0)
+          - >-
+            _talk_min | string | length == 0 or (
+            _talk_min | string is match('^[0-9]+$') and _talk_max | string is match('^[0-9]+$')
+            and 1024 <= (_talk_min | int) <= (_talk_max | int) <= 65535
+            and ((_talk_max | int) - (_talk_min | int) + 1) <= 200
+            and _talk_mode == 'host')
+          - >-
+            _talk_ip | string | length == 0 or (
+            _talk_ip | string is match('^(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])([.](25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])){3}$')
+            and _talk_mode == 'host' and _talk_min | string | length > 0)
+        fail_msg: >-
+          skhub Talk TURN settings are inconsistent. TALK_TURN_PUBLISH_MODE must be ingress or host;
+          host needs TALK_HPB_PLACEMENT_CONSTRAINTS (pin the node the router forwards to);
+          TALK_TURN_RELAY_MIN_PORT/MAX_PORT must both be set, 1024-65535, at most 200 ports, host mode only;
+          TALK_TURN_RELAY_IPV4 must be an IPv4 address and needs host mode plus a relay range.
+        quiet: true
+
     - name: Define network variables
       # Networks are created idempotently by the create_networks.yml shared
       # task below. Reference: See shared/networks for all registered
