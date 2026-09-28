@@ -31,7 +31,7 @@ services:
       - cloud-public-{{ env }}
     deploy:
       mode: replicated
-      replicas: 1
+      replicas: {{ skmon.replicas | default(1) | int }}
       resources:
         limits:
           cpus: '{{ skmon.PROMETHEUS_CPU_LIMIT | default("0.5") }}'
@@ -76,7 +76,7 @@ services:
       - loki
     deploy:
       mode: replicated
-      replicas: 1
+      replicas: {{ skmon.replicas | default(1) | int }}
       resources:
         limits:
           cpus: '{{ skmon.GRAFANA_CPU_LIMIT | default("0.5") }}'
@@ -99,7 +99,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: {{ skmon.GRAFANA_HEALTH_START_PERIOD | default('60s') }}
 
   loki:
     image: grafana/loki:3.5.4
@@ -113,7 +113,7 @@ services:
       - skmon-{{ env }}
     deploy:
       mode: replicated
-      replicas: 1
+      replicas: {{ skmon.replicas | default(1) | int }}
       resources:
         limits:
           cpus: '{{ skmon.LOKI_CPU_LIMIT | default("0.5") }}'
@@ -134,6 +134,12 @@ services:
       - skmon-{{ env }}
     deploy:
       mode: global
+{% if (skmon.replicas | default(1) | int) == 0 %}
+      placement:
+        constraints:
+          # scaled to 0: no node has this id, mode stays global
+          - node.id == skmon-scaled-to-zero
+{% endif %}
       resources:
         limits:
           cpus: '{{ skmon.PROMTAIL_CPU_LIMIT | default("0.25") }}'
@@ -154,6 +160,12 @@ services:
       - skmon-{{ env }}
     deploy:
       mode: global
+{% if (skmon.replicas | default(1) | int) == 0 %}
+      placement:
+        constraints:
+          # scaled to 0: no node has this id, mode stays global
+          - node.id == skmon-scaled-to-zero
+{% endif %}
       resources:
         limits:
           cpus: '{{ skmon.CADVISOR_CPU_LIMIT | default("0.25") }}'
@@ -183,6 +195,12 @@ services:
       - skmon-{{ env }}
     deploy:
       mode: global
+{% if (skmon.replicas | default(1) | int) == 0 %}
+      placement:
+        constraints:
+          # scaled to 0: no node has this id, mode stays global
+          - node.id == skmon-scaled-to-zero
+{% endif %}
       resources:
         limits:
           cpus: '{{ skmon.NODE_EXPORTER_CPU_LIMIT | default("0.10") }}'
@@ -205,7 +223,7 @@ services:
       - cloud-public-{{ env }}
     deploy:
       mode: replicated
-      replicas: 1
+      replicas: {{ skmon.replicas | default(1) | int }}
       resources:
         limits:
           cpus: '{{ skmon.ALERTMANAGER_CPU_LIMIT | default("0.25") }}'
@@ -245,7 +263,7 @@ services:
       - cloud-public-{{ env }}
     deploy:
       mode: replicated
-      replicas: 1
+      replicas: {{ skmon.replicas | default(1) | int }}
       resources:
         limits:
           cpus: '{{ skmon.JAEGER_CPU_LIMIT | default("0.5") }}'

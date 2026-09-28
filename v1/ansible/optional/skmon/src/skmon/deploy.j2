@@ -80,6 +80,7 @@ sleep 30
 echo -e "${GREEN}📊 Service Status:${NC}"
 docker service ls | grep "${STACK_NAME}"
 
+{% if (skmon.replicas | default(1) | int) > 0 %}
 # Health check
 echo -e "${YELLOW}🏥 Checking service health...${NC}"
 
@@ -153,6 +154,9 @@ else
     docker service logs --tail 20 ${STACK_NAME}_jaeger
 fi
 
+{% else %}
+echo -e "${YELLOW}skmon.replicas is 0: stack deployed scaled to 0, skipping health waits${NC}"
+{% endif %}
 echo -e "${GREEN}✨ Deployment complete!${NC}"
 echo -e "${GREEN}🌐 Access URLs:${NC}"
 echo -e "${GREEN}   - Grafana: https://skmon{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}${NC}"
