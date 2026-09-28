@@ -1,31 +1,20 @@
-# CrowdSec acquisition configuration
-# Traefik v3.6.2 JSON logs - uses custom traefik-v3-logs parser for direct JSON
-# Node-aware: Uses wildcard patterns to read from all node-specific log directories
-# Supports both single-node and HA mode deployments
-# 
-# Log paths are mounted from /var/data/logs/{traefik_service_name}-{env}/traefik/ to /var/log/traefik/
-# traefik_service_name is auto-detected during deployment (skfence or skfenceha)
-# This configuration reads from the mounted paths inside the container
+# CrowdSec acquisition configuration (rendered by the sksec playbook).
+# Traefik v3 JSON access logs, parsed by the stock crowdsecurity/traefik-logs
+# parser from the crowdsecurity/traefik collection (its filter is
+# evt.Parsed.program startsWith 'traefik', JSON lines included).
+#
+# The log dir is on the shared filesystem and every Traefik node appends to
+# its own file, so the node running CrowdSec never gets an inotify event for
+# another node's writes: poll instead.
 filenames:
 {% if (traefik_service_name | default('skfence')) == 'skfenceha' or (sksec.TRAEFIK_HA_MODE | default(false) | bool) %}
-  # HA mode (skfenceha): Read from acme-node and worker-base logs
-  # ACME master logs: Always read from acme-node
-  - /var/log/traefik/acme-node/node-*/traefik-access.log
-  # Worker logs: worker-base/worker-*/traefik-access.log (container-specific)
-  - /var/log/traefik/worker-base/worker-*/traefik-access.log
-  # Worker logs: worker-base/node-*/traefik-access.log (node-specific)
-  - /var/log/traefik/worker-base/node-*/traefik-access.log
-  # Error logs (optional - uncomment if needed)
-  #- /var/log/traefik/acme-node/node-*/traefik-error.log
-  #- /var/log/traefik/worker-base/worker-*/traefik-error.log
-  #- /var/log/traefik/worker-base/node-*/traefik-error.log
+  # skfenceha: /var/data/logs/skfenceha-<env>/traefik/{worker,acme}/access-<node>.log
+  - /var/log/traefik/worker/access-*.log
+  - /var/log/traefik/acme/access-*.log
 {% else %}
-  # Single-node mode (skfence): Read from node-specific directories
-  # skfence logs: /var/data/logs/skfence-{env}/traefik/{NODE_HOSTNAME}/access.log
-  # Mounted as: /var/log/traefik/{NODE_HOSTNAME}/access.log
+  # skfence: /var/data/logs/skfence-<env>/traefik/<node>/access.log
   - /var/log/traefik/*/access.log
-  # Error logs (optional - uncomment if needed)
-  #- /var/log/traefik/*/traefik.log
 {% endif %}
+poll_without_inotify: true
 labels:
-  type: traefik-v3  # Maps to crowdsecurity/traefik-v3-logs parser
+  type: traefik

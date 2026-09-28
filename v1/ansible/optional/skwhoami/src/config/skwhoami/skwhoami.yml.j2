@@ -46,7 +46,7 @@ services:
         - "traefik.http.routers.skwhoami01{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
         - "traefik.http.routers.skwhoami01{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
         - "traefik.http.routers.skwhoami01{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
-        - "traefik.http.routers.skwhoami01{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares=default-no-crowdsec@file"
+        - "traefik.http.routers.skwhoami01{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares={{ (skwhoami.MIDDLEWARES | default({})).get('whoami01') or 'default-no-crowdsec@file' }}"
         - "traefik.http.services.skwhoami01{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=80"
 
   whoami02:
@@ -71,7 +71,7 @@ services:
         - "traefik.http.routers.skwhoami02{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
         - "traefik.http.routers.skwhoami02{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
         - "traefik.http.routers.skwhoami02{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
-        - "traefik.http.routers.skwhoami02{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares=default-no-crowdsec@file"
+        - "traefik.http.routers.skwhoami02{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares={{ (skwhoami.MIDDLEWARES | default({})).get('whoami02') or 'default-no-crowdsec@file' }}"
         - "traefik.http.services.skwhoami02{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=80"
 
   whoami03:
@@ -96,5 +96,5 @@ services:
         - "traefik.http.routers.skwhoami03{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
         - "traefik.http.routers.skwhoami03{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
         - "traefik.http.routers.skwhoami03{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
-        - "traefik.http.routers.skwhoami03{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares=default-no-crowdsec@file"
+        - "traefik.http.routers.skwhoami03{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares={{ (skwhoami.MIDDLEWARES | default({})).get('whoami03') or 'default-no-crowdsec@file' }}"
         - "traefik.http.services.skwhoami03{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=80"

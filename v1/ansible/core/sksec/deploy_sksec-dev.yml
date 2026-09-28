@@ -56,34 +56,6 @@
       tags:
         - networks
 
-    - name: Remove ACME master label from all manager nodes (HA mode cleanup)
-      shell: |
-        for node in {{ (groups[target_manager_group | default('swarm_managers')] | default([])) | join(' ') }}; do
-          docker node inspect $node --format '{{'{{ .Spec.Labels }}'}}' | grep -q 'traefik.acme.master' && docker node update --label-rm traefik.acme.master $node || true
-        done
-      register: acme_label_remove_result
-      changed_when: acme_label_remove_result.rc == 0
-      failed_when: false
-      when: sksec.TRAEFIK_HA_MODE | default(false) | bool
-      delegate_to: >-
-        {{ selected_manager }}
-      tags:
-        - labels
-        - ha
-
-    - name: Label ACME master node for HA mode (if enabled)
-      shell: |
-        docker node update --label-add traefik.acme.master=true {{ selected_manager }}
-      register: acme_label_result
-      changed_when: "'Label added' in acme_label_result.stdout or acme_label_result.rc == 0"
-      failed_when: false
-      when: sksec.TRAEFIK_HA_MODE | default(false) | bool
-      delegate_to: >-
-        {{ selected_manager }}
-      tags:
-        - labels
-        - ha
-
     - name: Check Traefik ACME master label presence (warn-only)
       shell: |
         for n in {{ (groups[target_manager_group | default('swarm_managers')] | default([])) | join(' ') }}; do
@@ -100,9 +72,8 @@
       debug:
         msg: |
           {% if sksec.TRAEFIK_HA_MODE | default(false) | bool %}
-          HA Mode Enabled: One manager node must have the label: traefik.acme.master=true
-          Add it manually on the intended node, e.g.:
-          docker node update --label-add traefik.acme.master=true <node-hostname>
+          HA Mode Enabled: CrowdSec is constrained to the node labelled traefik.acme.master=true.
+          skfenceha's deploy owns that label; sksec only reads it and never moves it.
           {% else %}
           Single-Node Mode: No ACME master label required (only one manager node)
           {% endif %}
@@ -142,12 +113,8 @@
         - /var/data/{{ app }}-{{ env }}/crowdsec/crowdsec-config
         - /var/data/runtime/{{ app }}-{{ env }}/crowdsec-db
         - /var/data/runtime/{{ app }}-{{ env }}/crowdsec-config
-        # Log directories (HA-aware - created per-node at runtime if needed)
-        # Uses detected traefik_service_name (skfence or skfenceha)
+        # Traefik access log dir (read-only in the crowdsec container)
         - /var/data/logs/{{ traefik_service_name | default('skfence') }}-{{ env }}/traefik
-        - /var/data/logs/{{ traefik_service_name | default('skfence') }}-{{ env }}/traefik/acme-node
-        - /var/data/logs/{{ traefik_service_name | default('skfence') }}-{{ env }}/traefik/worker-base
-      # Note: worker-${HOSTNAME} and node-* subdirectories created per-node at runtime (not in playbook)
 
     - name: Ensure secret directory exists
       file:
@@ -244,28 +211,41 @@
       tags:
         - templates
 
-    - name: Ensure bouncer registered in CrowdSec LAPI with computed key (idempotent)
-      shell: |
-        set -euo pipefail
-        STACK_NAME={{ app }}-{{ env }}
-        CID=""
-        for i in {1..30}; do
-          CID=$(docker ps -q -f name=${STACK_NAME}_crowdsec | head -n1)
-          [ -n "$CID" ] && break || sleep 2
-        done
-        if [ -z "$CID" ]; then
-          echo "crowdsec container not found; skipping bouncer registration"
-          exit 0
-        fi
-        docker exec "$CID" cscli bouncers delete bouncer-traefik >/dev/null 2>&1 || true
-        docker exec "$CID" cscli bouncers add bouncer-traefik --key {{ computed_bouncer_key }}
-      args:
-        executable: /bin/bash
-      register: bouncer_add_output
-      changed_when: false
-      failed_when: false
+    # The bouncer is registered by CrowdSec itself at container start from
+    # BOUNCER_KEY_traefik in sksec.env (docker_start.sh register_bouncer), so
+    # no cscli call carries the key on a command line.
+
+    - name: Ensure the CrowdSec local s02-enrich parser dir exists
+      ansible.builtin.file:
+        path: "/var/data/runtime/{{ app }}-{{ env }}/crowdsec-config/parsers/s02-enrich"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
       tags:
-        - bouncer
+        - templates
+        - allowlist
+
+    - name: Render the sksec allowlist parser (sksec.ALLOWLIST_CIDRS)
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/src/{{ app }}/crowdsec/config/parsers/s02-enrich/sksec-allowlist.yaml.j2"
+        dest: "/var/data/runtime/{{ app }}-{{ env }}/crowdsec-config/parsers/s02-enrich/sksec-allowlist.yaml"
+        owner: root
+        group: root
+        mode: '0644'
+      when: (sksec.ALLOWLIST_CIDRS | default([])) | length > 0
+      tags:
+        - templates
+        - allowlist
+
+    - name: Remove the sksec allowlist parser when ALLOWLIST_CIDRS is empty
+      ansible.builtin.file:
+        path: "/var/data/runtime/{{ app }}-{{ env }}/crowdsec-config/parsers/s02-enrich/sksec-allowlist.yaml"
+        state: absent
+      when: (sksec.ALLOWLIST_CIDRS | default([])) | length == 0
+      tags:
+        - templates
+        - allowlist
 
     - name: Process {{ app }} acquis.yaml template
       ansible.builtin.template:
