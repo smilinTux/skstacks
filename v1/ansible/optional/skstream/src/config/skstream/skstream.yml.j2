@@ -1,0 +1,123 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+version: '3.8'
+
+# skstream: Plex (+ optional Kometa) in swarm. The Real-Debrid side (zurg +
+# rclone FUSE mount + cli_debrid) is NOT in this stack: it runs host-level as
+# skstream-dumb.service on the media node (see README.md, "Why host-level").
+# Plex is pinned to that node (skstream.placement_constraints, default the
+# node label skstream-media=true) so it sees the FUSE mount via rslave.
+{% set sfx = '' if env == 'prod' else '-' + env %}
+{% set local_root = skstream.LOCAL_ROOT | default('/var/lib/skstream' + sfx) %}
+{% set constraints = (skstream.placement_constraints | default(['node.labels.skstream-media == true'])) | tojson %}
+
+services:
+  plex:
+    image: {{ skstream.PLEX_IMAGE | default('plexinc/pms-docker@sha256:e0ab27395614a8e1a4fdf84c6bc60ac664915cfdde70c52d030c7728a1c48e14') }}
+    # Plex needs time to close its SQLite DB cleanly.
+    stop_grace_period: 60s
+    env_file: /var/data/config/{{ app }}-{{ env }}/plex.env
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+    volumes:
+      - type: bind
+        source: /var/data/{{ app }}-{{ env }}/plex/config
+        target: /config
+      - type: bind
+        source: /var/data/{{ app }}-{{ env }}/plex/transcode
+        target: /transcode
+      # SQLite must not live on NFS: with it there Plex logs "Waited over 10
+      # seconds for a busy database" and API clients time out. Local disk on
+      # the media node; Plex's own periodic DB backups go to /config (NFS).
+      - type: bind
+        source: {{ local_root }}/plex-db
+        target: "/config/Library/Application Support/Plex Media Server/Plug-in Support/Databases"
+      - type: bind
+        source: /var/data/{{ app }}-{{ env }}/zurg/mnt
+        target: /mnt/debrid
+        read_only: true
+        bind:
+          propagation: rslave
+    networks:
+      - {{ app }}-{{ env }}
+      - cloud-public-{{ env }}
+    deploy:
+      mode: replicated
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+      placement:
+        constraints: {{ constraints }}
+      resources:
+        limits:
+          cpus: '{{ skstream.PLEX_RESOURCES_LIMITS_CPUS | default("2.00") }}'
+          memory: {{ skstream.PLEX_RESOURCES_LIMITS_MEMORY | default("3G") }}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.routers.skstream{{ sfx }}.rule=Host(`skstream{{ sfx }}.{{ skstream.CLUSTERNAME }}.{{ skstream.DOMAIN }}`)"
+        - "traefik.http.routers.skstream{{ sfx }}.entrypoints=websecure"
+        - "traefik.http.routers.skstream{{ sfx }}.tls=true"
+        - "traefik.http.routers.skstream{{ sfx }}.tls.certresolver=main"
+        - "traefik.http.routers.skstream{{ sfx }}.service=skstream{{ sfx }}"
+        - "traefik.http.services.skstream{{ sfx }}.loadbalancer.server.port=32400"
+{% if skstream.tls_options | default('') %}
+        - "traefik.http.routers.skstream{{ sfx }}.tls.options={{ skstream.tls_options }}"
+{% endif %}
+{% set _mw = (skstream.router_middlewares_pre | default([])) + (skstream.router_middlewares | default([])) %}
+{% if _mw %}
+        - "traefik.http.routers.skstream{{ sfx }}.middlewares={{ _mw | join(',') }}"
+{% endif %}
+{% if skstream.KOMETA_ENABLED | default(false) | bool %}
+
+  kometa:
+    image: {{ skstream.KOMETA_IMAGE | default('kometateam/kometa@sha256:c8a6b82ec7292f6e0148dc8708651ad8de4547902a38b1b78c899f463295b5c8') }}
+    env_file: /var/data/config/{{ app }}-{{ env }}/kometa.env
+    environment:
+      - TZ={{ skstream.TZ | default('UTC') }}
+      - KOMETA_RUN=false
+      - KOMETA_TIME={{ skstream.KOMETA_TIME | default('03:00') }}
+      - KOMETA_PLEX_URL=http://plex:32400
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+    volumes:
+      - type: bind
+        source: /var/data/{{ app }}-{{ env }}/kometa/config
+        target: /config
+    networks:
+      - {{ app }}-{{ env }}
+    deploy:
+      mode: replicated
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 60s
+      placement:
+        constraints: {{ constraints }}
+      resources:
+        limits:
+          cpus: '{{ skstream.KOMETA_RESOURCES_LIMITS_CPUS | default("1.00") }}'
+          memory: {{ skstream.KOMETA_RESOURCES_LIMITS_MEMORY | default("768M") }}
+{% endif %}
+
+networks:
+  {{ app }}-{{ env }}:
+    external: true
+  cloud-public-{{ env }}:
+    external: true

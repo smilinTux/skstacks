@@ -1,0 +1,22 @@
+{#- DUMB seed (written only if absent; DUMB deep-merges its own defaults on
+    start). Enables zurg + rclone + cli_debrid + cli_battery for Real-Debrid. -#}
+{
+  "puid": {{ skstream.PUID | default(1000) }},
+  "pgid": {{ skstream.PGID | default(1000) }},
+  "tz": {{ skstream.TZ | default('UTC') | to_json }},
+  "dumb": {
+    "plex_token": {{ skstream.PLEX_TOKEN | to_json }},
+    "plex_address": "http://plex:32400",
+    "onboarding_completed": true
+  },
+  "zurg": {"instances": {"RealDebrid": {
+    "enabled": true, "core_service": "cli_debrid", "api_key": {{ skstream.RD_API_KEY | to_json }}
+  }}},
+  "rclone": {"instances": {"RealDebrid": {
+    "enabled": true, "core_service": "cli_debrid", "api_key": {{ skstream.RD_API_KEY | to_json }},
+    "zurg_enabled": true, "mount_dir": "/mnt/debrid",
+    "mount_name": {{ skstream.RCLONE_MOUNT_NAME | default('rclone_RD') | to_json }}, "cache_dir": "/cache"
+  }}},
+  "cli_debrid": {"enabled": true},
+  "cli_battery": {"enabled": true}
+}

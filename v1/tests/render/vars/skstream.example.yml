@@ -1,0 +1,8 @@
+# Public, obviously fake example vault for the real-Ansible render gate
+# (v1/tests/render/render_playbooks.py). example.test only; no real secrets.
+skstream:
+  CLUSTERNAME: render
+  DOMAIN: example.test
+  MEDIA_NODE: localhost
+  RD_API_KEY: example-rd-api-key-not-a-secret
+  PLEX_TOKEN: example-plex-token-not-a-secret
