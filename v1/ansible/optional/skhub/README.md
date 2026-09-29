@@ -39,6 +39,12 @@ skhub:
   # if you renamed the bucket or moved skstor off its defaults.
 ```
 
+## Nextcloud image
+
+| Key | Default | Meaning |
+|---|---|---|
+| `NEXTCLOUD_IMAGE` | `nextcloud:31.0.14` | Image for `nextcloud`, `cron` and `notify_push` (they share `/var/www/html`, so always the same image). Pin a digest (`nextcloud:<ver>@sha256:...`). Nextcloud upgrades are one-way and one major at a time: once an instance runs a newer Nextcloud, keep this set, because deploying an older image makes the entrypoint refuse to start (downgrade) and the service crash-loops. |
+
 ## Talk HPB TURN
 
 With `skhub.enable_talk_hpb: true`, the `talk-hpb` service (aio-talk) runs
