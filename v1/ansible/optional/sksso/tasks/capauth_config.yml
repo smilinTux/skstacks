@@ -6,13 +6,15 @@
 - name: Check the CapAuth vault keys
   assert:
     that:
-      - "'@sha256:' in (sksso.CAPAUTH_IMAGE | default('') | string)"
+      # unset = the pinned public release (sksso.yml.j2); a value set in the
+      # vault must be pinned by digest too
+      - "sksso.CAPAUTH_IMAGE is not defined or '@sha256:' in (sksso.CAPAUTH_IMAGE | string)"
       - "(sksso.CAPAUTH_CLIENT_SECRET | default('') | string | length) >= 32"
       - "(sksso.CAPAUTH_ADMIN_TOKEN | default('') | string | length) >= 32"
       - "(sksso.api_token | default('') | string | length) >= 32"
     fail_msg: >-
-      sksso.CAPAUTH_ENABLED needs sksso.CAPAUTH_IMAGE pinned by digest
-      (image@sha256:...), sksso.CAPAUTH_CLIENT_SECRET and
+      sksso.CAPAUTH_ENABLED needs sksso.CAPAUTH_IMAGE unset (the pinned
+      default) or pinned by digest (image@sha256:...), sksso.CAPAUTH_CLIENT_SECRET and
       sksso.CAPAUTH_ADMIN_TOKEN (each openssl rand -hex 32), and
       sksso.api_token (registered once with src/sksso/ensure-api-token.sh).
     quiet: true

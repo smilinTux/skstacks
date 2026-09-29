@@ -126,12 +126,12 @@ The flow is not bound to anything. An application opts in by using it as its pro
 sksso:
   api_token: "..."                    # required (see "Automation API token")
   CAPAUTH_ENABLED: true
-  CAPAUTH_IMAGE: "<registry>/capauth:<version>@sha256:<digest>"   # required, digest-pinned
   CAPAUTH_CLIENT_SECRET: "..."        # required, openssl rand -hex 32 (CapAuth <-> Authentik)
   CAPAUTH_ADMIN_TOKEN: "..."          # required, openssl rand -hex 32 (approves keys)
   CAPAUTH_USERS:                      # optional: fingerprint -> existing Authentik user
     - {username: alice, fingerprint: 0123456789ABCDEF0123456789ABCDEF01234567}
   # optional
+  CAPAUTH_IMAGE: "<registry>/capauth:<version>@sha256:<digest>"   # default: the pinned public release below
   CAPAUTH_HOST: capauth.example.org   # default capauth[-<env>].<base>
   CAPAUTH_SSO_HOST: sso.example.org   # default sso[-<env>].<base>
   CAPAUTH_REQUIRE_APPROVAL: true      # default true: new keys wait for an admin
@@ -140,7 +140,7 @@ sksso:
   CAPAUTH_SOURCE_AUTHENTICATION_FLOW: default-source-authentication
 ```
 
-There is no public, digest-pinned CapAuth image yet, so `CAPAUTH_IMAGE` has no default and the deploy refuses a value without `@sha256:`. The image must include CapAuth's per-client `require_nonce` (Authentik's source sends no OIDC nonce).
+`CAPAUTH_IMAGE` defaults to the public CapAuth release `ghcr.io/smilintux/capauth:0.3.13@sha256:f2de737815f30a47706336250cfb257673c4861c0a790f28d09cd7403fb80ac7` (capauth v0.3.13: per-client `require_nonce`, which Authentik's source needs because it sends no OIDC nonce). An instance may set its own (for example a mirror in its own registry), and the deploy refuses a value without `@sha256:`.
 
 Enrolling a user (once per key):
 

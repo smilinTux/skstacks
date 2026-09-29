@@ -64,7 +64,8 @@ def _is_pinned(image):
 # digest). Each must be the service's ONLY default-less image, and the guard
 # must really check that key, so this cannot hide anything else.
 INSTANCE_PINNED = {
-    "sksso": ("sksso.CAPAUTH_IMAGE", "v1/ansible/optional/sksso/tasks/capauth_config.yml"),
+    # sksso.CAPAUTH_IMAGE left this list when a public, digest-pinned CapAuth
+    # release existed (ghcr.io/smilintux/capauth:0.3.13): it has a default now.
 }
 
 

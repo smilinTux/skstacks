@@ -221,7 +221,7 @@ services:
   # Only the login page (/oidc/) and key enrollment are routed publicly; the
   # admin API (approve/revoke) is reached from inside the cluster.
   capauth:
-    image: "{{ sksso.CAPAUTH_IMAGE }}"
+    image: "{{ sksso.CAPAUTH_IMAGE | default('ghcr.io/smilintux/capauth:0.3.13@sha256:f2de737815f30a47706336250cfb257673c4861c0a790f28d09cd7403fb80ac7') }}"
     env_file: /var/data/config/{{ app }}-{{ env }}/capauth.env
     deploy:
       mode: replicated

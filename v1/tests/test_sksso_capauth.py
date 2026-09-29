@@ -155,10 +155,24 @@ def _eval_assert(sksso):
 def test_config_refuses_missing_or_weak_keys():
     good = dict(ENABLED, api_token="t" * 40)
     assert _eval_assert(good)
-    for key in ("CAPAUTH_IMAGE", "CAPAUTH_CLIENT_SECRET", "CAPAUTH_ADMIN_TOKEN", "api_token"):
+    for key in ("CAPAUTH_CLIENT_SECRET", "CAPAUTH_ADMIN_TOKEN", "api_token"):
         assert not _eval_assert({k: v for k, v in good.items() if k != key}), key
+    assert _eval_assert({k: v for k, v in good.items() if k != "CAPAUTH_IMAGE"})  # the pinned default
     assert not _eval_assert(dict(good, CAPAUTH_CLIENT_SECRET="short"))
     assert not _eval_assert(dict(good, CAPAUTH_IMAGE="capauth:latest"))  # must be pinned by digest
+    assert not _eval_assert(dict(good, CAPAUTH_IMAGE=""))
+
+
+# the public release with per-client require_nonce (capauth #99), built from
+# tag v0.3.13 and published on ghcr.io; anonymous pull verified by digest
+DEFAULT_IMAGE = ("ghcr.io/smilintux/capauth:0.3.13"
+                 "@sha256:f2de737815f30a47706336250cfb257673c4861c0a790f28d09cd7403fb80ac7")
+
+
+def test_default_image_is_the_public_release_pinned_by_digest():
+    enabled = {k: v for k, v in ENABLED.items() if k != "CAPAUTH_IMAGE"}
+    assert _compose(**enabled)["capauth"]["image"] == DEFAULT_IMAGE
+    assert _compose(**ENABLED)["capauth"]["image"] == ENABLED["CAPAUTH_IMAGE"]  # the vault still wins
 
 
 def test_secret_files_are_owner_only_and_mounted_read_only():
