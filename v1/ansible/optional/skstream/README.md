@@ -85,6 +85,7 @@ Namespace `skstream`. Required: `RD_API_KEY`, `PLEX_TOKEN`, `MEDIA_NODE`.
 | `PLEX_RESOURCES_LIMITS_CPUS`, `PLEX_RESOURCES_LIMITS_MEMORY` | `2.00`, `3G` | |
 | `KOMETA_RESOURCES_LIMITS_CPUS`, `KOMETA_RESOURCES_LIMITS_MEMORY` | `1.00`, `768M` | |
 | `DUMB_MEMORY_LIMIT` | `2g` | |
+| `PLEX_EXTRA_BINDS` | `[]` | list of `{source, target}` read-only binds into Plex, e.g. `{source: /var/data/skfetch-prod/media, target: /skfetch/media}` so libraries can include skfetch folders |
 | `placement_constraints` | `["node.labels.skstream-media == true"]` | list; `[]` for none |
 | `router_middlewares_pre`, `router_middlewares`, `tls_options` | none | Traefik router hooks |
 | `PUID`, `PGID`, `TZ` | `1000`, `1000`, `UTC` | |
@@ -143,6 +144,11 @@ ansible-playbook optional/skstream/deploy_skstream-prod.yml -l <managers> -e tar
 ```
 
 ## Using it
+
+Plex libraries: add `/mnt/debrid/<RCLONE_MOUNT_NAME>/...` folders for the
+debrid side and, with `PLEX_EXTRA_BINDS`, the extra mount (for skfetch:
+`/skfetch/media/tv`, `/movies`, `/music`). Create a Music library too
+before wiring Lidarr: Lidarr refuses a Plex connection until one exists.
 
 Add a movie or show to the Plex watchlist (Plex app or web: Discover, then
 "+ Watchlist"). cli_debrid polls the watchlist, finds a cached 1080p release,

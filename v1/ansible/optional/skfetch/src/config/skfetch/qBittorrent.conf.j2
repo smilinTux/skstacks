@@ -1,0 +1,33 @@
+{% set sfx = '' if env == 'prod' else '-' + env %}
+{% set local_root = skfetch.LOCAL_ROOT | default('/var/lib/skfetch' + sfx) %}
+{% set media = skfetch.MEDIA_PATH | default('/var/data/' + app + '-' + env) %}
+{% set cfgdir = '/var/data/config/' + app + '-' + env %}
+{% set subnet = skfetch.BRIDGE_SUBNET | default('172.30.60.0/24') %}
+{% set net = subnet.split('/')[0].rsplit('.', 1)[0] %}
+{% set lan = skfetch.LAN_BIND_ADDRESS | default('127.0.0.1') %}
+{% set stream = skfetch.STREAM_NETWORK | default('skstream-' + env) %}
+{% set flare = (skfetch.FLARESOLVERR_ENABLED | default(true) | string | lower) in ['true', 'yes', '1', 'on'] %}
+[BitTorrent]
+Session\AnonymousModeEnabled=true
+Session\DefaultSavePath=/data/downloads/
+Session\GlobalDLSpeedLimit={{ skfetch.QBT_DL_LIMIT_KIB | default(25600) | int }}
+Session\GlobalUPSpeedLimit={{ skfetch.QBT_UL_LIMIT_KIB | default(0) | int }}
+Session\GlobalMaxRatio={{ skfetch.QBT_MAX_RATIO | default(1) }}
+Session\GlobalMaxSeedingMinutes={{ skfetch.QBT_MAX_SEEDING_MINUTES | default(60) | int }}
+Session\Interface=tun0
+Session\InterfaceName=tun0
+Session\MaxActiveDownloads={{ skfetch.QBT_MAX_ACTIVE_DOWNLOADS | default(2) | int }}
+Session\MaxActiveTorrents={{ skfetch.QBT_MAX_ACTIVE_TORRENTS | default(4) | int }}
+Session\MaxActiveUploads={{ skfetch.QBT_MAX_ACTIVE_UPLOADS | default(2) | int }}
+Session\QueueingSystemEnabled=true
+Session\ShareLimitAction=Stop
+Session\TempPath=/data/incomplete
+Session\TempPathEnabled=true
+
+[Preferences]
+WebUI\AuthSubnetWhitelist={{ subnet }}
+WebUI\AuthSubnetWhitelistEnabled=true
+WebUI\CSRFProtection=false
+WebUI\HostHeaderValidation=false
+WebUI\LocalHostAuth=false
+WebUI\Port=8080
