@@ -225,6 +225,9 @@ class FakeAuthentik:
         self.flows = [{"pk": pk, "slug": s} for s, pk in self.FLOWS.items()]
         self.sources, self.ident, self.login, self.bindings, self.conns = [], [], [], [], []
         self.users = [{"pk": 7, "username": "alice"}]
+        # stages from Authentik's default blueprints (default-authentication-flow)
+        self.pw_stages = [{"pk": "pw-default", "name": "default-authentication-password"}]
+        self.mfa_stages = [{"pk": "mfa-default", "name": "default-authentication-mfa-validation"}]
         self.secret = None
         self.log = []
         self.n = 100
@@ -277,6 +280,7 @@ class FakeAuthentik:
             obj.update(body)
             return 200, obj
         stores = {"/stages/identification/": self.ident, "/stages/user_login/": self.login,
+                  "/stages/password/": self.pw_stages, "/stages/authenticator/validate/": self.mfa_stages,
                   "/flows/bindings/": self.bindings, "/sources/user_connections/oauth/": self.conns}
         for prefix, store in stores.items():
             if not p.startswith(prefix):
@@ -294,6 +298,9 @@ class FakeAuthentik:
                 obj = dict(body, pk=self._pk())
                 store.append(obj)
                 return 201, obj
+            if method == "DELETE":
+                store[:] = [o for o in store if str(o["pk"]) != rest]
+                return 204, None
             obj = next(o for o in store if str(o["pk"]) == rest)
             obj.update(body)
             return 200, obj
@@ -321,7 +328,7 @@ def fake_authentik():
                 self.end_headers()
                 self.wfile.write(raw)
 
-            do_GET = do_POST = do_PATCH = _do
+            do_GET = do_POST = do_PATCH = do_DELETE = _do
 
             def log_message(self, *a):
                 pass
@@ -362,8 +369,9 @@ def _provision(cfg):
 
 
 def test_provisioner_creates_everything_then_is_idempotent(fake_authentik):
+    """CapAuth only (password_login off): the form offers the source alone."""
     fake = fake_authentik()
-    first = _provision(_cfg(fake))
+    first = _provision(_cfg(fake, password_login=False))
     assert first.returncode == 0, first.stderr
     for line in ("source: created", "source client secret: set", "identification stage: created",
                  "user login stage: created", "flow: created", "flow binding identification: created",
@@ -385,7 +393,7 @@ def test_provisioner_creates_everything_then_is_idempotent(fake_authentik):
     assert all(b["target"] == flow["pk"] for b in fake.bindings)
     assert {h for _, _, h, _ in fake.log} == {"sso.demo.example.test"}
 
-    second = _provision(_cfg(fake))
+    second = _provision(_cfg(fake, password_login=False))
     assert second.returncode == 0, second.stderr
     assert "created" not in second.stdout and "updated (" not in second.stdout
     assert "source client secret: set" in second.stdout  # write-only: set every run
@@ -489,3 +497,76 @@ def test_provisioner_refuses_to_move_a_key_to_another_user(fake_authentik):
     out = _provision(_cfg(fake, users=[{"username": "bob", "fingerprint": FP}]))
     assert out.returncode == 1 and "already linked to another Authentik user" in out.stderr
     assert [(c["user"], c["identifier"]) for c in fake.conns] == [(7, FP)]
+
+
+# --- password fallback: CapAuth AND the normal password login on one form -------
+
+def _bound(fake, flow_slug="capauth-authentication"):
+    flow = next(f for f in fake.flows if f["slug"] == flow_slug)
+    return sorted((b["stage"], b["order"]) for b in fake.bindings if b["target"] == flow["pk"])
+
+
+def test_password_login_is_the_default_and_sits_next_to_the_capauth_button(fake_authentik):
+    """The standard Authentik pattern: one identification stage with the
+    username field, the password field inline (password_stage) and the
+    source button; then MFA validation (as the default login flow does, so
+    the fallback is not weaker than the password login everywhere else)
+    and user login."""
+    fake = fake_authentik()
+    out = _provision(_cfg(fake))  # no password_login key: default on
+    assert out.returncode == 0, out.stderr
+    ident = fake.ident[0]
+    assert ident["user_fields"] == ["username", "email"]
+    assert ident["password_stage"] == "pw-default"
+    assert ident["sources"] == [fake.sources[0]["pk"]] and ident["show_source_labels"] is True
+    assert _bound(fake) == sorted([(ident["pk"], 10), ("mfa-default", 30), (fake.login[0]["pk"], 100)])
+    assert "password login: on (default-authentication-password)" in out.stdout
+    assert "flow binding mfa validation: created" in out.stdout
+    again = _provision(_cfg(fake, password_login=True))
+    assert again.returncode == 0, again.stderr
+    assert "created" not in again.stdout and "updated (" not in again.stdout and "removed" not in again.stdout
+
+
+def test_password_login_can_be_switched_off_and_back_on(fake_authentik):
+    fake = fake_authentik()
+    assert _provision(_cfg(fake)).returncode == 0
+    off = _provision(_cfg(fake, password_login=False))
+    assert off.returncode == 0, off.stderr
+    assert "identification stage: updated (password_stage, user_fields)" in off.stdout
+    assert "flow binding mfa validation: removed" in off.stdout
+    assert fake.ident[0]["user_fields"] == [] and fake.ident[0]["password_stage"] is None
+    assert _bound(fake) == sorted([(fake.ident[0]["pk"], 10), (fake.login[0]["pk"], 100)])
+    assert "password login: off" in off.stdout
+    on = _provision(_cfg(fake, password_login=True))
+    assert on.returncode == 0, on.stderr
+    assert "identification stage: updated (password_stage, user_fields)" in on.stdout
+    assert fake.ident[0]["password_stage"] == "pw-default"
+    assert ("mfa-default", 30) in _bound(fake)
+
+
+def test_password_login_uses_the_named_stages_and_fails_loudly_without_them(fake_authentik):
+    fake = fake_authentik()
+    fake.pw_stages.append({"pk": "pw-custom", "name": "my-password"})
+    ok = _provision(_cfg(fake, password_stage="my-password", mfa_stage=""))  # "" = no MFA stage
+    assert ok.returncode == 0, ok.stderr
+    assert fake.ident[0]["password_stage"] == "pw-custom"
+    assert not any(stage == "mfa-default" for stage, _ in _bound(fake))
+    nopw = _provision(_cfg(fake, password_stage="no-such-password-stage"))
+    assert nopw.returncode == 1 and "no-such-password-stage" in nopw.stderr
+    nomfa = _provision(_cfg(fake, mfa_stage="no-such-mfa-stage"))
+    assert nomfa.returncode == 1 and "no-such-mfa-stage" in nomfa.stderr
+
+
+def test_provision_task_passes_the_password_login_knobs():
+    tasks = {t["name"]: t for t in _tasks("capauth_provision.yml")}
+    facts = tasks["Build the CapAuth provisioner input"]["set_fact"]["sksso_capauth_input"]
+    assert facts["password_login"] == "{{ sksso.CAPAUTH_PASSWORD_LOGIN | default(true) | bool }}"
+    assert facts["password_stage"] == "{{ sksso.CAPAUTH_PASSWORD_STAGE | default('') }}"
+    assert facts["mfa_stage"] == "{{ sksso.CAPAUTH_MFA_STAGE | default('default-authentication-mfa-validation') }}"
+
+
+def test_password_login_off_as_a_string_is_off(fake_authentik):
+    fake = fake_authentik()
+    out = _provision(_cfg(fake, password_login="False"))
+    assert out.returncode == 0, out.stderr
+    assert fake.ident[0]["password_stage"] is None and "password login: off" in out.stdout
