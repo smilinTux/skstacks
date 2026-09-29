@@ -118,7 +118,7 @@ What the deploy does:
 
 - runs a `capauth` service (one replica: its key registry, OIDC state and RS256 signing key are SQLite/files under `/var/data/sksso-<env>/capauth`), routed by Traefik at `capauth[-<env>].<base>` (`sksso.CAPAUTH_HOST` to override) for `/oidc/` (login page, OIDC endpoints), `/capauth/v1/challenge` and `/capauth/v1/verify` (key enrollment) only. The admin API, the phone-signer (bunker) and the other CapAuth endpoints are not routed. That host needs DNS and a certificate like `sso[-<env>]`. Authentik's server calls the token and userinfo endpoints on the stack network.
 - renders `capauth.env` and `capauth-oidc-clients.json` (both `0600`): one client, `authentik`, whose only redirect URI is `https://sso[-<env>].<base>/source/oauth/callback/<source slug>/` (`sksso.CAPAUTH_SSO_HOST` if users reach Authentik on another host).
-- after the stack is up (`tasks/capauth_provision.yml`, idempotent, via `sksso.api_token`): an OAuth source `CapAuth` (`capauth`), an identification stage that offers only that source (no username or password field), a user login stage, and the flow `capauth-authentication` (title "Sign in with CapAuth"). Users are matched by the OIDC `sub` (the PGP fingerprint) only and the source has **no enrollment flow**: a CapAuth key that is not linked to an Authentik user is refused. Each `sksso.CAPAUTH_USERS` entry links a fingerprint to an existing Authentik user (never created).
+- after the stack is up (`tasks/capauth_provision.yml`, idempotent, via `sksso.api_token`): an OAuth source `CapAuth` (`capauth`), the flow `capauth-authentication` (title "Sign in with CapAuth"): one login form with the normal username and password fields **and** a CapAuth button (Authentik's identification stage with its inline password stage `default-authentication-password` and the source), then the MFA validation stage `default-authentication-mfa-validation` (so the password path is no weaker than the default login), then a user login stage. `sksso.CAPAUTH_PASSWORD_LOGIN: false` makes it CapAuth only (the button alone, no password field); switching back and forth is idempotent. Users are matched by the OIDC `sub` (the PGP fingerprint) only and the source has **no enrollment flow**: a CapAuth key that is not linked to an Authentik user is refused. Each `sksso.CAPAUTH_USERS` entry links a fingerprint to an existing Authentik user (never created).
 
 The flow is not bound to anything. An application opts in by using it as its provider's authentication flow (skmesh: `skmesh.AUTHENTIK_AUTHENTICATION_FLOW: capauth-authentication`). Every other application keeps the brand's default password login.
 
@@ -138,6 +138,9 @@ sksso:
   CAPAUTH_SOURCE_SLUG: capauth
   CAPAUTH_FLOW_SLUG: capauth-authentication
   CAPAUTH_SOURCE_AUTHENTICATION_FLOW: default-source-authentication
+  CAPAUTH_PASSWORD_LOGIN: true        # default true: password form + CapAuth button; false = CapAuth only
+  CAPAUTH_PASSWORD_STAGE: ""          # default default-authentication-password (must exist)
+  CAPAUTH_MFA_STAGE: default-authentication-mfa-validation   # "" = no MFA stage on the password path
 ```
 
 There is no public, digest-pinned CapAuth image yet, so `CAPAUTH_IMAGE` has no default and the deploy refuses a value without `@sha256:`. The image must include CapAuth's per-client `require_nonce` (Authentik's source sends no OIDC nonce).
@@ -158,7 +161,7 @@ Enrolling a user (once per key):
 
 Authentik keeps one CapAuth link per user: changing a user's fingerprint in `CAPAUTH_USERS` (key rotation) updates that link on the next deploy. A fingerprint already linked to a different user is refused; remove that link in the admin UI first.
 
-Login: the application sends the user to the CapAuth flow, the user picks "CapAuth", signs the challenge on CapAuth's page, and returns to Authentik logged in as the linked user.
+Login: the application sends the user to the CapAuth flow. Either the user types username and password as usual (then MFA if they have it), or clicks "CapAuth", signs the challenge on CapAuth's page (copy the challenge, `capauth sign-challenge`, paste the signature), and returns to Authentik logged in as the linked user.
 
 Rollback: unbind the flow in every application that uses it first (skmesh: remove `AUTHENTIK_AUTHENTICATION_FLOW` and redeploy it), then set `CAPAUTH_ENABLED: false` and redeploy sksso: the deploy removes the `capauth` service (a stack deploy alone would leave it running). The Authentik objects (source, stages, flow, links) stay until deleted in the admin UI; the source is useless without the service, and nothing is bound to the flow.
 

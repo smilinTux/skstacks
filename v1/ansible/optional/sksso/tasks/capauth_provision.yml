@@ -28,6 +28,12 @@
       flow_slug: "{{ sksso.CAPAUTH_FLOW_SLUG | default('capauth-authentication') }}"
       flow_title: Sign in with CapAuth
       users: "{{ sksso.CAPAUTH_USERS | default([]) }}"
+      # the CapAuth button next to the normal username/password form (on by
+      # default); false = CapAuth only
+      password_login: "{{ sksso.CAPAUTH_PASSWORD_LOGIN | default(true) | bool }}"
+      # empty = the provisioner's default, default-authentication-password
+      password_stage: "{{ sksso.CAPAUTH_PASSWORD_STAGE | default('') }}"
+      mfa_stage: "{{ sksso.CAPAUTH_MFA_STAGE | default('default-authentication-mfa-validation') }}"
   vars:
     sksso_capauth_base: "{{ sksso.DOMAIN if (sksso.CLOUDFLARED | default(false)) else (sksso.CLUSTERNAME ~ '.' ~ sksso.DOMAIN) }}"
     sksso_capauth_host: "{{ sksso.CAPAUTH_HOST | default('capauth' ~ ('' if env == 'prod' else '-' ~ env) ~ '.' ~ sksso_capauth_base) }}"

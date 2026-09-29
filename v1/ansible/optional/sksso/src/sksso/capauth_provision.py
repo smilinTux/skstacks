@@ -12,9 +12,14 @@ in Authentik and builds a login flow that uses it:
   fingerprint) only, and the source has NO enrollment flow: a fingerprint
   that is not linked to an Authentik user is refused, so nobody gets an
   Authentik account by holding a CapAuth key;
-* an identification stage that offers only that source (no username or
-  password field), a user login stage, and an authentication **flow** with
-  both. The flow is bound to nothing here: an application opts in by using
+* an identification stage offering that source as a button, by default
+  next to the normal username and password fields (`password_login`, the
+  standard Authentik pattern: the identification stage's inline password
+  stage), then MFA validation (the default login flow's stage, so the
+  password path is no weaker than the login every other application uses)
+  and a user login stage, in an authentication **flow**. With
+  `password_login` false the form offers only the source (CapAuth only).
+  The flow is bound to nothing here: an application opts in by using
   it as its provider's authentication flow (skmesh:
   skmesh.AUTHENTIK_AUTHENTICATION_FLOW). Every other application keeps the
   brand's default (password) login;
@@ -39,6 +44,8 @@ import urllib.parse
 import urllib.request
 
 MIN_VERSION = (2025, 2)
+DEFAULT_PASSWORD_STAGE = "default-authentication-password"
+DEFAULT_MFA_STAGE = "default-authentication-mfa-validation"
 
 
 class ApiError(Exception):
@@ -130,6 +137,26 @@ def provision(api, cfg):
     if version_tuple(version) < MIN_VERSION:
         raise ApiError(f"Authentik {version} has no PKCE on OAuth sources; the CapAuth source needs 2025.2+")
 
+    # resolve the password-login stages first: a missing one fails the run
+    # before anything is created or changed
+    raw = cfg.get("password_login", True)
+    password_login = raw if isinstance(raw, bool) else str(raw).strip().lower() in ("1", "true", "yes", "on")
+    pw_name = cfg.get("password_stage") or DEFAULT_PASSWORD_STAGE
+    mfa_name = cfg.get("mfa_stage", DEFAULT_MFA_STAGE)
+    mfa = api.first("/stages/authenticator/validate/", name=mfa_name) if mfa_name else None
+    pw = None
+    if password_login:
+        pw = api.first("/stages/password/", name=pw_name)
+        if pw is None:
+            raise ApiError(f"password login: password stage '{pw_name}' not found in Authentik "
+                           "(set CAPAUTH_PASSWORD_STAGE, or CAPAUTH_PASSWORD_LOGIN: false for CapAuth only)")
+        if mfa_name and mfa is None:
+            raise ApiError(f"password login: MFA validation stage '{mfa_name}' not found in Authentik "
+                           "(set CAPAUTH_MFA_STAGE; an empty value binds none)")
+        print(f"password login: on ({pw_name})")
+    else:
+        print("password login: off (CapAuth only)")
+
     source = {
         "name": cfg["source_name"],
         "slug": cfg["source_slug"],
@@ -165,7 +192,9 @@ def provision(api, cfg):
 
     ident, _ = ensure(api, "/stages/identification/",
                       lambda: api.first("/stages/identification/", name=cfg["identification_stage"]),
-                      {"name": cfg["identification_stage"], "user_fields": [], "password_stage": None,
+                      {"name": cfg["identification_stage"],
+                       "user_fields": ["username", "email"] if pw else [],
+                       "password_stage": pw["pk"] if pw else None,
                        "sources": [source_pk], "show_source_labels": True},
                       "identification stage")
     login, _ = ensure(api, "/stages/user_login/",
@@ -175,11 +204,22 @@ def provision(api, cfg):
                      {"name": cfg["flow_name"], "slug": cfg["flow_slug"], "title": cfg["flow_title"],
                       "designation": "authentication"},
                      "flow", key="slug")
-    for stage, order, label in ((ident, 10, "identification"), (login, 100, "user login")):
+    wanted = [(ident, 10, "identification"), (login, 100, "user login")]
+    if pw and mfa:
+        wanted.insert(1, (mfa, 30, "mfa validation"))
+    for stage, order, label in wanted:
         ensure(api, "/flows/bindings/",
                lambda stage=stage: api.first("/flows/bindings/", target=flow["pk"], stage=stage["pk"]),
                {"target": flow["pk"], "stage": stage["pk"], "order": order},
                f"flow binding {label}")
+    # the flow is this script's own: drop what is no longer wanted (password
+    # login switched off: its MFA stage)
+    keep = {stage["pk"] for stage, _, _ in wanted}
+    for b in api.get("/flows/bindings/", target=flow["pk"], page_size=1000).get("results", []):
+        if b["stage"] not in keep:
+            api.call("DELETE", f"/flows/bindings/{b['pk']}/")
+            what = "mfa validation" if mfa and b["stage"] == mfa["pk"] else f"stage {b['stage']}"
+            print(f"flow binding {what}: removed")
 
     if not cfg.get("users"):
         return
