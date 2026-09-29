@@ -52,6 +52,13 @@ services:
         read_only: true
         bind:
           propagation: rslave
+{% for b in skstream.PLEX_EXTRA_BINDS | default([]) if b is mapping and b.source is defined and b.target is defined %}
+      # extra read-only media for Plex libraries (e.g. skfetch downloads)
+      - type: bind
+        source: {{ b.source }}
+        target: {{ b.target }}
+        read_only: true
+{% endfor %}
     networks:
       - {{ app }}-{{ env }}
       - cloud-public-{{ env }}

@@ -1,0 +1,171 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+---
+# skfetch (prod): Sonarr / Radarr / Lidarr / Prowlarr (+ FlareSolverr) and
+# qBittorrent behind a VPN (gluetun), as a HOST-LEVEL docker compose project on
+# skfetch.MEDIA_NODE, started by skfetch.service. Not a swarm stack: see
+# README.md ("Why host-level"). Shared files are written once from the selected
+# manager; everything on the node is delegated to MEDIA_NODE (it must be an
+# inventory host; delegate_to reaches it even when the run is limited).
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skfetch
+    env: prod
+    service_name: skfetch
+    service_type: optional
+    skfetch_sfx: "{{ '' if env == 'prod' else '-' + env }}"
+    skfetch_local_root: "{{ skfetch.LOCAL_ROOT | default('/var/lib/skfetch' + skfetch_sfx) }}"
+    skfetch_media: "{{ skfetch.MEDIA_PATH | default('/var/data/' + app + '-' + env) }}"
+    skfetch_uid: "{{ skfetch.PUID | default(1000) }}"
+    skfetch_gid: "{{ skfetch.PGID | default(1000) }}"
+    skfetch_stream: "{{ skfetch.STREAM_NETWORK | default('skstream-' + env) }}"
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+  tasks:
+    - name: Fail closed if required skfetch vars are empty or unset
+      assert:
+        that:
+          - (skfetch.MEDIA_NODE | default('') | string) | length > 0
+          - (skfetch.OPENVPN_USER | default('') | string) | length > 0
+          - (skfetch.OPENVPN_PASSWORD | default('') | string) | length > 0
+          - (skfetch.SONARR_API_KEY | default('') | string) | length > 0
+          - (skfetch.RADARR_API_KEY | default('') | string) | length > 0
+          - (skfetch.LIDARR_API_KEY | default('') | string) | length > 0
+          - (skfetch.PROWLARR_API_KEY | default('') | string) | length > 0
+          - not (skfetch.PLEX_TOKEN_IS_SERVER_TOKEN | default(false) | bool)
+        fail_msg: >-
+          skfetch.MEDIA_NODE, OPENVPN_USER, OPENVPN_PASSWORD and the four
+          *_API_KEY values are required. PLEX_TOKEN (optional) must be a
+          dedicated account token, never the server PlexOnlineToken
+          (see optional/skstream/README.md); PLEX_TOKEN_IS_SERVER_TOKEN true
+          stops the play.
+      tags: [config, secrets]
+
+    - name: Create {{ app }} shared directories (not recursive)
+      file: { path: "{{ item.path }}", state: directory, owner: "{{ item.owner }}", group: "{{ item.owner }}", mode: "0755" }
+      loop:
+        - { path: "{{ skfetch_media }}", owner: "{{ skfetch_uid }}" }
+        - { path: "{{ skfetch_media }}/downloads", owner: "{{ skfetch_uid }}" }
+        - { path: "{{ skfetch_media }}/incomplete", owner: "{{ skfetch_uid }}" }
+        - { path: "{{ skfetch_media }}/media", owner: "{{ skfetch_uid }}" }
+        - { path: "{{ skfetch_media }}/media/tv", owner: "{{ skfetch_uid }}" }
+        - { path: "{{ skfetch_media }}/media/movies", owner: "{{ skfetch_uid }}" }
+        - { path: "{{ skfetch_media }}/media/music", owner: "{{ skfetch_uid }}" }
+        - { path: "/var/data/config/{{ app }}-{{ env }}", owner: "0" }
+      tags: [config]
+
+    - name: Render the VPN credentials env file
+      template: { src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env", owner: root, group: root, mode: "0600" }
+      register: skfetch_envfile
+      tags: [templates, secrets]
+
+    - name: Render the {{ app }} compose file
+      template: { src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml", owner: root, group: root, mode: "0644" }
+      register: skfetch_compose
+      tags: [compose]
+
+    - name: Render the API wiring input
+      template: { src: "{{ playbook_dir }}/src/config/{{ app }}/wire.json.j2", dest: "/var/data/config/{{ app }}-{{ env }}/wire.json", owner: root, group: root, mode: "0600" }
+      tags: [templates, wire]
+
+    - name: Install the API wiring script
+      copy: { src: "{{ playbook_dir }}/src/{{ app }}/wire.py", dest: "/var/data/config/{{ app }}-{{ env }}/wire.py", owner: root, group: root, mode: "0755" }
+      tags: [wire]
+
+    - name: Render the Traefik file-provider routes (only when a dynamic dir is set)
+      template: { src: "{{ playbook_dir }}/src/config/{{ app }}/skfetch-traefik.yml.j2", dest: "{{ skfetch.TRAEFIK_DYNAMIC_DIR | default('') }}/skfetch{{ skfetch_sfx }}.yml", owner: root, group: root, mode: "0644" }
+      when: (skfetch.TRAEFIK_DYNAMIC_DIR | default('') | string) | length > 0
+      tags: [traefik]
+
+    - name: Create local state directories on the media node (not recursive)
+      # *arr and qBittorrent SQLite must not live on NFS.
+      file: { path: "{{ item }}", state: directory, owner: "{{ skfetch_uid }}", group: "{{ skfetch_gid }}", mode: "0750" }
+      loop:
+        - "{{ skfetch_local_root }}"
+        - "{{ skfetch_local_root }}/gluetun"
+        - "{{ skfetch_local_root }}/qbittorrent"
+        - "{{ skfetch_local_root }}/qbittorrent/qBittorrent"
+        - "{{ skfetch_local_root }}/prowlarr"
+        - "{{ skfetch_local_root }}/sonarr"
+        - "{{ skfetch_local_root }}/radarr"
+        - "{{ skfetch_local_root }}/lidarr"
+      delegate_to: "{{ skfetch.MEDIA_NODE }}"
+      tags: [host]
+
+    - name: Seed qBittorrent.conf on the media node (only if absent)
+      template: { src: "{{ playbook_dir }}/src/config/{{ app }}/qBittorrent.conf.j2", dest: "{{ skfetch_local_root }}/qbittorrent/qBittorrent/qBittorrent.conf", owner: "{{ skfetch_uid }}", group: "{{ skfetch_gid }}", mode: "0640", force: "{{ skfetch.FORCE_SEED | default(false) | bool }}" }
+      delegate_to: "{{ skfetch.MEDIA_NODE }}"
+      tags: [host, seed]
+
+    - name: Seed each *arr config.xml on the media node (only if absent)
+      template: { src: "{{ playbook_dir }}/src/config/{{ app }}/arr-config.xml.j2", dest: "{{ skfetch_local_root }}/{{ arr.name }}/config.xml", owner: "{{ skfetch_uid }}", group: "{{ skfetch_gid }}", mode: "0600", force: "{{ skfetch.FORCE_SEED | default(false) | bool }}" }
+      loop:
+        - { name: prowlarr, port: 9696, octet: 10 }
+        - { name: sonarr, port: 8989, octet: 11 }
+        - { name: radarr, port: 7878, octet: 12 }
+        - { name: lidarr, port: 8686, octet: 13 }
+      loop_control: { loop_var: arr, label: "{{ arr.name }}" }
+      delegate_to: "{{ skfetch.MEDIA_NODE }}"
+      tags: [host, seed]
+
+    - name: Install the swarm-wait helper on the media node
+      copy: { src: "{{ playbook_dir }}/../skstream/src/skstream/sk-wait-swarm-net", dest: /usr/local/sbin/sk-wait-swarm-net, owner: root, group: root, mode: '0755' }
+      when: skfetch_stream | length > 0
+      delegate_to: "{{ skfetch.MEDIA_NODE }}"
+      tags: [host]
+
+    - name: Install skfetch.service on the media node
+      template: { src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.service.j2", dest: "/etc/systemd/system/skfetch{{ skfetch_sfx }}.service", owner: root, group: root, mode: '0644' }
+      register: skfetch_unit
+      delegate_to: "{{ skfetch.MEDIA_NODE }}"
+      tags: [host]
+
+    - name: Enable and start skfetch.service (restart when the unit, compose or env changed)
+      systemd:
+        name: "skfetch{{ skfetch_sfx }}.service"
+        enabled: true
+        daemon_reload: true
+        state: "{{ 'restarted' if (skfetch_unit.changed or skfetch_compose.changed or skfetch_envfile.changed) else 'started' }}"
+      delegate_to: "{{ skfetch.MEDIA_NODE }}"
+      tags: [host, deploy]
+
+    - name: Wire the *arr apps, Prowlarr, qBittorrent and Plex together (idempotent)
+      shell: "python3 /var/data/config/{{ app }}-{{ env }}/wire.py /var/data/config/{{ app }}-{{ env }}/wire.json"
+      register: skfetch_wire
+      changed_when: "'created' in skfetch_wire.stdout"
+      when: skfetch.WIRE_ENABLED | default(true) | bool
+      delegate_to: "{{ skfetch.MEDIA_NODE }}"
+      tags: [wire]
+    - name: Show wiring output
+      debug: var=skfetch_wire.stdout_lines
+      when: skfetch.WIRE_ENABLED | default(true) | bool
+      tags: [wire]

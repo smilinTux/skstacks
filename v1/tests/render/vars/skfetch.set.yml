@@ -1,0 +1,14 @@
+# Optional features on, for the second render-gate pass.
+skfetch:
+  # dedicated account token from the plex.tv/link PIN flow; never the server PlexOnlineToken
+  PLEX_TOKEN: example-plex-token-not-a-secret
+  PLEX_TOKEN_IS_SERVER_TOKEN: false
+  LAN_BIND_ADDRESS: 192.0.2.10
+  SERVER_REGIONS: Example Region
+  FLARESOLVERR_ENABLED: false
+  STREAM_NETWORK: ""
+  TRAEFIK_DYNAMIC_DIR: /var/data/config/skfenceha-dev/dynamic
+  TRAEFIK_MIDDLEWARES: ["authentik@file"]
+  BRIDGE_SUBNET: 10.99.7.0/24
+  QBT_DL_LIMIT_KIB: 0
+  EXTRA_ALLOWED_HOSTS: ["media.example.test"]
