@@ -305,3 +305,44 @@ def test_deploy_script_touches_kometa_only_when_enabled(flag, present):
 
 def test_deploy_script_uses_the_skstream_network_default():
     assert 'NETWORKS["skstream-prod"]="172.16.162.0/24"' in _deploy()
+
+
+# ---- follow-up: hybrid mode, PLEX_TOKEN guard -----------------------------------
+
+def test_cli_debrid_hybrid_mode_defaults_on():
+    c = json.loads(render(CLID_SEED))
+    assert c["Scraping"]["hybrid_mode"] is True
+
+
+@pytest.mark.parametrize("flag", [False, "false", "no"])
+def test_cli_debrid_hybrid_mode_can_be_turned_off(flag):
+    c = json.loads(render(CLID_SEED, CLI_DEBRID_HYBRID_MODE=flag))
+    assert c["Scraping"]["hybrid_mode"] is False
+
+
+def test_cli_debrid_seed_stays_valid_json_with_hybrid_on():
+    c = json.loads(render(CLID_SEED, CLI_DEBRID_HYBRID_MODE=True))
+    assert c["Scraping"]["uncached_content_handling"] == "None"
+
+
+@pytest.mark.parametrize("env", ["dev", "staging", "prod"])
+def test_play_refuses_a_plex_server_token(env):
+    text = json.dumps([t for t in tasks(env) if "assert" in t])
+    assert "PLEX_TOKEN_IS_SERVER_TOKEN" in text
+
+
+def test_readme_warns_plex_token_is_never_the_server_token():
+    readme = (APP / "README.md").read_text()
+    assert "never the server `PlexOnlineToken`" in readme
+    assert "plex.tv/link" in readme and "### Minting the PLEX_TOKEN" in readme
+    assert "the Plex server's own token" not in readme
+
+
+def test_example_vault_comment_says_dedicated_token():
+    ex = (ANSIBLE.parent / "tests/render/vars/skstream.example.yml").read_text()
+    assert "never the server PlexOnlineToken" in ex
+
+
+def test_readme_notes_dmca_blocked_cached_releases():
+    readme = (APP / "README.md").read_text()
+    assert "451" in readme and "infringing_file" in readme

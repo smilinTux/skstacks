@@ -10,3 +10,5 @@ skstream:
   placement_constraints: ["node.hostname == render"]
   router_middlewares: ["default-no-crowdsec@file"]
   tls_options: intermediate@file
+  CLI_DEBRID_HYBRID_MODE: false
+  PLEX_TOKEN_IS_SERVER_TOKEN: false

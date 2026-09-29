@@ -65,10 +65,13 @@
           - (skstream.RD_API_KEY | default('')) | length > 0
           - (skstream.PLEX_TOKEN | default('')) | length > 0
           - (skstream.MEDIA_NODE | default('')) | length > 0
+          - not (skstream.PLEX_TOKEN_IS_SERVER_TOKEN | default(false) | bool)
         fail_msg: >-
           skstream.RD_API_KEY, skstream.PLEX_TOKEN and skstream.MEDIA_NODE are
           required. MEDIA_NODE is the inventory host (and swarm node name) that
-          runs the DUMB FUSE mount and Plex.
+          runs the DUMB FUSE mount and Plex. PLEX_TOKEN must be a dedicated
+          account token (plex.tv/link PIN flow), never the server
+          PlexOnlineToken; PLEX_TOKEN_IS_SERVER_TOKEN true stops the play.
       tags: [config, secrets]
 
     - name: Create {{ app }} directories on the shared data mount (not recursive)

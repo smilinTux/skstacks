@@ -23,6 +23,7 @@
   "UI Settings": {"enable_user_system": true},
   "Scraping": {
     "uncached_content_handling": "None", "filter_trash_releases": true,
+    "hybrid_mode": {{ ((skstream.CLI_DEBRID_HYBRID_MODE | default(true) | string | lower) in ['true', 'yes', '1', 'on']) | to_json }},
     "versions": {"1080p": {
       "max_resolution": "1080p", "resolution_wanted": "<=", "enable_hdr": false, "hdr_weight": 1.0,
       "min_size_gb": 0.2, "max_size_gb": 1e9, "min_bitrate_mbps": 0.01, "max_bitrate_mbps": 1e9,
