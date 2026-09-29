@@ -60,3 +60,16 @@ def test_only_image_lines_differ_between_default_and_knob():
     assert len(a) == len(b)
     diff = [(x, y) for x, y in zip(a, b) if x != y]
     assert len(diff) == 3 and all("image:" in x for x, _ in diff)
+
+
+@pytest.mark.parametrize("env_name", ["dev", "staging", "prod"])
+def test_unset_renders_byte_identical_image_lines(env_name):
+    """The docstring's promise, checked on the text: the default render must
+    carry the exact line the hardcoded template had (`image: nextcloud:31.0.14`,
+    unquoted), not a quoted equivalent, so an instance's rendered compose file
+    and its live-parity comparison do not change on the upgrade."""
+    env = jinja2.Environment(undefined=jinja2.ChainableUndefined, trim_blocks=True, keep_trailing_newline=True)
+    text = env.from_string(COMPOSE.read_text()).render(app="skhub", env=env_name, skhub=dict(BASE),
+                                                       fence_service_name="skfenceha")
+    lines = [l for l in text.splitlines() if l.strip().startswith("image:") and "nextcloud:" in l]
+    assert lines == ["    image: " + DEFAULT] * 3, lines
