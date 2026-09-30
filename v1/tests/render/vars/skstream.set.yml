@@ -12,3 +12,4 @@ skstream:
   tls_options: intermediate@file
   CLI_DEBRID_HYBRID_MODE: false
   PLEX_TOKEN_IS_SERVER_TOKEN: false
+  PLEX_ENDPOINT_MODE: vip
