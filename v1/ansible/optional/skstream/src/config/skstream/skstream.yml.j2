@@ -64,6 +64,15 @@ services:
       - cloud-public-{{ env }}
     deploy:
       mode: replicated
+      # dnsrr (default): "plex" resolves straight to the task IP, no VIP.
+      # Host-level containers attached to this attachable overlay (skstream
+      # DUMB, skfetch) get their IPs from the local daemon, which can hand
+      # out an address already held as this service's VIP (seen after a
+      # full-cluster reboot). "plex" then resolved to an IP owned by another
+      # container and calls were black-holed; freeing the IP left stale
+      # IPVS routing. Plex publishes no ports and Traefik targets task IPs,
+      # so dnsrr costs nothing here. PLEX_ENDPOINT_MODE: vip | dnsrr.
+      endpoint_mode: {{ skstream.PLEX_ENDPOINT_MODE | default('dnsrr') }}
       replicas: 1
       restart_policy:
         condition: any

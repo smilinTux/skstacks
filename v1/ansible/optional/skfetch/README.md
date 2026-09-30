@@ -31,6 +31,19 @@ service on Docker 27 cannot get. The unit is hardened like
 skstream overlay (`sk-wait-swarm-net`), is `WantedBy=docker.service`, and
 has `StartLimitIntervalSec=0`.
 
+### Services reached from host-level containers: use dnsrr
+
+Host-level containers on a shared attachable swarm overlay (skstream DUMB,
+skfetch's *arr apps) get their IPs from the local docker daemon, which does
+not know which addresses swarm holds as service VIPs. After a full-cluster
+reboot one of them was handed the Plex service VIP: "plex" resolved to an
+address owned by another container, calls were black-holed for hours, and
+restarting the container left stale IPVS routing behind. Any swarm service
+that host-level containers reach by name should therefore run with
+`deploy.endpoint_mode: dnsrr` (the name resolves to task IPs, no VIP). It
+needs no published ports; Traefik already targets task IPs. skstream does
+this for Plex by default (`skstream.PLEX_ENDPOINT_MODE`).
+
 ### Storage
 
 - `MEDIA_PATH` (default `/var/data/skfetch-<env>`) is mounted at `/data`:

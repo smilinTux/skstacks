@@ -32,6 +32,19 @@ swarm before joining the overlay, `WantedBy=docker.service` brings it back
 after a docker restart, `StartLimitIntervalSec=0` never gives up, and a stale
 FUSE mount is cleaned on stop and start.
 
+### Services reached from host-level containers: use dnsrr
+
+Host-level containers on a shared attachable swarm overlay (skstream DUMB,
+skfetch's *arr apps) get their IPs from the local docker daemon, which does
+not know which addresses swarm holds as service VIPs. After a full-cluster
+reboot one of them was handed the Plex service VIP: "plex" resolved to an
+address owned by another container, calls were black-holed for hours, and
+restarting the container left stale IPVS routing behind. Any swarm service
+that host-level containers reach by name should therefore run with
+`deploy.endpoint_mode: dnsrr` (the name resolves to task IPs, no VIP). It
+needs no published ports; Traefik already targets task IPs. skstream does
+this for Plex by default (`PLEX_ENDPOINT_MODE`).
+
 ### State and NFS
 
 SQLite must not live on NFS (Plex logs "Waited over 10 seconds for a busy
@@ -85,6 +98,7 @@ Namespace `skstream`. Required: `RD_API_KEY`, `PLEX_TOKEN`, `MEDIA_NODE`.
 | `PLEX_RESOURCES_LIMITS_CPUS`, `PLEX_RESOURCES_LIMITS_MEMORY` | `2.00`, `3G` | |
 | `KOMETA_RESOURCES_LIMITS_CPUS`, `KOMETA_RESOURCES_LIMITS_MEMORY` | `1.00`, `768M` | |
 | `DUMB_MEMORY_LIMIT` | `2g` | |
+| `PLEX_ENDPOINT_MODE` | `dnsrr` | `vip` or `dnsrr`; keep dnsrr while host-level containers share the overlay (see above) |
 | `PLEX_EXTRA_BINDS` | `[]` | list of `{source, target}` read-only binds into Plex, e.g. `{source: /var/data/skfetch-prod/media, target: /skfetch/media}` so libraries can include skfetch folders |
 | `placement_constraints` | `["node.labels.skstream-media == true"]` | list; `[]` for none |
 | `router_middlewares_pre`, `router_middlewares`, `tls_options` | none | Traefik router hooks |

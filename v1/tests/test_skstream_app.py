@@ -346,3 +346,37 @@ def test_example_vault_comment_says_dedicated_token():
 def test_readme_notes_dmca_blocked_cached_releases():
     readme = (APP / "README.md").read_text()
     assert "451" in readme and "infringing_file" in readme
+
+
+# ---- plex endpoint mode (VIP collision with host-level overlay containers) ------
+
+def _asserts_ok(env, **over):
+    """Evaluate the play's required-vars assert conditions the way Ansible would."""
+    conds = [t for t in tasks(env) if "assert" in t][0]["assert"]["that"]
+    e = _env()
+    return all(e.compile_expression(c)(**_vars(env, **over)) for c in conds)
+
+
+def test_plex_endpoint_mode_defaults_to_dnsrr():
+    assert services()["plex"]["deploy"]["endpoint_mode"] == "dnsrr"
+
+
+def test_plex_endpoint_mode_vip_override():
+    assert services(PLEX_ENDPOINT_MODE="vip")["plex"]["deploy"]["endpoint_mode"] == "vip"
+
+
+def test_plex_publishes_no_ports_so_dnsrr_is_valid():
+    assert "ports" not in services()["plex"]
+
+
+@pytest.mark.parametrize("env", ["dev", "staging", "prod"])
+@pytest.mark.parametrize("mode,ok", [(None, True), ("dnsrr", True), ("vip", True), ("VIP", False), ("dns", False)])
+def test_play_validates_plex_endpoint_mode(env, mode, ok):
+    over = {} if mode is None else {"PLEX_ENDPOINT_MODE": mode}
+    assert _asserts_ok(env, **over) is ok
+
+
+def test_readme_explains_dnsrr_for_services_reached_from_host_containers():
+    for app in ("skstream", "skfetch"):
+        readme = (ANSIBLE / f"optional/{app}/README.md").read_text()
+        assert "dnsrr" in readme and "host-level" in readme, app
