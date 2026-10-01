@@ -80,7 +80,7 @@
           - (sksso.SERVER_BACKEND_SCHEME | default('http')) in ['http', 'https']
         fail_msg: >-
           sksso.SERVER_BACKEND_SCHEME must be http (Authentik port 9000, the
-          default) or https (port 9443), got {{ sksso.SERVER_BACKEND_SCHEME }}.
+          default) or https (port 9443), got {{ sksso.SERVER_BACKEND_SCHEME | default('http') }}.
 
     - name: Define network variables from vault (idempotent network creation)
       # IMPORTANT: network subnets must match your instance's network
