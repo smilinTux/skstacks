@@ -238,6 +238,13 @@ curl -sf https://sso[-<env>].<your-domain>/-/health/live/
 or, from the swarm manager: `docker service logs <stack>_server` /
 `docker service ps <stack>_server` where `<stack>` is `sksso-<env>`.
 
+## Server router middlewares and backend scheme
+
+- `sksso.router_middlewares` (list, default `[]`): Traefik middlewares on the server router, for example a file-provider chain with security headers and error pages (`["default@file"]`). Empty renders no `middlewares` label, as before.
+- `sksso.SERVER_BACKEND_SCHEME` (`http` default, or `https`): how Traefik reaches the Authentik server, `http` on 9000 or `https` on 9443 (Authentik's own certificate). Anything else stops the play.
+
+An instance moving an existing Authentik onto the framework sets both to what its running router uses, so the first deploy does not drop headers from the login page.
+
 ## Extra CSRF origins
 
 `sksso.csrf_extra_origins` (list, default `[]`): extra `https://` origins appended to `AUTHENTIK_CSRF__TRUSTED_ORIGINS`, for another host that POSTs to Authentik (for example a mesh console).

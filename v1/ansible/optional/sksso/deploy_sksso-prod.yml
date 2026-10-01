@@ -74,6 +74,14 @@
           ({{ sksso_postgres_data_path }}, {{ sksso_redis_data_path }}) but
           sksso.DATA_NODE is empty. Set DATA_NODE to the node holding the data.
 
+    - name: Fail closed on an unknown sksso.SERVER_BACKEND_SCHEME
+      assert:
+        that:
+          - (sksso.SERVER_BACKEND_SCHEME | default('http')) in ['http', 'https']
+        fail_msg: >-
+          sksso.SERVER_BACKEND_SCHEME must be http (Authentik port 9000, the
+          default) or https (port 9443), got {{ sksso.SERVER_BACKEND_SCHEME }}.
+
     - name: Define network variables from vault (idempotent network creation)
       # IMPORTANT: network subnets must match your instance's network
       # registry. Networks are created idempotently by create_networks.yml
