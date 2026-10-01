@@ -62,6 +62,11 @@ sksso:
                                            # cluster has no worker nodes
   placement_exclude_nodes: []      # optional list of node hostnames to exclude
 
+  # postgres + redis data (see "Local database on a pinned node")
+  DATA_NODE: ""                    # node hostname; pins postgres + redis there
+  POSTGRES_DATA_PATH: /var/data/runtime/sksso-<env>/postgres   # default
+  REDIS_DATA_PATH: /var/data/runtime/sksso-<env>/redis         # default
+
   # replicas (all default to 1)
   server_replicas: 1
   worker_replicas: 1
@@ -164,6 +169,56 @@ Authentik keeps one CapAuth link per user: changing a user's fingerprint in `CAP
 Login: the application sends the user to the CapAuth flow. Either the user types username and password as usual (then MFA if they have it), or clicks "CapAuth", signs the challenge on CapAuth's page (copy the challenge, `capauth sign-challenge`, paste the signature), and returns to Authentik logged in as the linked user.
 
 Rollback: unbind the flow in every application that uses it first (skmesh: remove `AUTHENTIK_AUTHENTICATION_FLOW` and redeploy it), then set `CAPAUTH_ENABLED: false` and redeploy sksso: the deploy removes the `capauth` service (a stack deploy alone would leave it running). The Authentik objects (source, stages, flow, links) stay until deleted in the admin UI; the source is useless without the service, and nothing is bound to the flow.
+
+## Local database on a pinned node
+
+By default postgres and redis keep their data under `/var/data/runtime`
+(shared storage, NFS on a typical instance) and float across workers. An
+NFS hang on the node running them then takes Authentik down, and with it
+every forward-auth login. To keep them on local disk on one node:
+
+```yaml
+sksso:
+  DATA_NODE: <node hostname>               # also an inventory host
+  POSTGRES_DATA_PATH: /var/lib/sksso/postgres
+  REDIS_DATA_PATH: /var/lib/sksso/redis
+```
+
+- `DATA_NODE` adds `node.hostname == <DATA_NODE>` to postgres and redis
+  only (the worker constraint stays unless `placement_use_worker_constraint`
+  is false). The backup sidecar, server and worker keep floating.
+- A path outside `/var/data` is local: the deploy creates it on `DATA_NODE`
+  (owner 999, mode 0700, never recursive) and no longer creates the old
+  `/var/data/runtime` path. The play fails if a path is local but
+  `DATA_NODE` is empty: local data on a floating service is an empty
+  database after the next reschedule.
+- Local data is not on shared storage: back it up with the node, and keep
+  the nightly dump (`database-dump/`) on shared storage as it is.
+
+### Migrating an existing instance
+
+1. Take a fresh dump: `docker exec <postgres task> pg_dump -U <user> <db> > database-dump/pre-move.sql`.
+2. Scale `server` and `worker` to 0, then `postgres` and `redis` to 0, and
+   wait until no task is running.
+3. On `DATA_NODE`, copy each data dir: `rsync -aHAX --numeric-ids
+   /var/data/runtime/sksso-<env>/postgres/ /var/lib/sksso/postgres/` (same
+   for redis).
+4. Verify: file counts and total sizes match on both sides
+   (`find <dir> | wc -l`, `du -s --apparent-size`).
+5. Rename the old dirs (for example `postgres.moved-<date>`) so nothing can
+   start on them by accident, and put a guard file there: a plain file at
+   the old path (`touch /var/data/runtime/sksso-<env>/postgres`) makes a
+   deploy from an old template fail loudly instead of starting an empty
+   database.
+6. Set the three vault keys and deploy. Check postgres logs show no
+   `initdb` and Authentik logins work, then remove the renamed dirs later.
+
+**WARNING:** do not switch a mount by hand with one
+`docker service update --mount-rm <target> --mount-add type=bind,src=...,target=<target>`.
+`--mount-rm` is applied last, so it removes BOTH the old and the new mount
+for that target, and postgres starts `initdb` on an empty anonymous volume.
+Do the `--mount-rm` and `--mount-add` in separate updates, or (better)
+redeploy the stack from the template.
 
 ## Deployment
 

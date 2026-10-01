@@ -39,6 +39,24 @@ def test_every_mounted_var_data_dir_is_created():
     pb = (SKSSO / "deploy_sksso-dev.yml").read_text()
     for m in re.finditer(r"^\s+- (/var/data/.+?)\s*$", pb, re.M):
         created.add(m.group(1).replace("{{ app }}", "sksso").replace("{{ env }}", "dev"))
+    # file-task loops over play vars (the postgres/redis data paths), with
+    # their per-item `when`, resolved the way Ansible would
+    jenv = jinja2.Environment(undefined=jinja2.ChainableUndefined)
+    ctx = {"app": "sksso", "env": "dev", "sksso": {"CLUSTERNAME": "cluster1", "DOMAIN": "example.com"}}
+    for play in yaml.safe_load(pb):
+        if not isinstance(play, dict):
+            continue
+        for k, v in (play.get("vars") or {}).items():
+            ctx[k] = jenv.from_string(str(v)).render(**ctx)
+        for task in play.get("tasks") or []:
+            if "file" not in task or not isinstance(task.get("loop"), list) or task.get("delegate_to"):
+                continue
+            for item in task["loop"]:
+                path = jenv.from_string(str(item)).render(**ctx)
+                when = task.get("when")
+                if when is not None and not jenv.compile_expression(str(when))(item=path, **ctx):
+                    continue
+                created.add(path)
     for name, svc in render(user_settings_py="x = 1\n").items():
         for v in svc.get("volumes", []):
             src = str(v).split(":")[0]
