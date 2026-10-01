@@ -87,6 +87,30 @@
           TALK_TURN_RELAY_IPV4 must be an IPv4 address and needs host mode plus a relay range.
         quiet: true
 
+    - name: Fail closed on a local code tree without a pinned app node
+      # README "Local code tree on a pinned node". A WEBROOT_LOCAL_PATH is
+      # local disk on ONE node: without APP_NODE swarm may start nextcloud,
+      # cron or notify_push on another node, on an empty directory, and the
+      # entrypoint would treat that as a fresh install. The path must be
+      # absolute, outside /var/data (that is the shared copy it replaces), with
+      # no trailing slash or whitespace.
+      vars:
+        _wr_path: "{{ skhub.WEBROOT_LOCAL_PATH | default('', true) | string }}"
+        _wr_node: "{{ skhub.APP_NODE | default('', true) | string }}"
+      assert:
+        that:
+          - >-
+            _wr_path | length == 0 or (
+            _wr_node | length > 0
+            and _wr_path is match('^/[^\\s:]*[^/\\s:]$')
+            and _wr_path != '/var/data'
+            and not _wr_path.startswith('/var/data/'))
+        fail_msg: >-
+          skhub.WEBROOT_LOCAL_PATH ({{ skhub.WEBROOT_LOCAL_PATH | default('', true) }}) needs skhub.APP_NODE
+          (the node holding the local copy) and must be an absolute path outside /var/data
+          with no trailing slash.
+        quiet: true
+
     - name: Define network variables
       # Networks are created idempotently by the create_networks.yml shared
       # task below. Reference: See shared/networks for all registered
@@ -143,6 +167,97 @@
         - { path: "/var/data/{{ app }}-{{ env }}/database-dump", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/runtime/{{ app }}-{{ env }}/db", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/runtime/{{ app }}-{{ env }}/clamav", owner: "root", group: "root", mode: "0755" }
+
+    - name: Create the {{ app }} local code tree dirs on the app node (not recursive)
+      # README "Local code tree on a pinned node". The /var/data html and
+      # custom_apps above stay: they are the failover copy and rollback path.
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.owner }}"
+        mode: '0755'
+      loop:
+        - { path: "{{ skhub.WEBROOT_LOCAL_PATH | default('', true) }}", owner: root }
+        - { path: "{{ skhub.WEBROOT_LOCAL_PATH | default('', true) }}/html", owner: www-data }
+        - { path: "{{ skhub.WEBROOT_LOCAL_PATH | default('', true) }}/custom_apps", owner: www-data }
+      when: skhub.WEBROOT_LOCAL_PATH | default('', true) | string | length > 0
+      # Ansible templates delegate_to before it evaluates when, so it must
+      # render with APP_NODE unset too (the guard in pre_tasks requires
+      # APP_NODE whenever this task actually runs).
+      delegate_to: "{{ skhub.APP_NODE | default(inventory_hostname, true) }}"
+
+    - name: Check the local code tree on the app node is seeded
+      stat:
+        path: "{{ skhub.WEBROOT_LOCAL_PATH | default('', true) }}/html/version.php"
+      register: skhub_webroot_local_version
+      when: skhub.WEBROOT_LOCAL_PATH | default('', true) | string | length > 0
+      delegate_to: "{{ skhub.APP_NODE | default(inventory_hostname, true) }}"
+
+    - name: Check whether the shared code tree holds an installed Nextcloud
+      stat:
+        path: /var/data/{{ app }}-{{ env }}/html/version.php
+      register: skhub_webroot_nfs_version
+      when: skhub.WEBROOT_LOCAL_PATH | default('', true) | string | length > 0
+
+    - name: Refuse to start an existing instance on an unseeded local code tree
+      # An empty local html on an instance that is already installed makes the
+      # entrypoint copy a bare tree and try a fresh install against the live
+      # config. Seed it first (README migration steps). A brand new instance
+      # (nothing on /var/data either) is fine: the entrypoint fills it.
+      assert:
+        that:
+          - >-
+            (skhub_webroot_local_version.stat.exists | default(false))
+            or not (skhub_webroot_nfs_version.stat.exists | default(false))
+        fail_msg: >-
+          skhub.WEBROOT_LOCAL_PATH {{ skhub.WEBROOT_LOCAL_PATH | default('', true) }}/html has no version.php
+          on {{ skhub.APP_NODE | default('', true) }}, but /var/data/{{ app }}-{{ env }}/html holds an installed
+          Nextcloud. Seed the local copy first (README "Local code tree on a pinned node").
+        quiet: true
+      when: skhub.WEBROOT_LOCAL_PATH | default('', true) | string | length > 0
+
+    - name: Install the {{ app }} webroot sync script on the app node
+      template:
+        src: "{{ playbook_dir }}/templates/skhub-webroot-sync.sh.j2"
+        dest: "/usr/local/sbin/{{ app }}-{{ env }}-webroot-sync.sh"
+        owner: root
+        group: root
+        mode: '0755'
+      when: >-
+        skhub.WEBROOT_LOCAL_PATH | default('', true) | string | length > 0
+        and (skhub.WEBROOT_NFS_SYNC | default(true) | bool)
+      delegate_to: "{{ skhub.APP_NODE | default(inventory_hostname, true) }}"
+      tags:
+        - templates
+
+    - name: Install the {{ app }} webroot sync units on the app node
+      template:
+        src: "{{ playbook_dir }}/templates/skhub-webroot-sync.{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ app }}-{{ env }}-webroot-sync.{{ item }}"
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - service
+        - timer
+      when: >-
+        skhub.WEBROOT_LOCAL_PATH | default('', true) | string | length > 0
+        and (skhub.WEBROOT_NFS_SYNC | default(true) | bool)
+      delegate_to: "{{ skhub.APP_NODE | default(inventory_hostname, true) }}"
+      tags:
+        - templates
+
+    - name: Enable the {{ app }} webroot sync timer on the app node
+      systemd:
+        name: "{{ app }}-{{ env }}-webroot-sync.timer"
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: >-
+        skhub.WEBROOT_LOCAL_PATH | default('', true) | string | length > 0
+        and (skhub.WEBROOT_NFS_SYNC | default(true) | bool)
+      delegate_to: "{{ skhub.APP_NODE | default(inventory_hostname, true) }}"
 
     - name: Create Redis data directory with correct ownership (Redis runs as root in container)
       file:
