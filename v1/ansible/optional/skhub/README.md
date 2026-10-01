@@ -46,6 +46,77 @@ skhub:
 | `NEXTCLOUD_IMAGE` | `nextcloud:31.0.14` | Image for `nextcloud`, `cron` and `notify_push` (they share `/var/www/html`, so always the same image). Pin a digest (`nextcloud:<ver>@sha256:...`). Nextcloud upgrades are one-way and one major at a time: once an instance runs a newer Nextcloud, keep this set, because deploying an older image makes the entrypoint refuse to start (downgrade) and the service crash-loops. |
 | `TALK_HPB_IMAGE` | `ghcr.io/nextcloud-releases/aio-talk:20260122_105751` | Image for `talk-hpb` (with `enable_talk_hpb`). Pin a digest (`ghcr.io/nextcloud-releases/aio-talk:<tag>@sha256:...`). Set it to keep a newer aio-talk (newer signaling server) an instance already runs: unset, the next deploy puts talk-hpb back on the default. The TURN relay command still runs the image's own `supervisord -c /supervisord.conf`, so a replacement image must keep that path. |
 
+## Local code tree on a pinned node
+
+By default the Nextcloud code tree, `/var/www/html` (about 30k files) and
+`custom_apps` (about 60k files, several GB with Recognize's models), is bind
+mounted from `/var/data/skhub-<env>/`, which is NFS on a typical instance.
+Every request and every `occ` command stats thousands of those small files: on
+one production instance `occ integrity:check-core` took 340 s and the admin
+Overview setup checks timed out. Worse, **a Nextcloud image bump makes the
+entrypoint rsync the whole code tree onto that mount** (`rsync --delete` of
+about 700 MB of small files), which over NFS took 35 to 75 minutes per hop
+while the service sat unhealthy. A `docker service update` of anything on the
+service during that time recreates the task and restarts the copy. Keep the
+code tree on local disk before the next upgrade.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `WEBROOT_LOCAL_PATH` | empty | A local directory on `APP_NODE` holding `html/` and `custom_apps/`. `nextcloud` and `cron` mount `<path>/html` and `<path>/custom_apps`, `notify_push` mounts `<path>/custom_apps` read-only. `config`, `data` and `themes` stay on `/var/data`. Empty renders exactly as before. Must be absolute, outside `/var/data`, no trailing slash. |
+| `APP_NODE` | empty | Node hostname: adds `node.hostname == <APP_NODE>` to `nextcloud`, `cron` and `notify_push` only (after `placement_constraints`). Required with `WEBROOT_LOCAL_PATH`: the play stops without it, because a local tree on a floating service is an empty directory after the next reschedule, which the entrypoint treats as a fresh install. |
+| `WEBROOT_NFS_SYNC` | `true` | With a local path: a systemd timer on `APP_NODE` (`skhub-<env>-webroot-sync.timer`) copies the local tree back to `/var/data/skhub-<env>/{html,custom_apps}` (`rsync --delete`, `ionice -c3`, bandwidth limited), so the shared copy stays a usable failover source and rollback path. It refuses to run when the local tree has no `html/version.php` or an empty `custom_apps`, or when the shared directories are missing (storage not mounted). `false` installs nothing (an existing timer is left alone: `systemctl disable --now` it by hand). |
+| `WEBROOT_NFS_SYNC_ON_CALENDAR` | `*-*-* 03:17:00 UTC` | systemd `OnCalendar` for the sync (with up to 10 minutes of random delay, `Persistent=true`). |
+| `WEBROOT_NFS_SYNC_BWLIMIT` | `20000` | rsync `--bwlimit` in KiB/s. After an image bump the first sync writes the whole new code tree to NFS. |
+
+The deploy creates `<path>`, `<path>/html` and `<path>/custom_apps` on
+`APP_NODE` (not recursive), and stops if `<path>/html/version.php` is missing
+there while `/var/data/skhub-<env>/html` holds an installed Nextcloud (an
+unseeded local tree). A new instance with nothing on `/var/data` deploys
+straight onto local disk.
+
+Trade-off: the three services can no longer move to another node on their
+own. If `APP_NODE` dies, point `APP_NODE` at another node, seed that node from
+the shared copy (step 3 below) and redeploy, or follow the rollback.
+
+### Migrating a running instance
+
+Plan a short maintenance window (minutes; the copy is done beforehand). Take
+your usual pre-change backup (a database dump and a storage snapshot) first.
+
+1. Pick `APP_NODE` (normally the node already running `nextcloud`) and check
+   its local free space against `du -sh /var/data/skhub-<env>/{html,custom_apps}`.
+2. Pre-seed while the site is up (heavy reads on shared storage: throttle it):
+   ```
+   install -d -m 0755 <path> && install -d -o www-data -g www-data -m 0755 <path>/html <path>/custom_apps
+   ionice -c3 rsync -aHAX --numeric-ids --delete --bwlimit=40000 \
+     --exclude='/data/**' --exclude='/config/**' --exclude='/custom_apps/**' --exclude='/themes/**' \
+     /var/data/skhub-<env>/html/ <path>/html/
+   ionice -c3 rsync -aHAX --numeric-ids --delete --bwlimit=40000 \
+     /var/data/skhub-<env>/custom_apps/ <path>/custom_apps/
+   ```
+3. `occ maintenance:mode --on`, then scale `skhub-<env>_nextcloud`, `_cron`
+   and `_notify_push` to 0 so nothing writes the tree, and run the same two
+   rsyncs again (only the delta). Compare file counts and byte totals of both
+   sides before going on.
+4. Set `WEBROOT_LOCAL_PATH` and `APP_NODE` in the vault and deploy skhub, or,
+   to change only the live services, update each one with its replicas still
+   at 0. **Never `--mount-rm X` and `--mount-add ...target=X` in one
+   `docker service update`**: docker drops both and the task starts on the
+   image's anonymous `/var/www/html` volume. Remove in one update, add (plus
+   `--constraint-add node.hostname==<APP_NODE>`) in a second.
+5. Scale `nextcloud` to 1 and wait until it is healthy (`occ status`
+   reports the same version: no upgrade copy runs, the tree is already in
+   place), then `cron` and `notify_push`, then `occ maintenance:mode --off`.
+6. Verify `status.php`, a login, WebDAV, a cron run and
+   `occ notify_push:self-test`, and run the sync once by hand:
+   `systemctl start skhub-<env>-webroot-sync.service`.
+
+Rollback: `occ maintenance:mode --on`, scale the three services to 0, make
+sure the shared copy is current (run the sync service if the local disk is
+still readable), swap the mounts back to `/var/data/skhub-<env>/{html,custom_apps}`
+and drop the hostname constraint (again in separate updates, or clear the two
+keys and redeploy), scale back up and turn maintenance off.
+
 ## Talk HPB TURN
 
 With `skhub.enable_talk_hpb: true`, the `talk-hpb` service (aio-talk) runs

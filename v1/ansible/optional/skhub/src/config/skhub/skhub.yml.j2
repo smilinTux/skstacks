@@ -3,6 +3,11 @@
 {%- else -%}
   {%- set _base_domain = skhub.CLUSTERNAME ~ '.' ~ skhub.DOMAIN -%}
 {%- endif -%}
+{#- Nextcloud code tree (html + custom_apps) on local disk on APP_NODE: see
+    README "Local code tree on a pinned node". Empty = /var/data, unchanged. -#}
+{%- set _webroot_local = skhub.WEBROOT_LOCAL_PATH | default('', true) | string -%}
+{%- set _app_node = skhub.APP_NODE | default('', true) | string -%}
+{%- set _app_constraints = (skhub.placement_constraints | default([])) + ((['node.hostname == ' ~ _app_node]) if _app_node else []) -%}
 version: "3.7"
 
 services:
@@ -20,7 +25,7 @@ services:
       - redis
     deploy:
       placement:
-        constraints: {{ (skhub.placement_constraints | default([])) | tojson }}
+        constraints: {{ _app_constraints | tojson }}
       replicas: 1
       restart_policy:
         condition: any
@@ -74,8 +79,13 @@ services:
       retries: 3
       start_period: 300s
     volumes:
+{% if _webroot_local %}
+      - {{ _webroot_local }}/html:/var/www/html
+      - {{ _webroot_local }}/custom_apps:/var/www/html/custom_apps
+{% else %}
       - /var/data/skhub-{{ env }}/html:/var/www/html
       - /var/data/skhub-{{ env }}/custom_apps:/var/www/html/custom_apps
+{% endif %}
       - /var/data/skhub-{{ env }}/config:/var/www/html/config
       - /var/data/skhub-{{ env }}/data:/var/www/html/data
       - /var/data/skhub-{{ env }}/themes:/var/www/html/themes
@@ -238,7 +248,7 @@ services:
       start_period: 30s
     deploy:
       placement:
-        constraints: {{ (skhub.placement_constraints | default([])) | tojson }}
+        constraints: {{ _app_constraints | tojson }}
       replicas: 1
       restart_policy:
         condition: any
@@ -252,8 +262,13 @@ services:
     networks:
       - skhub-{{ env }}
     volumes:
+{% if _webroot_local %}
+      - {{ _webroot_local }}/html:/var/www/html
+      - {{ _webroot_local }}/custom_apps:/var/www/html/custom_apps
+{% else %}
       - /var/data/skhub-{{ env }}/html:/var/www/html
       - /var/data/skhub-{{ env }}/custom_apps:/var/www/html/custom_apps
+{% endif %}
       - /var/data/skhub-{{ env }}/config:/var/www/html/config
       - /var/data/skhub-{{ env }}/data:/var/www/html/data
       - /var/data/skhub-{{ env }}/themes:/var/www/html/themes
@@ -280,11 +295,15 @@ services:
       - nextcloud
       - redis
     volumes:
+{% if _webroot_local %}
+      - {{ _webroot_local }}/custom_apps:/var/www/html/custom_apps:ro
+{% else %}
       - /var/data/skhub-{{ env }}/custom_apps:/var/www/html/custom_apps:ro
+{% endif %}
       - /var/data/skhub-{{ env }}/config:/var/www/html/config:ro
     deploy:
       placement:
-        constraints: {{ (skhub.placement_constraints | default([])) | tojson }}
+        constraints: {{ _app_constraints | tojson }}
       replicas: 1
       restart_policy:
         condition: any
