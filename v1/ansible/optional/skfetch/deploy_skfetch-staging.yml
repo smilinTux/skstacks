@@ -70,6 +70,21 @@
           stops the play.
       tags: [config, secrets]
 
+    - name: Fail closed if slskd is enabled without its secrets
+      assert:
+        that:
+          - (skfetch.SLSKD_SOULSEEK_USERNAME | default('') | string) | length > 0
+          - (skfetch.SLSKD_SOULSEEK_PASSWORD | default('') | string) | length > 0
+          - (skfetch.SLSKD_WEB_USERNAME | default('') | string) | length > 0
+          - (skfetch.SLSKD_WEB_PASSWORD | default('') | string) | length > 0
+          - (skfetch.SLSKD_API_KEY | default('') | string) | length > 0
+        fail_msg: >-
+          skfetch.SLSKD_ENABLED needs SLSKD_SOULSEEK_USERNAME/PASSWORD (a
+          Soulseek account, created on first login), SLSKD_WEB_USERNAME/PASSWORD
+          and SLSKD_API_KEY (openssl rand -hex 32, shared with Soularr).
+      when: (skfetch.SLSKD_ENABLED | default(false) | bool)
+      tags: [config, secrets]
+
     - name: Create {{ app }} shared directories (not recursive)
       file: { path: "{{ item.path }}", state: directory, owner: "{{ item.owner }}", group: "{{ item.owner }}", mode: "0755" }
       loop:
@@ -81,6 +96,11 @@
         - { path: "{{ skfetch_media }}/media/movies", owner: "{{ skfetch_uid }}" }
         - { path: "{{ skfetch_media }}/media/music", owner: "{{ skfetch_uid }}" }
         - { path: "/var/data/config/{{ app }}-{{ env }}", owner: "0" }
+      tags: [config]
+
+    - name: Create the slskd download directory on the dataset (when slskd is on)
+      file: { path: "{{ skfetch_media }}/slskd-downloads", state: directory, owner: "{{ skfetch_uid }}", group: "{{ skfetch_uid }}", mode: "0755" }
+      when: (skfetch.SLSKD_ENABLED | default(false) | bool)
       tags: [config]
 
     - name: Render the VPN credentials env file
@@ -134,6 +154,27 @@
         - { name: radarr, port: 7878, octet: 12 }
         - { name: lidarr, port: 8686, octet: 13 }
       loop_control: { loop_var: arr, label: "{{ arr.name }}" }
+      delegate_to: "{{ skfetch.MEDIA_NODE }}"
+      tags: [host, seed]
+
+    - name: Create slskd and Soularr state directories on the media node (when slskd is on)
+      file: { path: "{{ item }}", state: directory, owner: "{{ skfetch_uid }}", group: "{{ skfetch_gid }}", mode: "0755" }
+      loop:
+        - "{{ skfetch_local_root }}/slskd"
+        - "{{ skfetch_local_root }}/soularr"
+      when: (skfetch.SLSKD_ENABLED | default(false) | bool)
+      delegate_to: "{{ skfetch.MEDIA_NODE }}"
+      tags: [host]
+
+    - name: Seed slskd.yml on the media node (only if absent, when slskd is on)
+      template: { src: "{{ playbook_dir }}/src/config/{{ app }}/slskd.yml.j2", dest: "{{ skfetch_local_root }}/slskd/slskd.yml", owner: "{{ skfetch_uid }}", group: "{{ skfetch_gid }}", mode: "0600", force: "{{ skfetch.FORCE_SEED | default(false) | bool }}" }
+      when: (skfetch.SLSKD_ENABLED | default(false) | bool)
+      delegate_to: "{{ skfetch.MEDIA_NODE }}"
+      tags: [host, seed]
+
+    - name: Seed Soularr config.ini on the media node (only if absent, when slskd is on)
+      template: { src: "{{ playbook_dir }}/src/config/{{ app }}/soularr-config.ini.j2", dest: "{{ skfetch_local_root }}/soularr/config.ini", owner: "{{ skfetch_uid }}", group: "{{ skfetch_gid }}", mode: "0600", force: "{{ skfetch.FORCE_SEED | default(false) | bool }}" }
+      when: (skfetch.SLSKD_ENABLED | default(false) | bool)
       delegate_to: "{{ skfetch.MEDIA_NODE }}"
       tags: [host, seed]
 
