@@ -12,7 +12,7 @@ web:
     api_keys:
       soularr:
         key: {{ skfetch.SLSKD_API_KEY | string | to_json }}
-        cidr: {{ skfetch.SLSKD_API_KEY_CIDR | default('0.0.0.0/0,::/0') | to_json }}
+        cidr: {{ skfetch.SLSKD_API_CIDR | default('0.0.0.0/0,::/0') | to_json }}
 directories:
   downloads: /app/downloads
   incomplete: /app/incomplete

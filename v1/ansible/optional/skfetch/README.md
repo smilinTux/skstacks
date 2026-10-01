@@ -143,7 +143,7 @@ Namespace `skfetch`. Required: `MEDIA_NODE`, `OPENVPN_USER`,
 | `SLSKD_SOULSEEK_USERNAME`, `SLSKD_SOULSEEK_PASSWORD` | required when on | Soulseek network account (created on first login; pick random values) |
 | `SLSKD_WEB_USERNAME`, `SLSKD_WEB_PASSWORD` | required when on | slskd web UI login (the UI is never published) |
 | `SLSKD_API_KEY` | required when on | slskd API key Soularr uses (`openssl rand -hex 32`) |
-| `SLSKD_LISTEN_PORT`, `SLSKD_API_KEY_CIDR` | `50300`, `0.0.0.0/0,::/0` | slskd seed values |
+| `SLSKD_LISTEN_PORT`, `SLSKD_API_CIDR` | `50300`, `0.0.0.0/0,::/0` | slskd seed values |
 | `SLSKD_IMAGE`, `SOULARR_IMAGE` | digest-pinned | |
 | `SLSKD_MEM_LIMIT`, `SOULARR_MEM_LIMIT` | `512m`, `256m` | |
 | `SOULARR_INTERVAL`, `SOULARR_STALLED_TIMEOUT` | `300`, `3600` | seconds between Soularr runs; seconds before a stalled slskd download is given up |
