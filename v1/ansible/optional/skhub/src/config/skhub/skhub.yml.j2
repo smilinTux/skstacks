@@ -415,7 +415,7 @@ services:
 {% set _talk_relay_max = skhub.TALK_TURN_RELAY_MAX_PORT | default('') %}
 {% set _talk_relay_ipv4 = skhub.TALK_TURN_RELAY_IPV4 | default('') %}
   talk-hpb:
-    image: ghcr.io/nextcloud-releases/aio-talk:20260122_105751
+    image: {{ skhub.TALK_HPB_IMAGE | default('ghcr.io/nextcloud-releases/aio-talk:20260122_105751') }}
     env_file: /var/data/config/skhub-{{ env }}/talk-hpb.env
 {% if _talk_relay_ipv4 | string | length > 0 %}
     # aio-talk's /start.sh always writes relay_ipv4_addr = the container IP

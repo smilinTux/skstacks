@@ -3,6 +3,12 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased (v2.24.0)
+
+### Changes
+
+- v1: **skhub** `TALK_HPB_IMAGE` sets the Talk HPB (aio-talk) image. The compose template hardcoded `ghcr.io/nextcloud-releases/aio-talk:20260122_105751`, so an instance that moved talk-hpb to a newer aio-talk (a newer signaling server, which a newer Talk app asks for in its setup checks) could not keep it: the next skhub deploy put talk-hpb back on the older image. The knob sets talk-hpb only; unset renders byte-identical. Pin a digest. Tests: `v1/tests/test_skhub_talk_hpb_image.py` (default, knob, byte-identical unset in every env, other services untouched, the TURN relay command kept). **Instance action**: none; an instance that already runs a newer aio-talk sets `skhub.TALK_HPB_IMAGE` to that image before its next skhub deploy.
+
 ## skstacks-v2.23.0 - 2026-10-01
 
 ### Changes

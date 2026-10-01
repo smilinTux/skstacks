@@ -44,6 +44,7 @@ skhub:
 | Key | Default | Meaning |
 |---|---|---|
 | `NEXTCLOUD_IMAGE` | `nextcloud:31.0.14` | Image for `nextcloud`, `cron` and `notify_push` (they share `/var/www/html`, so always the same image). Pin a digest (`nextcloud:<ver>@sha256:...`). Nextcloud upgrades are one-way and one major at a time: once an instance runs a newer Nextcloud, keep this set, because deploying an older image makes the entrypoint refuse to start (downgrade) and the service crash-loops. |
+| `TALK_HPB_IMAGE` | `ghcr.io/nextcloud-releases/aio-talk:20260122_105751` | Image for `talk-hpb` (with `enable_talk_hpb`). Pin a digest (`ghcr.io/nextcloud-releases/aio-talk:<tag>@sha256:...`). Set it to keep a newer aio-talk (newer signaling server) an instance already runs: unset, the next deploy puts talk-hpb back on the default. The TURN relay command still runs the image's own `supervisord -c /supervisord.conf`, so a replacement image must keep that path. |
 
 ## Talk HPB TURN
 
