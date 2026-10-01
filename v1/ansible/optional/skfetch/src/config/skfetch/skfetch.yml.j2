@@ -28,6 +28,7 @@
 {% set lan = skfetch.LAN_BIND_ADDRESS | default('127.0.0.1') %}
 {% set stream = skfetch.STREAM_NETWORK | default('skstream-' + env) %}
 {% set flare = (skfetch.FLARESOLVERR_ENABLED | default(true) | string | lower) in ['true', 'yes', '1', 'on'] %}
+{% set slskd = (skfetch.SLSKD_ENABLED | default(false) | string | lower) in ['true', 'yes', '1', 'on'] %}
 name: {{ app }}-{{ env }}
 
 services:
@@ -117,6 +118,45 @@ services:
     networks:
       skfetch: { ipv4_address: {{ net }}.20 }
     mem_limit: {{ skfetch.FLARESOLVERR_MEM_LIMIT | default('512m') }}
+{% endif %}
+{% if slskd %}
+
+  # slskd (Soulseek) in the VPN namespace, like qBittorrent; Soularr feeds it
+  # Lidarr's wanted albums. Secrets only in the slskd.yml / config.ini seeds.
+  slskd:
+    image: {{ skfetch.SLSKD_IMAGE | default('slskd/slskd@sha256:ecd4026d4f8fb504e2cc55323efa2c1f5b56d20d3686b018249cc36b48ea17a6') }}
+    restart: on-failure
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+    user: "{{ skfetch.PUID | default(1000) }}:{{ skfetch.PGID | default(1000) }}"
+    network_mode: service:gluetun
+    depends_on:
+      gluetun: { condition: service_healthy }
+    environment:
+      TZ: {{ skfetch.TZ | default('UTC') | to_json }}
+      SLSKD_REMOTE_CONFIGURATION: "false"
+    volumes:
+      - {{ local_root }}/slskd:/app
+      - {{ media }}/slskd-downloads:/app/downloads
+    mem_limit: {{ skfetch.SLSKD_MEM_LIMIT | default('512m') }}
+
+  soularr:
+    image: {{ skfetch.SOULARR_IMAGE | default('mrusse08/soularr@sha256:9d17bdc35108afd747c4862dc32a0c1cba821638d170e1374188a977ce255c76') }}
+    restart: on-failure
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+    user: "{{ skfetch.PUID | default(1000) }}:{{ skfetch.PGID | default(1000) }}"
+    depends_on: [lidarr, slskd]
+    environment:
+      PUID: "{{ skfetch.PUID | default(1000) }}"
+      PGID: "{{ skfetch.PGID | default(1000) }}"
+      TZ: {{ skfetch.TZ | default('UTC') | to_json }}
+      SCRIPT_INTERVAL: "{{ skfetch.SOULARR_INTERVAL | default(300) }}"
+      WEBUI_ENABLED: "false"
+    volumes:
+      - {{ local_root }}/soularr:/data
+      - {{ media }}/slskd-downloads:/downloads
+    networks:
+      skfetch: { ipv4_address: {{ net }}.21 }
+    mem_limit: {{ skfetch.SOULARR_MEM_LIMIT | default('256m') }}
 {% endif %}
 
 networks:

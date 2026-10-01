@@ -12,3 +12,9 @@ skfetch:
   BRIDGE_SUBNET: 10.99.7.0/24
   QBT_DL_LIMIT_KIB: 0
   EXTRA_ALLOWED_HOSTS: ["media.example.test"]
+  SLSKD_ENABLED: true
+  SLSKD_SOULSEEK_USERNAME: example-soulseek-user
+  SLSKD_SOULSEEK_PASSWORD: example-soulseek-pass-not-a-secret
+  SLSKD_WEB_USERNAME: example-web-user
+  SLSKD_WEB_PASSWORD: example-web-pass-not-a-secret
+  SLSKD_API_KEY: "123456789"

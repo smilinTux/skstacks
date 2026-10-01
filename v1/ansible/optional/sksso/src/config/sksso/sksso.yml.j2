@@ -162,9 +162,13 @@ services:
         - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.tls=true"
         - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.tls.certresolver=main"
         - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.tls.options=intermediate@file"
+{% if sksso.router_middlewares | default([]) %}
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.middlewares={{ sksso.router_middlewares | join(',') }}"
+{% endif %}
         - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.service={{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server"
-        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.loadbalancer.server.scheme=http"
-        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.loadbalancer.server.port=9000"
+{% set _sso_https = (sksso.SERVER_BACKEND_SCHEME | default('http')) == 'https' %}
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.loadbalancer.server.scheme={{ 'https' if _sso_https else 'http' }}"
+        - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.loadbalancer.server.port={{ '9443' if _sso_https else '9000' }}"
         - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.loadbalancer.sticky=true"
         - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.loadbalancer.sticky.cookie=true"
         - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.loadbalancer.sticky.cookie.name=authentik-session"

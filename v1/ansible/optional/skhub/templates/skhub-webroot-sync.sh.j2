@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Managed by SKStacks (skhub). Nightly copy of the local Nextcloud code tree
+# (html + custom_apps on {{ skhub.APP_NODE | default('the app node', true) }}) to shared storage, so the
+# /var/data copy stays a usable failover source and rollback path (README
+# "Local code tree on a pinned node"). Throttled: it reads local disk and
+# writes NFS, and after an image bump the delta is the whole code tree.
+set -euo pipefail
+
+SRC="${SKHUB_WEBROOT_SRC:-{{ skhub.WEBROOT_LOCAL_PATH | default('', true) }}}"
+DST="${SKHUB_WEBROOT_DST:-/var/data/{{ app }}-{{ env }}}"
+BWLIMIT="{{ skhub.WEBROOT_NFS_SYNC_BWLIMIT | default(20000) }}"
+
+refuse() { echo "skhub-webroot-sync: $*; not syncing" >&2; exit 1; }
+
+# Never mirror a broken or unseeded local tree over the failover copy, and
+# never write into a bare mount point when shared storage is not mounted.
+[ -n "$SRC" ] || refuse "no local webroot path"
+[ -f "$SRC/html/version.php" ] || refuse "$SRC/html/version.php missing"
+[ -n "$(ls -A "$SRC/custom_apps" 2>/dev/null)" ] || refuse "$SRC/custom_apps empty or missing"
+[ -d "$DST/html" ] && [ -d "$DST/custom_apps" ] || refuse "$DST/html or $DST/custom_apps missing (shared storage not mounted?)"
+
+RSYNC=(ionice -c3 nice rsync -aHAX --numeric-ids --delete "--bwlimit=$BWLIMIT")
+# html: code only. data, config, custom_apps and themes under it are mount
+# points for their own binds; excluded paths are also kept on the receiver.
+"${RSYNC[@]}" --exclude='/data/**' --exclude='/config/**' --exclude='/custom_apps/**' --exclude='/themes/**' \
+  "$SRC/html/" "$DST/html/"
+"${RSYNC[@]}" "$SRC/custom_apps/" "$DST/custom_apps/"
+echo "skhub-webroot-sync: $SRC -> $DST done $(date -u +%Y-%m-%dT%H:%M:%SZ)"

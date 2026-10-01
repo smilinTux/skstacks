@@ -100,6 +100,7 @@ Namespace `skstream`. Required: `RD_API_KEY`, `PLEX_TOKEN`, `MEDIA_NODE`.
 | `DUMB_MEMORY_LIMIT` | `2g` | |
 | `PLEX_ENDPOINT_MODE` | `dnsrr` | `vip` or `dnsrr`; keep dnsrr while host-level containers share the overlay (see above) |
 | `PLEX_EXTRA_BINDS` | `[]` | list of `{source, target}` read-only binds into Plex, e.g. `{source: /var/data/skfetch-prod/media, target: /skfetch/media}` so libraries can include skfetch folders |
+| `DUMB_EXTRA_BINDS` | `[]` | list of `{source, target, read_only}` binds into the DUMB container (`read_only` default `true`), rendered as `-v source:target[:ro]` after the `/data` bind. For a patched cli_debrid module until upstream releases the fix, e.g. `{source: /var/lib/skstream/patches/plex_watchlist.py, target: /cli_debrid/content_checkers/plex_watchlist.py}`. The source file is yours to place on `MEDIA_NODE`; absolute paths without spaces or colons (the play checks). Drop the entry once a DUMB image ships the fix |
 | `placement_constraints` | `["node.labels.skstream-media == true"]` | list; `[]` for none |
 | `router_middlewares_pre`, `router_middlewares`, `tls_options` | none | Traefik router hooks |
 | `PUID`, `PGID`, `TZ` | `1000`, `1000`, `UTC` | |

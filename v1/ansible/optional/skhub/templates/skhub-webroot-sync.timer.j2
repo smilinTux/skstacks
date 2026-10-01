@@ -1,0 +1,11 @@
+# Managed by SKStacks (skhub).
+[Unit]
+Description=Nightly SKStacks {{ app }}-{{ env }} webroot sync
+
+[Timer]
+OnCalendar={{ skhub.WEBROOT_NFS_SYNC_ON_CALENDAR | default('*-*-* 03:17:00 UTC') }}
+RandomizedDelaySec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -72,6 +72,10 @@ this for Plex by default (`skstream.PLEX_ENDPOINT_MODE`).
   `400 Bad Request` to a Host header missing from AllowedHosts, so the public
   FQDN must be there.
 
+### Soulseek (slskd + Soularr)
+
+`SLSKD_ENABLED: true` adds two containers. slskd runs with `network_mode: service:gluetun`, so Soulseek traffic leaves through the same VPN tunnel and kill switch as qBittorrent; its state (`slskd.yml`, database) is on local disk under `LOCAL_ROOT/slskd` and downloads go to `MEDIA_PATH/slskd-downloads`, which Lidarr sees as `/data/slskd-downloads`. Soularr sits on the bridge (`.21`), reads Lidarr's wanted list every `SOULARR_INTERVAL` seconds, searches slskd and asks Lidarr to import what finished. Lidarr only lists an album as wanted when both the artist and the album are monitored. `slskd.yml` and Soularr's `config.ini` are seeds (0600, only if absent, `FORCE_SEED` rewrites them); the five secrets are also written to `skfetch.env`. Nothing is shared back (`shares.directories: []`).
+
 ### Post-deploy wiring (idempotent)
 
 `wire.py` (stdlib only) runs on the media node after the unit starts and
@@ -135,6 +139,14 @@ Namespace `skfetch`. Required: `MEDIA_NODE`, `OPENVPN_USER`,
 | `BRIDGE_SUBNET` | `172.30.60.0/24` | a /24; fixed IPs `.2` `.10`-`.13` `.20` |
 | `STREAM_NETWORK` | `skstream-<env>` | swarm overlay shared with Plex; `''` for none (no swarm wait) |
 | `FLARESOLVERR_ENABLED` | `true` | |
+| `SLSKD_ENABLED` | `false` | adds slskd (Soulseek client, in gluetun's namespace like qBittorrent) and Soularr (searches slskd for Lidarr's wanted albums); see "Soulseek (slskd + Soularr)" below |
+| `SLSKD_SOULSEEK_USERNAME`, `SLSKD_SOULSEEK_PASSWORD` | required when on | Soulseek network account (created on first login; pick random values) |
+| `SLSKD_WEB_USERNAME`, `SLSKD_WEB_PASSWORD` | required when on | slskd web UI login (the UI is never published) |
+| `SLSKD_API_KEY` | required when on | slskd API key Soularr uses (`openssl rand -hex 32`) |
+| `SLSKD_LISTEN_PORT`, `SLSKD_API_CIDR` | `50300`, `0.0.0.0/0,::/0` | slskd seed values |
+| `SLSKD_IMAGE`, `SOULARR_IMAGE` | digest-pinned | |
+| `SLSKD_MEM_LIMIT`, `SOULARR_MEM_LIMIT` | `512m`, `256m` | |
+| `SOULARR_INTERVAL`, `SOULARR_STALLED_TIMEOUT` | `300`, `3600` | seconds between Soularr runs; seconds before a stalled slskd download is given up |
 | `INDEXERS` | thepiratebay, yts, nyaasi, limetorrents, Knaben, torrentdownload | Prowlarr definition names |
 | `INDEXERS_FLARESOLVERR` | eztv, 1337x, uindex | tagged `flaresolverr` |
 | `QBT_DL_LIMIT_KIB`, `QBT_UL_LIMIT_KIB` | `25600`, `0` | KiB/s, 0 = unlimited |

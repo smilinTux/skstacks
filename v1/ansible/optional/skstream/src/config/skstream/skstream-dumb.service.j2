@@ -41,6 +41,9 @@ ExecStart=/usr/bin/docker run --rm --name skstream-dumb{{ sfx }} --hostname skst
   -v /var/data/{{ app }}-{{ env }}/dumb/config:/config \
   -v {{ local_root }}/dumb-log:/log \
   -v {{ local_root }}/dumb-data:/data \
+{% for b in skstream.DUMB_EXTRA_BINDS | default([]) if b is mapping and b.source is defined and b.target is defined %}
+  -v {{ b.source }}:{{ b.target }}{{ ':ro' if (b.read_only | default(true) | bool) else '' }} \
+{% endfor %}
   -v {{ local_root }}/rclone-cache:/cache \
   -v {{ mnt }}:/mnt/debrid:rshared \
   --network {{ app }}-{{ env }} --network-alias dumb \

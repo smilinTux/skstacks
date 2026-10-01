@@ -76,6 +76,19 @@
           PLEX_ENDPOINT_MODE must be vip or dnsrr (default dnsrr).
       tags: [config, secrets]
 
+    - name: Validate skstream.DUMB_EXTRA_BINDS (absolute paths, no spaces or colons)
+      assert:
+        that:
+          - item is mapping
+          - (item.source | default('')) is match('^/[^\\s:]+$')
+          - (item.target | default('')) is match('^/[^\\s:]+$')
+        fail_msg: >-
+          Each skstream.DUMB_EXTRA_BINDS entry must be a mapping with absolute
+          source and target paths without spaces or colons (they become a
+          docker run -v source:target[:ro] argument), got {{ item }}.
+      loop: "{{ skstream.DUMB_EXTRA_BINDS | default([]) }}"
+      tags: [config]
+
     - name: Create {{ app }} directories on the shared data mount (not recursive)
       file: { path: "{{ item.path }}", state: directory, owner: "{{ item.owner }}", group: "{{ item.owner }}", mode: "{{ item.mode }}" }
       loop:

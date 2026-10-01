@@ -1,0 +1,11 @@
+# Managed by SKStacks (skhub): local Nextcloud code tree -> shared storage.
+[Unit]
+Description=SKStacks {{ app }}-{{ env }} webroot sync (local -> shared storage failover copy)
+Wants=network-online.target
+After=network-online.target remote-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/{{ app }}-{{ env }}-webroot-sync.sh
+Nice=10
+IOSchedulingClass=idle
