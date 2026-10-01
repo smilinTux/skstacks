@@ -140,7 +140,7 @@ def test_local_dirs_are_created_on_the_data_node_as_999_0700(env):
     local = [t for t in _db_dir_tasks(env) if t.get("delegate_to")]
     assert len(local) == 1
     t = local[0]
-    assert t["delegate_to"] == "{{ sksso.DATA_NODE }}"
+    assert t["delegate_to"] == "{{ sksso.DATA_NODE | default(inventory_hostname, true) }}"
     assert str(t["file"]["owner"]) == "999" and str(t["file"]["mode"]) == "0700"
     assert not t["file"].get("recurse")
 
