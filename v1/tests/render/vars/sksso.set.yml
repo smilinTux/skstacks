@@ -22,3 +22,5 @@ sksso:
   DATA_NODE: localhost
   POSTGRES_DATA_PATH: /var/lib/sksso/postgres
   REDIS_DATA_PATH: /var/lib/sksso/redis
+  router_middlewares: [example-chain@file]
+  SERVER_BACKEND_SCHEME: https
