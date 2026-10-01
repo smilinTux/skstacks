@@ -3,7 +3,7 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
-## Unreleased (v2.22.0)
+## skstacks-v2.22.0 - 2026-10-01
 
 ### Upgrade notes (instances)
 
