@@ -13,3 +13,6 @@ skstream:
   CLI_DEBRID_HYBRID_MODE: false
   PLEX_TOKEN_IS_SERVER_TOKEN: false
   PLEX_ENDPOINT_MODE: vip
+  DUMB_EXTRA_BINDS:
+    - {source: /var/lib/skstream/patches/plex_watchlist.py, target: /cli_debrid/content_checkers/plex_watchlist.py}
+    - {source: /srv/render/extra, target: /extra, read_only: false}
