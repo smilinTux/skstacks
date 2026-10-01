@@ -134,7 +134,10 @@
         - "{{ sksso_postgres_data_path }}"
         - "{{ sksso_redis_data_path }}"
       when: not item.startswith('/var/data/')
-      delegate_to: "{{ sksso.DATA_NODE }}"
+      # Ansible templates delegate_to before it evaluates when, so it must
+      # render with DATA_NODE unset too (the guard above requires DATA_NODE
+      # whenever this task actually runs).
+      delegate_to: "{{ sksso.DATA_NODE | default(inventory_hostname, true) }}"
 
     - name: Make the {{ app }} media dir writable by Authentik (uid 1000 in the image)
       file:
