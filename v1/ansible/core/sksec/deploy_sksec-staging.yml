@@ -137,11 +137,15 @@
         executable: /bin/bash
       when: not bouncer_key_file.stat.exists and ((sksec.CROWDSEC_BOUNCER_API_KEY | default('') | length) == 0)
 
-    - name: Read persisted bouncer key if present
+    # Read whenever the vault gives no key: the file exists by now either way
+    # (persisted earlier, or generated just above). Gating this on the stat
+    # taken BEFORE the generation skipped the read on a first install, left
+    # the computed key empty and stopped the deploy below.
+    - name: Read persisted bouncer key (vault key unset)
       slurp:
         src: /var/data/config/{{ app }}-{{ env }}/secret/bouncer.key
       register: persisted_bouncer_key
-      when: bouncer_key_file.stat.exists
+      when: (sksec.CROWDSEC_BOUNCER_API_KEY | default('') | length) == 0
 
     - name: Set computed bouncer key (vault overrides persisted)
       set_fact:

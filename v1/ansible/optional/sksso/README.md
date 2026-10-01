@@ -56,7 +56,7 @@ sksso:
   CLOUDFLARED: false                # true: BASE_DOMAIN = DOMAIN (no cluster prefix)
   TZ: UTC
   log_level: ...                   # default: warning(prod)/info(staging)/debug(dev)
-  backup_num_keep: 7               # default: 7
+  backup_keep_days: 7              # days of pg dumps kept (default: backup_num_keep, else 7)
   backup_frequency: 1d              # default: 1d
   placement_use_worker_constraint: true   # default true; set false if the
                                            # cluster has no worker nodes

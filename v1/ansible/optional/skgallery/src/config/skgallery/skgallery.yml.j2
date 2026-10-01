@@ -265,16 +265,36 @@ services:
       # === DIRECT BIND MOUNT FOR BACKUPS ===
       - /var/data/skgallery-{{ env }}/database-dump:/dump
       - /etc/localtime:/etc/localtime:ro
-    entrypoint: |
-      bash -c 'bash -s <<EOF
-      trap "break;exit" SIGHUP SIGINT SIGTERM
-      sleep 2m
-      while /bin/true; do
-        pg_dump -Fc -h database -U $${PGUSER} -d $${PGDATABASE} > /dump/dump_`date +%d-%m-%Y"_"%H_%M_%S`.psql
-        (ls -t /dump/dump*.psql|head -n $${BACKUP_NUM_KEEP};ls /dump/dump*.psql)|sort|uniq -u|xargs rm -- {}
-        sleep $${BACKUP_FREQUENCY}
-      done
-      EOF'
+    # One shell runs this script (list form, no `bash -s <<EOF` heredoc): an
+    # unquoted heredoc made the OUTER shell expand the date once at container
+    # start, so every run overwrote one file and a failed dump truncated the
+    # only copy. Each run now gets its own name, dumps to a hidden temp file
+    # renamed only on success, and prunes dumps older than BACKUP_KEEP_DAYS
+    # only after a good dump (a run of failures never ages out the last one).
+    # Every $ is $$ so docker stack deploy does not interpolate it.
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -o pipefail
+        trap 'exit 0' HUP INT TERM
+        rm -f /dump/.dump_*.tmp
+        sleep 2m & wait $$!
+        while true; do
+          NAME=dump_$$(date +%d-%m-%Y_%H_%M_%S).psql
+          TMP=/dump/.$${NAME}.tmp
+          if pg_dump -Fc -h database -U "$${PGUSER}" -d "$${PGDATABASE}" -f "$${TMP}" && [ -s "$${TMP}" ]; then
+            mv -f "$${TMP}" "/dump/$${NAME}"
+            echo "[backup] OK /dump/$${NAME} ($$(stat -c %s "/dump/$${NAME}") bytes)"
+            DAYS=$${BACKUP_KEEP_DAYS:-7}
+            [ "$${DAYS}" -ge 1 ] 2>/dev/null || DAYS=1
+            find /dump -maxdepth 1 -type f -name 'dump_*.psql' ! -name "$${NAME}" -mmin +$$((DAYS * 1440)) -print -delete
+          else
+            echo "[backup] FAIL: dump failed or empty, previous dumps kept" >&2
+            rm -f "$${TMP}"
+          fi
+          sleep "$${BACKUP_FREQUENCY:-1d}" & wait $$!
+        done
     deploy:
       mode: replicated
       replicas: {{ skgallery.BACKUP_REPLICAS | default(1) }}
