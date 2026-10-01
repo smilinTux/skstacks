@@ -6,6 +6,10 @@ networks:
   cloud-public-{{ env }}:
     external: true
 
+# sksso.DATA_NODE pins postgres + redis to one node (node.hostname ==); with
+# POSTGRES_DATA_PATH / REDIS_DATA_PATH on local disk an NFS hang on any other
+# node no longer takes Authentik down. See README.md "Local database on a
+# pinned node". Defaults keep the NFS paths under /var/data/runtime.
 services:
   postgres:
     image: postgres:16.2
@@ -16,7 +20,7 @@ services:
       mode: replicated
       replicas: {{ sksso.postgres_replicas | default(1) }}
       placement:
-        constraints: {{ (["node.role == worker"] if (sksso.placement_use_worker_constraint | default(true)) else []) | tojson }}
+        constraints: {{ ((["node.role == worker"] if (sksso.placement_use_worker_constraint | default(true)) else []) + (["node.hostname == " + sksso.DATA_NODE] if (sksso.DATA_NODE | default("")) else [])) | tojson }}
       resources:
         reservations:
           memory: 256M
@@ -28,7 +32,7 @@ services:
         condition: any
         delay: 10s
     volumes:
-      - /var/data/runtime/{{ app }}-{{ env }}/postgres:/var/lib/postgresql/data
+      - {{ sksso.POSTGRES_DATA_PATH | default('/var/data/runtime/' + app + '-' + env + '/postgres') }}:/var/lib/postgresql/data
       - /etc/localtime:/etc/localtime:ro
     networks:
       - {{ app }}-{{ env }}
@@ -89,7 +93,7 @@ services:
       mode: replicated
       replicas: {{ sksso.redis_replicas | default(1) }}
       placement:
-        constraints: {{ (["node.role == worker"] if (sksso.placement_use_worker_constraint | default(true)) else []) | tojson }}
+        constraints: {{ ((["node.role == worker"] if (sksso.placement_use_worker_constraint | default(true)) else []) + (["node.hostname == " + sksso.DATA_NODE] if (sksso.DATA_NODE | default("")) else [])) | tojson }}
       resources:
         reservations:
           memory: 64M
@@ -101,7 +105,7 @@ services:
         condition: any
         delay: 10s
     volumes:
-      - /var/data/runtime/{{ app }}-{{ env }}/redis:/data
+      - {{ sksso.REDIS_DATA_PATH | default('/var/data/runtime/' + app + '-' + env + '/redis') }}:/data
       - /etc/localtime:/etc/localtime:ro
     networks:
       - {{ app }}-{{ env }}
