@@ -35,6 +35,8 @@
     env: prod
     service_name: sksso
     service_type: optional
+    sksso_postgres_data_path: "{{ sksso.POSTGRES_DATA_PATH | default('/var/data/runtime/' + app + '-' + env + '/postgres') }}"
+    sksso_redis_data_path: "{{ sksso.REDIS_DATA_PATH | default('/var/data/runtime/' + app + '-' + env + '/redis') }}"
   pre_tasks:
     - name: Select vault file based on domain and cluster
       import_tasks: ../../shared/tasks/select_vault_file.yml
@@ -56,6 +58,21 @@
         (sksso.authentik_secret_key | default('')) == '' or
         (sksso.CLUSTERNAME | default('')) == '' or
         (sksso.DOMAIN | default('')) == ''
+
+    - name: Fail closed on local database paths without a pinned data node
+      # A path outside /var/data is local disk on one node. Without DATA_NODE
+      # swarm may reschedule postgres or redis elsewhere and start them on an
+      # empty directory (data loss).
+      assert:
+        that:
+          - >-
+            (sksso.DATA_NODE | default('') | string | length > 0) or
+            (((sksso.POSTGRES_DATA_PATH | default('/var/data/') | string).startswith('/var/data/')) and
+             ((sksso.REDIS_DATA_PATH | default('/var/data/') | string).startswith('/var/data/')))
+        fail_msg: >-
+          sksso.POSTGRES_DATA_PATH / REDIS_DATA_PATH point at local disk
+          ({{ sksso_postgres_data_path }}, {{ sksso_redis_data_path }}) but
+          sksso.DATA_NODE is empty. Set DATA_NODE to the node holding the data.
 
     - name: Define network variables from vault (idempotent network creation)
       # IMPORTANT: network subnets must match your instance's network
@@ -89,9 +106,38 @@
         - /var/data/{{ app }}-{{ env }}/certs
         - /var/data/{{ app }}-{{ env }}/custom-templates
         - /var/data/{{ app }}-{{ env }}/database-dump
-        - /var/data/runtime/{{ app }}-{{ env }}/postgres
-        - /var/data/runtime/{{ app }}-{{ env }}/redis
         - /var/data/config/{{ app }}-{{ env }}/custom
+
+    - name: Create the {{ app }} database directories on shared storage
+      # Only the paths that live under /var/data; a local path is created on
+      # DATA_NODE below, and the old NFS path is left alone once it moved.
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - "{{ sksso_postgres_data_path }}"
+        - "{{ sksso_redis_data_path }}"
+      when: item.startswith('/var/data/')
+
+    - name: Create the {{ app }} local database directories on the data node (not recursive)
+      # postgres and redis both run as uid 999 in their images.
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: '999'
+        group: '999'
+        mode: '0700'
+      loop:
+        - "{{ sksso_postgres_data_path }}"
+        - "{{ sksso_redis_data_path }}"
+      when: not item.startswith('/var/data/')
+      # Ansible templates delegate_to before it evaluates when, so it must
+      # render with DATA_NODE unset too (the guard above requires DATA_NODE
+      # whenever this task actually runs).
+      delegate_to: "{{ sksso.DATA_NODE | default(inventory_hostname, true) }}"
 
     - name: Make the {{ app }} media dir writable by Authentik (uid 1000 in the image)
       file:
@@ -123,6 +169,18 @@
         group: root
         mode: '0644'
       when: sksso.user_settings_py | default('') | length > 0
+
+    - name: CapAuth IdP env file and client registry (sksso.CAPAUTH_ENABLED)
+      include_tasks:
+        file: tasks/capauth_config.yml
+        apply:
+          tags:
+            - templates
+            - deploy
+      when: sksso.CAPAUTH_ENABLED | default(false) | bool
+      tags:
+        - templates
+        - deploy
 
     - name: Process {{ app }} Docker Compose template
       template:
@@ -170,6 +228,16 @@
 
     - name: Show deploy output
       debug: var=deploy_output.stdout_lines
+      tags:
+        - deploy
+
+    - name: CapAuth source, login flow and user links in Authentik (sksso.CAPAUTH_ENABLED)
+      include_tasks:
+        file: tasks/capauth_provision.yml
+        apply:
+          tags:
+            - deploy
+      when: sksso.CAPAUTH_ENABLED | default(false) | bool
       tags:
         - deploy
 

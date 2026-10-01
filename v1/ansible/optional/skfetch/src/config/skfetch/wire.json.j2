@@ -1,0 +1,32 @@
+{% set sfx = '' if env == 'prod' else '-' + env %}
+{% set local_root = skfetch.LOCAL_ROOT | default('/var/lib/skfetch' + sfx) %}
+{% set media = skfetch.MEDIA_PATH | default('/var/data/' + app + '-' + env) %}
+{% set cfgdir = '/var/data/config/' + app + '-' + env %}
+{% set subnet = skfetch.BRIDGE_SUBNET | default('172.30.60.0/24') %}
+{% set net = subnet.split('/')[0].rsplit('.', 1)[0] %}
+{% set lan = skfetch.LAN_BIND_ADDRESS | default('127.0.0.1') %}
+{% set stream = skfetch.STREAM_NETWORK | default('skstream-' + env) %}
+{% set flare = (skfetch.FLARESOLVERR_ENABLED | default(true) | string | lower) in ['true', 'yes', '1', 'on'] %}
+{#- Input for wire.py (0600: API keys and the Plex token). -#}
+{% set k = skfetch %}
+{% set plex = none %}
+{% if k.PLEX_TOKEN | default('') %}
+{% set plex = {'host': k.PLEX_HOST | default('plex'), 'port': 32400, 'token': k.PLEX_TOKEN,
+               'map_from': '/data/media/', 'map_to': (k.PLEX_MEDIA_MOUNT | default('/skfetch/media')) + '/'} %}
+{% endif %}
+{{ {
+  'wait': {'tries': k.WIRE_WAIT_TRIES | default(60) | int, 'delay': 5},
+  'apps': {
+    'sonarr': {'url': 'http://' + lan + ':8989', 'key': k.SONARR_API_KEY, 'api': 'v3', 'root': '/data/media/tv',
+               'category_field': 'tvCategory', 'category': 'tv', 'bridge_url': 'http://' + net + '.11:8989'},
+    'radarr': {'url': 'http://' + lan + ':7878', 'key': k.RADARR_API_KEY, 'api': 'v3', 'root': '/data/media/movies',
+               'category_field': 'movieCategory', 'category': 'movies', 'bridge_url': 'http://' + net + '.12:7878'},
+    'lidarr': {'url': 'http://' + lan + ':8686', 'key': k.LIDARR_API_KEY, 'api': 'v1', 'root': '/data/media/music',
+               'category_field': 'musicCategory', 'category': 'music', 'bridge_url': 'http://' + net + '.13:8686'}},
+  'prowlarr': {'url': 'http://' + lan + ':9696', 'key': k.PROWLARR_API_KEY, 'bridge_url': 'http://' + net + '.10:9696'},
+  'qbittorrent': {'host': net + '.2', 'port': 8080},
+  'plex': plex,
+  'flaresolverr': ({'url': 'http://' + net + '.20:8191/'} if flare else none),
+  'indexers': k.INDEXERS | default(['thepiratebay', 'yts', 'nyaasi', 'limetorrents', 'Knaben', 'torrentdownload']),
+  'indexers_flaresolverr': (k.INDEXERS_FLARESOLVERR | default(['eztv', '1337x', 'uindex'])) if flare else []
+} | to_json }}

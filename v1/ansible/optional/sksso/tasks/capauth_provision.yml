@@ -1,0 +1,108 @@
+# sksso.CAPAUTH_ENABLED, after the stack deploy: register the CapAuth IdP in
+# Authentik as an OAuth source, build the CapAuth login flow and link the
+# vault's users (sksso.CAPAUTH_USERS) to their PGP fingerprints. Idempotent.
+#
+# Uses the Authentik admin API with sksso.api_token (register it once per
+# cluster with src/sksso/ensure-api-token.sh; on a brand-new cluster that
+# means: deploy, register the token, deploy again). The provisioner runs in
+# a throwaway container on this stack's network against the server
+# directly; every secret goes in on stdin and nothing secret is logged.
+
+- name: Build the CapAuth provisioner input
+  set_fact:
+    sksso_capauth_input:
+      url: "http://{{ app }}-{{ env }}_server:9000"
+      host: "{{ sksso_capauth_sso_host }}"
+      token: "{{ sksso.api_token }}"
+      source_name: "{{ sksso.CAPAUTH_SOURCE_NAME | default('CapAuth') }}"
+      source_slug: "{{ sksso.CAPAUTH_SOURCE_SLUG | default('capauth') }}"
+      client_id: authentik
+      client_secret: "{{ sksso.CAPAUTH_CLIENT_SECRET }}"
+      authorization_url: "https://{{ sksso_capauth_host }}/oidc/authorize"
+      token_url: "http://{{ app }}-{{ env }}_capauth:8420/oidc/token"
+      userinfo_url: "http://{{ app }}-{{ env }}_capauth:8420/oidc/userinfo"
+      source_authentication_flow: "{{ sksso.CAPAUTH_SOURCE_AUTHENTICATION_FLOW | default('default-source-authentication') }}"
+      identification_stage: capauth-identification
+      login_stage: capauth-authentication-login
+      flow_name: CapAuth login
+      flow_slug: "{{ sksso.CAPAUTH_FLOW_SLUG | default('capauth-authentication') }}"
+      flow_title: Sign in with CapAuth
+      users: "{{ sksso.CAPAUTH_USERS | default([]) }}"
+      # the CapAuth button next to the normal username/password form (on by
+      # default); false = CapAuth only
+      password_login: "{{ sksso.CAPAUTH_PASSWORD_LOGIN | default(true) | bool }}"
+      # empty = the provisioner's default, default-authentication-password
+      password_stage: "{{ sksso.CAPAUTH_PASSWORD_STAGE | default('') }}"
+      mfa_stage: "{{ sksso.CAPAUTH_MFA_STAGE | default('default-authentication-mfa-validation') }}"
+  vars:
+    sksso_capauth_base: "{{ sksso.DOMAIN if (sksso.CLOUDFLARED | default(false)) else (sksso.CLUSTERNAME ~ '.' ~ sksso.DOMAIN) }}"
+    sksso_capauth_host: "{{ sksso.CAPAUTH_HOST | default('capauth' ~ ('' if env == 'prod' else '-' ~ env) ~ '.' ~ sksso_capauth_base) }}"
+    sksso_capauth_sso_host: "{{ sksso.CAPAUTH_SSO_HOST | default('sso' ~ ('' if env == 'prod' else '-' ~ env) ~ '.' ~ sksso_capauth_base) }}"
+  no_log: true
+
+- name: Stage the CapAuth provisioner
+  copy:
+    src: "{{ playbook_dir }}/src/{{ app }}/capauth_provision.py"
+    dest: "/var/data/config/{{ app }}-{{ env }}/capauth_provision.py"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Wait for the Authentik API and CapAuth to answer on the stack network
+  command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --network
+      - "{{ app }}-{{ env }}"
+      - "{{ sksso.PROVISIONER_IMAGE | default('python:3.13.15-alpine@sha256:79e7a9b9ff1cbceff819f856fb374477792a5967759d94df266de7b7b4120e6f') }}"
+      - python
+      - -c
+      - |
+        import urllib.request
+        # Authentik answers 404 for a Host it does not know (a service name)
+        req = urllib.request.Request("http://{{ app }}-{{ env }}_server:9000/-/health/ready/",
+                                     headers={"Host": "{{ sksso_capauth_input.host }}"})
+        urllib.request.urlopen(req, timeout=10).read()
+        urllib.request.urlopen("http://{{ app }}-{{ env }}_capauth:8420/oidc/.well-known/openid-configuration",
+                               timeout=10).read()
+  register: sksso_capauth_ready
+  until: sksso_capauth_ready.rc == 0
+  retries: 60
+  delay: 10
+  changed_when: false
+
+- name: Create or update the CapAuth source, login flow and user links in Authentik
+  command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - -i
+      - --network
+      - "{{ app }}-{{ env }}"
+      - -v
+      - "/var/data/config/{{ app }}-{{ env }}/capauth_provision.py:/capauth_provision.py:ro"
+      - "{{ sksso.PROVISIONER_IMAGE | default('python:3.13.15-alpine@sha256:79e7a9b9ff1cbceff819f856fb374477792a5967759d94df266de7b7b4120e6f') }}"
+      - python
+      - /capauth_provision.py
+    stdin: "{{ sksso_capauth_input | to_json }}"
+  register: sksso_capauth_provision
+  changed_when: "'created' in sksso_capauth_provision.stdout or 'updated (' in sksso_capauth_provision.stdout"
+  failed_when: false
+  no_log: true
+
+# The provisioner prints status lines only (never a secret), so its output
+# is safe to show; the task above is no_log because its stdin is secret.
+- name: Show the CapAuth provisioner result
+  debug:
+    msg: "{{ (sksso_capauth_provision.stdout_lines | default([])) + (sksso_capauth_provision.stderr_lines | default([])) }}"
+
+- name: Fail if CapAuth provisioning failed
+  fail:
+    msg: >-
+      CapAuth provisioning failed (rc={{ sksso_capauth_provision.rc | default('?') }}), see the lines
+      above. HTTP 403 on a new cluster: register sksso.api_token with src/sksso/ensure-api-token.sh,
+      then deploy again.
+  when: (sksso_capauth_provision.rc | default(1)) != 0

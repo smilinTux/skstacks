@@ -154,6 +154,10 @@ skmesh:
   AUTHENTIK_NETWORK: ""          # default sksso-<env>
   AUTHENTIK_VAULT_FILE: ""       # default: sksso's vault beside this one
   AUTHENTIK_AUTHORIZATION_FLOW: default-provider-authorization-implicit-consent
+  AUTHENTIK_AUTHENTICATION_FLOW: ""  # login flow for skmesh only, e.g. capauth-authentication
+                                  # (sksso CAPAUTH_ENABLED: password form + CapAuth button,
+                                  # or CapAuth only with CAPAUTH_PASSWORD_LOGIN: false);
+                                  # empty = the brand's default login
   AUTHENTIK_INVALIDATION_FLOW: default-provider-invalidation-flow
   AUTHENTIK_SIGNING_KEY: "authentik Self-signed Certificate"
   PROVISIONER_IMAGE: ""          # default python:3.13.15-alpine pinned by digest

@@ -1,0 +1,194 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# skstream (dev): Plex (+ optional Kometa) as a swarm stack, plus DUMB
+# (zurg + rclone FUSE mount + cli_debrid) as a host-level systemd unit on the
+# media node skstream.MEDIA_NODE. See README.md for why DUMB is host-level.
+# The stack deploy runs on ONE selected manager; the host-level tasks are
+# delegated to the media node (it must be an inventory host; delegate_to
+# reaches it even when the run is limited to the managers).
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skstream
+    env: dev
+    service_name: skstream
+    service_type: optional
+    skstream_sfx: "{{ '' if env == 'prod' else '-' + env }}"
+    skstream_local_root: "{{ skstream.LOCAL_ROOT | default('/var/lib/skstream' + skstream_sfx) }}"
+    skstream_uid: "{{ skstream.PUID | default(1000) }}"
+    skstream_gid: "{{ skstream.PGID | default(1000) }}"
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+    - name: Define network variables from vault (idempotent network creation)
+      # skstream-dev: 172.16.160.0/24
+      # cloud-public-dev: 172.16.202.0/24
+      set_fact:
+        app_networks: "{{ skstream.networks | default([
+          { 'name': 'skstream-dev', 'subnet': '172.16.160.0/24', 'driver': 'overlay', 'attachable': true },
+          { 'name': 'cloud-public-dev', 'subnet': '172.16.202.0/24', 'driver': 'overlay', 'attachable': true }
+        ]) }}"
+      tags: [networks, config]
+  tasks:
+    - name: Fail closed if required skstream vars are empty or unset
+      assert:
+        that:
+          - (skstream.RD_API_KEY | default('')) | length > 0
+          - (skstream.PLEX_TOKEN | default('')) | length > 0
+          - (skstream.MEDIA_NODE | default('')) | length > 0
+          - not (skstream.PLEX_TOKEN_IS_SERVER_TOKEN | default(false) | bool)
+          - (skstream.PLEX_ENDPOINT_MODE | default('dnsrr')) in ['vip', 'dnsrr']
+        fail_msg: >-
+          skstream.RD_API_KEY, skstream.PLEX_TOKEN and skstream.MEDIA_NODE are
+          required. MEDIA_NODE is the inventory host (and swarm node name) that
+          runs the DUMB FUSE mount and Plex. PLEX_TOKEN must be a dedicated
+          account token (plex.tv/link PIN flow), never the server
+          PlexOnlineToken; PLEX_TOKEN_IS_SERVER_TOKEN true stops the play.
+          PLEX_ENDPOINT_MODE must be vip or dnsrr (default dnsrr).
+      tags: [config, secrets]
+
+    - name: Create {{ app }} directories on the shared data mount (not recursive)
+      file: { path: "{{ item.path }}", state: directory, owner: "{{ item.owner }}", group: "{{ item.owner }}", mode: "{{ item.mode }}" }
+      loop:
+        - { path: "/var/data/{{ app }}-{{ env }}", owner: "0", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/plex", owner: "0", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/plex/config", owner: "{{ skstream_uid }}", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/plex/transcode", owner: "{{ skstream_uid }}", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/zurg", owner: "0", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/zurg/mnt", owner: "{{ skstream_uid }}", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/kometa", owner: "0", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/kometa/config", owner: "{{ skstream_uid }}", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/dumb", owner: "0", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/dumb/config", owner: "{{ skstream_uid }}", mode: "0750" }
+        - { path: "/var/data/config/{{ app }}-{{ env }}", owner: "0", mode: "0755" }
+      tags: [config]
+
+    - name: Process {{ app }} env templates
+      template: { src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}", dest: "{{ item.dest }}", owner: root, group: root, mode: "{{ item.mode }}" }
+      loop:
+        - { src: "{{ app }}.sh.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env", mode: "0640" }
+        - { src: "plex.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/plex.env", mode: "0600" }
+        - { src: "kometa.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/kometa.env", mode: "0600" }
+      tags: [templates]
+
+    - name: Process {{ app }} compose/stack template
+      template: { src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml", owner: root, group: root, mode: '0644' }
+      tags: [compose]
+    - name: docker-compose.yml symlink
+      file: { src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml", dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml", state: link, force: yes }
+      tags: [compose]
+    - name: Process deploy script template
+      template: { src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2", dest: "/var/data/{{ app }}-{{ env }}/deploy", owner: root, group: root, mode: '0755' }
+      tags: [deploy-script]
+    - name: control script symlink
+      file: { src: "/var/data/{{ app }}-{{ env }}/deploy", dest: "/var/data/deploy_{{ app }}-{{ env }}", state: link, force: yes }
+      tags: [deploy-script]
+
+    - name: Seed DUMB config (only if absent; DUMB owns it after first start)
+      # force follows skstream.FORCE_SEED (default false): runtime state such as
+      # tokens refreshed or settings changed in the DUMB UI is never clobbered.
+      template: { src: "{{ playbook_dir }}/src/config/{{ app }}/dumb_config.json.j2", dest: "/var/data/{{ app }}-{{ env }}/dumb/config/dumb_config.json", owner: "{{ skstream_uid }}", group: "{{ skstream_gid }}", mode: "0600", force: "{{ skstream.FORCE_SEED | default(false) | bool }}" }
+      tags: [templates, seed]
+
+    - name: Label the media node for Plex placement
+      shell: "docker node update --label-add skstream-media=true {{ skstream.MEDIA_NODE | quote }}"
+      changed_when: false
+      tags: [placement]
+
+    - name: Ensure overlay networks exist
+      include_tasks: ../../shared/tasks/create_networks.yml
+      tags: [networks]
+
+    - name: Create local state directories on the media node (not recursive)
+      # SQLite (Plex DB, cli_debrid, DUMB) must not live on NFS.
+      file: { path: "{{ item }}", state: directory, owner: "{{ skstream_uid }}", group: "{{ skstream_gid }}", mode: "0750" }
+      loop:
+        - "{{ skstream_local_root }}"
+        - "{{ skstream_local_root }}/plex-db"
+        - "{{ skstream_local_root }}/dumb-data"
+        - "{{ skstream_local_root }}/dumb-data/cli_debrid"
+        - "{{ skstream_local_root }}/dumb-data/cli_debrid/config"
+        - "{{ skstream_local_root }}/dumb-data/zurg_RD"
+        - "{{ skstream_local_root }}/dumb-log"
+        - "{{ skstream_local_root }}/rclone-cache"
+      delegate_to: "{{ skstream.MEDIA_NODE }}"
+      tags: [host]
+
+    - name: Seed cli_debrid config on the media node (only if absent)
+      template: { src: "{{ playbook_dir }}/src/config/{{ app }}/cli_debrid_config.json.j2", dest: "{{ skstream_local_root }}/dumb-data/cli_debrid/config/config.json", owner: "{{ skstream_uid }}", group: "{{ skstream_gid }}", mode: "0600", force: "{{ skstream.FORCE_SEED | default(false) | bool }}" }
+      delegate_to: "{{ skstream.MEDIA_NODE }}"
+      tags: [host, seed]
+
+    - name: Install the zurg Plex partial-scan hook on the media node
+      template: { src: "{{ playbook_dir }}/src/config/{{ app }}/plex_update.sh.j2", dest: "{{ skstream_local_root }}/dumb-data/zurg_RD/plex_update.sh", owner: "{{ skstream_uid }}", group: "{{ skstream_gid }}", mode: "0750" }
+      delegate_to: "{{ skstream.MEDIA_NODE }}"
+      tags: [host]
+
+    - name: Check whether zurg has written its config yet
+      stat: { path: "{{ skstream_local_root }}/dumb-data/zurg_RD/config.yml" }
+      register: skstream_zurg_cfg
+      delegate_to: "{{ skstream.MEDIA_NODE }}"
+      tags: [host]
+
+    - name: Point zurg on_library_update at the hook (skstream-dumb.service reads it on restart)
+      lineinfile: { path: "{{ skstream_local_root }}/dumb-data/zurg_RD/config.yml", regexp: '^#?\s*on_library_update:', line: 'on_library_update: sh plex_update.sh "$@"' }
+      when: skstream_zurg_cfg.stat.exists | default(false)
+      delegate_to: "{{ skstream.MEDIA_NODE }}"
+      tags: [host]
+
+    - name: Install the swarm-wait helper on the media node
+      copy: { src: "{{ playbook_dir }}/src/{{ app }}/sk-wait-swarm-net", dest: /usr/local/sbin/sk-wait-swarm-net, owner: root, group: root, mode: '0755' }
+      delegate_to: "{{ skstream.MEDIA_NODE }}"
+      tags: [host]
+
+    - name: Install skstream-dumb.service on the media node
+      template: { src: "{{ playbook_dir }}/src/config/{{ app }}/skstream-dumb.service.j2", dest: "/etc/systemd/system/skstream-dumb{{ skstream_sfx }}.service", owner: root, group: root, mode: '0644' }
+      register: skstream_unit
+      delegate_to: "{{ skstream.MEDIA_NODE }}"
+      tags: [host]
+
+    - name: Deploy {{ app }} stack
+      shell: "cd /var/data/{{ app }}-{{ env }} && ./deploy"
+      register: deploy_output
+      tags: [deploy]
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags: [deploy]
+
+    - name: Enable and start skstream-dumb.service (restart when the unit changed)
+      systemd:
+        name: "skstream-dumb{{ skstream_sfx }}.service"
+        enabled: true
+        daemon_reload: true
+        state: "{{ 'restarted' if (skstream_unit.changed | default(false)) else 'started' }}"
+      delegate_to: "{{ skstream.MEDIA_NODE }}"
+      tags: [host, deploy]

@@ -12,3 +12,13 @@ sksso:
   email_from: authentik@example.test
   geoip_account_id: "123456"
   geoip_license_key: example-geoip-license-key-not-a-secret
+  api_token: example-api-token-not-a-secret-0123456789
+  CAPAUTH_ENABLED: true
+  CAPAUTH_IMAGE: registry.example.test/capauth:0.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  CAPAUTH_CLIENT_SECRET: example-capauth-client-secret-not-a-secret
+  CAPAUTH_ADMIN_TOKEN: example-capauth-admin-token-not-a-secret-0
+  CAPAUTH_USERS:
+    - {username: example-user, fingerprint: 0123456789ABCDEF0123456789ABCDEF01234567}
+  DATA_NODE: localhost
+  POSTGRES_DATA_PATH: /var/lib/sksso/postgres
+  REDIS_DATA_PATH: /var/lib/sksso/redis

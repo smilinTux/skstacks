@@ -1,0 +1,15 @@
+# Optional features on, for the second render-gate pass.
+skstream:
+  KOMETA_ENABLED: true
+  TRAKT_CLIENT_ID: example-trakt-client-id
+  TRAKT_CLIENT_SECRET: example-trakt-client-secret-not-a-secret
+  TMDB_API_KEY: example-tmdb-key-not-a-secret
+  PLEX_CLAIM: example-claim-not-a-secret
+  CUTOFF_DATE: "7"
+  RCLONE_MOUNT_NAME: pd_zurg
+  placement_constraints: ["node.hostname == render"]
+  router_middlewares: ["default-no-crowdsec@file"]
+  tls_options: intermediate@file
+  CLI_DEBRID_HYBRID_MODE: false
+  PLEX_TOKEN_IS_SERVER_TOKEN: false
+  PLEX_ENDPOINT_MODE: vip

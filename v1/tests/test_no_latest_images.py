@@ -59,9 +59,36 @@ def _is_pinned(image):
     return True
 
 
+# Images only the instance can name, because no public pinned build exists
+# yet: service -> (vault key, task file that refuses a value without a
+# digest). Each must be the service's ONLY default-less image, and the guard
+# must really check that key, so this cannot hide anything else.
+INSTANCE_PINNED = {
+    # sksso.CAPAUTH_IMAGE left this list when a public, digest-pinned CapAuth
+    # release existed (ghcr.io/smilintux/capauth:0.3.13): it has a default now.
+}
+
+
+def _instance_pinned(image, services):
+    if image != "<unresolved>":
+        return False
+    return all(svc in INSTANCE_PINNED for svc in services.split(","))
+
+
+def test_instance_pinned_images_are_guarded_and_alone():
+    for svc, (key, guard) in INSTANCE_PINNED.items():
+        text = (REPO_ROOT / guard).read_text()
+        assert f"'@sha256:' in ({key} | default('') | string)" in text, (svc, guard)
+        tpl = REPO_ROOT / f"v1/ansible/optional/{svc}/src/config/{svc}/{svc}.yml.j2"
+        bare = [ln.strip() for ln in tpl.read_text().splitlines()
+                if ln.strip().startswith("image:") and "{{" in ln and "default(" not in ln]
+        assert bare == [f'image: "{{{{ {key} }}}}"'], (svc, bare)
+
+
 def test_every_remote_image_is_pinned():
     rows = run_list_images(REPO_ROOT)
-    remote_images = [image for image in rows if not _is_locally_built(image)]
+    remote_images = [image for image in rows
+                     if not _is_locally_built(image) and not _instance_pinned(image, rows[image])]
     assert remote_images, "expected at least one remote image from list_images.py"
     unpinned = sorted(
         f"{image} (services: {rows[image]})"

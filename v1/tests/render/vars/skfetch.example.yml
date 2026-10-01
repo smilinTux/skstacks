@@ -1,0 +1,12 @@
+# Public, obviously fake example vault for the real-Ansible render gate
+# (v1/tests/render/render_playbooks.py). example.test only; no real secrets.
+skfetch:
+  CLUSTERNAME: render
+  DOMAIN: example.test
+  MEDIA_NODE: localhost
+  OPENVPN_USER: example-vpn-user
+  OPENVPN_PASSWORD: example-vpn-password-not-a-secret
+  SONARR_API_KEY: examplekey1notasecret
+  RADARR_API_KEY: examplekey2notasecret
+  LIDARR_API_KEY: examplekey3notasecret
+  PROWLARR_API_KEY: examplekey4notasecret

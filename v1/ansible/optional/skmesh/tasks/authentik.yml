@@ -49,6 +49,7 @@
         - "http://localhost:53000"
       authorization_flow: "{{ skmesh.AUTHENTIK_AUTHORIZATION_FLOW | default('default-provider-authorization-implicit-consent') }}"
       invalidation_flow: "{{ skmesh.AUTHENTIK_INVALIDATION_FLOW | default('default-provider-invalidation-flow') }}"
+      authentication_flow: "{{ skmesh.AUTHENTIK_AUTHENTICATION_FLOW | default('') }}"
       signing_key: "{{ skmesh.AUTHENTIK_SIGNING_KEY | default('authentik Self-signed Certificate') }}"
       sa_username: "{{ skmesh.IDP_MANAGER_USERNAME | default('skmesh-idp-manager') }}"
       sa_password: "{{ skmesh.IDP_MANAGER_PASSWORD }}"

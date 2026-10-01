@@ -1,0 +1,129 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# skfetch: host-level docker compose project (NOT a swarm stack), started by
+# skfetch[-<env>].service on the media node. qBittorrent shares gluetun's
+# network namespace (network_mode: service:gluetun), which swarm cannot do, and
+# gluetun needs NET_ADMIN + /dev/net/tun. Secrets only in skfetch.env (0600).
+# *arr SQLite on local disk (LOCAL_ROOT); media and incomplete downloads on the
+# media dataset (MEDIA_PATH, mounted at /data).
+{% set sfx = '' if env == 'prod' else '-' + env %}
+{% set local_root = skfetch.LOCAL_ROOT | default('/var/lib/skfetch' + sfx) %}
+{% set media = skfetch.MEDIA_PATH | default('/var/data/' + app + '-' + env) %}
+{% set cfgdir = '/var/data/config/' + app + '-' + env %}
+{% set subnet = skfetch.BRIDGE_SUBNET | default('172.30.60.0/24') %}
+{% set net = subnet.split('/')[0].rsplit('.', 1)[0] %}
+{% set lan = skfetch.LAN_BIND_ADDRESS | default('127.0.0.1') %}
+{% set stream = skfetch.STREAM_NETWORK | default('skstream-' + env) %}
+{% set flare = (skfetch.FLARESOLVERR_ENABLED | default(true) | string | lower) in ['true', 'yes', '1', 'on'] %}
+name: {{ app }}-{{ env }}
+
+services:
+  gluetun:
+    image: {{ skfetch.GLUETUN_IMAGE | default('qmcgaw/gluetun@sha256:2733bb22b27e3efa7a9f2cef9057ec12791b8b225793fcd3dbfd0508404dfc25') }}
+    restart: on-failure
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    env_file: {{ cfgdir }}/skfetch.env
+    environment:
+      TZ: {{ skfetch.TZ | default('UTC') | to_json }}
+      VPN_SERVICE_PROVIDER: {{ skfetch.VPN_SERVICE_PROVIDER | default('private internet access') | to_json }}
+      VPN_TYPE: {{ skfetch.VPN_TYPE | default('openvpn') | to_json }}
+      SERVER_REGIONS: {{ skfetch.SERVER_REGIONS | default('') | to_json }}
+      VPN_PORT_FORWARDING: {{ skfetch.VPN_PORT_FORWARDING | default('on') | string | to_json }}
+      # Hands the forwarded port to qBittorrent, which shares this namespace
+      # and trusts localhost (qBittorrent.conf WebUI\LocalHostAuth=false).
+      VPN_PORT_FORWARDING_UP_COMMAND: {{ ("/bin/sh -c 'wget -q -O- --retry-connrefused --post-data \"json={\\\"listen_port\\\":{{PORTS}}}\" http://127.0.0.1:8080/api/v2/app/setPreferences'") | to_json }}
+      HTTP_CONTROL_SERVER_ADDRESS: ":8000"
+    volumes:
+      - {{ local_root }}/gluetun:/gluetun
+    networks:
+      skfetch: { ipv4_address: {{ net }}.2 }
+    mem_limit: {{ skfetch.GLUETUN_MEM_LIMIT | default('256m') }}
+
+  qbittorrent:
+    image: {{ skfetch.QBITTORRENT_IMAGE | default('lscr.io/linuxserver/qbittorrent@sha256:b522f9f4b769f8f36d49d22d5eb6a92e9aa18904c6a1830b1439df511ec21983') }}
+    restart: on-failure
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+    # Never published: only reachable inside the VPN namespace and the bridge.
+    network_mode: service:gluetun
+    depends_on:
+      gluetun: { condition: service_healthy }
+    environment:
+      PUID: "{{ skfetch.PUID | default(1000) }}"
+      PGID: "{{ skfetch.PGID | default(1000) }}"
+      TZ: {{ skfetch.TZ | default('UTC') | to_json }}
+      WEBUI_PORT: "8080"
+    volumes:
+      - {{ local_root }}/qbittorrent:/config
+      - {{ media }}:/data
+    mem_limit: {{ skfetch.QBITTORRENT_MEM_LIMIT | default('768m') }}
+{% for a in [('prowlarr', 9696, 10, '384m'),
+             ('sonarr', 8989, 11, '640m'),
+             ('radarr', 7878, 12, '640m'),
+             ('lidarr', 8686, 13, '640m')] %}
+
+  {{ a[0] }}:
+{% if a[0] == 'prowlarr' %}
+    image: {{ skfetch.PROWLARR_IMAGE | default('lscr.io/linuxserver/prowlarr@sha256:f2b26429893d4c4cb71941b7ee50b1bdecd9d5f9f9e02d5410615e9f4f7c8d95') }}
+{% elif a[0] == 'sonarr' %}
+    image: {{ skfetch.SONARR_IMAGE | default('lscr.io/linuxserver/sonarr@sha256:f247545d23ba8b233d6604575347e48a623fe6ad75dda02348bf81917f3b5c06') }}
+{% elif a[0] == 'radarr' %}
+    image: {{ skfetch.RADARR_IMAGE | default('lscr.io/linuxserver/radarr@sha256:adb6c09d6b729ea5e642c99cea35af72702ef476bf4763f153299ac5db9f0b4f') }}
+{% elif a[0] == 'lidarr' %}
+    image: {{ skfetch.LIDARR_IMAGE | default('lscr.io/linuxserver/lidarr@sha256:044d616beb43c5e7810991242c6a9c42b93ff238c8c0850684939634ea751208') }}
+{% endif %}
+    restart: on-failure
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+    environment:
+      PUID: "{{ skfetch.PUID | default(1000) }}"
+      PGID: "{{ skfetch.PGID | default(1000) }}"
+      TZ: {{ skfetch.TZ | default('UTC') | to_json }}
+    volumes:
+      - {{ local_root }}/{{ a[0] }}:/config
+{% if a[0] != 'prowlarr' %}
+      - {{ media }}:/data
+{% endif %}
+    ports: ["{{ lan }}:{{ a[1] }}:{{ a[1] }}"]
+    networks:
+      skfetch: { ipv4_address: {{ net }}.{{ a[2] }} }
+{% if stream and a[0] != 'prowlarr' %}
+      {{ stream }}: {}
+{% endif %}
+    mem_limit: {{ skfetch[a[0] | upper + '_MEM_LIMIT'] | default(a[3]) }}
+{% endfor %}
+{% if flare %}
+
+  flaresolverr:
+    image: {{ skfetch.FLARESOLVERR_IMAGE | default('ghcr.io/flaresolverr/flaresolverr@sha256:c80ae007ce2ccdcd217a12426e4f039ef763ff90738c808d38810c3e59323767') }}
+    restart: on-failure
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+    environment:
+      TZ: {{ skfetch.TZ | default('UTC') | to_json }}
+      LOG_LEVEL: info
+    networks:
+      skfetch: { ipv4_address: {{ net }}.20 }
+    mem_limit: {{ skfetch.FLARESOLVERR_MEM_LIMIT | default('512m') }}
+{% endif %}
+
+networks:
+  skfetch:
+    driver: bridge
+    ipam: { config: [ { subnet: {{ subnet }} } ] }
+{% if stream %}
+  {{ stream }}:
+    external: true
+{% endif %}

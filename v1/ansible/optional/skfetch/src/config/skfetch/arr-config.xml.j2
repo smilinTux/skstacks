@@ -1,0 +1,25 @@
+{% set sfx = '' if env == 'prod' else '-' + env %}
+{% set local_root = skfetch.LOCAL_ROOT | default('/var/lib/skfetch' + sfx) %}
+{% set media = skfetch.MEDIA_PATH | default('/var/data/' + app + '-' + env) %}
+{% set cfgdir = '/var/data/config/' + app + '-' + env %}
+{% set subnet = skfetch.BRIDGE_SUBNET | default('172.30.60.0/24') %}
+{% set net = subnet.split('/')[0].rsplit('.', 1)[0] %}
+{% set lan = skfetch.LAN_BIND_ADDRESS | default('127.0.0.1') %}
+{% set stream = skfetch.STREAM_NETWORK | default('skstream-' + env) %}
+{% set flare = (skfetch.FLARESOLVERR_ENABLED | default(true) | string | lower) in ['true', 'yes', '1', 'on'] %}
+{% set fqdn = arr.name + sfx + '.' + skfetch.CLUSTERNAME + '.' + skfetch.DOMAIN %}
+{% set hosts = [lan, skfetch.MEDIA_NODE, 'localhost', '127.0.0.1', fqdn, net + '.' + (arr.octet | string)] + (skfetch.EXTRA_ALLOWED_HOSTS | default([])) %}
+<Config>
+  <BindAddress>*</BindAddress>
+  <Port>{{ arr.port }}</Port>
+  <EnableSsl>False</EnableSsl>
+  <LaunchBrowser>False</LaunchBrowser>
+  <ApiKey>{{ skfetch[arr.name | upper + '_API_KEY'] | e }}</ApiKey>
+  <AuthenticationMethod>External</AuthenticationMethod>
+  <AuthenticationRequired>Enabled</AuthenticationRequired>
+  <LogLevel>info</LogLevel>
+  <UrlBase></UrlBase>
+  <InstanceName>{{ arr.name | capitalize }}</InstanceName>
+  <UpdateMechanism>Docker</UpdateMechanism>
+  <AllowedHosts>{{ hosts | unique | join(',') | e }}</AllowedHosts>
+</Config>
