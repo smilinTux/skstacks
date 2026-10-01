@@ -43,6 +43,31 @@
       tags:
         - config
 
+    - name: Resolve skmesh.AUTH_MODE (standalone | authentik)
+      set_fact:
+        skmesh_auth_mode: "{{ skmesh.AUTH_MODE | default('standalone') | string | lower }}"
+      tags:
+        - config
+
+    # Instances written before AUTH_MODE existed were Authentik-wired and
+    # carry NETBIRD_AUTH_CLIENT_ID; refuse to flip them to standalone (a
+    # different user store) just because AUTH_MODE is unset.
+    - name: Check skmesh.AUTH_MODE and the vault keys it needs
+      assert:
+        that:
+          - skmesh_auth_mode in ['standalone', 'authentik']
+          - skmesh.AUTH_MODE is defined or skmesh.NETBIRD_AUTH_CLIENT_ID is not defined
+          - skmesh_auth_mode != 'authentik' or (skmesh.IDP_MANAGER_PASSWORD | default('') | string | length) >= 32
+          - skmesh_auth_mode != 'authentik' or (skmesh.SSO_HOST_IP | default('') | string | length) > 0
+        fail_msg: >-
+          skmesh.AUTH_MODE must be 'standalone' or 'authentik' (got '{{ skmesh_auth_mode }}'),
+          and must be set explicitly when the vault carries NETBIRD_AUTH_CLIENT_ID (an
+          Authentik-era vault). authentik mode also needs IDP_MANAGER_PASSWORD (32+ chars,
+          e.g. openssl rand -hex 32) and SSO_HOST_IP. See the skmesh README "Authentication".
+        quiet: true
+      tags:
+        - config
+
     - name: Define default network variables when not provided in vault
       set_fact:
         app_networks: >-
@@ -71,7 +96,7 @@
         - { path: "/var/data/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/runtime/{{ app }}-{{ env }}/postgres", owner: "999", group: "999", mode: "0755" }
         - { path: "/var/data/{{ app }}-{{ env }}/database-dump", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/{{ app }}-{{ env }}/management", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/{{ app }}-{{ env }}/management", owner: "root", group: "root", mode: "0700" }
         - { path: "/var/data/{{ app }}-{{ env }}/signal", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/{{ app }}-{{ env }}/relay", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/config/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
@@ -88,10 +113,44 @@
         - { src: "postgres.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/postgres.env" }
         - { src: "postgres-backup.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/postgres-backup.env" }
         - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env" }
-        - { src: "management.json.j2", dest: "/var/data/config/{{ app }}-{{ env }}/management.json" }
         - { src: "turnserver.conf.j2", dest: "/var/data/config/{{ app }}-{{ env }}/turnserver.conf" }
       tags:
         - templates
+
+    # management.json holds the datastore key, relay/TURN secrets and (in
+    # authentik mode) the IdP manager's app password: owner-only.
+    - name: Process {{ app }} management.json template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/management.json.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/management.json"
+        owner: root
+        group: root
+        mode: '0600'
+      tags:
+        - templates
+
+    - name: Write the CA management trusts for HTTPS to the IdP (skmesh.EXTRA_CA_CERT)
+      copy:
+        content: "{{ skmesh.EXTRA_CA_CERT }}"
+        dest: "/var/data/config/{{ app }}-{{ env }}/extra-ca.pem"
+        owner: root
+        group: root
+        mode: '0644'
+      when: skmesh.EXTRA_CA_CERT | default('') | length > 0
+      tags:
+        - templates
+
+    - name: Create or update the Authentik provider, application and IdP manager account
+      include_tasks:
+        file: tasks/authentik.yml
+        apply:
+          tags:
+            - authentik
+            - deploy
+      when: skmesh_auth_mode == 'authentik'
+      tags:
+        - authentik
+        - deploy
 
     - name: Process {{ app }} Docker Compose template
       template:
@@ -158,11 +217,22 @@
           sleep 2
         done
 
-        chown -R root:root /var/data/{{ app }}-{{ env }}/management || true
-        chown -R root:root /var/data/{{ app }}-{{ env }}/signal || true
-        chown -R root:root /var/data/{{ app }}-{{ env }}/relay || true
+        # Incremental, never `chown -R` / `chmod -R`: those rewrite every
+        # entry on every deploy even when nothing is wrong (on NFS, one
+        # SETATTR round trip each). These three dirs are NetBird state (a
+        # store db, keys, GeoLite and IdP data: tens of files, no bulk
+        # data), so walking them is cheap; the finds only change entries
+        # whose owner or mode is actually wrong.
+        for S in /var/data/{{ app }}-{{ env }}/management /var/data/{{ app }}-{{ env }}/signal /var/data/{{ app }}-{{ env }}/relay; do
+          [ -d "$S" ] || continue
+          find "$S" \( ! -user 0 -o ! -group 0 \) -exec chown -h root:root {} + || true
+        done
 
-        chmod -R 755 /var/data/{{ app }}-{{ env }}/management || true
+        # Never a blanket `chmod -R 755` here: management/ is the NetBird
+        # /var/lib/netbird (store, keys, GeoLite and IdP data). Management
+        # runs as root, so owner-only: dirs 0700, files 0600 (x bits kept).
+        M=/var/data/{{ app }}-{{ env }}/management
+        find "$M" ! -type l \( -perm /0077 -o \( -type d ! -perm -0700 \) -o \( -type f ! -perm -0600 \) \) -exec chmod u+rwX,go-rwx {} + || true
       when: deploy_output.rc == 0
       ignore_errors: yes
       tags:

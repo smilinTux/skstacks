@@ -140,25 +140,27 @@ def test_skdash_resources_vars_override_defaults():
 def test_skdash_has_restart_policy_and_rollback_config():
     doc = _skdash_doc()
     deploy = doc["services"]["dashy"]["deploy"]
-    assert deploy["restart_policy"]["condition"] == "on-failure"
+    assert deploy["restart_policy"]["condition"] == "any"
     assert deploy["rollback_config"]["parallelism"] == 1
 
 
-def test_skdash_default_restart_policy_has_max_attempts_and_window():
+def test_skdash_default_restart_policy_has_no_restart_budget():
+    """No max_attempts/window: a spent budget leaves the service at 0/1 for
+    good (see test_restart_policy_never_gives_up.py)."""
     doc = _skdash_doc()
     rp = doc["services"]["dashy"]["deploy"]["restart_policy"]
-    assert rp["max_attempts"] == 5
-    assert rp["window"] == "120s"
+    assert "max_attempts" not in rp
+    assert "window" not in rp
 
 
 def test_skdash_restart_policy_condition_overridable():
-    doc = _skdash_doc(restart_policy_condition="any")
+    doc = _skdash_doc(restart_policy_condition="on-failure")
     rp = doc["services"]["dashy"]["deploy"]["restart_policy"]
-    assert rp["condition"] == "any"
+    assert rp["condition"] == "on-failure"
 
 
-def test_skdash_restart_policy_max_attempts_and_window_omittable():
-    doc = _skdash_doc(restart_policy_max_attempts="", restart_policy_window="")
+def test_skdash_retired_restart_budget_knobs_are_not_rendered():
+    doc = _skdash_doc(restart_policy_max_attempts=3, restart_policy_window="120s")
     rp = doc["services"]["dashy"]["deploy"]["restart_policy"]
     assert "max_attempts" not in rp
     assert "window" not in rp

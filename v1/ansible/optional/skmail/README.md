@@ -51,6 +51,8 @@ skmail:
   ENABLE_RSPAMD: "1"                     # default: 1
   ENABLE_CLAMAV: "1"                     # default: 1
   ENABLE_FAIL2BAN: "1"                   # default: 1
+  HEALTHCHECK_START_PERIOD: "1800s"      # default: 1800s - see "Healthcheck and slow starts" below
+  MAIL_WEB_ENABLED: true                 # default: true - see "The mail-web sidecar" below
 
   # SSL_TYPE: default: letsencrypt - see "Certificates" below for manual/self-signed
   SSL_TYPE: "letsencrypt"
@@ -75,6 +77,38 @@ skmail:
     A:      { name: "mail",             type: A,   value: "<your WAN IP>" }
     MX:     { name: "@",                type: MX,  value: "mail.example.com", priority: 10 }
 ```
+
+## Healthcheck and slow starts
+
+At every container start docker-mailserver runs `chown -R` over each
+account's mailbox (`helpers/accounts.sh:_create_accounts`) and fixes
+ownership under `/var/mail` (`_chown_var_mail`) before postfix listens on
+port 25. On NFS every file costs a SETATTR round trip: one production start
+with 22 mailboxes (~2.5k files) took about 17 minutes while the NFS server
+was busy with an unrelated bulk copy. The old healthcheck (60s
+`start_period`, then 3 failed probes 30s apart) gave up after ~2.5 minutes,
+Swarm killed the task as unhealthy, and the replacement started the same
+chown from the top: a kill loop, and no mail, until `start_period` was
+raised by hand.
+
+`skmail.HEALTHCHECK_START_PERIOD` (default `1800s`) sets that window. The
+default is the observed worst case (~17 min) with about 75% headroom, and
+still bounded: a container that never becomes healthy is replaced after
+roughly 32 minutes (`start_period` plus 3 x 30s). A long value does not
+slow a normal start: failed probes inside the window are not counted, and
+the first passing probe marks the task healthy immediately (the mail ports
+are published in host mode, so nothing waits on the health state to route
+traffic). An instance whose NFS is slower, or which has many more
+mailboxes, should raise it; time a restart
+(`docker service logs skmail-<env>_skmail` from "Welcome to
+docker-mailserver" to "is up and running") and leave generous headroom.
+
+DMS 16.0.1 has no environment option that skips or limits this ownership
+fix: the per-mailbox `chown -R` in `_create_accounts` is unconditional for
+the default FILE account provisioner, and `_chown_var_mail` runs on every
+start. So there is no knob here to turn it off; the durable fixes are
+keeping heavy I/O off the NFS server while mail restarts, and keeping
+mailbox counts and file counts in mind when sizing this window.
 
 ## First mail account (fresh install)
 
@@ -165,6 +199,33 @@ for the full reference on every value below.
   already-mounted `docker-data/dms/config/ssl/` directory (skipped once the
   files exist) - no vault keys needed beyond `SSL_TYPE: self-signed` itself.
   The Traefik-acme preflight above is skipped for this type too.
+
+### The mail-web sidecar
+
+`mail-web` (a `traefik/whoami` container behind a Traefik router for
+`HOSTNAME` with `certresolver=main`) exists only so that Traefik's ACME
+resolver OBTAINS a certificate for the mail hostname on an instance that does
+not hold one yet. It is not what renews it: Traefik's ACME provider renews
+every certificate stored in `acme.json` on its own timer
+(`renewCertificates` in `pkg/provider/acme/provider.go`, Traefik v3.6.2),
+whether or not any router still references it. A router whose domain is
+already covered by a stored certificate, a wildcard included, never obtains a
+new one (`getUncheckedDomains`), so on an instance whose skmail uses a
+wildcard (`SSL_DOMAIN: "*.example.com"`) mail-web does nothing for TLS at all.
+It does, however, publish each visitor's request headers and client IP at
+`https://HOSTNAME`, because that is what whoami does.
+
+Set `skmail.MAIL_WEB_ENABLED: false` to drop it: the compose file then has no
+mail-web service and no Traefik router, and the deploy script removes a
+mail-web service left over from an earlier deploy (`docker stack deploy`
+never removes a service that disappeared from the file). `https://HOSTNAME`
+then falls through to the fence's catch-all. Before you disable it, check
+that the certificate docker-mailserver reads is already in `acme.json`.
+Neither setting covers a lost `acme.json`: only a router that names the
+certificate's exact domain (for a wildcard, `tls.domains[n].main=*.example.com`
+on some router using a DNS-01 resolver) makes Traefik obtain it again, and
+mail-web asks for `HOSTNAME`, not a wildcard, unless `TLS_DOMAINS` says
+otherwise.
 
 ## Estate data
 

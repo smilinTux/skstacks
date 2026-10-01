@@ -60,6 +60,15 @@ set +a
 echo -e "${YELLOW}🚀 Deploying stack '${STACK_NAME}'...${NC}"
 record_preexisting "${SERVICE_NAME}"
 docker stack deploy -c "${COMPOSE_FILE}" "${STACK_NAME}"
+{% if (skmail.MAIL_WEB_ENABLED | default(true) | string | lower) in ["false", "no", "0", "off", ""] %}
+
+# skmail.MAIL_WEB_ENABLED is false: docker stack deploy never removes a
+# service that is no longer in the compose file, so drop a leftover one.
+if docker service inspect "${STACK_NAME}_mail-web" >/dev/null 2>&1; then
+    echo -e "${YELLOW}Removing ${STACK_NAME}_mail-web (skmail.MAIL_WEB_ENABLED is false)${NC}"
+    docker service rm "${STACK_NAME}_mail-web"
+fi
+{% endif %}
 
 # Wait for services to register
 sleep 5

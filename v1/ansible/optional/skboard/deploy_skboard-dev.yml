@@ -44,6 +44,19 @@
       include_vars: "{{ vault_file_path }}"
       when: vault_file_path is defined
 
+    - name: Refuse restart-budget keys the framework no longer honours
+      # A restart budget (max_attempts, counted per window) runs out for good
+      # after one outage of a pinned node: the service then sits at 0/1.
+      assert:
+        that:
+          - (skboard | default({})).RESTART_POLICY_MAX_ATTEMPTS is not defined
+          - (skboard | default({})).RESTART_POLICY_WINDOW is not defined
+        fail_msg: >-
+          skboard.RESTART_POLICY_MAX_ATTEMPTS and skboard.RESTART_POLICY_WINDOW were removed in skstacks v2.22.0
+          (a spent restart budget left the service at 0 replicas for good).
+          Delete them from the vault.
+        quiet: true
+
     - name: Define network variables from vault (idempotent network creation)
       # ⚠️ IMPORTANT: Network subnets MUST match shared/networks registry
       # Reference: See shared/networks for all registered network subnets
@@ -76,8 +89,6 @@
         mode: 0755
       loop:
         - /var/data/{{ app }}-{{ env }}
-        - /var/data/{{ app }}-{{ env }}/data
-        - /var/data/{{ app }}-{{ env }}/data/files
         - /var/data/config/{{ app }}-{{ env }}
 
     - name: Set data directory ownership
@@ -85,15 +96,20 @@
       # /etc/passwd beyond that uid) and needs write access to create the
       # sqlite journal/WAL files next to vikunja.db; root:root 0755 here
       # makes the container fail with "permission denied" opening the db.
+      # Not recursive: the deploy creates data/ and data/files/ owned right
+      # here; vikunja.db and every attachment under files/ are created by
+      # the container as 1000 itself. `recurse: yes` walked every
+      # attachment over NFS on every deploy (and its 0755 marked every file
+      # executable).
       file:
         path: "{{ item }}"
         state: directory
         owner: "1000"
         group: "0"
         mode: 0755
-        recurse: yes
       loop:
         - /var/data/{{ app }}-{{ env }}/data
+        - /var/data/{{ app }}-{{ env }}/data/files
 
     - name: Process {{ app }} environment templates
       template:

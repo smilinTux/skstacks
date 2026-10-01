@@ -84,14 +84,24 @@
       # SKPort never mounts the Docker socket directly: it always talks to
       # whichever of skfence (single-node) or skfenceha (HA) is deployed,
       # through that stack's socket-proxy service on cloud-socket-proxy-{{ env }}.
+      # The service list is captured first and matched afterwards: piping
+      # `docker service ls` into `grep -q` under pipefail misfires on a busy
+      # cluster (grep exits at the match, docker takes SIGPIPE, the pipeline
+      # "fails") and used to fall through to the wrong proxy. No known proxy
+      # stops the deploy instead of guessing one.
       shell: |
         set -o pipefail
-        if docker service ls --format "{{ '{{' }}.Name{{ '}}' }}" | grep -q "^skfenceha-{{ env }}_socket-proxy$"; then
+        services=$(docker service ls --format "{{ '{{' }}.Name{{ '}}' }}") || {
+          echo "docker service ls failed; cannot find the socket-proxy service" >&2
+          exit 1
+        }
+        if grep -qx "skfenceha-{{ env }}_socket-proxy" <<<"$services"; then
           echo "skfenceha"
-        elif docker service ls --format "{{ '{{' }}.Name{{ '}}' }}" | grep -q "^skfence-{{ env }}_socket-proxy$"; then
+        elif grep -qx "skfence-{{ env }}_socket-proxy" <<<"$services"; then
           echo "skfence"
         else
-          echo "skfence"
+          echo "no socket-proxy service found (expected skfenceha-{{ env }}_socket-proxy or skfence-{{ env }}_socket-proxy); deploy skfenceha or skfence first" >&2
+          exit 1
         fi
       args:
         executable: /bin/bash

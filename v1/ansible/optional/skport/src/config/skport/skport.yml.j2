@@ -34,8 +34,6 @@ services:
       restart_policy:
         condition: any
         delay: 10s
-        max_attempts: 5
-        window: 120s
       rollback_config:
         parallelism: 1
       labels:

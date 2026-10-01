@@ -1,11 +1,11 @@
 # Public, obviously fake example vault for the real-Ansible render gate
 # (v1/tests/render/render_playbooks.py). Minimal: only what the deploy
 # needs to render. example.test / 192.0.2.0/24 only; no real secrets.
+# Base pass: AUTH_MODE unset = standalone (NetBird's embedded IdP).
 skmesh:
   CLUSTERNAME: render
   DOMAIN: example.test
   POSTGRES_PASSWORD: example-postgres-password-not-a-secret
-  NETBIRD_AUTH_CLIENT_ID: netbird
   TURN_USER: turn
   TURN_PASSWORD: example-turn-password-not-a-secret
   NETBIRD_RELAY_ENDPOINT: rels://relay.render.example.test:443
@@ -13,4 +13,3 @@ skmesh:
   NETBIRD_DATASTORE_ENC_KEY: example-netbird-datastore-enc-key-not-a-secret
   TURN_SECRET: example-turn-secret-not-a-secret
   COTURN_EXTERNAL_IP: 192.0.2.20
-  SSO_HOST_IP: 192.0.2.5

@@ -1,0 +1,103 @@
+# skmesh AUTH_MODE: authentik. Create or update, idempotently, what NetBird
+# needs on the cluster's sksso (Authentik), BEFORE the stack starts:
+# NetBird management exits at startup if the OIDC discovery document of its
+# issuer does not exist yet.
+#
+# Uses the Authentik admin API with sksso's automation token
+# (sksso.api_token in sksso's vault; bootstrap it once per cluster with
+# sksso's src/sksso/ensure-api-token.sh). The provisioner runs in a
+# throwaway container on sksso's overlay network against sksso's server
+# directly, so it needs neither public DNS nor the edge certificate. Every
+# secret goes in on stdin; nothing secret is logged.
+
+- name: Locate sksso's vault (holds sksso.api_token)
+  set_fact:
+    skmesh_sksso_vault_file: >-
+      {{ skmesh.AUTHENTIK_VAULT_FILE | default((vault_file_path | dirname) ~ '/'
+         ~ (vault_file_path | basename | regex_replace('^skmesh-', 'sksso-'))) }}
+
+- name: Load sksso's vault
+  include_vars:
+    file: "{{ skmesh_sksso_vault_file }}"
+    name: skmesh_sksso_vault
+  no_log: true
+
+- name: Check that sksso's vault carries the Authentik automation token
+  assert:
+    that:
+      - (skmesh_sksso_vault.sksso.api_token | default('') | string | length) >= 32
+    fail_msg: >-
+      sksso.api_token (32+ chars) is missing from {{ skmesh_sksso_vault_file }}.
+      Generate it (openssl rand -hex 32), add it to sksso's vault, and register it in
+      Authentik once with sksso's src/sksso/ensure-api-token.sh (see the sksso README).
+    quiet: true
+
+- name: Build the Authentik provisioner input
+  set_fact:
+    skmesh_authentik_input:
+      url: "{{ skmesh.AUTHENTIK_INTERNAL_URL | default('http://sksso-' ~ env ~ '_server:9000') }}"
+      host: "{{ skmesh_sso_host }}"
+      token: "{{ skmesh_sksso_vault.sksso.api_token }}"
+      client_id: "{{ skmesh.NETBIRD_AUTH_CLIENT_ID | default('skmesh') }}"
+      provider_name: "{{ skmesh.AUTHENTIK_APP_SLUG | default('skmesh') }}"
+      app_name: "{{ skmesh.AUTHENTIK_APP_NAME | default('SKMesh') }}"
+      app_slug: "{{ skmesh.AUTHENTIK_APP_SLUG | default('skmesh') }}"
+      launch_url: "https://{{ skmesh_host }}/"
+      redirect_uris:
+        - "https://{{ skmesh_host }}/nb-auth"
+        - "https://{{ skmesh_host }}/nb-silent-auth"
+        - "http://localhost:53000"
+      authorization_flow: "{{ skmesh.AUTHENTIK_AUTHORIZATION_FLOW | default('default-provider-authorization-implicit-consent') }}"
+      invalidation_flow: "{{ skmesh.AUTHENTIK_INVALIDATION_FLOW | default('default-provider-invalidation-flow') }}"
+      signing_key: "{{ skmesh.AUTHENTIK_SIGNING_KEY | default('authentik Self-signed Certificate') }}"
+      sa_username: "{{ skmesh.IDP_MANAGER_USERNAME | default('skmesh-idp-manager') }}"
+      sa_password: "{{ skmesh.IDP_MANAGER_PASSWORD }}"
+      sa_group: "{{ skmesh.IDP_MANAGER_USERNAME | default('skmesh-idp-manager') }}"
+      sa_role: "{{ skmesh.IDP_MANAGER_USERNAME | default('skmesh-idp-manager') }}"
+      sa_token_identifier: "{{ skmesh.IDP_MANAGER_USERNAME | default('skmesh-idp-manager') }}"
+      device_flow: "{{ skmesh.DEVICE_AUTH_FLOW | default(false) | bool }}"
+      device_code_flow: "{{ skmesh.AUTHENTIK_AUTHORIZATION_FLOW | default('default-provider-authorization-implicit-consent') }}"
+  vars:
+    skmesh_base_domain: "{{ skmesh.DOMAIN if (skmesh.CLOUDFLARED | default(false)) else (skmesh.CLUSTERNAME ~ '.' ~ skmesh.DOMAIN) }}"
+    skmesh_host: "skmesh{{ '' if env == 'prod' else '-' ~ env }}.{{ skmesh_base_domain }}"
+    skmesh_sso_host: "{{ skmesh.SSO_HOST | default('sso' ~ ('' if env == 'prod' else '-' ~ env) ~ '.' ~ skmesh_base_domain) }}"
+  no_log: true
+
+- name: Stage the Authentik provisioner
+  copy:
+    src: "{{ playbook_dir }}/src/{{ app }}/authentik_provision.py"
+    dest: "/var/data/config/{{ app }}-{{ env }}/authentik_provision.py"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Create or update the skmesh provider, application and IdP manager in Authentik
+  command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - -i
+      - --network
+      - "{{ skmesh.AUTHENTIK_NETWORK | default('sksso-' ~ env) }}"
+      - -v
+      - "/var/data/config/{{ app }}-{{ env }}/authentik_provision.py:/authentik_provision.py:ro"
+      - "{{ skmesh.PROVISIONER_IMAGE | default('python:3.13.15-alpine@sha256:79e7a9b9ff1cbceff819f856fb374477792a5967759d94df266de7b7b4120e6f') }}"
+      - python
+      - /authentik_provision.py
+    stdin: "{{ skmesh_authentik_input | to_json }}"
+  register: skmesh_authentik_provision
+  changed_when: "'created' in skmesh_authentik_provision.stdout or 'updated (' in skmesh_authentik_provision.stdout"
+  failed_when: false
+  no_log: true
+
+# The provisioner prints status lines only (never a secret), so its output
+# is safe to show; the task above is no_log because its stdin is secret.
+- name: Show the Authentik provisioner result
+  debug:
+    msg: "{{ (skmesh_authentik_provision.stdout_lines | default([])) + (skmesh_authentik_provision.stderr_lines | default([])) }}"
+
+- name: Fail if Authentik provisioning failed
+  fail:
+    msg: "Authentik provisioning failed (rc={{ skmesh_authentik_provision.rc | default('?') }}), see the lines above"
+  when: (skmesh_authentik_provision.rc | default(1)) != 0

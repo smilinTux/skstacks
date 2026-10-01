@@ -43,6 +43,10 @@ networks:
     external: true
 
 services:
+{# skmail.MAIL_WEB_ENABLED (default true): false drops mail-web and its router.
+   Written without the Ansible-only bool filter so plain jinja2 renders it too. #}
+{% set _mail_web_enabled = (skmail.MAIL_WEB_ENABLED | default(true) | string | lower) not in ["false", "no", "0", "off", ""] %}
+{% if _mail_web_enabled %}
   # === MAIL-WEB: Certificate Generation Trigger ===
   # Simple web service that triggers Traefik ACME to generate mail.example.com certificate
   # The certificate is then dumped by traefik-certs-dumper for DMS to use
@@ -69,7 +73,6 @@ services:
       restart_policy:
         condition: any
         delay: 5s
-        max_attempts: 3
       resources:
         limits:
           cpus: '0.1'
@@ -99,6 +102,7 @@ services:
         - "traefik.http.routers.mail-web-{{ env }}.tls.domains[{{ loop.index0 }}].sans={{ _tls_sans | join(',') }}"
 {% endif %}
 {% endfor %}
+{% endif %}
 
   skmail:
     image: "ghcr.io/docker-mailserver/docker-mailserver:{{ skmail.DMS_VERSION | default('16.0.1') }}"
@@ -111,7 +115,12 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      # DMS chowns every mailbox (chown -R) at each start, before postfix
+      # listens; over a loaded NFS server that has taken ~17 minutes. Failed
+      # probes inside start_period do not count and the first passing probe
+      # marks the task healthy at once, so a long value never delays a fast
+      # start. See README.md "Healthcheck and slow starts".
+      start_period: {{ skmail.HEALTHCHECK_START_PERIOD | default('1800s') }}
     # HOST MODE: Ports bind directly to host network (no NAT/overlay)
     ports:
       - target: 25
@@ -178,8 +187,6 @@ services:
       restart_policy:
         condition: any
         delay: 10s
-        max_attempts: 5
-        window: 120s
       # skmail.RESOURCES_* (skdash's naming); defaults are the historical
       # values. An empty reservation value is omitted; both empty drops the
       # reservations block entirely.

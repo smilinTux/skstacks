@@ -481,8 +481,12 @@
         CONTAINER=$(docker ps --filter 'name={{ app }}-{{ env }}_skmail' --format '{% raw %}{{.ID}}{% endraw %}' | head -1)
         if [ -n "${CONTAINER}" ]; then
           echo "Fixing mail directory permissions..."
-          # Set base mail directory permissions
-          docker exec ${CONTAINER} chown -R 5000:5000 /var/mail || echo "Failed to set base mail permissions"
+          # Set base mail directory ownership: the domain and mailbox dirs
+          # only (/var/mail/<domain>/<user>), and only where wrong. Never -R:
+          # /var/mail is every mailbox on NFS, and DMS already chowns each
+          # mailbox recursively at every start (the #95 finding), so a
+          # second walk from the deploy only doubles that I/O.
+          docker exec ${CONTAINER} find /var/mail -maxdepth 2 \( ! -user 5000 -o ! -group 5000 \) -exec chown -h 5000:5000 {} + || echo "Failed to set base mail permissions"
           # Ensure clamav mailbox has correct permissions if it exists
           docker exec ${CONTAINER} sh -c 'if id clamav >/dev/null 2>&1; then chown clamav:clamav /var/mail/clamav 2>/dev/null || echo "ClamAV mailbox permissions may need manual fix"; fi' || echo "ClamAV user check failed"
           # Set permissions for any other system mailboxes

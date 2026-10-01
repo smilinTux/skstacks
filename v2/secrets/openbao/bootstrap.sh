@@ -97,7 +97,11 @@ export BAO_ADDR
 command -v bao >/dev/null 2>&1 || die "the 'bao' CLI is required on PATH"
 
 # ── 1. init status (idempotent) ───────────────────────────────────────────--
-if bao status -format=json 2>/dev/null | grep -q '"initialized": *true'; then
+# Capture, then match. `bao status` exits 2 when sealed, so under pipefail
+# `bao status | grep -q` read an initialized-but-sealed server (and any
+# SIGPIPE from grep's early exit) as "not initialized" and went on to init.
+bao_status="$(bao status -format=json 2>/dev/null || true)"
+if grep -q '"initialized": *true' <<<"$bao_status"; then
   log "OpenBao already initialized — skipping init."
 else
   # ── 2. init with PGP-encrypted output — THE NO-CATCH-22 STEP ──────────────-

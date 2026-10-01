@@ -7,7 +7,7 @@ version: "3.7"
 
 services:
   nextcloud:
-    image: nextcloud:31.0.14
+    image: {{ skhub.NEXTCLOUD_IMAGE | default('nextcloud:31.0.14') }}
     env_file: /var/data/config/skhub-{{ env }}/skhub.env
     networks:
       - skhub-{{ env }}
@@ -226,7 +226,7 @@ services:
       start_period: 120s
 
   cron:
-    image: nextcloud:31.0.14
+    image: {{ skhub.NEXTCLOUD_IMAGE | default('nextcloud:31.0.14') }}
     # Healthcheck probes crond itself (PID 1 is `busybox crond`), NOT log
     # freshness: at a sane loglevel a quiet instance leaves the log untouched
     # for long stretches, so a log-mtime check flaps the container.
@@ -267,7 +267,7 @@ services:
       - redis
 
   notify_push:
-    image: nextcloud:31.0.14
+    image: {{ skhub.NEXTCLOUD_IMAGE | default('nextcloud:31.0.14') }}
     user: www-data
     entrypoint: /var/www/html/custom_apps/notify_push/bin/x86_64/notify_push /var/www/html/config/config.php
     env_file: /var/data/config/skhub-{{ env }}/notify_push.env
@@ -406,20 +406,56 @@ services:
       start_period: 90s
 {% endif %}
 {% if skhub.enable_talk_hpb | default(false) %}
+{#- TURN for callers outside the LAN (see README "Talk HPB TURN"). Ingress
+    publishing SNATs clients to 10.0.0.x, so host mode is needed for eturnal to
+    see real addresses; host-mode ports only open on the task's node, hence the
+    talk-hpb placement knob. The deploy playbooks assert the combination. #}
+{% set _talk_turn_mode = skhub.TALK_TURN_PUBLISH_MODE | default('ingress') %}
+{% set _talk_relay_min = skhub.TALK_TURN_RELAY_MIN_PORT | default('') %}
+{% set _talk_relay_max = skhub.TALK_TURN_RELAY_MAX_PORT | default('') %}
+{% set _talk_relay_ipv4 = skhub.TALK_TURN_RELAY_IPV4 | default('') %}
   talk-hpb:
     image: ghcr.io/nextcloud-releases/aio-talk:20260122_105751
     env_file: /var/data/config/skhub-{{ env }}/talk-hpb.env
+{% if _talk_relay_ipv4 | string | length > 0 %}
+    # aio-talk's /start.sh always writes relay_ipv4_addr = the container IP
+    # into /conf/eturnal.yml, then execs this command. Rewrite that one line
+    # to the address the router forwards, then exec the image's own CMD.
+    # $$ is docker stack deploy's escape for a literal $.
+    command:
+      - /bin/bash
+      - -c
+      - >-
+        grep -q '^  relay_ipv4_addr: ' /conf/eturnal.yml
+        || { echo 'talk-hpb: no relay_ipv4_addr line in /conf/eturnal.yml (aio-talk start.sh changed?)' >&2; exit 1; };
+        sed -i 's|^  relay_ipv4_addr: .*|  relay_ipv4_addr: "{{ _talk_relay_ipv4 }}"|' /conf/eturnal.yml
+        && exec "$$@"
+      - talk-hpb-relay-addr
+      - supervisord
+      - -c
+      - /supervisord.conf
+{% endif %}
     networks:
       - skhub-{{ env }}
       - cloud-public-{{ env }}
     ports:
+{% if _talk_turn_mode == 'host' %}
+      - { target: 3478, published: 3478, protocol: tcp, mode: host }
+      - { target: 3478, published: 3478, protocol: udp, mode: host }
+{% if _talk_relay_min | string | length > 0 %}
+{% for _p in range(_talk_relay_min | int, (_talk_relay_max | int) + 1) %}
+      - { target: {{ _p }}, published: {{ _p }}, protocol: udp, mode: host }
+{% endfor %}
+{% endif %}
+{% else %}
       - "3478:3478/tcp"
       - "3478:3478/udp"
+{% endif %}
     cap_add:
       - NET_ADMIN
     deploy:
       placement:
-        constraints: {{ (skhub.placement_constraints | default([])) | tojson }}
+        constraints: {{ (skhub.TALK_HPB_PLACEMENT_CONSTRAINTS | default(skhub.placement_constraints | default([]))) | tojson }}
       replicas: 1
       restart_policy:
         condition: any

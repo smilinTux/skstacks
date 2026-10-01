@@ -1,0 +1,4 @@
+# Second render pass: drive skwhoami.MIDDLEWARES down its set path.
+skwhoami:
+  MIDDLEWARES:
+    whoami01: "crowdsec-bouncer@file,default@file"

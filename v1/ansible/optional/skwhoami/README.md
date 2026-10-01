@@ -36,7 +36,16 @@ skwhoami:
   CLUSTERNAME: "skstack01"
   DOMAIN: "example.com"
   whoami_version: "v1.12.0"   # pinned tag; never :latest
+  # optional: per-router Traefik middlewares, keyed by service name.
+  # Unset routers keep default-no-crowdsec@file.
+  MIDDLEWARES:
+    whoami01: "crowdsec-bouncer@file,default@file"
 ```
+
+`MIDDLEWARES` makes one whoami router a canary for a new edge middleware
+(for example sksec's fail-closed `crowdsec-bouncer@file`) before it is put
+on real services. The middleware must be loaded by every Traefik node first:
+a router that references a missing middleware is disabled on that node.
 
 ## Networks
 

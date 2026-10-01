@@ -39,7 +39,6 @@ services:
       restart_policy:
         condition: any
         delay: 5s
-        max_attempts: 0
       labels:
         - "traefik.enable=false"
 
@@ -66,7 +65,6 @@ services:
       restart_policy:
         condition: any
         delay: 5s
-        max_attempts: 0
       labels:
         - "traefik.enable=false"
 

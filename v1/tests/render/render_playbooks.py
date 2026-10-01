@@ -36,7 +36,10 @@ render-only playbook that runs against localhost:
 The vault a deploy would read is replaced by ``vars/<svc>.example.yml``
 (obviously fake, example.test values only). A second pass merges
 ``vars/<svc>.set.yml`` on top where it exists, to exercise the optional
-hooks (parity hooks, placement, router hooks) on their "set" path.
+hooks (parity hooks, placement, router hooks) on their "set" path. A deploy
+that also reads ANOTHER service's vault (skmesh's authentik mode reads
+sksso's) gets that vault from ``vars/<svc>.with.<other>.yml``, staged beside
+its own as ``<other>-<env>_vault.yml``.
 
 Then every rendered file is checked: YAML/JSON/TOML must parse, compose
 files must pass the Compose Specification schema plus the swarm checks from
@@ -112,6 +115,7 @@ PREFIXES = ("ansible.builtin.", "ansible.legacy.")
 FAKE_STDOUT = {
     "fence_service_detection": "skfenceha",
     "traefik_detection": "skfenceha",
+    "socket_proxy_detection": "skfenceha",
     "actual_cert_dir": "/var/data/runtime/skfenceha-dev/certs/mail.example.test",
     "skfenceha_logrotate_nodes": "render-node-1",
     "skfence_logrotate_nodes": "render-node-1",
@@ -534,6 +538,17 @@ def write_inventory(path: Path, target_group: str) -> None:
     path.write_text(yaml.safe_dump({"all": {"hosts": {"localhost": host}, "children": groups}}))
 
 
+def stage_companion_vaults(svc: str, env: str, vault_dir: Path, vars_dir: Path = VARS) -> list[str]:
+    """Stage vars/<svc>.with.<other>.yml as <other>-<env>_vault.yml: the fake
+    vault of another service this deploy reads (e.g. skmesh reads sksso's)."""
+    staged = []
+    for extra in sorted(vars_dir.glob(f"{svc}.with.*.yml")):
+        other = extra.name[len(svc) + len(".with."):-len(".yml")]
+        (vault_dir / f"{other}-{env}_vault.yml").write_text(extra.read_text())
+        staged.append(other)
+    return staged
+
+
 def run_one(work: Path, stype: str, svc: str, env: str, pb: Path, pass_name: str) -> dict:
     t0 = time.monotonic()
     res = {"service": svc, "env": env, "pass": pass_name, "status": "PASS",
@@ -552,6 +567,7 @@ def run_one(work: Path, stype: str, svc: str, env: str, pb: Path, pass_name: str
     vault_dir = run_dir / "vaults" / stype / "group_vars" / env
     vault_dir.mkdir(parents=True)
     (vault_dir / f"{svc}-{env}_vault.yml").write_text(yaml.dump(vault, Dumper=VarsDumper))
+    stage_companion_vaults(svc, env, vault_dir)
     inv_dir = run_dir / "inventory"
     shutil.copytree(FIXTURES, inv_dir)
     target_group = "skfenceha_managers" if svc == "skfenceha" else "swarm_managers"

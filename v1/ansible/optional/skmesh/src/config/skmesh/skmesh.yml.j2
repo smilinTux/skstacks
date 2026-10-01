@@ -3,6 +3,8 @@
 {%- else -%}
   {%- set _base_domain = skmesh.CLUSTERNAME ~ '.' ~ skmesh.DOMAIN -%}
 {%- endif -%}
+{%- set _mode = skmesh.AUTH_MODE | default('standalone') | string | lower -%}
+{%- set _sso = skmesh.SSO_HOST | default('sso' ~ ('' if env == 'prod' else '-' ~ env) ~ '.' ~ _base_domain) -%}
 version: "3.9"
 
 x-logging: &logging
@@ -19,7 +21,7 @@ networks:
 
 services:
   postgres:
-    image: postgres:16.15-alpine
+    image: {{ skmesh.POSTGRES_IMAGE | default('postgres:16.15-alpine') }}
     env_file: /var/data/config/skmesh-{{ env }}/postgres.env
     environment:
       - PGTEMP=/var/lib/postgresql/data/tmp
@@ -48,7 +50,7 @@ services:
       start_period: 30s
 
   postgres-db-backup:
-    image: postgres:16.14@sha256:ff23cdce56cac62ada6f66013e1a50864c0abbe79d132d40b6e05bd80f378a70
+    image: {{ skmesh.POSTGRES_BACKUP_IMAGE | default('postgres:16.14@sha256:ff23cdce56cac62ada6f66013e1a50864c0abbe79d132d40b6e05bd80f378a70') }}
     env_file: /var/data/config/skmesh-{{ env }}/postgres-backup.env
     environment:
       - PGTEMP=/dump/tmp
@@ -57,16 +59,36 @@ services:
       - /etc/localtime:/etc/localtime:ro
     networks:
       - skmesh-{{ env }}
-    entrypoint: |
-      bash -c 'bash -s <<EOF
-      trap "break;exit" SIGHUP SIGINT SIGTERM
-      sleep 2m
-      while /bin/true; do
-        pg_dumpall -h postgres -U $${PGUSER} | gzip -c > /dump/dump_`date +%d-%m-%Y"_"%H_%M_%S`.sql.gz
-        ls -tr /dump/dump_*.sql.gz | head -n -"$${BACKUP_NUM_KEEP}" | xargs -r rm
-        sleep $${BACKUP_FREQUENCY}
-      done
-      EOF'
+    # One shell runs this script (list form, no `bash -s <<EOF` heredoc): an
+    # unquoted heredoc made the OUTER shell expand the date once at container
+    # start, so every run overwrote one file and a failed dump truncated the
+    # only copy. Each run now gets its own name, dumps to a hidden temp file
+    # renamed only on success, and prunes dumps older than BACKUP_KEEP_DAYS
+    # only after a good dump (a run of failures never ages out the last one).
+    # Every $ is $$ so docker stack deploy does not interpolate it.
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -o pipefail
+        trap 'exit 0' HUP INT TERM
+        rm -f /dump/.dump_*.tmp
+        sleep 2m & wait $$!
+        while true; do
+          NAME=dump_$$(date +%d-%m-%Y_%H_%M_%S).sql.gz
+          TMP=/dump/.$${NAME}.tmp
+          if pg_dumpall -h postgres -U "$${PGUSER}" | gzip -c > "$${TMP}" && [ -s "$${TMP}" ]; then
+            mv -f "$${TMP}" "/dump/$${NAME}"
+            echo "[backup] OK /dump/$${NAME} ($$(stat -c %s "/dump/$${NAME}") bytes)"
+            DAYS=$${BACKUP_KEEP_DAYS:-7}
+            [ "$${DAYS}" -ge 1 ] 2>/dev/null || DAYS=1
+            find /dump -maxdepth 1 -type f -name 'dump_*.sql.gz' ! -name "$${NAME}" -mmin +$$((DAYS * 1440)) -print -delete
+          else
+            echo "[backup] FAIL: dump failed or empty, previous dumps kept" >&2
+            rm -f "$${TMP}"
+          fi
+          sleep "$${BACKUP_FREQUENCY:-1d}" & wait $$!
+        done
     depends_on:
       - postgres
     deploy:
@@ -77,11 +99,15 @@ services:
     logging: *logging
 
   management:
-    image: netbirdio/management:0.79.0
+    image: {{ skmesh.MANAGEMENT_IMAGE | default('netbirdio/management:0.79.0') }}
     container_name: skmesh-management
     env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
+{% if _mode == 'authentik' %}
+    # Management fetches the OIDC discovery document and JWKS from sksso,
+    # and its IdP manager calls the Authentik API, all at this hostname.
     extra_hosts:
-      - "sso.{{ _base_domain }}:{{ skmesh.SSO_HOST_IP }}"
+      - "{{ _sso }}:{{ skmesh.SSO_HOST_IP }}"
+{% endif %}
     networks:
       - skmesh-{{ env }}
       - cloud-public-{{ env }}
@@ -91,6 +117,12 @@ services:
     volumes:
       - /var/data/config/skmesh-{{ env }}/management.json:/etc/netbird/management.json:ro
       - /var/data/skmesh-{{ env }}/management:/var/lib/netbird
+{% if skmesh.EXTRA_CA_CERT | default('') %}
+      # EXTRA_CA_CERT: a CA management must trust for HTTPS to the IdP (a
+      # private CA in front of sksso). Go reads /etc/ssl/certs/* in addition
+      # to the system bundle.
+      - /var/data/config/skmesh-{{ env }}/extra-ca.pem:/etc/ssl/certs/skmesh-extra-ca.pem:ro
+{% endif %}
     command:
       - "--log-file=console"
       - "--log-level=info"
@@ -113,7 +145,14 @@ services:
         - "traefik.http.routers.skmesh-mgmt-grpc.service=skmesh-mgmt-grpc-svc"
         - "traefik.http.services.skmesh-mgmt-grpc-svc.loadbalancer.server.port=33073"
         - "traefik.http.services.skmesh-mgmt-grpc-svc.loadbalancer.server.scheme=h2c"
-        - "traefik.docker.network=cloud-public-{{ env }}"
+{% if _mode != 'authentik' %}
+        # embedded IdP (Dex) is served by management's HTTP port at /oauth2
+        - "traefik.http.routers.skmesh-mgmt-oauth2.rule=Host(`skmesh{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && PathPrefix(`/oauth2`)"
+        - "traefik.http.routers.skmesh-mgmt-oauth2.entrypoints=websecure"
+        - "traefik.http.routers.skmesh-mgmt-oauth2.tls.certresolver=main"
+        - "traefik.http.routers.skmesh-mgmt-oauth2.service=skmesh-mgmt-api-svc"
+{% endif %}
+        - "traefik.swarm.network=cloud-public-{{ env }}"
     logging: *logging
     ports:
       - "33073:33073/tcp"
@@ -122,7 +161,7 @@ services:
       - postgres
 
   signal:
-    image: netbirdio/signal:0.79.0
+    image: {{ skmesh.SIGNAL_IMAGE | default('netbirdio/signal:0.79.0') }}
     container_name: skmesh-signal
     env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
     networks:
@@ -141,7 +180,7 @@ services:
         - "traefik.http.routers.skmesh-signal.service=skmesh-signal-svc"
         - "traefik.http.services.skmesh-signal-svc.loadbalancer.server.port=10000"
         - "traefik.http.services.skmesh-signal-svc.loadbalancer.server.scheme=h2c"
-        - "traefik.docker.network=cloud-public-{{ env }}"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
     logging: *logging
     ports:
       - "10000:10000/tcp"
@@ -149,15 +188,29 @@ services:
       - management
 
   relay:
-    image: netbirdio/relay:0.79.0
+    image: {{ skmesh.RELAY_IMAGE | default('netbirdio/relay:0.79.0') }}
     env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
+    # Peers dial wss://<NB_EXPOSED_ADDRESS host>/relay; Traefik terminates
+    # TLS on :443 and forwards the WebSocket here in plain HTTP.
+    environment:
+      - NB_LISTEN_ADDRESS=:33080
     networks:
       - skmesh-{{ env }}
+      - cloud-public-{{ env }}
     deploy:
       replicas: 1
       placement:
         constraints:
           - node.role == manager
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.skmesh-relay.rule=Host(`skmesh{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && PathPrefix(`/relay`)"
+        - "traefik.http.routers.skmesh-relay.entrypoints=websecure"
+        - "traefik.http.routers.skmesh-relay.tls.certresolver=main"
+        - "traefik.http.routers.skmesh-relay.service=skmesh-relay-svc"
+        - "traefik.http.services.skmesh-relay-svc.loadbalancer.server.port=33080"
+        - "traefik.http.services.skmesh-relay-svc.loadbalancer.server.scheme=http"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
     logging: *logging
     depends_on:
       - management
@@ -183,10 +236,11 @@ services:
           - node.role == manager
       labels:
         - "traefik.enable=true"
-        - "traefik.http.routers.skmesh-dash.rule=Host(`skmesh{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && !PathPrefix(`/api`) && !PathPrefix(`/management`) && !PathPrefix(`/signalexchange.SignalExchange`)"
+        - "traefik.http.routers.skmesh-dash.rule=Host(`skmesh{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && !PathPrefix(`/api`) && !PathPrefix(`/management`) && !PathPrefix(`/signalexchange.SignalExchange`) && !PathPrefix(`/relay`){% if _mode != 'authentik' %} && !PathPrefix(`/oauth2`){% endif %}"
         - "traefik.http.routers.skmesh-dash.entrypoints=websecure"
         - "traefik.http.routers.skmesh-dash.tls.certresolver=main"
         - "traefik.http.services.skmesh-dash.loadbalancer.server.port=80"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
     logging: *logging
     depends_on:
       - management

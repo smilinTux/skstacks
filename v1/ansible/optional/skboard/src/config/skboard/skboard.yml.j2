@@ -61,12 +61,11 @@ services:
           cpus: '{{ skboard.RESOURCES_RESERVATIONS_CPUS | default("0.10") }}'
           memory: {{ skboard.RESOURCES_RESERVATIONS_MEMORY | default("128M") }}
       restart_policy:
-        # Matches the live reference deployment's restart policy exactly.
-        # See README.md "Restart policy footgun" before changing this.
-        condition: {{ skboard.RESTART_POLICY_CONDITION | default('on-failure') }}
+        # No max_attempts/window: with the single-node pin, one outage of that
+        # node spent the old budget of 3 and Swarm never rescheduled vikunja
+        # again (0/1 for months). See README.md "Restart policy".
+        condition: {{ skboard.RESTART_POLICY_CONDITION | default('any') }}
         delay: {{ skboard.RESTART_POLICY_DELAY | default('10s') }}
-        max_attempts: {{ skboard.RESTART_POLICY_MAX_ATTEMPTS | default(3) }}
-        window: {{ skboard.RESTART_POLICY_WINDOW | default('120s') }}
       labels:
         # === TRAEFIK: HTTP ===
         - "traefik.enable=true"
