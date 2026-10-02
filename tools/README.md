@@ -42,12 +42,12 @@ manager_group: skstack01-douno-managers
 vault_password_file: ~/.vault_pass_env/.prod_vault_pass
 inventory: v1/ansible/shared/hosts   # relative to the instance dir
 lock_timeout: 14400
-snapshot_hook: "ssh root@192.168.0.12 sk-predeploy-snap {purpose}"
+snapshot_hook: "ssh root@<nas-host> sk-predeploy-snap {purpose}"
 allow_no_snapshot_hook: false        # true opts OUT of the fail-closed check below
 services:
   skhub:
     base_url: https://skhub.example.test
-    db_dump_hook: "ssh norap1001 '...' | gzip -1 > {backup_dir}/skhub-all.sql.gz"
+    db_dump_hook: "ssh <db-host> '...' | gzip -1 > {backup_dir}/skhub-all.sql.gz"
     parity_hook: "tools/live_parity.sh skhub ."
 ```
 
