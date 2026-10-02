@@ -448,11 +448,12 @@ services:
         grep -q '^  relay_ipv4_addr: ' /conf/eturnal.yml
         || { echo 'talk-hpb: no relay_ipv4_addr line in /conf/eturnal.yml (aio-talk start.sh changed?)' >&2; exit 1; };
         sed -i 's|^  relay_ipv4_addr: .*|  relay_ipv4_addr: "{{ _talk_relay_ipv4 }}"|' /conf/eturnal.yml
+        && { command -v "$$1" >/dev/null || { echo "talk-hpb: $$1 is not in this image; set skhub.TALK_HPB_CMD to the image's own CMD" >&2; exit 127; }; }
         && exec "$$@"
       - talk-hpb-relay-addr
-      - supervisord
-      - -c
-      - /supervisord.conf
+{% for _arg in (skhub.TALK_HPB_CMD | default(['supervisord', '-c', '/supervisord.conf'], true)) %}
+      - {{ _arg | string | tojson }}
+{% endfor %}
 {% endif %}
     networks:
       - skhub-{{ env }}
