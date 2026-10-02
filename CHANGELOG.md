@@ -3,6 +3,12 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased (v2.25.0)
+
+### Changes
+
+- v1: **skhub** `TALK_HPB_CMD` sets the command the Talk TURN relay wrapper execs (with `TALK_TURN_RELAY_IPV4`). The wrapper hardcoded `supervisord -c /supervisord.conf`, the CMD of the default aio-talk image; newer aio-talk images (e.g. the signaling 2.1.1 build that `TALK_HPB_IMAGE` exists for) run dinit and have no supervisord, so the first deploy that combined `TALK_HPB_IMAGE` with the relay knobs left talk-hpb crash-looping with exit 127. Unset keeps supervisord. The wrapper now checks that the command exists and exits 127 with a message naming the knob. Tests: `v1/tests/test_skhub_talk_turn_modes.py`. **Instance action**: an instance that sets `TALK_HPB_IMAGE` to a dinit-based aio-talk and `TALK_TURN_RELAY_IPV4` must set `TALK_HPB_CMD` to that image's CMD before deploying skhub.
+
 ## skstacks-v2.24.0 - 2026-10-01
 
 ### Changes

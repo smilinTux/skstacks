@@ -279,3 +279,33 @@ def test_talk_env_file_is_not_world_readable(pb):
     m = re.search(r'src: "talk-hpb\.env\.j2".*?mode: "(0[0-7]{3})"', text)
     assert m, pb.name
     assert int(m.group(1), 8) & 0o007 == 0, m.group(1)
+
+
+# --- TALK_HPB_CMD: the command the relay wrapper execs -----------------------
+# aio-talk moved from supervisord to dinit (seen on the 831a08f digest, signaling
+# 2.1.1): with TALK_TURN_RELAY_IPV4 set the wrapper still exec'd
+# `supervisord -c /supervisord.conf`, which is not in the newer image, and
+# talk-hpb crash-looped with exit 127 on the first framework deploy that used
+# TALK_HPB_IMAGE + the relay knobs together (2026-10-02, rolled back).
+
+DINIT = ["dinit", "--system", "--container", "nats-server", "eturnal", "janus", "signaling"]
+
+
+def test_talk_hpb_cmd_replaces_the_execd_command():
+    cmd = _wrapper(**HOST_SET, TALK_HPB_CMD=DINIT)
+    assert cmd[4:] == DINIT
+
+
+def test_talk_hpb_cmd_unset_keeps_supervisord():
+    assert _wrapper(**HOST_SET)[4:] == ["supervisord", "-c", "/supervisord.conf"]
+
+
+def test_wrapper_fails_loudly_when_the_command_is_not_in_the_image(tmp_path):
+    cmd = _wrapper(**HOST_SET)
+    conf = tmp_path / "eturnal.yml"
+    conf.write_text(ETURNAL_YML)
+    script = cmd[2].replace("$$", "$").replace("/conf/eturnal.yml", str(conf))
+    out = subprocess.run(["bash", "-c", script, cmd[3], "no-such-supervisor-binary", "-c", "x"],
+                         capture_output=True, text=True, env={"PATH": os.environ["PATH"]})
+    assert out.returncode != 0
+    assert "TALK_HPB_CMD" in out.stderr
