@@ -2,7 +2,7 @@
 
 28 services, grouped by 4C layer. **Status:** ✅ deploy-ready (has a validated `deploy:` block, renders to Swarm compose + K8s manifests via `skrender`) · 📋 descriptor-only (capability descriptor present, `deploy:` block TODO).
 
-**Totals:** 10 ✅ deploy-ready · 18 📋 descriptor-only.
+**Totals:** 9 ✅ deploy-ready · 19 📋 descriptor-only.
 
 Every service resolves secrets from the secret backend (`skvault` / OpenBao) at deploy time — Swarm via `${ENV}`, K8s via an ESO `ExternalSecret` (`external-secrets.io/v1`) → `Secret` → `envFrom` (UPPERCASE env names). Descriptors contain **structure only, never secret values**.
 
@@ -10,7 +10,7 @@ Every service resolves secrets from the secret backend (`skvault` / OpenBao) at 
 
 | Service | Capability | Provider | Status | Doc |
 |---------|------------|----------|--------|-----|
-| capauth | Sovereign M2M auth — PGP identity & secret access without OAuth | CapAuth (sovereign PGP) | ✅ | [capauth.md](capauth.md) |
+| capauth | Sovereign M2M auth — PGP identity & secret access without OAuth | CapAuth (sovereign PGP) | 📋 | [capauth.md](capauth.md) |
 | skca | Internal PKI / mTLS — ACME, X.509 mTLS, SSH CA | step-ca | ✅ | [skca.md](skca.md) |
 | sksec | Threat defense — reputation/runtime/host/network IDS | CrowdSec + Falco + Wazuh + Suricata | ✅ | [sksec.md](sksec.md) |
 | sksso | Identity / SSO — human SSO + agent service-auth | Authentik (Zitadel upgrade path) | ✅ | [sksso.md](sksso.md) |
