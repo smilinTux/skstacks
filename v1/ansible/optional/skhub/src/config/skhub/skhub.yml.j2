@@ -510,7 +510,11 @@ services:
     NC_DOMAIN/HPB_DOMAIN are the public hostname (the recording container
     calls back out through it), hence cloud-public-{{ env }} below, same as
     talk-hpb. Each replica is one ffmpeg+browser worker, so
-    TALK_RECORDING_MAX_CONCURRENT sets the concurrent-recording cap. #}
+    TALK_RECORDING_MAX_CONCURRENT sets capacity for that many simultaneous
+    recordings (provisioned capacity, not admission control: neither Talk
+    nor the recording server limits concurrency, and Swarm's VIP
+    round-robins per connection, so an (N+1)th recording lands on an
+    already-busy worker instead of being refused). #}
   talk-recording:
     image: {{ skhub.TALK_RECORDING_IMAGE | default('ghcr.io/nextcloud-releases/aio-talk-recording:20260929_105435@sha256:64aa51b0279a4ab5c16249ad1e8f5e56b572ffee3947f14b64386429bc9c6696') }}
     env_file: /var/data/config/skhub-{{ env }}/talk-recording.env

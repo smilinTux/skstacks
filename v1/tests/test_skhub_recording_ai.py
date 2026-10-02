@@ -282,20 +282,24 @@ def test_only_talk_recording_service_appears_when_toggled(render_skhub):
     assert all(a["services"][k] == b["services"][k] for k in shared)
 
 
+@needs_ansible
 def test_recording_guard_allows_a_distinct_node(run_assert):
     assert run_assert({"TALK_RECORDING_ENABLED": True, "TALK_RECORDING_NODE": "w2",
                        "TALK_RECORDING_SECRET": "x" * 32, "APP_NODE": "w3"}) == 0
 
 
+@needs_ansible
 def test_recording_guard_allows_disabled_regardless_of_other_keys(run_assert):
     assert run_assert({}) == 0
     assert run_assert({"APP_NODE": "w3"}) == 0
 
 
+@needs_ansible
 def test_ai_guard_allows_enabled_with_both_values(run_assert):
     assert run_assert({"AI_ENABLED": True, "AI_BASE_URL": "http://gw.example:18780/v1", "AI_API_KEY": "k"}) == 0
 
 
+@needs_ansible
 def test_ai_guard_allows_disabled_regardless_of_other_keys(run_assert):
     assert run_assert({}) == 0
 
