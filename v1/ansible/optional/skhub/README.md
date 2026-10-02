@@ -170,3 +170,56 @@ skhub:
   TALK_TURN_RELAY_MAX_PORT: 62099
   TALK_TURN_RELAY_IPV4: 203.0.113.10
 ```
+
+## Talk recording and local AI
+
+Both default OFF: an instance that does not set these keys renders and
+deploys exactly as before.
+
+### Talk recording
+
+With `skhub.TALK_RECORDING_ENABLED: true` a `talk-recording` service (the
+official `ghcr.io/nextcloud-releases/aio-talk-recording` image: ffmpeg plus a
+headless Firefox, about 1-2 CPU cores per active recording) joins the stack
+and is registered with Talk (`occ config:app:set spreed recording_servers`).
+Recordings land in the call starter's Talk folder (Talk's own default).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `TALK_RECORDING_ENABLED` | `false` | Adds the `talk-recording` service and registers it with Talk. |
+| `TALK_RECORDING_IMAGE` | `ghcr.io/nextcloud-releases/aio-talk-recording:20260929_105435@sha256:64aa51b0279a4ab5c16249ad1e8f5e56b572ffee3947f14b64386429bc9c6696` | Pin a digest (`docker buildx imagetools inspect ghcr.io/nextcloud-releases/aio-talk-recording:<tag>`, or the registry API). |
+| `TALK_RECORDING_NODE` | none, required when enabled | Pins `talk-recording` (`node.hostname == <node>`). **Must differ from `APP_NODE`**: recording CPU must not compete with Nextcloud's own node; the deploy refuses the combination. |
+| `TALK_RECORDING_SECRET` | none, required when enabled | Shared secret (vault, 32+ characters) between Nextcloud and the recording backend (`RECORDING_SECRET` on the container, `secret` in Talk's `recording_servers`). Generate with `openssl rand -base64 32`. |
+| `TALK_RECORDING_MAX_CONCURRENT` | `2` | `talk-recording` replica count. Each replica is one independent ffmpeg+browser worker, so this is the concurrent-recording cap. |
+
+`talk-recording` is not published externally: Nextcloud reaches it over the
+`skhub-<env>` overlay network at `http://<app>-<env>_talk-recording:1234`
+(the service name Swarm resolves internally, same pattern as `av_host` for
+ClamAV). It also joins `cloud-public-<env>` (like `talk-hpb`), because the
+container calls back out to Nextcloud and the signaling server at their
+public hostname.
+
+### Local AI (integration_openai + assistant)
+
+With `skhub.AI_ENABLED: true` the deploy installs and enables the
+`integration_openai` and `assistant` apps and points `integration_openai` at
+an OpenAI-compatible gateway (built for [skgateway](https://github.com/smilinTux/skgateway),
+but any compatible endpoint works) so Assistant chat, summarize, rewrite,
+headline, translate and speech-to-text run against your own models instead of
+OpenAI's cloud.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `AI_ENABLED` | `false` | Installs/enables `integration_openai` + `assistant` and configures the provider. |
+| `AI_BASE_URL` | none, required when enabled | The gateway's OpenAI-compatible base URL (e.g. `http://gw.example:18780/v1`). Must start with `http://` or `https://`. |
+| `AI_API_KEY` | none, required when enabled (vault) | The gateway consumer key for this instance. |
+| `AI_TEXT_MODEL` | `sk-default` | `integration_openai` `default_completion_model_id`: a gateway **model alias**, never a literal cloud model id -- the gateway decides where it actually runs. |
+| `AI_STT_MODEL` | `sk-stt` | `integration_openai` `default_stt_model_id`, same alias convention. |
+
+Image generation and text-to-speech are out of scope here (both default on
+in `integration_openai` and use hardcoded OpenAI model ids,
+`gpt-image-1-mini` and `tts-1-hd`, that a local gateway does not serve), so
+the deploy turns both off (`t2i_provider_enabled`, `tts_provider_enabled`).
+The vision provider (`analyze_image_provider_enabled`) needs no separate
+call: `integration_openai` only defaults it on while `url` is still OpenAI's
+own cloud endpoint, so pointing `url` at the gateway already turns it off.
