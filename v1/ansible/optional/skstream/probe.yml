@@ -1,0 +1,13 @@
+# skstacks-deploy probe declaration. Format documented at the framework root, tools dir, deploy-tool docs.
+services: [plex, kometa]
+
+mode: swarm
+
+# No framework-managed database/schema migration.
+schema_changing: false
+
+# No HTTP checks yet: the real verification execs inside the plex
+# container (curl http://localhost:32400/identity), which a plain
+# "base_url + path" HTTP check can't express. Known gap, see
+# the framework root tools dir deploy-tool docs; replicas/running-state verification still applies.
+http_checks: []

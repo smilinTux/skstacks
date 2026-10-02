@@ -1,0 +1,17 @@
+# skstacks-deploy probe declaration. Format documented at the framework root, tools dir, deploy-tool docs.
+#
+# skfetch is a HOST-LEVEL docker compose project under a systemd unit, not
+# a swarm stack (no docker_swarm_service_info anywhere in its playbook).
+# "services" here are still recorded for visibility (docker service
+# inspect is simply skipped per-service since these aren't swarm
+# services), but mode: compose means this app is never auto-restored:
+# skstacks-deploy has no generic "restore a docker compose project to a
+# previous state" mechanism, so a failure always takes the manual-steps
+# path, the same as schema_changing.
+services: [gluetun, qbittorrent, flaresolverr, slskd, soularr]
+
+mode: compose
+
+schema_changing: false
+
+http_checks: []
