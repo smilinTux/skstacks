@@ -1,0 +1,104 @@
+name: config-template-drift
+
+# Gap 1 of the 2026-10-02 config-template-and-safe-deploy design: the public
+# smilinTux/skstacks-config-template repo is generated from
+# templates/config-repo/ (the single source of truth) by
+# scripts/generate-config-template.sh. This workflow guards against the
+# template drifting from its source, leaking real fleet identifiers, or
+# shipping placeholder values that don't actually render:
+#
+# - `test`: unit tests for the generator and scrub-check scripts, plus the
+#   fixture's vault round-trip and its sync with the framework's own
+#   render-gate fixture (scripts/tests/test_config_template_tooling.py).
+# - `drift`: regenerates the template contents from this checkout and diffs
+#   them against a fresh clone of the published template repo. A difference
+#   means someone edited templates/config-repo/ (or the template repo
+#   directly) without republishing the other side; fails until
+#   scripts/generate-config-template.sh is re-run against the template repo
+#   checkout and the result is committed and pushed there by hand (this
+#   workflow only detects drift, it does not publish).
+# - `scrub`: fails if templates/config-repo/ contains what looks like a real
+#   SK* fleet hostname, domain or private IP instead of a placeholder, via
+#   scripts/scrub-check.sh. This is independent of, and public (so it also
+#   runs on fork PRs, unlike), the private ESTATE_DENYLIST gate in
+#   .github/workflows/skred-scan.yml, which already scans this whole
+#   workspace -- including templates/config-repo/ -- on every push and
+#   same-repo PR.
+# - `render`: runs the framework's real-Ansible render gate
+#   (v1/tests/render/render_playbooks.py) for skbook, the service this
+#   template ships an example vault for. The `test` job's sync check is what
+#   makes this meaningful proof for the TEMPLATE's placeholder values, not
+#   just the framework's own pre-existing fixture.
+
+on:
+  push:
+    paths:
+      - 'templates/config-repo/**'
+      - 'scripts/generate-config-template.sh'
+      - 'scripts/scrub-check.sh'
+      - 'scripts/tests/test_config_template_tooling.py'
+      - 'v1/tests/render/**'
+      - 'v1/ansible/optional/skbook/**'
+      - '.github/workflows/config-template-drift.yml'
+  pull_request:
+    paths:
+      - 'templates/config-repo/**'
+      - 'scripts/generate-config-template.sh'
+      - 'scripts/scrub-check.sh'
+      - 'scripts/tests/test_config_template_tooling.py'
+      - 'v1/tests/render/**'
+      - 'v1/ansible/optional/skbook/**'
+      - '.github/workflows/config-template-drift.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install pytest pyyaml ansible-core
+      - run: python -m pytest -q scripts/tests/test_config_template_tooling.py
+
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate template contents from this checkout
+        run: scripts/generate-config-template.sh "$RUNNER_TEMP/generated"
+      - name: Clone the published template repo
+        run: |
+          set -euo pipefail
+          git clone --quiet --depth 1 \
+            https://github.com/smilinTux/skstacks-config-template.git \
+            "$RUNNER_TEMP/published"
+          rm -rf "$RUNNER_TEMP/published/.git"
+      - name: Diff generated vs. published
+        run: |
+          set -euo pipefail
+          if ! diff -rq "$RUNNER_TEMP/generated" "$RUNNER_TEMP/published"; then
+            echo "::error::skstacks-config-template has drifted from templates/config-repo/." \
+                 "Regenerate with scripts/generate-config-template.sh and commit the result to" \
+                 "smilinTux/skstacks-config-template."
+            exit 1
+          fi
+
+  scrub:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scrub-check templates/config-repo for real fleet identifiers
+        run: scripts/scrub-check.sh templates/config-repo
+
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install 'ansible-core==2.21.3' pyyaml jsonschema
+      - run: python v1/tests/render/render_playbooks.py --service skbook --env prod --pass base
