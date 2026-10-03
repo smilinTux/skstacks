@@ -1,0 +1,39 @@
+# Placeholder Ansible inventory for one example cluster. Rename the group
+# prefix (example-site) to your own cluster name and replace the hosts with
+# your real managers/workers. See docs/ANSIBLE_INVENTORY.md in the framework
+# repo for the full multi-cluster convention this mirrors (a real instance
+# can define more than one cluster the same way).
+#
+# domain + cluster_name here (set under [example-site:vars]) are what
+# v1/ansible/shared/tasks/select_vault_file.yml uses to pick a per-site vault
+# file when you outgrow the single-cluster "legacy" vault naming this
+# template ships with (<service>-<env>_vault.yml). See README.md.
+
+# ==============================================================================
+# CLUSTER: example-site @ example.test
+# ==============================================================================
+# 1 manager + 1 worker. Replace ansible_host with your real reachable
+# address (a Tailscale hostname, a LAN IP, whatever your fleet uses) and
+# ansible_user with the account that has docker/swarm access.
+[example-site-managers]
+example-mgr-01 ansible_host=192.0.2.10 ansible_user=example-user
+
+[example-site-workers]
+example-wrk-01 ansible_host=192.0.2.11 ansible_user=example-user
+
+[example-site:children]
+example-site-managers
+example-site-workers
+
+[example-site:vars]
+domain=example.test
+cluster_name=example-site
+
+# ==============================================================================
+# ROLE-BASED GROUPS (referenced by deploy_<svc>-<env>.yml playbooks)
+# ==============================================================================
+[swarm_managers:children]
+example-site-managers
+
+[swarm_workers:children]
+example-site-workers

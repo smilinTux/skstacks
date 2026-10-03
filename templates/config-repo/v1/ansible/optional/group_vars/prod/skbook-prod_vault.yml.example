@@ -1,0 +1,39 @@
+# Placeholder instance vault for skbook (BookStack), prod environment.
+#
+# This is the PLAINTEXT reference copy, the only form this file takes in the
+# smilinTux/skstacks framework repo: that repo's skred security gate
+# (v2/skred/denylist.py) fails closed on any file starting with the
+# $ANSIBLE_VAULT header, anywhere in the tree, so real vault ciphertext never
+# belongs here even as a scrubbed, placeholder-only fixture.
+#
+# The published smilinTux/skstacks-config-template repo (a separate, plain
+# repo with no such gate) DOES carry a real ansible-vault-encrypted sibling,
+# skbook-prod_vault.yml, encrypted with the documented demo password -- see
+# README.md "Set the vault password". The CI drift job verifies on every
+# push/PR that that published ciphertext still decrypts to exactly this
+# file's content. The file actually read by a deploy is always the one
+# without ".example"; regenerate it after editing this file:
+#
+#   ansible-vault encrypt --vault-password-file <password-file> \
+#     --output skbook-prod_vault.yml skbook-prod_vault.yml.example
+#
+# Keys match what v1/ansible/optional/skbook/README.md documents under
+# "Required instance vars (vault)" in the framework repo. Every value below
+# is a placeholder: example.test / 192.0.2.0/24 only, no real secrets.
+skbook:
+  # REQUIRED - no framework default, these are all estate-specific
+  MYSQL_ROOT_PASSWORD: example-mysql-root-password-not-a-secret
+  DB_DATABASE: bookstack
+  DB_USER: bookstack
+  DB_PASSWORD: example-db-password-not-a-secret
+  APP_KEY: "base64:ZXhhbXBsZS1hcHAta2V5LW5vdC1hLXNlY3JldA=="
+  CLUSTERNAME: render   # replace with your inventory's cluster_name
+  DOMAIN: example.test  # replace with your real domain
+
+  # optional (defaults shown)
+  PUID: 1000
+  PGID: 1000
+  TZ: UTC
+  APP_URL: "https://wiki.example.test"
+  DB_PORT: 3306
+  BOOKSTACK_VERSION: v26.09-ls285
