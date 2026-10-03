@@ -422,3 +422,94 @@ def test_probe_files_parse_and_match_declared_schema():
     for path in probe_files:
         probe = yaml.safe_load(path.read_text())
         sd.validate_probe(probe, path)  # raises DeployError on a schema violation
+
+
+# ---------------------------------------------------------------------------
+# 10. --locked-run refuses without the lock sentinel (review fix round 1)
+# ---------------------------------------------------------------------------
+
+def test_locked_run_requires_lock_sentinel(tmp_path, framework_root, instance_dir):
+    _write_probe(framework_root, "skhub", {
+        "services": ["nextcloud"], "mode": "swarm", "schema_changing": False,
+        "http_checks": [],
+    })
+    _write_settings(instance_dir, {"snapshot_hook": "true"})
+
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    _fake_docker_happy(bindir)
+    _fake_ansible_ok(bindir)
+
+    # Typed directly (no --execute, no sentinel env var): must refuse and
+    # run nothing, never reaching the mutating sequence.
+    proc = run_tool(tmp_path, bindir, ["skhub", "--instance", str(instance_dir), "--locked-run"],
+                     framework_root=framework_root)
+    assert proc.returncode != 0, proc.stdout + proc.stderr
+    assert not (tmp_path / "calls.log").exists()
+
+    # --execute alone, still no sentinel env var: must still refuse.
+    # --locked-run is reachable only through skstacks-deploy's own
+    # sk-lock re-exec, never directly on a human's command line.
+    proc2 = run_tool(tmp_path, bindir,
+                      ["skhub", "--instance", str(instance_dir), "--execute", "--locked-run"],
+                      framework_root=framework_root)
+    assert proc2.returncode != 0, proc2.stdout + proc2.stderr
+    assert not (tmp_path / "calls.log").exists()
+
+
+# ---------------------------------------------------------------------------
+# 11. a playbook-driven replica change does not look like a failure
+# (review fix round 1)
+# ---------------------------------------------------------------------------
+
+def _fake_docker_scale(bindir, pre_desired: int, post_desired: int):
+    """docker service inspect returns pre_desired the first time it's
+    called (the pre-playbook record step) and post_desired every call
+    after $SCALE_MARKER exists (the post-playbook verify step); docker
+    service ps always reports post_desired Running tasks, as if the
+    playbook had actually scaled the service."""
+    pre_json = _inspect_json(pre_desired)
+    post_json = _inspect_json(post_desired)
+    _write_fake(bindir, "docker", f"""
+{_logger_snippet("docker")}
+if [ "$1 $2" = "service inspect" ]; then
+  if [ -f "$SCALE_MARKER" ]; then
+    echo '{post_json}'
+  else
+    touch "$SCALE_MARKER"
+    echo '{pre_json}'
+  fi
+  exit 0
+fi
+if [ "$1 $2" = "service ps" ]; then
+  for i in $(seq 1 {post_desired}); do echo Running; done
+  exit 0
+fi
+if [ "$1 $2 $3" = "service update --rollback" ]; then
+  exit 0
+fi
+exit 1
+""")
+
+
+def test_playbook_scaling_replicas_does_not_trigger_false_restore(tmp_path, framework_root,
+                                                                    instance_dir):
+    _write_probe(framework_root, "skhub", {
+        "services": ["nextcloud"], "mode": "swarm", "schema_changing": False,
+        "http_checks": [],
+    })
+    _write_settings(instance_dir, {"snapshot_hook": "true"})
+
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    _fake_docker_scale(bindir, pre_desired=1, post_desired=2)
+    _fake_ansible_ok(bindir)
+    _fake_sklock_pass(bindir)
+
+    scale_marker = tmp_path / "scaled"
+    proc = run_tool(tmp_path, bindir, ["skhub", "--instance", str(instance_dir), "--execute"],
+                     framework_root=framework_root,
+                     env_extra={"SCALE_MARKER": str(scale_marker)})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    calls = _calls(tmp_path)
+    assert not any("service update --rollback" in c for c in calls)

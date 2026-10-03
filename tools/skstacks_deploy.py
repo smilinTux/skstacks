@@ -18,7 +18,9 @@ mode) with --locked-run; sk-lock execs the wrapped command on success and
 never does on contention (exit 75), so lock contention running nothing is
 exercised for real against a test's fake sk-lock, not mocked.
 
-Exit codes: 0 success; 75 lock contention (passed through unchanged from
+Exit codes: 0 success; 64 usage error (bad service/env name, or --locked-run
+invoked without --execute and the internal lock sentinel -- refuses before
+touching anything); 75 lock contention (passed through unchanged from
 sk-lock); 1 deploy failed, auto-restore succeeded; 2 deploy failed,
 auto-restore also failed (needs a human); 3 deploy failed, auto-restore not
 applicable (schema_changing app, non-swarm mode, or a backup/hook failure
@@ -47,6 +49,21 @@ FRAMEWORK_ROOT = Path(os.environ.get("SKSTACKS_DEPLOY_FRAMEWORK_ROOT", HERE.pare
 
 REQUIRED_PROBE_KEYS = {"services", "mode", "schema_changing"}
 VALID_MODES = {"swarm", "compose"}
+NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+# --locked-run runs the real mutating sequence with no lock check of its
+# own (it trusts it is already running inside one). It is for internal
+# re-exec only: main() refuses it unless both --execute is also set AND
+# this env var is set to this exact value, which only the lock-wrapping
+# code path below sets on the child process it hands to sk-lock. A bare
+# `--locked-run` (typed by hand, or left over in a copied command line)
+# must never run the mutating sequence outside a real lock.
+LOCK_SENTINEL_ENV = "SKSTACKS_DEPLOY_LOCKED"
+LOCK_SENTINEL_VALUE = "1"
+
+DEFAULT_HOOK_TIMEOUT = 600
+DEFAULT_DOCKER_TIMEOUT = 60
+DEFAULT_PLAYBOOK_TIMEOUT = 7200
 
 
 class DeployError(Exception):
@@ -114,17 +131,27 @@ def load_settings(instance_dir: Path) -> dict:
 # subprocess helpers (every mutating or external call funnels through here)
 # ---------------------------------------------------------------------------
 
-def run_hook(template: str, **fmt) -> int:
+def run_hook(template: str, timeout: int = DEFAULT_HOOK_TIMEOUT, **fmt) -> int:
     cmd = template.format(**fmt)
-    return subprocess.run(["bash", "-c", cmd]).returncode
+    try:
+        return subprocess.run(["bash", "-c", cmd], timeout=timeout).returncode
+    except subprocess.TimeoutExpired:
+        print(f"  hook timed out after {timeout}s: {cmd}")
+        return 124  # conventional shell "command timed out" exit code
 
 
-def docker_inspect(full_name: str) -> dict | None:
-    """Returns the parsed spec dict, or None if the service does not exist."""
-    proc = subprocess.run(
-        ["docker", "service", "inspect", full_name],
-        capture_output=True, text=True,
-    )
+def docker_inspect(full_name: str, timeout: int = DEFAULT_DOCKER_TIMEOUT) -> dict | None:
+    """Returns the parsed spec dict, or None if the service does not exist
+    (or the call times out -- treated the same as "nothing to record/verify
+    from", never raised up as a crash)."""
+    try:
+        proc = subprocess.run(
+            ["docker", "service", "inspect", full_name],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        print(f"  docker service inspect {full_name} timed out after {timeout}s")
+        return None
     if proc.returncode != 0:
         return None
     arr = json.loads(proc.stdout)
@@ -138,19 +165,29 @@ def docker_desired_replicas(spec: dict) -> int | None:
         return None
 
 
-def docker_running_count(full_name: str) -> int:
-    proc = subprocess.run(
-        ["docker", "service", "ps", full_name,
-         "--filter", "desired-state=running", "--format", "{{.CurrentState}}"],
-        capture_output=True, text=True,
-    )
+def docker_running_count(full_name: str, timeout: int = DEFAULT_DOCKER_TIMEOUT) -> int:
+    try:
+        proc = subprocess.run(
+            ["docker", "service", "ps", full_name,
+             "--filter", "desired-state=running", "--format", "{{.CurrentState}}"],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        print(f"  docker service ps {full_name} timed out after {timeout}s")
+        return 0
     if proc.returncode != 0:
         return 0
     return sum(1 for line in proc.stdout.splitlines() if line.strip().startswith("Running"))
 
 
-def docker_rollback(full_name: str) -> int:
-    return subprocess.run(["docker", "service", "update", "--rollback", full_name]).returncode
+def docker_rollback(full_name: str, timeout: int = DEFAULT_DOCKER_TIMEOUT) -> int:
+    try:
+        return subprocess.run(
+            ["docker", "service", "update", "--rollback", full_name], timeout=timeout
+        ).returncode
+    except subprocess.TimeoutExpired:
+        print(f"  docker service update --rollback {full_name} timed out after {timeout}s")
+        return 124
 
 
 def http_check_ok(base_url: str, check: dict) -> bool:
@@ -208,6 +245,10 @@ def print_plan(service: str, env: str, instance_dir: Path, settings: dict,
 
 def execute_locked(service: str, env: str, instance_dir: Path, settings: dict,
                     svc_settings: dict, probe: dict) -> int:
+    hook_timeout = settings.get("hook_timeout", DEFAULT_HOOK_TIMEOUT)
+    docker_timeout = settings.get("docker_timeout", DEFAULT_DOCKER_TIMEOUT)
+    playbook_timeout = settings.get("playbook_timeout", DEFAULT_PLAYBOOK_TIMEOUT)
+
     run_dir = instance_dir / ".skstacks-deploy" / "runs" / utc_ts()
     run_dir.mkdir(parents=True, exist_ok=True)
     records_dir = run_dir / "records"
@@ -221,8 +262,9 @@ def execute_locked(service: str, env: str, instance_dir: Path, settings: dict,
     db_dump_hook = svc_settings.get("db_dump_hook")
     if db_dump_hook:
         print("-- db_dump_hook")
-        if run_hook(db_dump_hook, backup_dir=str(backup_dir), service=service, env=env) != 0:
-            print("db_dump_hook FAILED; aborting before the playbook")
+        if run_hook(db_dump_hook, timeout=hook_timeout, backup_dir=str(backup_dir),
+                    service=service, env=env) != 0:
+            print("db_dump_hook FAILED (or timed out); aborting before the playbook")
             return 3
 
     snapshot_hook = settings.get("snapshot_hook")
@@ -235,8 +277,8 @@ def execute_locked(service: str, env: str, instance_dir: Path, settings: dict,
     else:
         purpose = sanitize_purpose(f"{service}-{utc_ts()}")
         print(f"-- snapshot_hook (purpose={purpose})")
-        if run_hook(snapshot_hook, purpose=purpose) != 0:
-            print("snapshot_hook FAILED; aborting before the playbook")
+        if run_hook(snapshot_hook, timeout=hook_timeout, purpose=purpose) != 0:
+            print("snapshot_hook FAILED (or timed out); aborting before the playbook")
             return 3
 
     # --- record phase ---
@@ -244,7 +286,7 @@ def execute_locked(service: str, env: str, instance_dir: Path, settings: dict,
     records: dict[str, dict] = {}
     for name in probe["services"]:
         full = full_service_name(service, env, name)
-        spec = docker_inspect(full)
+        spec = docker_inspect(full, timeout=docker_timeout)
         if spec is None:
             print(f"  {full}: absent (first deploy, nothing to record)")
             continue
@@ -263,7 +305,11 @@ def execute_locked(service: str, env: str, instance_dir: Path, settings: dict,
     manager_group = settings.get("manager_group")
     if manager_group:
         cmd += ["-e", f"target_manager_group={manager_group}", "-l", manager_group]
-    playbook_rc = subprocess.run(cmd, cwd=instance_dir).returncode
+    try:
+        playbook_rc = subprocess.run(cmd, cwd=instance_dir, timeout=playbook_timeout).returncode
+    except subprocess.TimeoutExpired:
+        print(f"playbook TIMED OUT after {playbook_timeout}s")
+        playbook_rc = 124
     playbook_failed = playbook_rc != 0
     if playbook_failed:
         print(f"playbook FAILED rc={playbook_rc}")
@@ -279,13 +325,20 @@ def execute_locked(service: str, env: str, instance_dir: Path, settings: dict,
     else:
         for name in probe["services"]:
             full = full_service_name(service, env, name)
-            spec = records.get(name) or docker_inspect(full)
+            # Always re-inspect AFTER the playbook: a playbook can
+            # intentionally change a service's desired replica count (a
+            # scale-up/down), so comparing against the pre-deploy recorded
+            # spec would flag a successful, intentional change as a
+            # failure and trigger an unwarranted restore. The pre-deploy
+            # `records` are for restoring TO on failure, not for judging
+            # the post-deploy state.
+            spec = docker_inspect(full, timeout=docker_timeout)
             if spec is None:
                 continue
             desired = docker_desired_replicas(spec)
             if desired is None:
                 continue  # job-mode or unknown mode service: nothing to count
-            running = docker_running_count(full)
+            running = docker_running_count(full, timeout=docker_timeout)
             ok = running == desired
             print(f"  {full}: {running}/{desired} running {'OK' if ok else 'FAIL'}")
             if not ok:
@@ -303,8 +356,9 @@ def execute_locked(service: str, env: str, instance_dir: Path, settings: dict,
         parity_hook = svc_settings.get("parity_hook")
         if parity_hook:
             print("-- parity_hook")
-            if run_hook(parity_hook, service=service, env=env, instance=str(instance_dir)) != 0:
-                print("  parity_hook FAILED")
+            if run_hook(parity_hook, timeout=hook_timeout, service=service, env=env,
+                        instance=str(instance_dir)) != 0:
+                print("  parity_hook FAILED (or timed out)")
                 failing |= set(probe["services"])
 
     if not failing:
@@ -335,13 +389,13 @@ def execute_locked(service: str, env: str, instance_dir: Path, settings: dict,
             print(f"  {full}: no recorded spec, cannot auto-restore")
             still_failing.add(name)
             continue
-        rc = docker_rollback(full)
+        rc = docker_rollback(full, timeout=docker_timeout)
         if rc != 0:
             print(f"  {full}: rollback FAILED rc={rc}")
             still_failing.add(name)
             continue
         desired = docker_desired_replicas(records[name])
-        running = docker_running_count(full)
+        running = docker_running_count(full, timeout=docker_timeout)
         ok = desired is None or running == desired
         print(f"  {full}: rolled back, re-verify {running}/{desired} {'OK' if ok else 'STILL FAILING'}")
         if not ok:
@@ -373,6 +427,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str]) -> int:
     args = build_arg_parser().parse_args(argv)
+
+    # --locked-run runs the real mutating sequence with no lock check of
+    # its own: it must only ever be reached via the sk-lock re-exec this
+    # same function builds below, never typed by hand or left over in a
+    # copied command line. Refuse before touching anything else (probe,
+    # settings, filesystem) if the proof-of-lock sentinel is missing.
+    if args.locked_run and not (args.execute and os.environ.get(LOCK_SENTINEL_ENV) == LOCK_SENTINEL_VALUE):
+        print("error: --locked-run is internal (re-exec only) and refuses to run without "
+              "--execute and the lock sentinel; refusing to run anything.", file=sys.stderr)
+        return 64
+
+    if not NAME_RE.match(args.service):
+        print(f"error: invalid service name {args.service!r} (must match {NAME_RE.pattern})",
+              file=sys.stderr)
+        return 64
+
     instance_dir = Path(args.instance).resolve()
 
     try:
@@ -383,6 +453,9 @@ def main(argv: list[str]) -> int:
         return e.code
 
     env = args.env or settings.get("env", "prod")
+    if not NAME_RE.match(env):
+        print(f"error: invalid env {env!r} (must match {NAME_RE.pattern})", file=sys.stderr)
+        return 64
     svc_settings = (settings.get("services") or {}).get(args.service, {})
 
     if args.locked_run:
@@ -403,7 +476,8 @@ def main(argv: list[str]) -> int:
     cmd = ["sk-lock", *lock_target, "-w", str(lock_timeout), "--",
            sys.executable, str(Path(__file__).resolve()), args.service,
            "--instance", str(instance_dir), "--execute", "--locked-run", "--env", env]
-    return subprocess.run(cmd).returncode
+    child_env = {**os.environ, LOCK_SENTINEL_ENV: LOCK_SENTINEL_VALUE}
+    return subprocess.run(cmd, env=child_env).returncode
 
 
 if __name__ == "__main__":

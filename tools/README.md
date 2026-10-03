@@ -22,14 +22,17 @@ tools/skstacks-deploy <service> --instance <config-repo-dir>
   work).
 - `--env`: overrides the instance's `env` setting (default `prod`).
 
-Exit codes: `0` success. `75` lock contention -- nothing ran, matching
+Exit codes: `0` success. `64` usage error -- a bad `<service>`/`env` name, or
+an internal `--locked-run` invoked without `--execute` and the lock
+sentinel (never reachable from a normal command line; refuses before
+touching anything). `75` lock contention -- nothing ran, matching
 `sk-lock`'s own contract. `1` deploy failed, auto-restore brought the
 affected service(s) back to their recorded spec. `2` deploy failed,
 auto-restore also failed -- needs a human, evidence is in the run
 directory. `3` deploy failed and auto-restore does not apply (the app is
-`schema_changing`, runs outside swarm, or a backup/hook failed before the
-playbook ever ran) -- the manual restore steps are printed, nothing beyond
-the backup/record steps was touched.
+`schema_changing`, runs outside swarm, or a backup/hook failed, or timed
+out, before the playbook ever ran) -- the manual restore steps are
+printed, nothing beyond the backup/record steps was touched.
 
 ## Instance settings: `<instance>/skstacks-deploy.yml`
 
@@ -38,10 +41,13 @@ secret. Every key is optional.
 
 ```yaml
 env: prod
-manager_group: skstack01-douno-managers
+manager_group: example-site-managers
 vault_password_file: ~/.vault_pass_env/.prod_vault_pass
 inventory: v1/ansible/shared/hosts   # relative to the instance dir
 lock_timeout: 14400
+hook_timeout: 600          # seconds; snapshot_hook/db_dump_hook/parity_hook each get this
+docker_timeout: 60         # seconds; each docker service inspect/ps/update call
+playbook_timeout: 7200     # seconds; the whole ansible-playbook run
 snapshot_hook: "ssh root@<nas-host> sk-predeploy-snap {purpose}"
 allow_no_snapshot_hook: false        # true opts OUT of the fail-closed check below
 services:
@@ -58,6 +64,9 @@ services:
 | `vault_password_file` | instance | Passed to `ansible-playbook --vault-password-file`. `~` is expanded. Omitted: no vault flag is passed. |
 | `inventory` | instance | Path to the Ansible inventory, relative to the instance dir. Default `v1/ansible/shared/hosts`. |
 | `lock_timeout` | instance | Seconds passed to `sk-lock -w`. Default 14400 (4h). `--lock-timeout` overrides it. |
+| `hook_timeout` | instance | Seconds before `snapshot_hook`/`db_dump_hook`/`parity_hook` is killed and treated as a failed step. Default 600 (10m). |
+| `docker_timeout` | instance | Seconds before each `docker service inspect`/`ps`/`update --rollback` call is killed and treated as absent/0-running/failed respectively. Default 60. |
+| `playbook_timeout` | instance | Seconds before `ansible-playbook` is killed and treated as a failed deploy (same path as a non-zero exit). Default 7200 (2h). |
 | `snapshot_hook` | instance | Shell command run before every deploy, with `{purpose}` substituted (`<service>-<UTC timestamp>`, sanitized to `[a-z0-9-]` -- `sk-predeploy-snap` rejects anything else). **Missing and `allow_no_snapshot_hook` is not `true` aborts the deploy before the lock does anything** (fail closed: no snapshot hook configured usually means nobody wired up a real backup path yet). A hook that exits non-zero also aborts, before the record/playbook steps run. |
 | `allow_no_snapshot_hook` | instance | Opt an instance out of the fail-closed check above (e.g. a stateless service with nothing to snapshot). |
 | `services.<app>.base_url` | per-service | Base URL `probe.yml`'s `http_checks` are run against. Required if that app declares any `http_checks`; missing it fails the whole app's verify. |
