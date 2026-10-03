@@ -100,13 +100,6 @@ Thumbs.db
 *_vault.yml
 **/*_vault.yml
 
-# Gap 1 config-template fixture exception: one deliberate, scrub-checked
-# (scripts/scrub-check.sh), drift-checked (.github/workflows/config-template-
-# drift.yml) example vault, encrypted with a documented demo password, that
-# backs the public smilinTux/skstacks-config-template repo. Every value in
-# it is a placeholder; see templates/config-repo/README.md.
-!templates/config-repo/**/*_vault.yml
-
 # 2026-08-16 security: never commit vault backup bundles. A tarball under
 # group_vars_backups/ was found in history containing an ansible-vault file
 # AND its own .prod_vault_service_pass password file — the encryption was void

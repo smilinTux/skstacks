@@ -16,7 +16,15 @@ name: config-template-drift
 #   directly) without republishing the other side; fails until
 #   scripts/generate-config-template.sh is re-run against the template repo
 #   checkout and the result is committed and pushed there by hand (this
-#   workflow only detects drift, it does not publish).
+#   workflow only detects drift, it does not publish). This framework repo
+#   can never carry real ansible-vault ciphertext (the skred gate below fails
+#   closed on the $ANSIBLE_VAULT header anywhere in the tree), so the
+#   published repo's one ciphertext file (*_vault.yml, encrypted with the
+#   documented demo password) has no generated counterpart to diff against
+#   byte for byte -- ciphertext isn't even deterministic across encryptions
+#   of the same plaintext. Instead this job decrypts it and asserts the
+#   plaintext matches the generated `.example` sibling exactly, then folds it
+#   into the generated tree so the final diff still catches anything else.
 # - `scrub`: fails if templates/config-repo/ contains what looks like a real
 #   SK* fleet hostname, domain or private IP instead of a placeholder, via
 #   scripts/scrub-check.sh. This is independent of, and public (so it also
@@ -67,6 +75,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install ansible-core
       - name: Generate template contents from this checkout
         run: scripts/generate-config-template.sh "$RUNNER_TEMP/generated"
       - name: Clone the published template repo
@@ -76,6 +87,29 @@ jobs:
             https://github.com/smilinTux/skstacks-config-template.git \
             "$RUNNER_TEMP/published"
           rm -rf "$RUNNER_TEMP/published/.git"
+      - name: Verify the published repo's encrypted vault(s), then fold them into the generated tree
+        run: |
+          set -euo pipefail
+          pw="$RUNNER_TEMP/demo-vault-pass"
+          printf '%s' 'skstacks-template-demo' > "$pw"
+          found=0
+          while IFS= read -r -d '' example; do
+            found=1
+            rel="${example#"$RUNNER_TEMP"/generated/}"
+            base="${rel%.example}"
+            enc="$RUNNER_TEMP/published/$base"
+            if [ ! -f "$enc" ]; then
+              echo "::error::published repo is missing the encrypted vault for $rel ($base)"
+              exit 1
+            fi
+            decrypted="$(ansible-vault view --vault-password-file "$pw" "$enc")"
+            if [ "$decrypted" != "$(cat "$example")" ]; then
+              echo "::error::$base in the published repo does not decrypt to $rel"
+              exit 1
+            fi
+            cp "$enc" "$RUNNER_TEMP/generated/$base"
+          done < <(find "$RUNNER_TEMP/generated" -name '*_vault.yml.example' -print0)
+          [ "$found" -eq 1 ] || { echo "::error::no *_vault.yml.example fixture found to verify"; exit 1; }
       - name: Diff generated vs. published
         run: |
           set -euo pipefail
@@ -100,5 +134,5 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
-      - run: pip install 'ansible-core==2.21.3' pyyaml jsonschema
+      - run: pip install 'ansible-core==2.21.3' pyyaml jsonschema pytest
       - run: python v1/tests/render/render_playbooks.py --service skbook --env prod --pass base
