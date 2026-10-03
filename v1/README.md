@@ -45,3 +45,23 @@ Example:
       --vault-password-file ~/.vault_pass_env/.<instance>_dev_vault_pass
 
 Tests: `python3 -m pytest -q v1/tests`.
+
+## Operational tooling: `v1/scripts/` vs `tools/`
+
+Two places hold CLI tooling for v1, split by what the tool needs:
+
+- **`v1/scripts/`** -- tooling that only reads the framework tree itself
+  (no instance, no live docker/ansible): `check_images.sh` + `list_images.py`
+  walk the compose templates to list every referenced image. Tests live in
+  `v1/tests` and CI already triggers on `v1/**`.
+- **`tools/`** (framework root) -- tooling that drives an actual deploy
+  against an instance repo and a live swarm/ansible controller, matching
+  the sibling harness repo's own `tools/` layout
+  (`skstack06/tools/live_parity.sh`, `tools/merge_pr_if_green.sh`):
+  `skstacks-deploy` (one-command deploy with automatic rollback, see
+  `tools/README.md`). Tests live beside the tool (`tools/test_*.py`); CI
+  triggers on `tools/**`.
+
+When in doubt: if it needs `--instance <config-repo>` or touches
+docker/ansible for real, it goes in `tools/`; if it only reads this repo's
+own files, it goes in `v1/scripts/`.
