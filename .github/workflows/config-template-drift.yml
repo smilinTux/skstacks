@@ -26,12 +26,12 @@ name: config-template-drift
 #   plaintext matches the generated `.example` sibling exactly, then folds it
 #   into the generated tree so the final diff still catches anything else.
 # - `scrub`: fails if templates/config-repo/ contains what looks like a real
-#   SK* fleet hostname, domain or private IP instead of a placeholder, via
-#   scripts/scrub-check.sh. This is independent of, and public (so it also
-#   runs on fork PRs, unlike), the private ESTATE_DENYLIST gate in
-#   .github/workflows/skred-scan.yml, which already scans this whole
-#   workspace -- including templates/config-repo/ -- on every push and
-#   same-repo PR.
+#   private IP instead of a placeholder, via scripts/scrub-check.sh. This is
+#   independent of, and public (so it also runs on fork PRs, unlike), the
+#   private ESTATE_DENYLIST gate in .github/workflows/skred-scan.yml, which
+#   already scans this whole workspace -- including templates/config-repo/
+#   -- for real fleet hostnames/domains on every push and same-repo PR; see
+#   scripts/scrub-check.sh's header for why that half isn't duplicated here.
 # - `render`: runs the framework's real-Ansible render gate
 #   (v1/tests/render/render_playbooks.py) for skbook, the service this
 #   template ships an example vault for. The `test` job's sync check is what
