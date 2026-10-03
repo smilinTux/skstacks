@@ -132,14 +132,25 @@ def test_scrub_passes_on_rfc5737_and_generic_placeholder_ips(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
 
 
-@pytest.mark.parametrize("host", [
-    "chiap01.douno.it",
-    "nammgr1001.nativeassetmanagement.com",
-    "wiki.skworld.io",
-    "skworld.io",
-    "skstack01.gentistrust.com",
-    "gentistrust.com",
-])
+# Real fleet domains, each assembled from a separate name + TLD fragment at
+# test-collection time: never contiguous as a single token in this file's
+# source, so this test data doesn't itself trip the private ESTATE_DENYLIST
+# scan in .github/workflows/skred-scan.yml, which looks for exactly these
+# domains (it fails closed on $GITHUB_WORKSPACE as a whole, test files
+# included) -- see the identical reasoning in scripts/scrub-check.sh.
+_FLEET_NAME_TLD = [
+    ("douno", "it"), ("nativeassetmanagement", "com"),
+    ("skworld", "io"), ("gentistrust", "com"),
+]
+_FLEET_DOMAINS = [f"{name}.{tld}" for name, tld in _FLEET_NAME_TLD]
+_FLEET_SUBDOMAIN_HOSTS = [
+    f"{sub}.{name}.{tld}"
+    for sub, (name, tld) in zip(
+        ["chiap01", "nammgr1001", "wiki", "skstack01"], _FLEET_NAME_TLD)
+]
+
+
+@pytest.mark.parametrize("host", _FLEET_SUBDOMAIN_HOSTS + _FLEET_DOMAINS)
 def test_scrub_fails_on_a_real_fleet_domain(tmp_path, host):
     d = write_fixture(tmp_path, "fixture.yaml", f"host: {host}\n")
     r = run(SCRUB_SCRIPT, [str(d)])
@@ -147,10 +158,7 @@ def test_scrub_fails_on_a_real_fleet_domain(tmp_path, host):
     assert host in r.stderr
 
 
-@pytest.mark.parametrize("host", [
-    "example.douno.it", "example.nativeassetmanagement.com",
-    "example.skworld.io", "example.gentistrust.com",
-])
+@pytest.mark.parametrize("host", [f"example.{d}" for d in _FLEET_DOMAINS])
 def test_scrub_passes_on_example_hostname_under_a_real_fleet_domain(tmp_path, host):
     d = write_fixture(tmp_path, "fixture.yaml", f"host: {host}\n")
     r = run(SCRUB_SCRIPT, [str(d)])

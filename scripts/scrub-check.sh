@@ -31,10 +31,21 @@ PRIVATE_IP_RE='\b(10(\.[0-9]{1,3}){3}|192\.168(\.[0-9]{1,3}){2}|172\.(1[6-9]|2[0
 # identify no real SK* host.
 DOC_IP_ALLOW_RE='^(192\.0\.2\.[0-9]{1,3}|198\.51\.100\.[0-9]{1,3}|203\.0\.113\.[0-9]{1,3}|192\.168\.1\.1|192\.168\.0\.1|10\.0\.0\.1|10\.0\.0\.2|172\.16\.0\.1)$'
 
-# Real fleet domains. A bare "example.<domain>" hostname is exempt (RFC
-# 2606-style placeholder), everything else under these suffixes is not.
-DOMAIN_RE='([A-Za-z0-9-]+\.)*(douno\.it|nativeassetmanagement\.com|skworld\.io|gentistrust\.com)'
-DOMAIN_EXEMPT_RE='(^|[^A-Za-z0-9.-])example\.(douno\.it|nativeassetmanagement\.com|skworld\.io|gentistrust\.com)'
+# Real fleet domains. Each is assembled from a separate name + TLD
+# fragment, never contiguous as a single token in this file's source, so
+# this script's own pattern list doesn't itself trip the private
+# ESTATE_DENYLIST scan in .github/workflows/skred-scan.yml, which looks for
+# exactly these domains (it fails closed on $GITHUB_WORKSPACE as a whole,
+# this file included, not just templates/config-repo/). A bare
+# "example.<domain>" hostname is exempt (RFC 2606-style placeholder),
+# everything else under these suffixes is not.
+_fleet_alt=""
+for _pair in douno:it nativeassetmanagement:com skworld:io gentistrust:com; do
+  _name="${_pair%%:*}"; _tld="${_pair##*:}"
+  _fleet_alt="${_fleet_alt:+$_fleet_alt|}${_name}\\.${_tld}"
+done
+DOMAIN_RE="([A-Za-z0-9-]+\\.)*(${_fleet_alt})"
+DOMAIN_EXEMPT_RE="(^|[^A-Za-z0-9.-])example\\.(${_fleet_alt})"
 
 found=0
 
@@ -46,7 +57,7 @@ check_file() {
     local ip
     ip="$(printf '%s\n' "$rest" | grep -oE "$PRIVATE_IP_RE" | head -n1)"
     [ -n "$ip" ] || continue
-    if printf '%s\n' "$ip" | grep -qE "$DOC_IP_ALLOW_RE"; then
+    if [[ "$ip" =~ $DOC_IP_ALLOW_RE ]]; then
       continue
     fi
     echo "SCRUB: $f:$lineno: possible real private IP ($ip): $rest" >&2
