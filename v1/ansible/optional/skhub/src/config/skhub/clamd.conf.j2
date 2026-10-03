@@ -1,0 +1,29 @@
+## Rendered by skhub's deploy playbook, bind-mounted over /etc/clamav/clamd.conf.
+## The clamav/clamav image has no env var for these settings; a full config file
+## is the only override mechanism it documents. Keep every directive the stock
+## image config set (LogFile/LogTime/LocalSocket/TCPSocket/User) plus the memory
+## tuning knobs below.
+LogFile /var/log/clamav/clamd.log
+LogTime yes
+LocalSocket /tmp/clamd.sock
+TCPSocket 3310
+User clamav
+
+# Caps worst-case concurrent-scan memory (each thread holds its own scan
+# buffers). Default: the image default is 10; most skhub instances only ever
+# have Nextcloud's own files_antivirus app talking to this one daemon.
+MaxThreads {{ skhub.CLAMD_MAX_THREADS | default(2) }}
+
+# Keep in sync with files_antivirus's av_stream_max_length (set by the
+# "Tune ClamAV scan size limits in Nextcloud" deploy task from the same
+# CLAMD_STREAM_MAX_LENGTH_MB value) so neither side truncates a scan the
+# other side would have allowed.
+StreamMaxLength {{ skhub.CLAMD_STREAM_MAX_LENGTH_MB | default(25) }}M
+MaxScanSize {{ skhub.CLAMD_MAX_SCAN_SIZE_MB | default(100) }}M
+
+# "yes" (the compiled-in default) keeps the old and new signature database
+# both resident while reloading, which measured as a ~94% RSS spike on a
+# clamav/clamav:latest container (961 MiB idle -> 1.86 GiB during reload).
+# "no" frees the old database first: the same reload measured as a dip to
+# ~240 MiB climbing back to the ~956 MiB idle baseline, never exceeding it.
+ConcurrentDatabaseReload {{ 'yes' if (skhub.CLAMD_CONCURRENT_DATABASE_RELOAD | default(false)) else 'no' }}
