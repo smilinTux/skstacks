@@ -100,7 +100,7 @@ services:
       - /etc/localtime:/etc/localtime:ro
 
   db:
-    image: mariadb:10.11.7
+    image: {{ skhub.MARIADB_IMAGE | default('mariadb:10.11.19@sha256:7db29378d4fdab73f8123bbc2b48905c90d1a4b00cf848b028f1e81e623257f2') }}
     env_file: /var/data/config/skhub-{{ env }}/skhub.env
     command:
       - --wait_timeout=28800
@@ -133,7 +133,7 @@ services:
       start_period: 40s
 
   db-backup:
-    image: mariadb:10.11.7
+    image: {{ skhub.MARIADB_IMAGE | default('mariadb:10.11.19@sha256:7db29378d4fdab73f8123bbc2b48905c90d1a4b00cf848b028f1e81e623257f2') }}
     env_file: /var/data/config/skhub-{{ env }}/skhub-db-backup.env
     deploy:
       placement:
@@ -178,7 +178,7 @@ services:
       - skhub-{{ env }}
 
   redis:
-    image: redis:8.4.0-alpine
+    image: {{ skhub.REDIS_IMAGE | default('redis:8.10.2-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0') }}
     # notify-keyspace-events Ex: required for Nextcloud file locking.
     # timeout 0 / tcp-keepalive 300: avoid "Redis went away" on long uploads.
     command: redis-server --notify-keyspace-events Ex --appendonly yes --timeout 0 --tcp-keepalive 300
@@ -208,11 +208,15 @@ services:
       retries: 5
 
   clamav:
-    image: clamav/clamav@sha256:0c5c0e7f1ba77ce66324a3c20d4c49155a465a91be29dbe5e0483c41b9299137
+    image: {{ skhub.CLAMAV_IMAGE | default('clamav/clamav:latest@sha256:ebec5bc138401b36ae987caa1a3fa3c3b2a21ed3d51f0bfa5852825e663e67b0') }}
     networks:
       - skhub-{{ env }}
     volumes:
       - /var/data/runtime/skhub-{{ env }}/clamav:/var/lib/clamav
+      # Overrides the image's stock clamd.conf: see clamd.conf.j2 (CLAMD_MAX_THREADS,
+      # CLAMD_STREAM_MAX_LENGTH_MB, CLAMD_MAX_SCAN_SIZE_MB, CLAMD_CONCURRENT_DATABASE_RELOAD).
+      # The image does not expose these via env vars, only via a full config file mount.
+      - /var/data/config/skhub-{{ env }}/clamd.conf:/etc/clamav/clamd.conf:ro
     deploy:
       placement:
         constraints: {{ (skhub.placement_constraints | default([])) | tojson }}
@@ -223,10 +227,10 @@ services:
       mode: replicated
       resources:
         reservations:
-          memory: 512M
+          memory: {{ skhub.CLAMAV_RESOURCES_RESERVATIONS_MEMORY | default("512M") }}
           cpus: '0.25'
         limits:
-          memory: 2G
+          memory: {{ skhub.CLAMAV_RESOURCES_LIMITS_MEMORY | default("2G") }}
           cpus: '1.0'
     healthcheck:
       test: ["CMD", "clamdscan", "--ping", "3"]
@@ -324,7 +328,7 @@ services:
         - "traefik.http.services.skhub-push-svc.loadbalancer.server.port=7867"
 
   whiteboard:
-    image: ghcr.io/nextcloud-releases/whiteboard:v1.5.4
+    image: {{ skhub.WHITEBOARD_IMAGE | default('ghcr.io/nextcloud-releases/whiteboard:v2.0.0@sha256:059596633333d009890c64858f89f133ccd973a2e0823ad960a0cc05cf8657f1') }}
     env_file: /var/data/config/skhub-{{ env }}/whiteboard.env
     networks:
       - skhub-{{ env }}
@@ -355,7 +359,7 @@ services:
         - "traefik.http.routers.whiteboard.tls.certresolver=main"
 
   imaginary:
-    image: nextcloud/aio-imaginary:20250325_084656
+    image: {{ skhub.IMAGINARY_IMAGE | default('nextcloud/aio-imaginary:latest@sha256:15d3b439849a675d7b646db6796654ae238dd9c84ea089258d19c2fa69999cdf') }}
     environment:
       PORT: 9000
     networks:
@@ -379,7 +383,7 @@ services:
     command: -concurrency 50 -enable-url-source -log-level info
 {% if skhub.enable_collabora | default(false) %}
   collabora:
-    image: collabora/code:25.04.8.2.1
+    image: {{ skhub.COLLABORA_IMAGE | default('collabora/code:26.04.4.2.1@sha256:4e983196eb9878f339cc506c38c21f1cc3473bca3d6de883c5de08f9c0cc3a6c') }}
     env_file: /var/data/config/skhub-{{ env }}/collabora.env
     networks:
       - skhub-{{ env }}

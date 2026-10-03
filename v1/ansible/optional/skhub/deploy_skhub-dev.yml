@@ -350,6 +350,7 @@
         - { src: "talk-hpb.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/talk-hpb.env", mode: "0640" }
         - { src: "talk-recording.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/talk-recording.env", mode: "0640" }
         - { src: "{{ app }}-db-backup.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}-db-backup.env", mode: "0640" }
+        - { src: "clamd.conf.j2", dest: "/var/data/config/{{ app }}-{{ env }}/clamd.conf", mode: "0644" }
       tags:
         - templates
 
@@ -776,6 +777,27 @@
       ignore_errors: yes
       tags:
         - post-deploy
+
+    - name: Tune ClamAV scan size limits in Nextcloud (files_antivirus)
+      # Only when files_antivirus is actually installed/enabled (skhub.enable_files_antivirus):
+      # NAM runs the clamav container without installing files_antivirus at all, and an
+      # unconditional occ config:app:set would write orphaned appconfig rows for an app that
+      # is not there. The byte value is derived from the same CLAMD_STREAM_MAX_LENGTH_MB knob
+      # clamd.conf.j2 uses, so the two never drift apart.
+      shell: |
+        CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+        docker exec "$CONTAINER_ID" php occ config:app:set files_antivirus av_max_file_size --value="{{ skhub.FILES_ANTIVIRUS_MAX_FILE_SIZE | default(-1) }}" 2>&1 || true
+        docker exec "$CONTAINER_ID" php occ config:app:set files_antivirus av_stream_max_length --value="{{ (skhub.CLAMD_STREAM_MAX_LENGTH_MB | default(25) | int) * 1048576 }}" 2>&1 || true
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
+      when: >
+        nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+        and (skhub.enable_files_antivirus | default(false))
+      # Best-effort: optional app/tuning step; a failure here must not block
+      # the deploy. Container lookup, Redis and notify_push are fatal above.
+      ignore_errors: yes
+      tags:
+        - post-deploy
+        - clamav
 
     - name: Add missing database indices
       shell: |
