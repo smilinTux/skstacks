@@ -72,8 +72,10 @@ def test_knob_with_turn_host_mode_keeps_the_relay_command():
 
 
 def test_no_hardcoded_aio_talk_image_left():
+    # "aio-talk:" (with the colon), not "aio-talk-recording:" (talk-recording's
+    # own image, its own knob TALK_RECORDING_IMAGE -- see test_skhub_recording_ai.py).
     lines = [l.strip() for l in COMPOSE.read_text().splitlines() if l.strip().startswith("image:")]
-    talk = [l for l in lines if "aio-talk" in l]
+    talk = [l for l in lines if "aio-talk:" in l]
     assert talk and all("skhub.TALK_HPB_IMAGE" in l for l in talk), talk
 
 

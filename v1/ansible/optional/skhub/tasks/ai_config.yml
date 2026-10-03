@@ -1,0 +1,93 @@
+---
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Local AI (integration_openai + assistant) through skgateway. See README
+# "Talk recording and local AI". Disabled by default (skhub.AI_ENABLED); the
+# deploy playbooks' pre_tasks guard already refused to get here without
+# AI_BASE_URL (http/https) and AI_API_KEY when enabled.
+#
+# Nextcloud 34 config keys verified against nextcloud/integration_openai
+# v4.5.2 (the release tagged for Nextcloud 33-34), lib/Service/
+# OpenAiSettingsService.php ADMIN_CONFIG_TYPES and lib/AppInfo/Application.php:
+#   url                           -> skhub.AI_BASE_URL (the gateway's /v1)
+#   api_key                       -> skhub.AI_API_KEY (the nextcloud-skhub
+#                                    gateway consumer key)
+#   default_completion_model_id   -> skhub.AI_TEXT_MODEL (default sk-default)
+#   default_stt_model_id          -> skhub.AI_STT_MODEL (default sk-stt)
+# Both are gateway MODEL ALIASES (never a literal OpenAI model id): the
+# gateway decides where sk-default/sk-stt actually run, and a backend error
+# must surface as an error, never a silent cloud fallback (no_failover is a
+# gateway-side consumer setting, not something this occ config carries).
+#
+# t2i_provider_enabled (image generation) and tts_provider_enabled (speech)
+# both default to '1' and use hardcoded OpenAI cloud model ids
+# (gpt-image-1-mini, tts-1-hd) that skgateway does not serve; neither is in
+# scope (design doc "Out of scope": image generation, text-to-speech), so
+# both are turned off explicitly. analyze_image_provider_enabled needs no
+# explicit call: integration_openai only defaults it on while `url` is still
+# OpenAI's own cloud endpoint (OpenAiSettingsService::getAnalyzeImageProviderEnabled),
+# so setting `url` to the gateway already turns it off.
+#
+# Expects: app, env, playbook_dir, skhub, nextcloud_container, nextcloud_node
+# (set by the deploy before this file is imported).
+#
+# Best-effort, like the other post-deploy occ config tasks in this playbook:
+# a bad occ call here must not stop the whole deploy.
+
+- name: Install and enable the local AI apps (integration_openai, assistant)
+  shell: |
+    CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+    docker exec "$CONTAINER_ID" php occ app:install integration_openai 2>&1 || true
+    docker exec "$CONTAINER_ID" php occ app:enable integration_openai 2>&1
+    docker exec "$CONTAINER_ID" php occ app:install assistant 2>&1 || true
+    docker exec "$CONTAINER_ID" php occ app:enable assistant 2>&1
+  delegate_to: "{{ nextcloud_node.stdout | trim }}"
+  register: skhub_ai_apps_enable
+  changed_when: "'enabled' in skhub_ai_apps_enable.stdout"
+  when: >-
+    (skhub.AI_ENABLED | default(false) | bool)
+    and nextcloud_container is defined and nextcloud_container.stdout is defined
+    and (nextcloud_container.stdout | trim | length > 0)
+  # Best-effort: optional app/tuning step; a failure here must not block the
+  # deploy. Container lookup, Redis and notify_push are fatal earlier in the
+  # play.
+  ignore_errors: yes
+  tags:
+    - post-deploy
+    - ai
+
+- name: Configure the local AI provider (integration_openai) in Nextcloud
+  shell: |
+    CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+    docker exec "$CONTAINER_ID" php occ config:app:set integration_openai url --value="{{ skhub.AI_BASE_URL }}" 2>&1 || true
+    docker exec "$CONTAINER_ID" php occ config:app:set integration_openai api_key --value="{{ skhub.AI_API_KEY }}" 2>&1 || true
+    docker exec "$CONTAINER_ID" php occ config:app:set integration_openai default_completion_model_id --value="{{ skhub.AI_TEXT_MODEL | default('sk-default') }}" 2>&1 || true
+    docker exec "$CONTAINER_ID" php occ config:app:set integration_openai default_stt_model_id --value="{{ skhub.AI_STT_MODEL | default('sk-stt') }}" 2>&1 || true
+    docker exec "$CONTAINER_ID" php occ config:app:set integration_openai t2i_provider_enabled --value="0" 2>&1 || true
+    docker exec "$CONTAINER_ID" php occ config:app:set integration_openai tts_provider_enabled --value="0" 2>&1 || true
+  delegate_to: "{{ nextcloud_node.stdout | trim }}"
+  when: >-
+    (skhub.AI_ENABLED | default(false) | bool)
+    and nextcloud_container is defined and nextcloud_container.stdout is defined
+    and (nextcloud_container.stdout | trim | length > 0)
+  # Best-effort: optional app/tuning step; a failure here must not block the
+  # deploy. Container lookup, Redis and notify_push are fatal earlier in the
+  # play. no_log: the value carries skhub.AI_API_KEY.
+  ignore_errors: yes
+  no_log: true
+  tags:
+    - post-deploy
+    - ai

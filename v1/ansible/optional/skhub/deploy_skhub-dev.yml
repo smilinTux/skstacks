@@ -111,6 +111,47 @@
           with no trailing slash.
         quiet: true
 
+    - name: Fail closed on Talk recording without a pinned node and a shared secret
+      # README "Talk recording and local AI". The recording container needs
+      # its own worker (ffmpeg + a headless browser, about 1-2 cores per
+      # recording), distinct from APP_NODE, so recording load never competes
+      # with Nextcloud itself, and a shared secret Nextcloud and the
+      # recording backend both read from the vault (32+ chars: it is used as
+      # an HMAC key, same bar as the other skhub shared secrets).
+      vars:
+        _rec_node: "{{ skhub.TALK_RECORDING_NODE | default('', true) | string }}"
+        _rec_secret: "{{ skhub.TALK_RECORDING_SECRET | default('', true) | string }}"
+        _rec_app_node: "{{ skhub.APP_NODE | default('', true) | string }}"
+      assert:
+        that:
+          - >-
+            not (skhub.TALK_RECORDING_ENABLED | default(false) | bool) or (
+            _rec_node | length > 0
+            and _rec_secret | length >= 32
+            and (_rec_app_node | length == 0 or _rec_node != _rec_app_node))
+        fail_msg: >-
+          skhub.TALK_RECORDING_ENABLED needs skhub.TALK_RECORDING_NODE (a worker distinct
+          from skhub.APP_NODE) and skhub.TALK_RECORDING_SECRET (32+ characters).
+        quiet: true
+
+    - name: Fail closed on local AI without a gateway base URL and an API key
+      # README "Talk recording and local AI". integration_openai needs a
+      # service URL and an API key before the post-deploy occ config means
+      # anything; refuse early rather than install the app against nothing.
+      vars:
+        _ai_url: "{{ skhub.AI_BASE_URL | default('', true) | string }}"
+        _ai_key: "{{ skhub.AI_API_KEY | default('', true) | string }}"
+      assert:
+        that:
+          - >-
+            not (skhub.AI_ENABLED | default(false) | bool) or (
+            _ai_url is match('^https?://')
+            and _ai_key | length > 0)
+        fail_msg: >-
+          skhub.AI_ENABLED needs skhub.AI_BASE_URL (http/https, the cluster's skgateway
+          /v1 endpoint) and skhub.AI_API_KEY (the nextcloud-skhub consumer key).
+        quiet: true
+
     - name: Define network variables
       # Networks are created idempotently by the create_networks.yml shared
       # task below. Reference: See shared/networks for all registered
@@ -307,6 +348,7 @@
         - { src: "notify_push.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/notify_push.env", mode: "0640" }
         - { src: "collabora.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/collabora.env", mode: "0640" }
         - { src: "talk-hpb.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/talk-hpb.env", mode: "0640" }
+        - { src: "talk-recording.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/talk-recording.env", mode: "0640" }
         - { src: "{{ app }}-db-backup.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}-db-backup.env", mode: "0640" }
       tags:
         - templates
@@ -671,6 +713,13 @@
         - post-deploy
         - talk
 
+    - name: Configure Talk recording
+      import_tasks: tasks/recording_config.yml
+      tags:
+        - post-deploy
+        - talk
+        - recording
+
     - name: Install and enable recognize app
       shell: |
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
@@ -831,3 +880,9 @@
       tags:
         - post-deploy
         - maintenance
+
+    - name: Configure local AI (integration_openai, assistant)
+      import_tasks: tasks/ai_config.yml
+      tags:
+        - post-deploy
+        - ai

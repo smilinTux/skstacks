@@ -1,0 +1,54 @@
+---
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Register the talk-recording service with Talk (spreed), once it is
+# running. See README "Talk recording and local AI". Disabled by default
+# (skhub.TALK_RECORDING_ENABLED); the deploy playbooks' pre_tasks guard
+# already refused to get here without TALK_RECORDING_NODE and
+# TALK_RECORDING_SECRET (32+ chars) when enabled.
+#
+# recording_servers is the same JSON shape Talk's own admin UI writes for
+# signaling_servers/turn_servers (a "servers" list plus a shared "secret"):
+# see nextcloud/spreed docs/settings.md and lib/Config.php. The "server" URL
+# is the in-cluster service name on the skhub-<env> overlay network (the
+# talk-recording service is not published externally), same pattern as
+# NEXTCLOUD_URL=http://nextcloud for notify_push and av_host for ClamAV.
+#
+# Expects: app, env, playbook_dir, skhub, nextcloud_container, nextcloud_node
+# (set by the deploy before this file is imported).
+#
+# Best-effort, like the other post-deploy occ config tasks in this playbook:
+# a bad occ call here must not stop the whole deploy. no_log: the value
+# carries skhub.TALK_RECORDING_SECRET.
+
+- name: Configure Talk recording servers in Nextcloud
+  shell: |
+    CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+    docker exec "$CONTAINER_ID" php occ config:app:set spreed recording_servers --value='{"servers":[{"server":"http://{{ app }}-{{ env }}_talk-recording:1234","verify":false}],"secret":"{{ skhub.TALK_RECORDING_SECRET }}"}' 2>&1 || true
+  delegate_to: "{{ nextcloud_node.stdout | trim }}"
+  when: >-
+    (skhub.TALK_RECORDING_ENABLED | default(false) | bool)
+    and nextcloud_container is defined and nextcloud_container.stdout is defined
+    and (nextcloud_container.stdout | trim | length > 0)
+  # Best-effort: optional app/tuning step; a failure here must not block the
+  # deploy. Container lookup, Redis and notify_push are fatal earlier in the
+  # play.
+  ignore_errors: yes
+  no_log: true
+  tags:
+    - post-deploy
+    - talk
+    - recording
