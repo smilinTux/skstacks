@@ -86,9 +86,11 @@ you otherwise.
 ## Set the vault password
 
 This template's shipped `skbook-prod_vault.yml` is encrypted with a
-**documented demo password**, `skstacks-template-demo`, purely so the
-render-gate CI job below can decrypt and render it. Replace it with your own
-real, private password before you put any real value in a vault:
+**documented demo password**, `skstacks-template-demo`, purely so the main
+framework repo's `config-template-drift` CI job can prove, on every change,
+that this published ciphertext still decrypts to exactly its `.example`
+sibling (see "A note on the encrypted vault" below). Replace it with your
+own real, private password before you put any real value in a vault:
 
 ```
 ansible-vault rekey --vault-password-file <old-password-file> \
@@ -106,20 +108,36 @@ ansible-vault encrypt --vault-password-file <password-file> \
   --output <service>-prod_vault.yml <service>-prod_vault.yml.example
 ```
 
+## A note on the encrypted vault
+
+The framework repo (`smilinTux/skstacks`) can never carry real ansible-vault
+ciphertext: its own security gate fails closed on any file starting with the
+`$ANSIBLE_VAULT` header, anywhere in the tree, placeholder or not. So the
+framework's `templates/config-repo/` source for this template ships only the
+plaintext `skbook-prod_vault.yml.example`; this published template repo is
+where the real, demo-password-encrypted `skbook-prod_vault.yml` actually
+lives. The framework's `config-template-drift` CI job decrypts this
+published ciphertext on every push/PR and fails if it no longer matches the
+source `.example` file exactly, so the two cannot silently drift apart.
+
 ## Run the render gate
 
 Before any real deploy, the framework's render gate
-(`v1/tests/render/render_playbooks.py` in the main repo) proves your vault
-and inventory produce valid output through real Ansible, without touching a
-host. With `framework/` checked out alongside this repo and the demo
-password file from above:
+(`v1/tests/render/render_playbooks.py` in the main repo) proves a service's
+example vault and deploy playbook produce valid output through real Ansible,
+without touching a host. It is a framework-internal CI gate (it always reads
+its own public example vars from `v1/tests/render/vars/`, not an arbitrary
+instance's vault), but since this template's `skbook-prod_vault.yml.example`
+is kept identical, key for key, to that gate's `skbook.example.yml` (enforced
+by a test in the framework repo), a green render for `skbook` there is proof
+this template's placeholder values are valid too:
 
 ```
 cd framework
 python v1/tests/render/render_playbooks.py --service skbook --env prod
 ```
 
-The same gate runs in this template's own CI
+This runs in the framework's own CI
 (`.github/workflows/config-template-drift.yml`'s `render` job) against this
 template's shipped `skbook` placeholder, so "Use this template" always starts
 from a known-good render.

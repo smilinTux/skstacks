@@ -11,11 +11,12 @@ config-template-and-safe-deploy design).
 - scripts/scrub-check.sh: fails on a real private IP or real fleet domain
   under a given path, with a small allow-list for documentation/placeholder
   addresses and `example.*` hostnames.
-- the fixture's committed vault ciphertext decrypts (with the documented
-  demo password) to exactly its plaintext `.example` sibling, and that
-  sibling's placeholder secrets match the framework's own real-Ansible
-  render-gate fixture for the same service, so the render-gate CI job
-  (v1/tests/render/render_playbooks.py --service skbook) is proof the
+- the fixture carries no ansible-vault ciphertext (this framework repo's
+  skred gate forbids it anywhere in the tree); the documented demo password
+  round-trips through a real `ansible-vault encrypt`/`view`, and the
+  plaintext `.example` file's placeholder secrets match the framework's own
+  real-Ansible render-gate fixture for the same service, so the render-gate
+  CI job (v1/tests/render/render_playbooks.py --service skbook) is proof the
   template's placeholder values render through real Ansible, not just a
   structurally-similar stand-in.
 
@@ -25,7 +26,6 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -37,7 +37,6 @@ SCRUB_SCRIPT = REPO_ROOT / "scripts" / "scrub-check.sh"
 SOURCE_DIR = REPO_ROOT / "templates" / "config-repo"
 VAULT_DIR = SOURCE_DIR / "v1" / "ansible" / "optional" / "group_vars" / "prod"
 VAULT_EXAMPLE = VAULT_DIR / "skbook-prod_vault.yml.example"
-VAULT_ENCRYPTED = VAULT_DIR / "skbook-prod_vault.yml"
 RENDER_GATE_FIXTURE = REPO_ROOT / "v1" / "tests" / "render" / "vars" / "skbook.example.yml"
 
 # Documented demo password for the fixture's vault. Not a secret: the whole
@@ -171,24 +170,50 @@ def test_scrub_refuses_with_usage_error_when_no_path_given():
     assert "usage" in r.stderr.lower()
 
 
-# --- the fixture's vault: encrypted, decryptable, placeholder-only ----------
+# --- the fixture's vault: no ciphertext in THIS repo, documented password --
+#
+# templates/config-repo/ ships only the plaintext .example file: this
+# framework repo's own skred security gate (v2/skred/denylist.py) fails
+# closed on any file starting with the $ANSIBLE_VAULT header, anywhere in
+# the tree, so real ciphertext can never live here even as a placeholder
+# fixture. The published smilinTux/skstacks-config-template repo (a
+# separate, plain repo with no such gate) carries the real,
+# demo-password-encrypted sibling; the `drift` CI job decrypts it on every
+# push/PR and fails if it no longer matches this file exactly. What's
+# tested here, without needing network or that published repo, is that the
+# documented encrypt command and demo password actually work.
 
-def test_vault_is_real_ansible_vault_ciphertext():
-    header = VAULT_ENCRYPTED.read_text().splitlines()[0]
-    assert header.startswith("$ANSIBLE_VAULT;1."), "not ansible-vault ciphertext"
-
-
-def test_vault_decrypts_with_the_documented_demo_password_to_the_example_file(tmp_path):
+def test_documented_demo_password_round_trips_through_ansible_vault(tmp_path):
     if shutil.which("ansible-vault") is None:
         pytest.skip("ansible-vault not installed")
     pw_file = tmp_path / "vault-pass"
     pw_file.write_text(DEMO_VAULT_PASSWORD)
-    r = subprocess.run(
-        ["ansible-vault", "view", "--vault-password-file", str(pw_file), str(VAULT_ENCRYPTED)],
+    encrypted = tmp_path / "skbook-prod_vault.yml"
+    enc = subprocess.run(
+        ["ansible-vault", "encrypt", "--vault-password-file", str(pw_file),
+         "--output", str(encrypted), str(VAULT_EXAMPLE)],
         capture_output=True, text=True,
     )
-    assert r.returncode == 0, r.stderr
-    assert r.stdout == VAULT_EXAMPLE.read_text()
+    assert enc.returncode == 0, enc.stderr
+    assert encrypted.read_text().splitlines()[0].startswith("$ANSIBLE_VAULT;1.")
+
+    view = subprocess.run(
+        ["ansible-vault", "view", "--vault-password-file", str(pw_file), str(encrypted)],
+        capture_output=True, text=True,
+    )
+    assert view.returncode == 0, view.stderr
+    assert view.stdout == VAULT_EXAMPLE.read_text()
+
+
+def test_no_ansible_vault_ciphertext_is_committed_in_this_repo():
+    """The hard constraint itself (v2/skred/denylist.py's VAULT_HEADER
+    check): fail the PR fast and locally, instead of discovering it only
+    from the skred-scan.yml CI job."""
+    hits = []
+    for p in SOURCE_DIR.rglob("*"):
+        if p.is_file() and p.read_bytes().startswith(b"$ANSIBLE_VAULT"):
+            hits.append(str(p.relative_to(REPO_ROOT)))
+    assert not hits, f"real ansible-vault ciphertext committed in the framework repo: {hits}"
 
 
 def test_fixture_placeholder_secrets_match_the_framework_render_gate_fixture():
