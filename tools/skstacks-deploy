@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# One-command SKStacks v1 (swarm) service deploy with automatic rollback.
+# See tools/README.md and tools/skstacks_deploy.py's module docstring for
+# the full interface; this is a thin shim (same shape as
+# v1/scripts/check_images.sh -> list_images.py).
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$HERE/skstacks_deploy.py" "$@"

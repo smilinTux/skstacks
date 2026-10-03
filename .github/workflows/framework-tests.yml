@@ -5,9 +5,9 @@ name: framework tests
 on:
   push:
     branches: ['**']
-    paths: ['v1/**', 'v2/platform/**', 'v2/infra/tofu/**', '.github/workflows/framework-tests.yml']
+    paths: ['v1/**', 'v2/platform/**', 'v2/infra/tofu/**', 'tools/**', '.github/workflows/framework-tests.yml']
   pull_request:
-    paths: ['v1/**', 'v2/platform/**', 'v2/infra/tofu/**', '.github/workflows/framework-tests.yml']
+    paths: ['v1/**', 'v2/platform/**', 'v2/infra/tofu/**', 'tools/**', '.github/workflows/framework-tests.yml']
 
 jobs:
   ansible:
@@ -44,3 +44,15 @@ jobs:
       - working-directory: v2/infra/tofu/modules/libvirt-cluster
         run: tofu init -backend=false && tofu test
       - run: tofu fmt -check -recursive v2/infra/tofu/modules/libvirt-cluster v2/infra/tofu/examples/libvirt-swarm
+
+  tools-tests:
+    # tools/skstacks-deploy: drives the tool against fake docker/
+    # ansible-playbook/sk-lock on PATH, no real daemon or network beyond a
+    # loopback http.server the tests start themselves.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install pytest pyyaml
+      - run: python -m pytest -q tools

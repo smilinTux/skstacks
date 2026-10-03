@@ -1,0 +1,27 @@
+# skstacks-deploy probe declaration. Format documented at the framework root, tools dir, deploy-tool docs.
+#
+# Docker services (compose service names, unqualified) in this app's
+# stack. Namespaced at runtime as "<service>-<env>_<name>". Every one gets
+# its docker service spec recorded before the playbook runs.
+services: [nextcloud, db, db-backup, redis, clamav, cron, notify_push,
+           whiteboard, imaginary, collabora, talk-hpb]
+
+# "swarm" (docker stack deploy / docker service *) or "compose" (host-level
+# docker compose + systemd). Only "swarm" services can be auto-restored.
+mode: swarm
+
+# Nextcloud's `occ` upgrade on a version bump is a one-way schema/data
+# migration: never auto-restore a failed skhub deploy.
+schema_changing: true
+
+# Checked against "<base_url><path>" (base_url comes from the instance's
+# skstacks-deploy.yml: services.skhub.base_url).
+http_checks:
+  - name: status.php
+    path: /status.php
+    method: GET
+    expect_status: 200
+  - name: webdav-propfind
+    path: /remote.php/dav/
+    method: PROPFIND
+    expect_status: 207
