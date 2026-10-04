@@ -43,6 +43,8 @@
     env: staging
     service_name: skhub
     service_type: optional
+    skhub_db_data_path: "{{ skhub.DB_DATA_PATH | default('/var/data/runtime/' + app + '-' + env + '/db') }}"
+    skhub_redis_data_path: "{{ skhub.REDIS_DATA_PATH | default('/var/data/runtime/' + app + '-' + env + '/redis') }}"
   pre_tasks:
     - name: Select vault file based on domain and cluster
       import_tasks: ../../shared/tasks/select_vault_file.yml
@@ -85,6 +87,25 @@
           host needs TALK_HPB_PLACEMENT_CONSTRAINTS (pin the node the router forwards to);
           TALK_TURN_RELAY_MIN_PORT/MAX_PORT must both be set, 1024-65535, at most 200 ports, host mode only;
           TALK_TURN_RELAY_IPV4 must be an IPv4 address and needs host mode plus a relay range.
+        quiet: true
+
+    - name: Fail closed on local db/redis data paths without a pinned data node
+      # A path outside /var/data is local disk on one node. Without DATA_NODE
+      # swarm may reschedule db or redis elsewhere and start them on an empty
+      # directory (data loss): see README "Local database on a pinned node".
+      vars:
+        _data_node: "{{ skhub.DATA_NODE | default('', true) | string }}"
+        _db_path: "{{ skhub.DB_DATA_PATH | default('/var/data/', true) | string }}"
+        _redis_path: "{{ skhub.REDIS_DATA_PATH | default('/var/data/', true) | string }}"
+      assert:
+        that:
+          - >-
+            (_data_node | length > 0) or
+            (_db_path.startswith('/var/data/') and _redis_path.startswith('/var/data/'))
+        fail_msg: >-
+          skhub.DB_DATA_PATH / REDIS_DATA_PATH point at local disk
+          ({{ skhub_db_data_path }}, {{ skhub_redis_data_path }}) but
+          skhub.DATA_NODE is empty. Set DATA_NODE to the node holding the data.
         quiet: true
 
     - name: Fail closed on a local code tree without a pinned app node
@@ -206,8 +227,31 @@
         - { path: "/var/data/{{ app }}-{{ env }}/app-hooks/post-upgrade", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/{{ app }}-{{ env }}/app-hooks/before-starting", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/{{ app }}-{{ env }}/database-dump", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/runtime/{{ app }}-{{ env }}/db", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/runtime/{{ app }}-{{ env }}/clamav", owner: "root", group: "root", mode: "0755" }
+
+    - name: Create the {{ app }} db directory on shared storage
+      # Only when DB_DATA_PATH stays on /var/data; a local path is created on
+      # DATA_NODE below, and the old NFS path is left alone once it moved.
+      file:
+        path: "{{ skhub_db_data_path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      when: skhub_db_data_path.startswith('/var/data/')
+
+    - name: Create the {{ app }} local db directory on the data node (not recursive)
+      file:
+        path: "{{ skhub_db_data_path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      when: not skhub_db_data_path.startswith('/var/data/')
+      # Ansible templates delegate_to before it evaluates when, so it must
+      # render with DATA_NODE unset too (the guard above requires DATA_NODE
+      # whenever this task actually runs).
+      delegate_to: "{{ skhub.DATA_NODE | default(inventory_hostname, true) }}"
 
     - name: Create the {{ app }} local code tree dirs on the app node (not recursive)
       # README "Local code tree on a pinned node". The /var/data html and
@@ -301,8 +345,10 @@
       delegate_to: "{{ skhub.APP_NODE | default(inventory_hostname, true) }}"
 
     - name: Create Redis data directory with correct ownership (Redis runs as root in container)
+      # Only when REDIS_DATA_PATH stays on /var/data; a local path is created
+      # on DATA_NODE below, and the old NFS path is left alone once it moved.
       file:
-        path: /var/data/runtime/{{ app }}-{{ env }}/redis
+        path: "{{ skhub_redis_data_path }}"
         state: directory
         owner: root
         group: root
@@ -310,6 +356,17 @@
       # Redis runs as root in the container by default and needs a
       # world-writable directory to fork background-save children even if
       # existing files are owned by a different uid.
+      when: skhub_redis_data_path.startswith('/var/data/')
+
+    - name: Create the {{ app }} local redis directory on the data node (not recursive)
+      file:
+        path: "{{ skhub_redis_data_path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0777'
+      when: not skhub_redis_data_path.startswith('/var/data/')
+      delegate_to: "{{ skhub.DATA_NODE | default(inventory_hostname, true) }}"
 
     - name: Copy {{ app }} config files except templates
       copy:

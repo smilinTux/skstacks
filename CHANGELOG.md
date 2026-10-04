@@ -3,6 +3,12 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased (v2.26.0)
+
+### Changes
+
+- v1: **skhub** `db` (MariaDB) and `redis` can keep their data on local disk on one pinned node. `skhub.DATA_NODE` adds `node.hostname == <DATA_NODE>` to `db` and `redis` only (after `placement_constraints`; `db-backup`, `clamav`, `imaginary`, `collabora` and the app services keep floating); `skhub.DB_DATA_PATH`/`REDIS_DATA_PATH` move their data (defaults unchanged under `/var/data/runtime/skhub-<env>`). A path outside `/var/data` is created on `DATA_NODE` (not recursive, same owner/mode as the shared-storage copy) and the old `/var/data/runtime` path is no longer created; a local path without `DATA_NODE` stops the play, since local data on a floating service would be an empty database after the next reschedule. Built after a production instance found its NFS-backed `db`/`redis` adding measurable write latency to every `occ` capability check and Talk HPB backend call; the instance moved the live mounts by hand first and renamed the now-stale NFS copies so a redeploy from the old template fails loudly instead of silently starting MariaDB on stale data. README "Local database on a pinned node" has the migration steps and the separate-updates rule for swapping mounts. Tests: `v1/tests/test_skhub_local_db_redis.py`. **Instance action**: none; unset knobs render exactly as before. To move, follow the README migration first.
+
 ## skstacks-v2.25.0 - 2026-10-04
 
 ### Changes
