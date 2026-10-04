@@ -86,12 +86,17 @@ echo -e "${YELLOW}Waiting for services to stabilize...${NC}"
 sleep 10
 
 echo -e "${GREEN}Service Status:${NC}"
-docker service ls | grep "${STACK_NAME}"
+timeout 15 docker service ls 2>/dev/null | grep "${STACK_NAME}" || echo "(docker service ls timed out or found nothing yet)"
 
 echo -e "${YELLOW}Checking service health...${NC}"
-# Poll: an update that restarts the task shows 0/1 for a while.
+# Poll: an update that restarts the task shows 0/1 for a while. Each status
+# call is bounded (timeout 15): a Swarm manager made slow/unresponsive by a
+# scheduling retry storm (e.g. a task stuck "failed to resolve reference")
+# must not be able to hang this loop -- it previously hung an ansible task,
+# and this whole release-gate run, for 5+ hours (2026-10-03/04).
+WORKER_REPLICAS="0/0"
 for _ in $(seq 1 36); do
-    WORKER_REPLICAS=$(docker service ls --filter "name=${WORKER_SVC}" --format "{{ '{{.Replicas}}' }}" 2>/dev/null || echo "0/0")
+    WORKER_REPLICAS=$(timeout 15 docker service ls --filter "name=${WORKER_SVC}" --format "{{ '{{.Replicas}}' }}" 2>/dev/null || echo "0/0")
     echo "$WORKER_REPLICAS" | grep -qE '^([1-9][0-9]*)/\1$' && break
     sleep 5
 done
@@ -99,7 +104,9 @@ if echo "$WORKER_REPLICAS" | grep -qE '^([1-9][0-9]*)/\1$'; then
     echo -e "${GREEN}${APP} worker role is healthy: ${WORKER_REPLICAS}${NC}"
 else
     echo -e "${RED}${APP} worker health check: ${WORKER_REPLICAS}${NC}"
-    docker service logs --tail 20 "$WORKER_SVC" 2>/dev/null || echo "Could not retrieve logs for $WORKER_SVC"
+    timeout 15 docker service logs --tail 20 "$WORKER_SVC" 2>/dev/null || echo "Could not retrieve logs for $WORKER_SVC"
+    echo -e "${RED}${APP} deploy failed: worker role never converged (${WORKER_REPLICAS})${NC}"
+    exit 1
 fi
 
 echo -e "${GREEN}Deployment complete!${NC}"
