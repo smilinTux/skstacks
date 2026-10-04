@@ -428,7 +428,13 @@ services:
         - "traefik.http.routers.collabora-ws.service=collabora-ws"
         - "traefik.http.services.collabora-ws.loadbalancer.server.port=9980"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9980/hosting/discovery"]
+      # inc-a2671db2: 26.04.x images (the COLLABORA_IMAGE default) have no shell and no
+      # curl -- a curl-based test always fails there and gets the task killed every
+      # cycle by Swarm's unhealthy-task restart (confirmed live). 26.04 ships its
+      # OWN probe (coolwsd --probe); pre-26.x images (e.g. a 25.04 COLLABORA_IMAGE pin)
+      # have curl but their coolwsd does NOT support --probe. Pin both knobs together
+      # when overriding COLLABORA_IMAGE to a different major.
+      test: {{ (skhub.COLLABORA_HEALTHCHECK_TEST | default(["CMD", "/usr/bin/coolwsd", "--probe", "--use-env-vars"])) | tojson }}
       interval: 30s
       timeout: 10s
       retries: 5
