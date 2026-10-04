@@ -3,6 +3,12 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased (v2.25.1)
+
+### Changes
+
+- v1: **skhub** Collabora's healthcheck test is now an override knob (`COLLABORA_HEALTHCHECK_TEST`), matching the `COLLABORA_IMAGE` pattern (#137). The hardcoded `curl`-based test (in place since 2026-06-21) always failed on the 26.04.4.2.1 default bumped in v2.25.0: that image dropped its shell and `curl` (minimal, non-root image, no `/bin/sh`) and ships its own probe (`/usr/bin/coolwsd --probe --use-env-vars`). Every 26.04 deploy got marked unhealthy and killed by Swarm on a 2-6 minute cycle (confirmed live: coolwsd logs "Ready to accept connections" then an immediate SIGTERM, exit 0, not OOM/apparmor/seccomp; the `ERR Could not open proof RSA key` line some installs also see is unrelated and non-fatal, logged before the server is ready). The default test is now the 26.04 native probe; a pin of `COLLABORA_IMAGE` back to a pre-26.x, curl-capable build must pin the matching curl-based test alongside it (pre-26.x `coolwsd` does not support `--probe`). Root cause: inc-a2671db2. Tests: `v1/tests/test_skhub_collabora_healthcheck.py`. **Instance action**: an instance that had pinned `COLLABORA_IMAGE` to a pre-26.x build as a mitigation should also set `COLLABORA_HEALTHCHECK_TEST` to `["CMD", "curl", "-f", "http://localhost:9980/hosting/discovery"]`, or clear both overrides to pick up the fixed 26.04 default.
+
 ## skstacks-v2.25.0 - 2026-10-04
 
 ### Changes
