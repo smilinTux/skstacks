@@ -40,6 +40,7 @@ tag yet.
 | [skfenceha](#skfenceha) | core | HA multi-manager Traefik edge | Traefik `v3.6.2` | none (alt. to skfence) | `:80`/`:443`/`:222`(ssh)/`:8082`, ACME host `:8080` | `runtime/skfenceha-<env>/{acme,certs}` | `CLOUDFLARE_EMAIL`+token (if ACME on) | `CROWDSEC_ENABLED` (false), `RATE_LIMIT_ENABLED` (true) | v2.19.0 |
 | [skha](#skha) | core | Keepalived VRRP floating VIP | keepalived (apt, unpinned) | none | VIP only, no container ports | none (host config) | `vip`, `auth_pass` | `health_checks` list | pending |
 | [sksec](#sksec) | core | CrowdSec agent + Traefik bouncer | crowdsec `v1.6.11` + bouncer `0.5.0` | skfence or skfenceha | forwardAuth middleware only, no public router | `config/sksec-<env>/` | `CROWDSEC_AGENT_HOST`, `COLLECTIONS` | `TRAEFIK_HA_MODE` (false) | v2.19.0 |
+| [proxmox-sso](#proxmox-sso) | core | Authentik groups-claim SSO standardization for Proxmox VE hosts | `pveum`/`pvesh` (no container) | an existing Authentik OIDC provider/application per host | none (PVE management API only, no router) | none (host config) | `proxmox_sso_client_secret` (new-host bootstrap only) | `proxmox_sso_dry_run` (false) | pending |
 | [skboard](#skboard) | optional | Vikunja task board (sqlite) | Vikunja `0.24.6` | none | `skboard[-env].<cluster>.<domain>` | `skboard-<env>/data` | `JWT_SECRET`, `CLUSTERNAME`, `DOMAIN` | mailer (off) | v2.19.0 |
 | [skbook](#skbook) | optional | BookStack wiki + MariaDB | BookStack `v26.09-ls285`, MariaDB `10.11` | none | `skbook[-env].<cluster>.<domain>` | `skbook-<env>/bookstack/config`, `runtime/skbook-<env>/db` | `MYSQL_ROOT_PASSWORD`, `DB_USERNAME`/`DB_PASSWORD`, `APP_KEY` | `ENABLE_SSO` (false) | v2.19.0 |
 | [skdash](#skdash) | optional | Dashy service dashboard, Traefik-API discovery | Dashy `4.7.10` | none | `skdash[-env].<cluster>.<domain>` | `skdash-<env>/config` | `CLUSTERNAME`, `DOMAIN`; `discovery.traefik_api_url`/`_token` if discovery on | `discovery.enabled` (true) | pending |
@@ -220,6 +221,56 @@ skfenceha's routers behind it, also set `skfenceha.CROWDSEC_ENABLED: true`
 (off by default there). `CROWDSEC_BOUNCER_API_KEY` is auto-generated and
 persisted on first deploy if left unset, so re-running the playbook does not
 rotate it.
+
+### proxmox-sso
+
+Idempotently standardizes Authentik groups-claim SSO on a Proxmox VE
+**hypervisor host** itself - the realm's `groups-claim`/`groups-autocreate`/
+`groups-overwrite`/`scopes`, plus three ACLs on `/`
+(`skadmin-authentik`→Administrator, `skeditor-authentik`→PVEVMAdmin,
+`skreadonly-authentik`→PVEAuditor). This is a **host service, not a Swarm
+stack** - it runs `pveum`/`pvesh` directly, no container, no `/var/data`.
+
+This is the framework's other documented **per-host exemption** (alongside
+skha): it runs every host in the `proxmox_sso` inventory group through its
+own full pass (serial, one at a time), because each Proxmox host has its own
+distinct realm identity - there is no "select one manager" concept for
+independent hypervisors that aren't Docker Swarm members at all.
+
+**Prerequisites**: an Authentik OAuth2/OIDC provider + application already
+created for this host (in Authentik itself, out of band - see
+[`optional/sksso`](../v1/ansible/optional/sksso/README.md) for the identity
+provider this depends on), with `skadmin`/`skeditor`/`skreadonly` groups and
+a `groups` scope mapping. Aligning an **existing** realm needs no vault vars
+at all; only bootstrapping a **new** host's realm from scratch needs the
+client secret.
+
+**Minimal vault snippet** (new-host bootstrap only - per-host, not per-env;
+see [the role's README](../v1/ansible/core/proxmox-sso/README.md) for why):
+
+```yaml
+proxmox_sso_issuer_url: "https://CHANGEME-sso-host/application/o/CHANGEME-app-slug/"
+proxmox_sso_client_id: "CHANGEME_CLIENT_ID"
+proxmox_sso_client_secret: "CHANGEME_CLIENT_SECRET"
+proxmox_sso_username_claim: "subject"
+```
+
+**Deploy**:
+
+```bash
+ansible-playbook -i <your-private-inventory> \
+  framework/v1/ansible/core/proxmox-sso/deploy_proxmox-sso.yml -l <host> \
+  --vault-password-file ~/.vault_pass_env/.<instance>_prod_vault_pass
+```
+
+**Health check**: `pveum user permissions <user>@authentik --path /` on the
+host, or run `scripts/pve_sso_check.py --json` directly (exit `0` = aligned).
+
+**Gotchas**: never touches `username-claim`/`client-id`/`issuer-url`/
+`client-key`/`default` (per-host, changing any orphans users or breaks
+login); never removes the legacy manual (non-suffixed) groups/ACLs - that is
+a separate, explicitly-confirmed step. See the role's own `SOP.md` for
+add-a-user / break-glass / new-host procedures.
 
 ---
 

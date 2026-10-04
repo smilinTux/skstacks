@@ -1,0 +1,151 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+---
+# Idempotent Proxmox SSO standardization: realm options + the three ACLs.
+# Safe to run repeatedly and safe under `ansible-playbook --check` (no write
+# task ever runs when ansible_check_mode is true). See README.md.
+
+- name: Assert root@pam break-glass account still exists (never removed)
+  ansible.builtin.command:
+    cmd: pveum user list --output-format json
+  register: proxmox_sso_user_list
+  changed_when: false
+  check_mode: false
+
+- name: Fail loudly if root@pam is missing
+  ansible.builtin.assert:
+    that: >-
+      'root@pam' in (proxmox_sso_user_list.stdout | from_json | map(attribute='userid') | list)
+    fail_msg: >-
+      root@pam break-glass account not found on {{ inventory_hostname }} - refusing to
+      touch SSO config on a host with no non-SSO admin fallback.
+    success_msg: "root@pam present - break-glass confirmed on {{ inventory_hostname }}."
+
+- name: Backup /etc/pve/user.cfg and /etc/pve/domains.cfg before any write
+  when: not ansible_check_mode
+  block:
+    - name: Ensure backup directory exists
+      ansible.builtin.file:
+        path: "{{ proxmox_sso_backup_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Snapshot the current timestamp for this run's backups
+      ansible.builtin.set_fact:
+        proxmox_sso_backup_ts: "{{ lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ') }}"
+
+    - name: Copy user.cfg + domains.cfg to the backup directory
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ proxmox_sso_backup_dir }}/{{ item | basename }}.bak-{{ proxmox_sso_backup_ts }}"
+        remote_src: true
+        mode: "0640"
+      loop:
+        - /etc/pve/user.cfg
+        - /etc/pve/domains.cfg
+
+- name: Check whether the target realm already exists
+  ansible.builtin.command:
+    cmd: pveum realm list --output-format json
+  register: proxmox_sso_realm_list
+  changed_when: false
+  check_mode: false
+
+- name: Create the realm (new-host bootstrap only - skipped if it already exists)
+  when:
+    - proxmox_sso_realm not in (proxmox_sso_realm_list.stdout | from_json | map(attribute='realm') | list)
+    - not ansible_check_mode
+  no_log: true
+  ansible.builtin.command:
+    cmd: >-
+      pveum realm add {{ proxmox_sso_realm }}
+      --type openid
+      --issuer-url {{ proxmox_sso_issuer_url | quote }}
+      --client-id {{ proxmox_sso_client_id | quote }}
+      --client-key {{ proxmox_sso_client_secret | quote }}
+      --username-claim {{ proxmox_sso_username_claim | quote }}
+      --autocreate 1
+
+- name: Stage the parity/dry-run checker on the target host
+  # Forced to run under --check too: this only ever copies our own
+  # read-only diagnostic script (never touches user.cfg/domains.cfg), and
+  # the report task below needs it present to do its read-only check.
+  check_mode: false
+  block:
+    - name: Ensure the checker's staging directory exists
+      ansible.builtin.file:
+        path: "{{ proxmox_sso_script_remote_path | dirname }}"
+        state: directory
+        mode: "0700"
+
+    - name: Copy the checker script
+      ansible.builtin.copy:
+        src: "{{ role_path }}/scripts/pve_sso_check.py"
+        dest: "{{ proxmox_sso_script_remote_path }}"
+        mode: "0750"
+
+- name: Report current alignment (always safe - read-only)
+  ansible.builtin.command:
+    cmd: >-
+      python3 {{ proxmox_sso_script_remote_path }}
+      --realm-name {{ proxmox_sso_realm }} --json
+  register: proxmox_sso_report
+  changed_when: false
+  check_mode: false
+  failed_when: proxmox_sso_report.rc not in (0, 1)
+
+- name: Parse the alignment report
+  ansible.builtin.set_fact:
+    proxmox_sso_report_json: "{{ proxmox_sso_report.stdout | from_json }}"
+
+- name: Show the plan when drift is found
+  ansible.builtin.debug:
+    msg: "{{ proxmox_sso_report_json.plan }}"
+  when: not proxmox_sso_report_json.aligned
+
+- name: Apply the standard (realm options + groups + ACLs)
+  when:
+    - not proxmox_sso_report_json.aligned
+    - not proxmox_sso_dry_run
+    - not ansible_check_mode
+  ansible.builtin.command:
+    cmd: >-
+      python3 {{ proxmox_sso_script_remote_path }}
+      --realm-name {{ proxmox_sso_realm }} --apply --json
+  register: proxmox_sso_apply
+  changed_when: true
+
+- name: Re-verify alignment after apply
+  when:
+    - not proxmox_sso_report_json.aligned
+    - not proxmox_sso_dry_run
+    - not ansible_check_mode
+  ansible.builtin.command:
+    cmd: >-
+      python3 {{ proxmox_sso_script_remote_path }}
+      --realm-name {{ proxmox_sso_realm }} --json
+  register: proxmox_sso_reverify
+  changed_when: false
+  failed_when: not (proxmox_sso_reverify.stdout | from_json).aligned
+
+- name: Remove the staged checker script (unless kept for manual re-checks)
+  when: not proxmox_sso_keep_script
+  # check_mode: false for the same reason as the staging task above - this
+  # only ever removes our own harmless diagnostic script, so a --check run
+  # leaves no trace behind either.
+  check_mode: false
+  ansible.builtin.file:
+    path: "{{ proxmox_sso_script_remote_path | dirname }}"
+    state: absent

@@ -1,0 +1,17 @@
+# Proxmox SSO Production Vault Configuration
+# Copy this file to host_vars/<your-host>/proxmox-sso-prod_vault.yml (one per
+# host - these vars are inherently per-host, each Proxmox host has its own
+# OIDC issuer URL/client) and encrypt with Ansible Vault:
+#   ansible-vault encrypt host_vars/<your-host>/proxmox-sso-prod_vault.yml
+#
+# Only needed for a host whose `authentik` realm does not exist yet (new-host
+# bootstrap) - an already-existing realm is aligned without these vars. Never
+# commit real values; this file stays a `.example` with placeholders only, and
+# no real hostname is ever used as a file/directory name in this public repo.
+
+proxmox_sso_issuer_url: "https://CHANGEME-sso-host/application/o/CHANGEME-app-slug/"
+proxmox_sso_client_id: "CHANGEME_CLIENT_ID"
+proxmox_sso_client_secret: "CHANGEME_CLIENT_SECRET"
+# Recommended for a new host: "subject" (every OIDC provider emits it).
+# Never change this for a host that already has it set - see ./SOP.md.
+proxmox_sso_username_claim: "subject"

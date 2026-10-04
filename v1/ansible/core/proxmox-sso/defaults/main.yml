@@ -1,0 +1,45 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+---
+# See README.md for the full vars table. Real values (issuer URL, client id,
+# client secret) come from inventory group_vars + the per-env vault file -
+# never hardcode a real host or secret here or in the role itself.
+
+# Name of the PVE realm this role manages. Must already exist (created once,
+# out of band, via `pveum realm add` or the Proxmox UI) - this role only
+# brings an existing openid realm up to the groups-claim SSO standard.
+proxmox_sso_realm: authentik
+
+# Where the checker script is staged on the target host during a run, and
+# whether it is left behind afterwards (useful for manual re-checks).
+proxmox_sso_script_remote_path: /root/.pve-sso-check/pve_sso_check.py
+proxmox_sso_keep_script: false
+
+# true  = report drift only, change nothing (also forced true under
+#         `ansible-playbook --check`, regardless of this value).
+# false = apply the minimal set of `pveum` commands the checker plans.
+proxmox_sso_dry_run: false
+
+# Directory backups of /etc/pve/user.cfg and /etc/pve/domains.cfg are
+# written to before any write, one timestamped pair per run.
+proxmox_sso_backup_dir: /root/pve-sso-backups
+
+# Standard target groups and the built-in PVE roles they map to on `/`.
+# Changing this list changes the standard for every host this role runs
+# against - see README.md "Target standard" before editing.
+proxmox_sso_group_roles:
+  skadmin-authentik: Administrator
+  skeditor-authentik: PVEVMAdmin
+  skreadonly-authentik: PVEAuditor

@@ -12,7 +12,8 @@ instance contract.
 ## Published services
 
 - **Core** (`v1/ansible/core/`, one per cluster): skfence, skfenceha (HA
-  alternative to skfence), skha, sksec.
+  alternative to skfence), skha, sksec, proxmox-sso (host-config: standardizes
+  Authentik SSO on the Proxmox VE hypervisors themselves, not a Swarm service).
 - **Optional** (`v1/ansible/optional/`, deploy the ones you want): skboard,
   skbook, skdash, skdesk, skform, skgallery, skgit, skgraph, skhub, skmail,
   skmem-pg, skmesh, skmon, skorch, skpdf, skpeek, skport, skpulse, skreg,

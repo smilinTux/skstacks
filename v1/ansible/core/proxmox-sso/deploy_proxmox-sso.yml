@@ -1,0 +1,45 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+---
+# skstacks: per-host - each Proxmox VE host is its own independent hypervisor
+# with its own `authentik` realm identity (issuer URL, client id, OIDC client
+# secret, username-claim) - there is no shared `/var/data` and no concept of
+# "select one manager" here (these hosts are not Docker Swarm members at
+# all), so every host in the inventory group runs its own full, idempotent
+# pass, same as skha's keepalived exemption for the same underlying reason:
+# per-node identity, not shared storage. See
+# v1/tests/test_single_manager_deploy.py for what this marker is checked
+# against.
+#
+# Standardize Proxmox SSO (realm options + the three ACLs) on every host in
+# the `proxmox_sso` inventory group, one host at a time (serial: 1 below, on
+# top of the per-host exemption, is this role's own extra caution - never
+# align more than one hypervisor unattended in a single run).
+#
+# Usage (see README.md for the full vars table + example inventory group):
+#   ansible-playbook -i <your-private-inventory> \
+#     --vault-password-file "$HOME/.vault_pass_env/.prod_vault_pass" \
+#     core/proxmox-sso/deploy_proxmox-sso.yml -l <host>
+#
+# Dry run (report drift, change nothing):
+#   ansible-playbook ... core/proxmox-sso/deploy_proxmox-sso.yml --check
+#   ansible-playbook ... core/proxmox-sso/deploy_proxmox-sso.yml -e proxmox_sso_dry_run=true
+
+- hosts: proxmox_sso
+  become: true
+  serial: 1
+  gather_facts: false
+  roles:
+    - proxmox-sso
