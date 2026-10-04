@@ -198,7 +198,14 @@ services:
 
   error-pages:
     # Image is built by the deploy playbook before stack deploy (Swarm
-    # doesn't support a `build:` context in a stack file).
+    # doesn't support a `build:` context in a stack file), on the SAME
+    # node labeled traefik.acme.master=true in this same deploy run (both
+    # happen in the playbook's selected_manager_group play). Placement
+    # below pins it to that label too: node.role == manager alone let
+    # Swarm schedule the task on a manager that never built the image,
+    # which rejected it ("failed to resolve reference ... not found")
+    # and rescheduled forever -- found 2026-10-03/04 (release-gate run,
+    # skfenceha hung 5h+), same class NAM hit 2026-10-01.
     image: {{ app }}-{{ env }}-error-pages:latest
     deploy:
       mode: replicated
@@ -214,6 +221,7 @@ services:
       placement:
         constraints:
           - node.role == manager
+          - node.labels.traefik.acme.master == true
       restart_policy:
         condition: any
       resources:
