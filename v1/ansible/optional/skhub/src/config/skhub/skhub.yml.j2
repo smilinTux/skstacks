@@ -8,6 +8,12 @@
 {%- set _webroot_local = skhub.WEBROOT_LOCAL_PATH | default('', true) | string -%}
 {%- set _app_node = skhub.APP_NODE | default('', true) | string -%}
 {%- set _app_constraints = (skhub.placement_constraints | default([])) + ((['node.hostname == ' ~ _app_node]) if _app_node else []) -%}
+{#- db + redis data on local disk on DATA_NODE: see README "Local database on a
+    pinned node". Empty paths = /var/data/runtime, unchanged. -#}
+{%- set _db_data_path = skhub.DB_DATA_PATH | default('/var/data/runtime/' ~ app ~ '-' ~ env ~ '/db', true) | string -%}
+{%- set _redis_data_path = skhub.REDIS_DATA_PATH | default('/var/data/runtime/' ~ app ~ '-' ~ env ~ '/redis', true) | string -%}
+{%- set _data_node = skhub.DATA_NODE | default('', true) | string -%}
+{%- set _data_constraints = (skhub.placement_constraints | default([])) + ((['node.hostname == ' ~ _data_node]) if _data_node else []) -%}
 version: "3.7"
 
 services:
@@ -109,10 +115,10 @@ services:
     networks:
       - skhub-{{ env }}
     volumes:
-      - /var/data/runtime/skhub-{{ env }}/db:/var/lib/mysql
+      - {{ _db_data_path }}:/var/lib/mysql
     deploy:
       placement:
-        constraints: {{ (skhub.placement_constraints | default([])) | tojson }}
+        constraints: {{ _data_constraints | tojson }}
       replicas: 1
       restart_policy:
         condition: any
@@ -184,7 +190,7 @@ services:
     command: redis-server --notify-keyspace-events Ex --appendonly yes --timeout 0 --tcp-keepalive 300
     deploy:
       placement:
-        constraints: {{ (skhub.placement_constraints | default([])) | tojson }}
+        constraints: {{ _data_constraints | tojson }}
       replicas: 1
       restart_policy:
         condition: any
@@ -200,7 +206,7 @@ services:
     networks:
       - skhub-{{ env }}
     volumes:
-      - /var/data/runtime/skhub-{{ env }}/redis:/data
+      - {{ _redis_data_path }}:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
