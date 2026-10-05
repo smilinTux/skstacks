@@ -57,14 +57,14 @@ def test_default_unchanged_without_turn_domain(pb):
 
 @pytest.mark.parametrize("pb", PLAYBOOKS, ids=lambda p: p.name)
 def test_turn_domain_override_replaces_the_hostname(pb):
-    assert _turn_server_value(pb, TURN_DOMAIN="turn.skstack01.douno.it") == "turn.skstack01.douno.it:3478"
+    assert _turn_server_value(pb, TURN_DOMAIN="turn.example.com") == "turn.example.com:3478"
 
 
 @pytest.mark.parametrize("pb", PLAYBOOKS, ids=lambda p: p.name)
 def test_turn_domain_override_does_not_touch_the_secret(pb):
     task = _turn_task(pb)
     shell = task["shell"]
-    rendered = _env().from_string(shell).render(skhub=dict(BASE_VARS, turn_secret="y" * 32, TURN_DOMAIN="turn.skstack01.douno.it"))
+    rendered = _env().from_string(shell).render(skhub=dict(BASE_VARS, turn_secret="y" * 32, TURN_DOMAIN="turn.example.com"))
     assert '"secret":"' + "y" * 32 + '"' in rendered
 
 
