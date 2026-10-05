@@ -3,6 +3,16 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## skstacks-v2.26.1 - 2026-10-05
+
+### Changes
+
+- v1: **skhub** `skhub.TURN_DOMAIN` overrides only the hostname Nextcloud's `turn_servers` config advertises (default unset renders `{{ CLUSTERNAME }}.{{ DOMAIN }}`, unchanged). For an instance whose own ingress cannot serve TURN and that instead relays Talk's TURN/STUN through another cluster's TURN server (a Chef-approved cross-cluster exception on the NAM client cluster, whose ISP blocks inbound 3478), this lets Nextcloud point at that other TURN host while `talk-hpb`'s own eturnal runs unused; `turn_secret` is set to the remote cluster's secret the same way as before. Port (3478) and `turn_secret` plumbing are unaffected. Tests: `v1/tests/test_skhub_turn_domain_override.py`. **Instance action**: none; unset renders exactly as before.
+
+### Also in this tree, not release-gated
+
+- v1: **skbackup** (restic engine replacing Duplicati, #109) is present in this tree from `skstacks-v2.26.0` onward but is not one of the skstack06 release-gate stages: it is covered by unit/render tests only (`v1/tests/test_skbackup_*`), never deployed in the skstack06 lab, and never ran through the fresh full `PROFILE=full` lane-1 run that gates this release. Do not deploy skbackup from this tag until it has been validated separately (a dedicated skstack06 stage or an instance pilot).
+
 ## skstacks-v2.26.0 - 2026-10-05
 
 ### Changes
