@@ -3,6 +3,12 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased (v2.26.1)
+
+### Changes
+
+- v1: **skhub** `skhub.TURN_DOMAIN` overrides only the hostname Nextcloud's `turn_servers` config advertises (default unset renders `{{ CLUSTERNAME }}.{{ DOMAIN }}`, unchanged). For an instance whose own ingress cannot serve TURN and that instead relays Talk's TURN/STUN through another cluster's TURN server (a Chef-approved cross-cluster exception on the NAM client cluster, whose ISP blocks inbound 3478), this lets Nextcloud point at that other TURN host while `talk-hpb`'s own eturnal runs unused; `turn_secret` is set to the remote cluster's secret the same way as before. Port (3478) and `turn_secret` plumbing are unaffected. Tests: `v1/tests/test_skhub_turn_domain_override.py`. **Instance action**: none; unset renders exactly as before.
+
 ## skstacks-v2.26.0 - 2026-10-05
 
 ### Changes

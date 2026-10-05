@@ -757,7 +757,7 @@
       shell: |
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
         docker exec "$CONTAINER_ID" php occ config:app:set spreed signaling_servers --value='{"servers":[{"server":"https://skhub.{{ skhub.CLUSTERNAME }}.{{ skhub.DOMAIN }}/standalone-signaling/","verify":true}],"secret":"{{ skhub.signaling_secret }}"}' 2>&1 || true
-        docker exec "$CONTAINER_ID" php occ config:app:set spreed turn_servers --value='[{"schemes":"turn,turns","server":"skhub.{{ skhub.CLUSTERNAME }}.{{ skhub.DOMAIN }}:3478","secret":"{{ skhub.turn_secret }}","protocols":"udp,tcp"}]' 2>&1 || true
+        docker exec "$CONTAINER_ID" php occ config:app:set spreed turn_servers --value='[{"schemes":"turn,turns","server":"{{ skhub.TURN_DOMAIN | default(skhub.CLUSTERNAME ~ "." ~ skhub.DOMAIN, true) }}:3478","secret":"{{ skhub.turn_secret }}","protocols":"udp,tcp"}]' 2>&1 || true
       delegate_to: "{{ nextcloud_node.stdout | trim }}"
       when: >-
         (skhub.enable_talk_hpb | default(false))
