@@ -326,6 +326,74 @@ Two ways to alert:
 Use absolute paths in anything a scheduler runs: cron and systemd have no
 login PATH.
 
+#### Command notifier: sk-alert and native ITIL
+
+The optional [skbackup-notify.py](examples/skbackup-notify.py) example connects
+the existing command notifier to sk-alert and SKCapstone's native ITIL API.
+It is not installed or enabled by the playbooks. Put it at
+`/usr/local/lib/skbackup-notify.py` on the notifier host. Use a Python
+interpreter with SKCapstone installed and point `--itil-home` at the existing
+shared SKCapstone root, not an agent-specific directory or a new empty store.
+The scheduler account needs write access to that root and its lock directory.
+
+```yaml
+skbackup:
+  alerts:
+    notifier: command
+    command: >-
+      /opt/alerts/bin/python /usr/local/lib/skbackup-notify.py
+      --host storage-a --agent backup-operator
+      --sk-alert /opt/alerts/bin/sk-alert
+      --itil-home /var/lib/skcapstone
+      --lock-file /var/lib/skbackup-notify/notify.lock
+```
+
+Replace the example paths and identities with the operator's private config.
+`--host` identifies the storage host, even when notification runs elsewhere.
+The engine supplies `BK_LEVEL`, `BK_KEY`, `BK_SUBJECT` and `BK_BODY`; do not
+put shell quoting, pipelines, or credentials into `alerts.command`. The
+example passes the complete message as one argument, never stdin, and uses
+an absolute sk-alert path with `-l`, `-k` and `-t 3600`. Dedupe keys include
+the storage host and finding, so two hosts do not suppress each other.
+
+Info reports only notify. Warnings open `sev3` incidents and critical findings
+open `sev2` incidents for `skbackup:<storage-host>`, tagged with the finding
+key. Active incidents are reused under a local lock; a recurrence after
+resolution or closure creates a new incident. Run one notifier writer per
+storage host against the shared ITIL store. The example does not automatically
+resolve or change the severity of an existing incident. Both backends are
+attempted if either fails; a nonzero exit lets the existing engine report a
+notifier failure. Backend error output is suppressed to keep credentials out
+of logs. If sk-alert already creates ITIL incidents, use the direct command
+below instead of also enabling this example:
+
+```yaml
+skbackup:
+  alerts:
+    notifier: command
+    command: /opt/alerts/bin/sk-alert -l {level} -k skbackup-storage-a-{key} -t 3600 {message}
+```
+
+If those tools live only on an alerting host, keep `notifier: none` on the
+storage host. The example also accepts explicit `--level`, `--key`,
+`--subject` and `--body` arguments. Use the existing `alert-host-check` from
+that host's existing scheduler, with key-based read-only SSH:
+
+```sh
+/usr/local/lib/skbackup/alert-host-check storage-a /usr/local/sbin/skbackup SKBACKUP \
+  /opt/alerts/bin/python /usr/local/lib/skbackup-notify.py \
+  --host storage-a --agent backup-operator --sk-alert /opt/alerts/bin/sk-alert \
+  --itil-home /var/lib/skcapstone --lock-file /var/lib/skbackup-notify/notify.lock \
+  --level '{level}' --key backup-check --subject '{message}'
+```
+
+Here the constant `backup-check` key represents the aggregate remote check,
+including SSH failure. It avoids opening new incidents when an age counter
+changes the checker output. It still includes the storage host in the final
+alert key. No SKCapstone installation is needed on the storage host for this
+mode. This is an opt-in recipe; no example runs or scheduler changes are
+performed by deployment.
+
 ## CLI
 
 ```
@@ -513,6 +581,15 @@ stack is needed.
 - **restic needs a stable path.** Backing up the snapshot from its
   `.zfs/snapshot/<name>` path, which changes every night, makes restic find
   no parent and re-read everything. Mount the snapshot at the same path.
+- **A weak storage CPU can cap the seed before the uplink does.** Chunking,
+  hashing, encryption and compression run on the machine executing restic.
+  When its CPU is busy while disk and uplink are underused, raising the
+  upload cap will not fix the bottleneck. `offsite.compression: off` removes
+  compression work at the cost of larger packs and more upload/storage; it
+  does not remove hashing or encryption. In a field seed, moving restic to
+  a faster NFS client raised uploads to about 13 MiB/s, saturating an uplink
+  at roughly 110 Mbit/s. This is a measurement, not a throughput guarantee.
+  See [seeding from a fast NFS client](#seeding-from-a-fast-nfs-client).
 - **S3 means `AWS_*`.** restic's S3 backend reads `AWS_ACCESS_KEY_ID` and
   `AWS_SECRET_ACCESS_KEY` only; B2 key names in the env file do nothing for
   an `s3:` repository unless mapped.
@@ -537,6 +614,48 @@ stack is needed.
   copy and compares it with the exact snapshot it came from.
 - **Keep the password offline.** A restic repository without its password is
   noise.
+
+### Seeding from a fast NFS client
+
+Use an already authorized NFS client with more CPU when hashing on the storage
+host limits a large first seed. Read the frozen source snapshots through
+read-only mounts; expose every included child filesystem, since a parent
+snapshot alone has empty child mount directories. Retain the source snapshots
+until the seed completes. Apply the same dataset exclusions and private-data
+policy as the engine, and check for unreadable files rather than accepting a
+partial backup. Creating or changing NFS exports is a separate operator action.
+
+Load the existing repository credentials privately from their protected file
+or vault, without shell tracing or credential values in command arguments.
+Assuming the frozen tree is already mounted at the engine's absolute paths
+on this client, an illustrative seed is:
+
+```sh
+restic --compression off --pack-size 64 backup \
+  --host storage-a --tag onedrive --tag skbackup --limit-upload 8000 \
+  --exclude-caches --exclude-if-present .nobackup \
+  /run/skbackup/src/share/cloud/onedrive /run/skbackup/src/share/cloud/gdrive
+```
+
+Use the same repository, storage-host label (`--host`, not the NFS client's
+hostname), complete absolute source-path list, set/brand tags, and excludes
+as the engine. Choose an upload cap that protects other traffic and keep the
+client's restic cache on a disk with enough space. The large set's pack-size
+override can reduce pack overhead; it does not replace CPU capacity.
+
+Before returning the work to the storage-host timer, verify the seed exited
+successfully, its repository snapshot has the expected host, paths and tags,
+and the engine finds it as a parent. Check the repository and restore a sample.
+The manual seed does not populate the engine's last-success or ZFS-provenance
+state files; let the first successful engine run establish those records.
+Coordinate its timer window with the seed instead of racing backups or prune.
+
+Matching host and paths lets restic select a parent; changed inode/ctime
+metadata between NFS and local ZFS can still force it to reread content.
+Already stored content is deduplicated, so parent selection is not a promise
+that no hashing occurs. Keep the normal change-detection checks unless a
+separate decision explicitly accepts weaker metadata checks. See the official
+[parent selection and file change detection documentation](https://restic.readthedocs.io/en/stable/040_backup.html#file-change-detection).
 
 ## Testing
 
