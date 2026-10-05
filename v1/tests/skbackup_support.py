@@ -222,7 +222,7 @@ class FakeHost:
         self.conf.write_text(conf_text(**base))
 
     def env(self, now: int | None = None, extra: dict | None = None) -> dict:
-        e = dict(os.environ, BACKUP_TEST_PATH=str(self.bin), FAKEZFS_STATE=str(self.zstate))
+        e = dict(os.environ, BACKUP_TEST_PATH=f"{self.bin}:{os.environ['PATH']}", FAKEZFS_STATE=str(self.zstate))
         e.pop("FAKEZFS_NOW", None)
         if now is not None:
             e["FAKEZFS_NOW"] = str(now)

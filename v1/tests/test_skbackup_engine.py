@@ -128,6 +128,14 @@ def test_predeploy_rejects_unsafe_purpose(host):
 # --- tiers 2 + 3: sync -----------------------------------------------------
 
 def test_sync_copies_each_app_from_a_frozen_snapshot(host):
+    # Exercise the daily copy on a non-weekly, non-monthly calendar day.
+    clock = host.bin / "date"
+    clock.write_text(
+        '#!/bin/sh\ncase "$1" in\n'
+        '  +%u) echo 5;;\n  +%d) echo 15;;\n'
+        '  *) exec /usr/bin/date "$@";;\nesac\n'
+    )
+    clock.chmod(0o755)
     out = host.run("sync", check=True).stdout
     copy1 = host.copies / "app1"
     assert (copy1 / "a.txt").read_text() == "alpha\n"
@@ -201,8 +209,8 @@ def test_check_is_quiet_when_fresh(host):
 def test_check_flags_stale_tiers(host):
     host.sanoid(now=int(time.time()) - 3 * HOUR)
     host.run("sync", check=True)
-    daily = host.snaps("backup/copies/app1")[-1]
-    host.set_creation(f"backup/copies/app1@{daily}", int(time.time()) - 30 * HOUR)
+    for snap in host.snaps("backup/copies/app1"):
+        host.set_creation(f"backup/copies/app1@{snap}", int(time.time()) - 30 * HOUR)
     (host.state / "restic-last-ok-kept").write_text(str(int(time.time()) - 40 * HOUR))
     out = host.run("check").stdout
     assert "STALE tier1: newest tank/data@autosnap_" in out
