@@ -65,3 +65,44 @@ THINPOOL_WARN={{ skb.alerts.thinpool_pct | int }}
 NOTIFY_MODE={{ q(skb.alerts.notifier) }}
 NOTIFY_LOG={{ q(skb_statedir ~ '/alerts.log') }}
 NOTIFY_COMMAND={{ q(skb.alerts.command) }}
+{% if skb.datasets.recursive | bool %}
+SRC_RECURSIVE=1
+SRC_EXCLUDES={{ q(skb.datasets.exclude | join(' ')) }}
+SRC_INCLUDE_PRIVATE={{ q(skb.datasets.include_private | join(' ')) }}
+{% endif %}
+{% if skb.snapshots.adopt_existing | bool %}
+SNAP_ADOPT_EXISTING=1
+{% endif %}
+{% for key, variable in [('pack_size_mib','RESTIC_PACK_SIZE'), ('compression','RESTIC_COMPRESSION'), ('read_concurrency','RESTIC_READ_CONCURRENCY'), ('retry_lock','RESTIC_RETRY_LOCK'), ('prune_max_unused','RESTIC_PRUNE_MAX_UNUSED'), ('check_subset','RESTIC_CHECK_SUBSET')] %}
+{% if key in (skbackup | default({})).get('offsite', {}) %}
+{{ variable }}={{ q(skb.offsite[key]) }}
+{% endif %}
+{% endfor %}
+{% if 'exclude_caches' in (skbackup | default({})).get('offsite', {}) %}
+RESTIC_EXCLUDE_CACHES={{ 1 if (skb.offsite.exclude_caches | bool) else 0 }}
+{% endif %}
+{% if 'exclude_if_present' in (skbackup | default({})).get('offsite', {}) %}
+RESTIC_EXCLUDE_MARKERS={{ q(skb.offsite.exclude_if_present | join(' ')) }}
+{% endif %}
+{% if skb.alerts.healthchecks_url %}
+HEALTHCHECKS_ENV_FILE={{ q(skb_confdir ~ '/healthchecks.env') }}
+{% endif %}
+{% if (skb.datasets.recursive | bool) and skb.datasets.retention %}
+{% set ages = namespace(values=[]) %}
+{% for ds, override in skb.datasets.retention | dictsort %}
+{% set retention = skb.snapshots.retention | combine(override) %}
+{% if (retention.hourly | default(0) | int) == 0 %}
+{% if (retention.daily | default(0) | int) > 0 %}
+{% set interval = 1440 %}
+{% elif (retention.weekly | default(0) | int) > 0 %}
+{% set interval = 10080 %}
+{% else %}
+{% set interval = 44640 %}
+{% endif %}
+{% set ages.values = ages.values + [ds ~ '=' ~ (interval + (skb.alerts.max_age.snapshot_minutes | int))] %}
+{% endif %}
+{% endfor %}
+{% if ages.values %}
+SRC_MAX_AGES={{ q(ages.values | join(' ')) }}
+{% endif %}
+{% endif %}

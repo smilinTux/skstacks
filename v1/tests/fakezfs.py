@@ -15,6 +15,7 @@ import os
 import shutil
 import sys
 import time
+import uuid
 from pathlib import Path
 
 STATE = Path(os.environ["FAKEZFS_STATE"])
@@ -65,7 +66,11 @@ def zfs(args):
         src = Path(st["datasets"][ds])
         dst = snapdir(st, snap)
         dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(src, dst, symlinks=True, ignore=lambda d, n: [".zfs"] if Path(d) == src else [])
+        children = [Path(m) for d,m in st['datasets'].items() if d.startswith(ds+'/') and Path(m).is_relative_to(src)]
+        shutil.copytree(src, dst, symlinks=True, ignore=lambda d,n: [x for x in n if x == '.zfs' or Path(d)/x in children])
+        for child in children:
+            (dst/child.relative_to(src)).mkdir(parents=True, exist_ok=True)
+        st.setdefault('events', []).append(['snapshot', snap])
         st["snaps"][snap] = int(os.environ.get("FAKEZFS_NOW") or time.time())
         save(st)
     elif cmd == "destroy":
@@ -117,7 +122,11 @@ def zfs(args):
         else:
             if target not in st["datasets"] and target not in st["snaps"]:
                 die(f"cannot open '{target}': dataset does not exist")
-            print(target)
+            if 'r' in flags:
+                for ds in sorted(d for d in st['datasets'] if d==target or d.startswith(target+'/')):
+                    print(ds)
+            else:
+                print(target)
     else:
         die(f"fakezfs: unsupported zfs {cmd}", 2)
 
@@ -136,25 +145,42 @@ def mount(args):
     flags, opts, pos = parse(args)
     snap, mnt = pos
     st = load()
+    if opts.get('-o') != 'ro' or snap not in st['snaps']:
+        die('fakezfs: only existing read-only snapshots can be mounted', 2)
     target = snapdir(st, snap)
     m = Path(mnt)
-    if m.is_symlink():
-        m.unlink()
-    elif m.exists():
+    ds = snap.split('@')[0]
+    use_overlay = bool(st.get('mounts')) or any(d.startswith(ds+'/') for d in st['datasets'])
+    if use_overlay:
+        stash = STATE.parent/'mount-stash'/uuid.uuid4().hex
+        stash.parent.mkdir(exist_ok=True)
+        m.rename(stash)
+        shutil.copytree(target,m,symlinks=True)
+        st.setdefault('mounts', {})[str(m)] = str(stash)
+    else:
         m.rmdir()
-    m.symlink_to(target)
+        m.symlink_to(target)
+        st.setdefault('mounts', {})[str(m)] = ''
+    st.setdefault('events', []).append(['mount',str(m)])
+    save(st)
 
 
 def umount(args):
-    m = Path(args[-1])
-    if not m.is_symlink():
-        die(f"umount: {m}: not mounted", 32)
-    m.unlink()
-    m.mkdir()
+    m = Path(args[-1]);st=load()
+    if str(m) not in st.get('mounts', {}):
+        die('fakezfs: not mounted',32)
+    stash=st['mounts'].pop(str(m))
+    if stash:
+        shutil.rmtree(m)
+        Path(stash).rename(m)
+    else:
+        m.unlink();m.mkdir()
+    st.setdefault('events', []).append(['umount',str(m)])
+    save(st)
 
 
 def mountpoint(args):
-    sys.exit(0 if Path(args[-1]).is_symlink() else 1)
+    sys.exit(0 if str(Path(args[-1])) in load().get('mounts',{}) else 1)
 
 
 if __name__ == "__main__":

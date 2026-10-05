@@ -26,11 +26,13 @@ skbackup_defaults:
 
   # The ZFS dataset the swarm's NFS data lives on (required).
   data_dataset: ""
+  datasets: {recursive: false, exclude: [], include_private: [], retention: {}}
   state_dir: ""        # default /var/lib/<short_name>
 
   # Tier 1: sanoid snapshots of data_dataset, plus the pre-deploy helper.
   snapshots:
     enabled: true
+    adopt_existing: false
     retention: {hourly: 36, daily: 30, weekly: 8, monthly: 6}
     predeploy_keep_days: 30
     predeploy_keep_min: 2
@@ -59,6 +61,14 @@ skbackup_defaults:
     repository: ""      # s3:https://s3.<region>.backblazeb2.com/<bucket>, b2:..., rest:..., /path
     password: ""        # the restic repository password (keep an offline copy)
     env: {}             # B2_ACCOUNT_ID/B2_ACCOUNT_KEY (mapped to AWS_* for s3:), AWS_*, B2_REGION ...
+    pack_size_mib: 16
+    compression: auto
+    read_concurrency: ""
+    retry_lock: 30m
+    exclude_caches: true
+    exclude_if_present: [.nobackup]
+    prune_max_unused: 5%
+    check_subset: 2.5%
     limit_upload_kbps: 8000
     mount_path: ""      # default /run/<short_name>/src
     # [{name, kind: apps}] = every copied app with its excludes;
@@ -80,6 +90,7 @@ skbackup_defaults:
 
   # Tier 6: staleness checks and alerts.
   alerts:
+    healthchecks_url: ""
     notifier: log       # none | log | command
     # command: one line, split on whitespace, never run by a shell;
     # placeholders per word: {level} {key} {subject} {message} {body}.
@@ -96,3 +107,4 @@ skbackup_defaults:
     prune: "Sun *-*-* 13:00:00"
     restore_test: "*-*-01 14:00:00"
     check: "*-*-* *:17:00"
+    repo_check: "Sun *-*-* 15:00:00"

@@ -26,14 +26,27 @@ bad()  { LINES+=("$1 $2"); echo "$1 $2"; rc=1; }
 good() { LINES+=("OK $1"); echo "OK $1"; }
 note() { LINES+=("$1"); echo "$1"; }
 
-# Tier 1: newest sanoid snapshot of the data dataset.
-s=$(skb_newest_snapshot "$SRC_DATASET" "$SANOID_PREFIX")
-if [ -z "$s" ]; then bad STALE "tier1: no ${SANOID_PREFIX}* snapshot of $SRC_DATASET"
-else
-  age=$(( (now - $(skb_snap_epoch "$s")) / 60 ))
-  if [ "$age" -gt "$MAX_AGE_SANOID_MIN" ]; then bad STALE "tier1: newest $s is ${age}m old (max ${MAX_AGE_SANOID_MIN}m)"
-  else good "tier1: $s ${age}m"; fi
-fi
+# Tier 1: every included dataset, never prune externally created snapshots.
+skb_discover_datasets
+for ds in "${SKB_DATASETS[@]}"; do
+  s=$(skb_newest_snapshot "$ds" "$SANOID_PREFIX")
+  if [ -z "$s" ]; then bad STALE "tier1: no ${SANOID_PREFIX}* snapshot of $ds"
+  else
+    age=$(( (now - $(skb_snap_epoch "$s")) / 60 ))
+    max_age="$MAX_AGE_SANOID_MIN"
+    for policy in $SRC_MAX_AGES; do
+      [ "${policy%=*}" != "$ds" ] || max_age="${policy##*=}"
+    done
+    if [ "$age" -gt "$max_age" ]; then bad STALE "tier1: newest $s is ${age}m old (max ${max_age}m)"
+    else good "tier1: $s ${age}m"; fi
+  fi
+  if [ "$SNAP_ADOPT_EXISTING" = 1 ]; then
+    while IFS= read -r external; do
+      case "${external#*@}" in "$SANOID_PREFIX"*|pre-*|"$SNAP_PREFIX_SYNC"-*) continue;; esac
+      note "EXTERNAL tier1: $external provenance=external-tool retention=unmanaged"
+    done < <(zfs list -H -t snapshot -o name -s creation -d 1 "$ds")
+  fi
+done
 
 # Tier 2: newest daily-* snapshot per app dataset; tier 3 dump freshness.
 if [ -n "$BAK_ROOT" ] && [ -r "$APPS_FILE" ]; then

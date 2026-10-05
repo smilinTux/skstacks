@@ -5,6 +5,9 @@
 
 [{{ skb.data_dataset }}]
 	use_template = {{ skb_short }}
+{% if skb.datasets.recursive | bool %}
+	recursive = yes
+{% endif %}
 
 [template_{{ skb_short }}]
 	frequently = 0
@@ -15,3 +18,20 @@
 	yearly = {{ skb.snapshots.retention.yearly | default(0) | int }}
 	autosnap = yes
 	autoprune = yes
+{% if skb.datasets.recursive | bool %}
+{% for ds, retention in skb.datasets.retention | dictsort %}
+
+[{{ ds }}]
+	use_template = {{ skb_short }}
+{% for tier, count in retention | dictsort %}
+	{{ tier }} = {{ count | int }}
+{% endfor %}
+{% endfor %}
+{% for ds in skb.datasets.exclude %}
+
+[{{ ds }}]
+	recursive = yes
+	autosnap = no
+	autoprune = no
+{% endfor %}
+{% endif %}

@@ -33,9 +33,20 @@ mkdir -p "$STATE_DIR" "$LOCK_DIR"
 exec 9>"$LOCK_DIR/$BRAND_SHORT-sync.lock"
 flock -n 9 || skb_die "another $BRAND_SHORT sync holds the lock"
 
-SRC_MNT=$(skb_mountpoint "$SRC_DATASET")
+skb_discover_datasets
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 SNAP="${SNAP_PREFIX_SYNC}-${TS}"
+
+# Validate all selected sources before any side effects.
+while IFS= read -r raw; do
+  if parsed=$(skb_parse_app_line "$raw"); then
+    IFS=$'\t' read -r name src _ _ _ _ <<<"$parsed"
+    if [ ${#ONLY[@]} -gt 0 ] && [[ ! " ${ONLY[*]} " == *" $name "* ]]; then continue; fi
+    skb_copy_owner "$src" >/dev/null || skb_die "copy source refused: $src"
+  else
+    code=$?; [ "$code" != 2 ] || skb_die "invalid apps record"
+  fi
+done < "$APPS_FILE"
 
 # 0. dump hooks: produce dumps INSIDE the data dataset before it is frozen.
 #    HOOKS_FILE line: NAME TIMEOUT_SECONDS COMMAND... (run with bash -c).
@@ -65,7 +76,9 @@ while IFS= read -r raw; do
   for o in $opts; do
     case "$o" in
       dump=*)
-        d="$SRC_MNT/$src/${o#dump=}"
+        owner=$(skb_path_owner "$src") || skb_die "invalid dump source"
+        IFS=$'\t' read -r _ _ live <<<"$owner"
+        d="$live/${o#dump=}"
         newest=$(find "$d" -maxdepth 1 -type f -size +0 -printf '%T@\n' 2>/dev/null | sort -rn | head -1)
         if [ -z "$newest" ] || [ "$(skb_age_h "${newest%.*}")" -ge "$DUMP_MAX_AGE_H" ]; then
           STALE+=("$name:${o#dump=}")
@@ -78,14 +91,17 @@ while IFS= read -r raw; do
 done < "$APPS_FILE"
 [ ${#STALE[@]} -eq 0 ] || skb_log "WARN stale or missing dumps (older than ${DUMP_MAX_AGE_H}h): ${STALE[*]}"
 
-# 2. freeze the source: one atomic snapshot for every app.
-run zfs snapshot "$SRC_DATASET@$SNAP"
-# shellcheck disable=SC2317,SC2329  # called by the EXIT trap
-cleanup() { [ "$DRY" = 1 ] || zfs destroy "$SRC_DATASET@$SNAP" 2>/dev/null || true; }
+# Freeze each selected owning dataset once; clean up even on partial failure.
+declare -A FROZEN_DATASETS=()
+# shellcheck disable=SC2317,SC2329
+cleanup() {
+  local ds
+  for ds in "${!FROZEN_DATASETS[@]}"; do
+    [ "$DRY" = 1 ] || zfs destroy "$ds@$SNAP" 2>/dev/null || true
+  done
+}
 trap cleanup EXIT
 trap 'exit 143' TERM INT
-FROZEN="$SRC_MNT/.zfs/snapshot/$SNAP"
-[ "$DRY" = 1 ] || [ -d "$FROZEN" ] || skb_die "snapshot dir not visible: $FROZEN"
 
 DOW=$(date +%u); DOM=$(date +%d)
 FAIL=0; DONE=0
@@ -93,6 +109,15 @@ while IFS= read -r raw; do
   parsed=$(skb_parse_app_line "$raw") || continue
   IFS=$'\t' read -r name src kd kw km opts <<<"$parsed"
   if [ ${#ONLY[@]} -gt 0 ] && [[ ! " ${ONLY[*]} " == *" $name "* ]]; then continue; fi
+  owner=$(skb_copy_owner "$src") || skb_die "invalid copy source"
+  IFS=$'\t' read -r ds inner live <<<"$owner"
+  if [ -z "${FROZEN_DATASETS[$ds]:-}" ]; then
+    run zfs snapshot "$ds@$SNAP"
+    FROZEN_DATASETS[$ds]=1
+  fi
+  FROZEN="$(skb_mountpoint "$ds")/.zfs/snapshot/$SNAP"
+  [ "$DRY" = 1 ] || [ -d "$FROZEN" ] || skb_die "snapshot dir not visible: $FROZEN"
+  src="$inner"
   dst="$BAK_ROOT/$name"
   if ! zfs list -H "$dst" >/dev/null 2>&1; then
     run zfs create -p "$dst"

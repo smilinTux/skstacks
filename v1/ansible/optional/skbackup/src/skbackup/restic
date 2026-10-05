@@ -28,28 +28,76 @@ skb_load_conf
 
 skb_restic_env
 mkdir -p "$STATE_DIR" "$LOCK_DIR" "$RESTIC_CACHE_DIR"
-R() { ionice -c3 nice -n19 restic "$@"; }
+R() { ionice -c3 nice -n19 restic --retry-lock "$RESTIC_RETRY_LOCK" --compression "$RESTIC_COMPRESSION" --pack-size "${SET_PACK:-$RESTIC_PACK_SIZE}" "$@"; }
 
+# Keep mount cleanup installed before the first mount, including partial failure.
+MOUNTED=(); TREE_SNAPS=()
+# shellcheck disable=SC2317,SC2329
+unmount_tree() {
+  local i
+  for ((i=${#MOUNTED[@]}-1; i>=0; i--)); do umount "${MOUNTED[i]}" 2>/dev/null || true; done
+}
 mount_newest_snapshot() {
+  skb_discover_datasets
+  local ds candidate name common selected rel target listing
   SNAP=$(skb_newest_snapshot "$SRC_DATASET" "$SANOID_PREFIX")
   [ -n "$SNAP" ] || skb_die "no ${SANOID_PREFIX}* snapshot of $SRC_DATASET"
+  selected="${SNAP#*@}"
+  if [ "$SRC_RECURSIVE" = 1 ]; then
+    listing=$(zfs list -H -t snapshot -o name -s creation -d 1 "$SRC_DATASET") || skb_die "snapshot discovery failed"
+    while IFS= read -r candidate; do
+      name="${candidate#*@}"; [[ "$name" = "$SANOID_PREFIX"* ]] || continue
+      common=1
+      for ds in "${SKB_DATASETS[@]}"; do
+        zfs list -H "$ds@$name" >/dev/null 2>&1 || { common=0; break; }
+      done
+      [ "$common" = 0 ] || selected="$name"
+    done <<<"$listing"
+    SNAP="$SRC_DATASET@$selected"
+  fi
+  trap unmount_tree EXIT
+  trap 'exit 143' TERM INT
   mkdir -p "$RESTIC_SRC_MNT"
-  if mountpoint -q "$RESTIC_SRC_MNT"; then umount "$RESTIC_SRC_MNT"; fi
-  mount -t zfs -o ro "$SNAP" "$RESTIC_SRC_MNT"
-  trap 'umount "$RESTIC_SRC_MNT" 2>/dev/null || true' EXIT
-  skb_log "source: $SNAP mounted at $RESTIC_SRC_MNT"
+  for ds in "${SKB_DATASETS[@]}"; do
+    candidate="$ds@$selected"
+    if ! zfs list -H "$candidate" >/dev/null 2>&1; then
+      candidate=$(skb_newest_snapshot "$ds" "$SANOID_PREFIX")
+      [ -n "$candidate" ] || skb_die "no ${SANOID_PREFIX}* snapshot of $ds"
+      skb_log "WARN snapshot fallback: $ds uses $candidate"
+    fi
+    rel="${ds#"$SRC_DATASET"}"; target="$RESTIC_SRC_MNT$rel"
+    # A child's stable mount directory must exist in the parent snapshot.
+    [ -d "$target" ] || skb_die "snapshot mount directory missing: $target"
+    [ ! -L "$target" ] || skb_die "symlink mount directory refused: $target"
+    [ "$(realpath -m -- "$target")" = "$target" ] || skb_die "unsafe snapshot mount path: $target"
+    if mountpoint -q "$target"; then umount "$target"; fi
+    mount -t zfs -o ro "$candidate" "$target"
+    MOUNTED+=("$target"); TREE_SNAPS+=("$candidate")
+    skb_log "source: $candidate mounted at $target"
+  done
 }
 
 # Build paths and excludes for one set line into the arrays PATHS / EXCL.
 build_set() {
   local kind="$1"; shift
-  PATHS=(); EXCL=()
+  PATHS=(); EXCL=(); SET_LIMIT="$RESTIC_LIMIT_UPLOAD"; SET_PACK="$RESTIC_PACK_SIZE"
+  local arg args=() child
+  for arg in "$@"; do
+    case "$arg" in
+      limit-upload=*) SET_LIMIT="${arg#*=}";;
+      pack-size=*) SET_PACK="${arg#*=}";;
+      *) args+=("$arg");;
+    esac
+  done
+  [[ "$SET_LIMIT" =~ ^[0-9]+$ && "$SET_PACK" =~ ^[0-9]+$ && "$SET_PACK" -ge 4 ]] || skb_die "invalid set limits"
+  set -- "${args[@]}"
   case "$kind" in
     apps)
       local raw parsed src opts
       while IFS= read -r raw; do
         parsed=$(skb_parse_app_line "$raw") || continue
         IFS=$'\t' read -r _ src _ _ _ opts <<<"$parsed"
+        skb_path_owner "$src" >/dev/null || skb_die "apps path refused: $src"
         [ -d "$RESTIC_SRC_MNT/$src" ] || { skb_log "WARN apps: $src missing, skipped"; continue; }
         PATHS+=("$RESTIC_SRC_MNT/$src")
         # shellcheck disable=SC2086
@@ -63,11 +111,19 @@ build_set() {
       local rels="$1"; shift
       local r
       IFS=, read -r -a r <<<"$rels"
-      for rel in "${r[@]}"; do PATHS+=("$RESTIC_SRC_MNT/$rel"); done
+      for rel in "${r[@]}"; do
+        skb_path_owner "$rel" >/dev/null || skb_die "set path refused: $rel"
+        PATHS+=("$RESTIC_SRC_MNT/$rel")
+      done
       mapfile -t EXCL < <(skb_restic_excludes "$RESTIC_SRC_MNT" "$@")
       ;;
     *) skb_die "unknown set kind: $kind" ;;
   esac
+  for child in $SRC_EXCLUDES; do EXCL+=("--exclude=$RESTIC_SRC_MNT/${child#"$SRC_DATASET/"}"); done
+  [ "$RESTIC_EXCLUDE_CACHES" != 1 ] || EXCL+=(--exclude-caches)
+  for arg in $RESTIC_EXCLUDE_MARKERS; do EXCL+=("--exclude-if-present=$arg"); done
+  [ -z "$RESTIC_READ_CONCURRENCY" ] || EXCL+=("--read-concurrency=$RESTIC_READ_CONCURRENCY")
+  [ ${#PATHS[@]} -gt 0 ] || skb_die "set has no included source paths"
 }
 
 cmd_backup() {
@@ -89,10 +145,11 @@ cmd_backup() {
     if [ ${#ONLY[@]} -gt 0 ] && [[ ! " ${ONLY[*]} " == *" $tag "* ]]; then continue; fi
     build_set "$kind" "$@"
     skb_log "== restic set $tag: ${#PATHS[@]} path(s), ${#EXCL[@]} exclude(s)"
-    if R backup --host "$RESTIC_HOST" --tag "$tag" --tag "$BRAND_SHORT" --limit-upload "$RESTIC_LIMIT_UPLOAD" \
+    if R backup --host "$RESTIC_HOST" --tag "$tag" --tag "$BRAND_SHORT" --limit-upload "$SET_LIMIT" \
         "${EXCL[@]}" "${PATHS[@]}"; then
       date +%s > "$STATE_DIR/restic-last-ok-$tag"
       echo "$SNAP" > "$STATE_DIR/restic-src-$tag"
+      printf '%s\n' "${TREE_SNAPS[@]}" > "$STATE_DIR/restic-tree-src-$tag"
     else
       skb_log "FAIL restic set $tag"; fail=1
     fi
@@ -105,7 +162,7 @@ cmd_forget_prune() {
   flock -w 7200 8 || skb_die "restic lock busy"
   R unlock >/dev/null 2>&1 || true
   R forget --group-by host,tags --keep-daily "$RESTIC_KEEP_DAILY" \
-    --keep-weekly "$RESTIC_KEEP_WEEKLY" --keep-monthly "$RESTIC_KEEP_MONTHLY" --prune
+    --keep-weekly "$RESTIC_KEEP_WEEKLY" --keep-monthly "$RESTIC_KEEP_MONTHLY" --prune --max-unused "$RESTIC_PRUNE_MAX_UNUSED"
 }
 
 # Restore RESTORE_TEST_APP (relative path in the snapshot) from the newest
@@ -117,17 +174,23 @@ cmd_forget_prune() {
 cmd_restore_test() {
   local tmp; tmp=$(mktemp -d /var/tmp/restoretest.XXXXXX)
   trap 'rm -rf "$tmp"' RETURN
+  skb_discover_datasets
   local ok=0 bad=0 skipped=0 total=0 lines=()
   compare_tree() {   # $1 restored root (contains the RESTIC_SRC_MNT prefix), $2 tag
-    local rroot="$1" tag="$2" srcsnap mnt ref f rel live
-    srcsnap=$(cat "$STATE_DIR/restic-src-$tag" 2>/dev/null || true)
-    mnt=$(skb_mountpoint "$SRC_DATASET")
-    ref=""
-    if [ -n "$srcsnap" ] && zfs list -H "$srcsnap" >/dev/null 2>&1; then
-      ref="$mnt/.zfs/snapshot/${srcsnap#*@}"
-    fi
+    local rroot="$1" tag="$2" srcsnap mnt ref f rel live owner ds inner
     while IFS= read -r -d '' f; do
       rel="${f#"$rroot$RESTIC_SRC_MNT"/}"
+      owner=$(skb_path_owner "$rel") || return 1
+      IFS=$'\t' read -r ds inner live <<<"$owner"
+      mnt=$(skb_mountpoint "$ds"); rel="$inner"; ref=""
+      if [ -r "$STATE_DIR/restic-tree-src-$tag" ]; then
+        srcsnap=$(awk -F@ -v ds="$ds" '$1==ds{print;exit}' "$STATE_DIR/restic-tree-src-$tag")
+      else
+        srcsnap=$(cat "$STATE_DIR/restic-src-$tag" 2>/dev/null || true)
+      fi
+      if [ -n "$srcsnap" ] && [[ "$srcsnap" = "$ds@"* ]] && zfs list -H "$srcsnap" >/dev/null 2>&1; then
+        ref="$mnt/.zfs/snapshot/${srcsnap#*@}"
+      fi
       total=$((total + 1))
       if [ -n "$ref" ] && [ -f "$ref/$rel" ]; then live="$ref/$rel"
       elif [ -f "$mnt/$rel" ] && [ "$(stat -c %s.%Y "$mnt/$rel")" = "$(stat -c %s.%Y "$f")" ]; then live="$mnt/$rel"
@@ -178,7 +241,7 @@ case "${1:-}" in
   init) if R snapshots >/dev/null 2>&1; then skb_log "repository already initialised"; else R init; fi ;;
   backup) shift; ONLY=("$@"); cmd_backup ;;
   forget-prune) cmd_forget_prune ;;
-  check) if [ -n "${2:-}" ]; then R check --read-data-subset="$2"; else R check; fi ;;
+  check) R check --read-data-subset="${2:-$RESTIC_CHECK_SUBSET}" ;;
   restore-test) cmd_restore_test ;;
   snapshots) R snapshots --latest 1 --group-by host,tags ;;
   *) echo "usage: $BRAND_SHORT restic init | backup [TAG]... | forget-prune | check [SUBSET] | restore-test | snapshots" >&2

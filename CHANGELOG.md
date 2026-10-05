@@ -5,6 +5,8 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+- v1 skbackup: opt-in recursive dataset trees with rooted exclusions and explicit private/recovery dataset consent, per-dataset sanoid retention, stable read-only restic mount trees and dataset-specific restore provenance. Local copies freeze only each selected app's owning dataset. Add restic tuning and upload overrides, weekly subset checks, optional protected healthcheck pings, and non-destructive external snapshot provenance reporting. Existing single-dataset vaults render identically, verified against a pre-extension 17-file SHA256 fixture. No live dataset changes are performed by the tests.
+
 ### Upgrade notes (instances)
 
 - **skbackup is now host-level (restic), the Duplicati skbackup is retired.** It was never deployed on an instance. Remove its keys from any skbackup vault (`settings_encryption_key`, `ui_password`, `passphrase`, `jobs`, `exclude`, `DUPLICATI_VERSION`, `source_path`, `source_read_only`, `CLI_ARGS`): the new deploy stops while one is present. `CLUSTERNAME`, `DOMAIN`, `ACME_ENABLED` and `networks` are unused and may stay. To adopt it, put the storage host in an inventory group (`storage_hosts` or `-e skbackup_hosts=`) and write the vault from `v1/ansible/optional/skbackup/README.md`.

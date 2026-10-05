@@ -69,6 +69,19 @@ skb_load_conf() {
   : "${NOTIFY_MODE:=log}"
   : "${NOTIFY_LOG:=$STATE_DIR/alerts.log}"
   : "${NOTIFY_COMMAND:=}"
+  : "${SRC_RECURSIVE:=0}"
+  : "${SRC_EXCLUDES:=}"
+  : "${SRC_MAX_AGES:=}"
+  : "${SRC_INCLUDE_PRIVATE:=}"
+  : "${SNAP_ADOPT_EXISTING:=0}"
+  : "${RESTIC_PACK_SIZE:=16}"
+  : "${RESTIC_COMPRESSION:=auto}"
+  : "${RESTIC_READ_CONCURRENCY:=}"
+  : "${RESTIC_RETRY_LOCK:=30m}"
+  : "${RESTIC_EXCLUDE_CACHES:=1}"
+  : "${RESTIC_EXCLUDE_MARKERS=.nobackup}"
+  : "${RESTIC_PRUNE_MAX_UNUSED:=5%}"
+  : "${RESTIC_CHECK_SUBSET:=2.5%}"
   export RESTIC_CACHE_DIR
 }
 
@@ -237,4 +250,106 @@ skb_report() {
     skb_footer
   } >"$REPORT_DIR/$name"
   printf '%s\n' "$REPORT_DIR/$name"
+}
+
+# Dataset names and paths are constrained before any snapshot or mount.
+skb_dataset_under_root() {
+  [[ "$1" == "$SRC_DATASET/"* && "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_.:/-]*$ && "$1" != *..* && "$1" != */ && "$1" != *//* ]]
+}
+
+skb_discover_datasets() {
+  local ds ex part listing excluded
+  SKB_DATASETS=(); SKB_ALL_DATASETS=()
+  for ex in $SRC_EXCLUDES; do
+    skb_dataset_under_root "$ex" || skb_die "dataset policy outside data root: $ex"
+  done
+  for ex in $SRC_INCLUDE_PRIVATE; do
+    [ "$ex" = "$SRC_DATASET" ] || skb_dataset_under_root "$ex" || skb_die "private policy outside data root: $ex"
+  done
+  if [ "$SRC_RECURSIVE" = 1 ]; then
+    listing=$(zfs list -H -t filesystem -o name -r "$SRC_DATASET") || skb_die "dataset discovery failed"
+    mapfile -t SKB_ALL_DATASETS <<<"$listing"
+  else
+    SKB_ALL_DATASETS=("$SRC_DATASET")
+  fi
+  for ds in "${SKB_ALL_DATASETS[@]}"; do
+    [ "$ds" = "$SRC_DATASET" ] || skb_dataset_under_root "$ds" || skb_die "invalid discovered dataset: $ds"
+    excluded=0
+    for ex in $SRC_EXCLUDES; do
+      if [[ "$ds" = "$ex" || "$ds" = "$ex/"* ]]; then excluded=1; break; fi
+    done
+    if [ "$excluded" = 1 ]; then continue; fi
+    IFS=/ read -r -a parts <<<"$ds"
+    for part in "${parts[@]}"; do
+      case "$part" in
+        *-private|recovery*)
+          [[ " $SRC_INCLUDE_PRIVATE " == *" $ds "* ]] || skb_die "private dataset requires explicit include_private: $ds" ;;
+      esac
+    done
+    SKB_DATASETS+=("$ds")
+  done
+  [ "${SKB_DATASETS[0]:-}" = "$SRC_DATASET" ] || skb_die "dataset root not discovered"
+}
+
+# Longest dataset prefix wins, including excluded children (fail closed).
+# Output: owning dataset, path inside that dataset, live absolute path.
+skb_path_owner() {
+  local rel="$1" ds owner="$SRC_DATASET" full inside mount live
+  case "$rel" in ''|/*|*..*|*//*|*/./*|./*|*/.|*[[:space:]]*) skb_die "unsafe source path: $rel";; esac
+  rel="${rel%/}"; [ "$rel" != . ] || rel=""
+  full="$SRC_DATASET${rel:+/$rel}"
+  for ds in "${SKB_ALL_DATASETS[@]}"; do
+    if [[ "$full" = "$ds" || "$full" = "$ds/"* ]] && [ "${#ds}" -gt "${#owner}" ]; then owner="$ds"; fi
+  done
+  for ds in $SRC_EXCLUDES; do
+    [[ "$full" != "$ds" && "$full" != "$ds/"* ]] || skb_die "source path is in excluded dataset: $1"
+  done
+  inside="${full#"$owner"}"; inside="${inside#/}"; inside="${inside:-.}"
+  mount=$(skb_mountpoint "$owner") || skb_die "source mountpoint unavailable: $owner"
+  case "$mount" in /*) ;; *) skb_die "dataset is not mounted: $owner";; esac
+  live="$mount/$inside"
+  [ "$(realpath -m -- "$live")" = "$(realpath -m -- "$mount")${inside:+/}$inside" ] || {
+    if [ "$inside" != . ] || [ "$(realpath -m -- "$live")" != "$(realpath -m -- "$mount")" ]; then
+      skb_die "symlink source path refused: $1"
+    fi
+  }
+  printf '%s\t%s\t%s\n' "$owner" "$inside" "$live"
+}
+
+# A tier-2 app cannot span children: only its owning dataset is frozen.
+skb_copy_owner() {
+  local fields ds inside live child full
+  fields=$(skb_path_owner "$1") || return 1
+  IFS=$'\t' read -r ds inside live <<<"$fields"
+  full="$SRC_DATASET/$1"
+  [ "$1" != . ] || full="$SRC_DATASET"
+  for child in "${SKB_ALL_DATASETS[@]}"; do
+    [[ "$child" != "$full/"* && "$child" != "$full" || "$child" = "$ds" ]] || skb_die "copy source spans child dataset: $1"
+  done
+  printf '%s\n' "$fields"
+}
+
+# URL stays in a 0600 environment file and process memory, never argv/logs.
+skb_healthcheck() {
+  [ -n "${HEALTHCHECKS_ENV_FILE:-}" ] || return 0
+  [ -r "$HEALTHCHECKS_ENV_FILE" ] || { skb_log "healthcheck credentials unreadable" >&2; return 0; }
+  (
+    set -a
+    # shellcheck disable=SC1090
+    . "$HEALTHCHECKS_ENV_FILE"
+    set +a
+    python3 - "$1" "$2" <<'PYHC'
+import os,sys,urllib.request,urllib.parse
+url=os.environ.get('HEALTHCHECKS_URL','').rstrip('/')
+if not url: sys.exit(0)
+if sys.argv[1]!='0':
+    parts=urllib.parse.urlsplit(url)
+    url=urllib.parse.urlunsplit((parts.scheme,parts.netloc,parts.path.rstrip('/')+'/fail',parts.query,parts.fragment))
+try:
+    request=urllib.request.Request(url,data=sys.argv[2].encode(),method='POST')
+    with urllib.request.urlopen(request,timeout=10) as response: response.read(1024)
+except Exception:
+    print('healthcheck ping failed',file=sys.stderr)
+PYHC
+  ) || true
 }

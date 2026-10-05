@@ -102,6 +102,16 @@ case "$cmd" in
   help | -h | --help) usage ;;
   --version | version) printf '%s %s\n' "$BRAND_PRODUCT" "$ENGINE_VERSION" ;;
   status) status ;;
-  sync | restic | check | predeploy) exec "$HERE/$cmd" "$@" ;;
+  sync | restic | check | predeploy)
+    if [ -n "${HEALTHCHECKS_ENV_FILE:-}" ]; then
+      trap 'result=$?; trap - EXIT; skb_healthcheck "$result" "$cmd"; exit "$result"' EXIT
+      trap 'exit 143' TERM
+      trap 'exit 130' INT
+      result=0
+      "$HERE/$cmd" "$@" || result=$?
+      exit "$result"
+    fi
+    exec "$HERE/$cmd" "$@" ;;
+
   *) echo "$BRAND_SHORT: unknown command '$cmd' (see: $BRAND_SHORT help)" >&2; exit 2 ;;
 esac

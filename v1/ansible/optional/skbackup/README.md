@@ -153,6 +153,7 @@ Top level:
 | `skbackup.branding` | SKBackup brand | See "White-labelling". |
 | `skbackup.unit_prefix` | `""` | Prefix for systemd unit NAMES: `acme-` gives `acme-<short_name>-sync.timer`. |
 | `skbackup.host_label` | short hostname | restic `--host` and the host named in alerts and reports. |
+| `skbackup.datasets` | single dataset | Recursive discovery, subtree exclusions, explicit private opt-ins and per-dataset retention. See "Dataset trees and restic tuning". |
 | `skbackup.state_dir` | `/var/lib/<short_name>` | Stamps (`last-ok-<app>`, `restic-last-ok-<set>`), rsync logs, reports, `alerts.log`. |
 | `skbackup.schedule` | see defaults | systemd `OnCalendar` for `sync` (05:30), `offsite` (06:30), `prune` (Sunday 13:00), `restore_test` (1st of the month 14:00), `check` (hourly at :17). |
 
@@ -552,3 +553,33 @@ stack is needed.
   `vars/skbackup.set.yml` (every tier, white-label brand).
 - skstack06 has a `skbackup` stage that deploys it on a test node with
   loopback ZFS pools and a local restic repository.
+
+
+### Dataset trees and restic tuning
+
+`skbackup.datasets` defaults to one dataset: `{recursive: false, exclude: [], include_private: [], retention: {}}`.
+Set `recursive: true` to discover the filesystem tree below `data_dataset`. Exclusions are complete dataset names below that root and cover descendants. A `*-private` or `recovery*` component fails closed unless excluded or the exact dataset is in `include_private`. The deploy checks privacy before enabling sanoid; every engine operation repeats discovery. Per-dataset `retention` maps override sanoid hourly/daily/weekly/monthly counts. When hourly snapshots are disabled, freshness checks allow one daily/weekly/monthly interval plus the configured grace instead of raising a false hourly alarm. The existing single-file sanoid ownership guard still applies.
+
+For example:
+
+```yaml
+skbackup:
+  data_dataset: tank/data
+  datasets:
+    recursive: true
+    exclude: [tank/data/backups, tank/data/recovery-old]
+    retention:
+      tank/data/share/cloud: {hourly: 0, daily: 14}
+  copy:
+    apps: [{name: app-one, src: shared/app-one}]
+  offsite:
+    sets:
+      - {name: users, kind: paths, paths: [share/users]}
+      - {name: cloud, kind: paths, paths: [share/cloud], limit_upload_kbps: 4000, pack_size_mib: 64}
+```
+
+Restic selects the newest autosnap name common to all included datasets. If none is common, it selects the parent's newest and warns when a child needs its own newest autosnap. The read-only mount tree uses stable dataset-relative paths, mounts parents first and unmounts in reverse on exit or failure. Child mount directories must exist without symlinks in the parent snapshot. Paths are relative to the root; excluded descendants are also filtered when a set covers their ancestor. Tier-2 apps must fit within one included dataset; only that owning dataset is frozen. Symlink source paths are refused. Restore tests record every source snapshot and compare against the originating dataset, with the existing unchanged-live-file fallback after snapshot expiry.
+
+Vault options under `offsite`: `pack_size_mib: 16` (per-set override supported), `compression: auto` (`max` or `off` also accepted), `read_concurrency` (unset uses restic's default), `retry_lock: 30m`, `exclude_caches: true`, `exclude_if_present: [.nobackup]`, `prune_max_unused: 5%`, `check_subset: 2.5%`. Each set can override `limit_upload_kbps`. A weekly subset-check timer is installed for recursive trees or an explicitly configured `check_subset`; `schedule.repo_check` defaults to Sunday 15:00. Older single-dataset vaults keep identical rendered configuration and units. `restic check [SUBSET]` uses the configured subset by default.
+
+`alerts.healthchecks_url` optionally pings on command success or failure alongside existing log/command alerts. The URL lives in a separate 0600 credentials file and is never logged. `snapshots.adopt_existing: false` leaves other tools' snapshots unmanaged; enabling it reports their external provenance during checks without pruning, renaming or using them as sanoid snapshots. Existing snapshot scheduling must be reconciled by the operator, not deleted by the engine.

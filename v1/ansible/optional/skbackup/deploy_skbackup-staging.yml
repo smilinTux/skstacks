@@ -90,6 +90,12 @@
             "on": "{{ skb.schedule.restore_test }}"
             network: true
             enabled: "{{ (skb.restore_test.enabled | bool) and (skb.offsite.enabled | bool) }}"
+          - name: repo-check
+            command: restic check
+            desc: offsite repository data subset verification
+            "on": "{{ skb.schedule.repo_check }}"
+            network: true
+            enabled: "{{ (skb.offsite.enabled | bool) and ((skb.datasets.recursive | bool) or ('check_subset' in (skbackup | default({})).get('offsite', {}))) }}"
           - name: check
             command: check --notify
             desc: backup staleness and health check
@@ -153,6 +159,69 @@
           not a mount path) the swarm's NFS data lives on.
       tags: [config]
 
+    - name: Refuse inactive dataset tree policy
+      assert:
+        that:
+          - (skb.datasets.recursive | bool) or (skb.datasets.exclude | length == 0 and skb.datasets.include_private | length == 0 and skb.datasets.retention | length == 0)
+        fail_msg: 'ERROR: datasets policy requires datasets.recursive=true.'
+      tags: [config]
+
+    - name: Validate dataset tree policy
+      assert:
+        that:
+          - item is match('^[A-Za-z0-9][A-Za-z0-9_.:/-]*$')
+          - item.startswith(skb.data_dataset ~ '/') or (item == skb.data_dataset and item in skb.datasets.include_private and item not in skb.datasets.exclude and item not in skb.datasets.retention)
+          - "'..' not in item and '//' not in item and not item.endswith('/')"
+        fail_msg: 'ERROR: datasets policy entries must be children under data_dataset without traversal.'
+      loop: "{{ skb.datasets.exclude + skb.datasets.include_private + (skb.datasets.retention.keys() | list) }}"
+      tags: [config]
+
+    - name: Discover the real tree before enabling snapshots
+      command:
+        argv: [zfs, list, '-H', '-t', filesystem, '-o', name, '-r', "{{ skb.data_dataset }}"]
+      register: skb_dataset_tree
+      changed_when: false
+      when: skb.datasets.recursive | bool
+      tags: [config]
+
+    - name: Fail closed on private datasets before installing sanoid
+      assert:
+        that:
+          - >-
+            item in skb.datasets.include_private or
+            ((skb.datasets.exclude | length > 0) and
+             (item is match('^(' ~ (skb.datasets.exclude | map('regex_escape') | join('|')) ~ ')(/|$)')))
+        fail_msg: 'ERROR: private dataset requires explicit datasets.include_private or exclusion.'
+      loop: "{{ skb_dataset_tree.stdout_lines | default([]) }}"
+      when:
+        - skb.datasets.recursive | bool
+        - "item is search('(^|/)([^/]*-private|recovery[^/]*)(/|$)')"
+      tags: [config]
+
+    - name: Validate per-dataset retention
+      assert:
+        that:
+          - item.value.keys() | difference(['frequently', 'hourly', 'daily', 'weekly', 'monthly', 'yearly']) | length == 0
+          - item.value.values() | map('int') | select('lt', 0) | list | length == 0
+        fail_msg: 'ERROR: datasets.retention uses nonnegative sanoid retention counts.'
+      loop: "{{ skb.datasets.retention | dict2items }}"
+      tags: [config]
+
+    - name: Validate restic tuning
+      assert:
+        that:
+          - skb.offsite.pack_size_mib | int >= 4
+          - skb.offsite.compression in ['auto', 'max', 'off']
+          - skb.offsite.read_concurrency == '' or skb.offsite.read_concurrency | int > 0
+          - skb.offsite.retry_lock is match('^([0-9]+(h|m|s))+$')
+          - skb.offsite.check_subset is match('^([0-9]+(\.[0-9]+)?)%$')
+          - skb.offsite.check_subset | regex_replace('%$', '') | float > 0
+          - skb.offsite.check_subset | regex_replace('%$', '') | float <= 100
+          - skb.offsite.prune_max_unused is match('^([0-9]+(\.[0-9]+)?%|[0-9]+[kKmMgGtT]?|unlimited)$')
+          - skb.offsite.exclude_if_present | select('search', '[\s/]|\.\.') | list | length == 0
+        fail_msg: 'ERROR: invalid offsite restic tuning values.'
+      tags: [config]
+
     - name: Validate the copy tier
       assert:
         that:
@@ -205,7 +274,10 @@
           - item.kind != 'apps' or ((skb['copy'].enabled | bool) and skb_app_names | length > 0)
           - item.kind != 'paths' or (item.paths | default([]) | length > 0)
           - item.paths | default([]) | select('search', '[\s,]|\.\.') | list | length == 0
+          - item.paths | default([]) | select('match', '^/') | list | length == 0
           - item.excludes | default([]) | select('search', '\s') | list | length == 0
+          - item.limit_upload_kbps | default(0) | int >= 0
+          - item.pack_size_mib | default(16) | int >= 4
         fail_msg: >-
           ERROR: offsite set '{{ item.name }}': kind apps needs the copy tier
           (it backs up every copied app), kind paths needs paths (relative,
@@ -382,6 +454,24 @@
         path: "{{ skb_confdir }}/offsite.env"
         state: absent
       when: not (skb.offsite.enabled | bool)
+      tags: [config, secrets]
+
+    - name: Render optional healthchecks credentials
+      template:
+        src: "{{ playbook_dir }}/src/config/skbackup/healthchecks.env.j2"
+        dest: "{{ skb_confdir }}/healthchecks.env"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      when: skb.alerts.healthchecks_url | length > 0
+      tags: [config, secrets]
+
+    - name: Remove unused healthchecks credentials
+      file:
+        path: "{{ skb_confdir }}/healthchecks.env"
+        state: absent
+      when: skb.alerts.healthchecks_url | length == 0
       tags: [config, secrets]
 
     - name: Install the command line wrapper
