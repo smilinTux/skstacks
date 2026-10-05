@@ -1,0 +1,19 @@
+{
+  "etc/sanoid/sanoid.conf": "75edeb3919d1fe845c0418677df1f8e6636247ecb07bcec8de01baae7d2ad070",
+  "etc/skbackup/apps.conf": "2d0245739b1d3e33940e907edd437ec28ca25d84fbaaeb10d20d27abf807f470",
+  "etc/skbackup/hooks.conf": "c6c8078536883b7418f524ba2385ca9bbb65e0b4704b29a142f91d0fb8faa6d0",
+  "etc/skbackup/offsite.env": "c4b791026431755fc4b1acb84fa2d20071f3143e567075b6fc8c722041b9619a",
+  "etc/skbackup/restic-sets.conf": "f78dd84dd11b912d01ad8e64e95a092c62544555258d3e20b16acd6c2a81ce73",
+  "etc/skbackup/skbackup.conf": "9e992c803794d1253c39126db776a4557b1928a21235bd66bda54d87cdd1fd6d",
+  "etc/systemd/system/skbackup-check.service": "fc29ce14bff3e8203df2ece9f1f7efb365fb8c4afbd788737de42f137850e83e",
+  "etc/systemd/system/skbackup-check.timer": "55f84ab7276f779e1d7235b7f711c4f18f120f6ec00d730ec45d74498dc1dd26",
+  "etc/systemd/system/skbackup-offsite.service": "29c09f94e67124c5aadd76a4745e95688260c80139eac90126b6a3dc6d089fa1",
+  "etc/systemd/system/skbackup-offsite.timer": "a7aa043dcb340c1b8f39db03f150551623a9ca4f3ffc12b7c78c74a92c4b78a4",
+  "etc/systemd/system/skbackup-prune.service": "1aecb5f2bff9908940c7f346bc7da6e5afe48832f2d106830a14dbfb4b6b92b7",
+  "etc/systemd/system/skbackup-prune.timer": "d6f2c4f97e4c22f496b4494282d4ee0806e92b882952b3950a9edee2c79c187d",
+  "etc/systemd/system/skbackup-restore-test.service": "42fc1993f2bf81ef7cd2338f583638ab9cb6b0d0f131cc19b7c6b80298253464",
+  "etc/systemd/system/skbackup-restore-test.timer": "097e5eb506dba7b7d30d90ca2b2e0bf259e3e94b5b8d9143dba11f44a24f534d",
+  "etc/systemd/system/skbackup-sync.service": "54de3fbfea68de03de05ecb8f5ad20ef8b2673d8b0318b6a53b4ff97dd0dc09e",
+  "etc/systemd/system/skbackup-sync.timer": "9ae7f4b3447c609a9062fa7b55735046ba3976d557544012341086c249c1b36f",
+  "usr/local/sbin/skbackup": "a28341a1bcd71aec77bdb60ca05c8628036e0316df68f5cd32f03768e3a45ea2"
+}

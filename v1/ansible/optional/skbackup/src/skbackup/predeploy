@@ -1,0 +1,33 @@
+#!/bin/bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# predeploy: take a pre-deploy ZFS snapshot of the data dataset.
+#   predeploy <purpose>          -> <dataset>@pre-<purpose>-<UTC ts>
+#   predeploy --list             -> list pre-* snapshots
+# Also prunes pre-* snapshots older than PREDEPLOY_KEEP_DAYS, always keeping
+# the newest PREDEPLOY_KEEP_MIN. sanoid never touches these (it only prunes
+# its own autosnap_* names). Zero I/O; safe to run any time.
+set -euo pipefail
+PATH=${BACKUP_TEST_PATH:+$BACKUP_TEST_PATH:}/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# shellcheck source=lib.sh
+. "${BACKUP_LIB:-$(dirname "$(readlink -f "$0")")/lib.sh}"
+skb_load_conf
+
+list() { zfs list -H -p -t snapshot -o name,creation -s creation -d 1 "$SRC_DATASET" | awk -F'\t' '$1 ~ /@pre-/'; }
+
+case "${1:-}" in
+  --list) list | while IFS=$'\t' read -r n c; do echo "$n $(date -u -d "@$c" +%FT%TZ)"; done; exit 0 ;;
+  ''|-*) echo "usage: $BRAND_SHORT predeploy <purpose> | --list" >&2; exit 2 ;;
+esac
+purpose="$1"
+[[ "$purpose" =~ ^[a-z0-9][a-z0-9-]{0,60}$ ]] || { echo "purpose must match [a-z0-9-]: $purpose" >&2; exit 2; }
+
+snap="$SRC_DATASET@pre-$purpose-$(date -u +%Y%m%dT%H%M%SZ)"
+zfs snapshot "$snap"
+zfs list -H -t snapshot -o name,creation "$snap"
+
+# prune: older than KEEP_DAYS, but never below the newest KEEP_MIN
+cut=$(( $(date +%s) - PREDEPLOY_KEEP_DAYS * 86400 ))
+list | head -n -"$PREDEPLOY_KEEP_MIN" | while IFS=$'\t' read -r n c; do
+  if [ "$c" -lt "$cut" ]; then zfs destroy "$n" && echo "pruned $n"; fi
+done

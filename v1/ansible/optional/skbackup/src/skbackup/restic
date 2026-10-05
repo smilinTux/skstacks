@@ -1,0 +1,281 @@
+#!/bin/bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# restic: tier 4. restic from frozen snapshots of the data dataset
+# to an offsite repository (B2 via its S3 endpoint, native b2:, rest:, a
+# local path). Runs ON the storage host as root. The snapshot is mounted
+# read-only at a STABLE path (RESTIC_SRC_MNT), so restic finds its parent
+# snapshot and only re-reads changed files; a changing path would make it
+# re-read everything every night.
+#
+# Usage:
+#   restic init                 create the repository (no-op if it exists)
+#   restic backup [TAG]...      back up every set (or only TAGs)
+#   restic forget-prune         apply retention and prune (weekly)
+#   restic check [SUBSET]       restic check (optionally --read-data-subset)
+#   restic restore-test         restore RESTORE_TEST_APP + sample files, compare sha256
+#   restic snapshots            list snapshots (latest per set)
+#
+# Sets ($RESTIC_SETS_FILE), one per line:  TAG  KIND  ARGS...
+#   TAG apps                       every app in APPS_FILE, with its excludes
+#   TAG paths REL[,REL...] [--exclude=PATTERN ...]
+#       PATTERN with a leading "/" is anchored to the snapshot root.
+set -euo pipefail
+PATH=${BACKUP_TEST_PATH:+$BACKUP_TEST_PATH:}/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# shellcheck source=lib.sh
+. "${BACKUP_LIB:-$(dirname "$(readlink -f "$0")")/lib.sh}"
+skb_load_conf
+
+skb_restic_env
+mkdir -p "$STATE_DIR" "$LOCK_DIR" "$RESTIC_CACHE_DIR"
+R() { ionice -c3 nice -n19 restic --retry-lock "$RESTIC_RETRY_LOCK" --compression "$RESTIC_COMPRESSION" --pack-size "${SET_PACK:-$RESTIC_PACK_SIZE}" "$@"; }
+
+# Keep mount cleanup installed before the first mount, including partial failure.
+MOUNTED=(); TREE_SNAPS=()
+OWNED_FILE="$STATE_DIR/restic-owned-snapshots"
+# shellcheck disable=SC2317,SC2329
+unmount_tree() {
+  local rc=$? i mounted=0 snap ds name keep=()
+  for ((i=${#MOUNTED[@]}-1; i>=0; i--)); do
+    if ! umount "${MOUNTED[i]}"; then
+      skb_log "WARN could not unmount ${MOUNTED[i]}"; mounted=1
+    fi
+  done
+  # Never release frozen sources while a mount is still in use.
+  if [ "$mounted" = 1 ]; then exit 1; fi
+  if [ "$SRC_RECURSIVE" = 1 ] && [ -f "$OWNED_FILE" ]; then
+    while IFS= read -r snap; do
+      ds="${snap%@*}"; name="${snap#*@}"
+      if { [ "$ds" != "$SRC_DATASET" ] && ! skb_dataset_under_root "$ds"; } || ! [[ "$name" =~ ^"$BRAND_SHORT-restic-"[0-9a-f]{32}$ ]]; then
+        skb_log "WARN invalid capture ownership entry"; keep+=("$snap"); continue
+      fi
+      if grep -Fqx -- "$snap" "$STATE_DIR"/restic-tree-src-* 2>/dev/null; then
+        keep+=("$snap")
+      elif zfs list -H "$snap" >/dev/null 2>&1 && ! zfs destroy "$snap"; then
+        skb_log "WARN could not release $snap"; keep+=("$snap"); rc=1
+      fi
+    done < "$OWNED_FILE"
+    : > "$OWNED_FILE.tmp"
+    [ ${#keep[@]} -eq 0 ] || printf '%s\n' "${keep[@]}" > "$OWNED_FILE.tmp"
+    mv "$OWNED_FILE.tmp" "$OWNED_FILE"
+  fi
+  exit "$rc"
+}
+mount_newest_snapshot() {
+  skb_discover_datasets
+  local ds candidate selected rel target listing captures=()
+  trap unmount_tree EXIT
+  trap 'exit 143' TERM INT
+  if [ "$SRC_RECURSIVE" = 1 ]; then
+    selected="$BRAND_SHORT-restic-$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
+    for ds in "${SKB_DATASETS[@]}"; do
+      candidate="$ds@$selected"
+      ! zfs list -H "$candidate" >/dev/null 2>&1 || skb_die "capture name already exists"
+      captures+=("$candidate")
+    done
+    listing=$(zfs list -H -r -t filesystem,volume -o name "$SRC_DATASET") || skb_die "capture discovery failed"
+    # Register unique names before capture so signals also clean newly created
+    # snapshots. Ownership never comes from a name-prefix scan of the pool.
+    printf '%s\n' "${captures[@]}" >> "$OWNED_FILE"
+    if [ "$listing" = "$(printf '%s\n' "${SKB_DATASETS[@]}")" ]; then
+      zfs snapshot -r "$SRC_DATASET@$selected"
+    else
+      # One atomic operation, without capturing excluded descendants or zvols.
+      zfs snapshot "${captures[@]}"
+    fi
+    SNAP="$SRC_DATASET@$selected"
+  else
+    SNAP=$(skb_newest_snapshot "$SRC_DATASET" "$SANOID_PREFIX")
+    [ -n "$SNAP" ] || skb_die "no ${SANOID_PREFIX}* snapshot of $SRC_DATASET"
+    selected="${SNAP#*@}"
+  fi
+  mkdir -p "$RESTIC_SRC_MNT"
+  for ds in "${SKB_DATASETS[@]}"; do
+    candidate="$ds@$selected"
+    zfs list -H "$candidate" >/dev/null 2>&1 || skb_die "captured snapshot missing: $candidate"
+    rel="${ds#"$SRC_DATASET"}"; target="$RESTIC_SRC_MNT$rel"
+    # A child's stable mount directory must exist in the parent snapshot.
+    [ -d "$target" ] || skb_die "snapshot mount directory missing: $target"
+    [ ! -L "$target" ] || skb_die "symlink mount directory refused: $target"
+    [ "$(realpath -m -- "$target")" = "$target" ] || skb_die "unsafe snapshot mount path: $target"
+    if mountpoint -q "$target"; then umount "$target"; fi
+    mount -t zfs -o ro "$candidate" "$target"
+    MOUNTED+=("$target"); TREE_SNAPS+=("$candidate")
+    skb_log "source: $candidate mounted at $target"
+  done
+}
+
+# Build paths and excludes for one set line into the arrays PATHS / EXCL.
+build_set() {
+  local kind="$1"; shift
+  PATHS=(); EXCL=(); SET_LIMIT="$RESTIC_LIMIT_UPLOAD"; SET_PACK="$RESTIC_PACK_SIZE"
+  local arg args=() child
+  for arg in "$@"; do
+    case "$arg" in
+      limit-upload=*) SET_LIMIT="${arg#*=}";;
+      pack-size=*) SET_PACK="${arg#*=}";;
+      *) args+=("$arg");;
+    esac
+  done
+  [[ "$SET_LIMIT" =~ ^[0-9]+$ && "$SET_PACK" =~ ^[0-9]+$ && "$SET_PACK" -ge 4 ]] || skb_die "invalid set limits"
+  set -- "${args[@]}"
+  case "$kind" in
+    apps)
+      local raw parsed src opts
+      while IFS= read -r raw; do
+        parsed=$(skb_parse_app_line "$raw") || continue
+        IFS=$'\t' read -r _ src _ _ _ opts <<<"$parsed"
+        skb_path_owner "$src" >/dev/null || skb_die "apps path refused: $src"
+        [ -d "$RESTIC_SRC_MNT/$src" ] || { skb_log "WARN apps: $src missing, skipped"; continue; }
+        PATHS+=("$RESTIC_SRC_MNT/$src")
+        # shellcheck disable=SC2086
+        mapfile -t -O "${#EXCL[@]}" EXCL < <(skb_restic_excludes "$RESTIC_SRC_MNT/$src" $opts)
+        # shellcheck disable=SC2086
+        mapfile -t -O "${#EXCL[@]}" EXCL < <(skb_newest_excludes "$RESTIC_SRC_MNT/$src" $opts \
+          | sed "s#^--exclude=/#--exclude=$RESTIC_SRC_MNT/$src/#")
+      done < "$APPS_FILE"
+      ;;
+    paths)
+      local rels="$1"; shift
+      local r
+      IFS=, read -r -a r <<<"$rels"
+      for rel in "${r[@]}"; do
+        skb_path_owner "$rel" >/dev/null || skb_die "set path refused: $rel"
+        PATHS+=("$RESTIC_SRC_MNT/$rel")
+      done
+      mapfile -t EXCL < <(skb_restic_excludes "$RESTIC_SRC_MNT" "$@")
+      ;;
+    *) skb_die "unknown set kind: $kind" ;;
+  esac
+  for child in $SRC_EXCLUDES; do EXCL+=("--exclude=$RESTIC_SRC_MNT/${child#"$SRC_DATASET/"}"); done
+  [ "$RESTIC_EXCLUDE_CACHES" != 1 ] || EXCL+=(--exclude-caches)
+  for arg in $RESTIC_EXCLUDE_MARKERS; do EXCL+=("--exclude-if-present=$arg"); done
+  [ -z "$RESTIC_READ_CONCURRENCY" ] || EXCL+=("--read-concurrency=$RESTIC_READ_CONCURRENCY")
+  [ ${#PATHS[@]} -gt 0 ] || skb_die "set has no included source paths"
+}
+
+cmd_backup() {
+  exec 8>"$LOCK_DIR/$BRAND_SHORT-restic.lock"
+  flock -n 8 || skb_die "another $BRAND_SHORT restic run holds the lock"
+  R unlock >/dev/null 2>&1 || true   # removes stale locks only
+  mount_newest_snapshot
+  # first-seed grace for check starts when the first run starts, for every set
+  awk '!/^[[:space:]]*(#|$)/{print $1}' "$RESTIC_SETS_FILE" | while read -r t; do
+    [ -e "$STATE_DIR/restic-seed-started-$t" ] || date +%s > "$STATE_DIR/restic-seed-started-$t"
+  done
+  local fail=0 line tag kind
+  while IFS= read -r line; do
+    line="${line%%#*}"
+    # shellcheck disable=SC2086
+    set -- $line
+    [ $# -ge 2 ] || continue
+    tag="$1"; kind="$2"; shift 2
+    if [ ${#ONLY[@]} -gt 0 ] && [[ ! " ${ONLY[*]} " == *" $tag "* ]]; then continue; fi
+    build_set "$kind" "$@"
+    skb_log "== restic set $tag: ${#PATHS[@]} path(s), ${#EXCL[@]} exclude(s)"
+    if R backup --host "$RESTIC_HOST" --tag "$tag" --tag "$BRAND_SHORT" --limit-upload "$SET_LIMIT" \
+        "${EXCL[@]}" "${PATHS[@]}"; then
+      date +%s > "$STATE_DIR/restic-last-ok-$tag"
+      echo "$SNAP" > "$STATE_DIR/restic-src-$tag"
+      printf '%s\n' "${TREE_SNAPS[@]}" > "$STATE_DIR/restic-tree-src-$tag.tmp"
+      mv "$STATE_DIR/restic-tree-src-$tag.tmp" "$STATE_DIR/restic-tree-src-$tag"
+    else
+      skb_log "FAIL restic set $tag"; fail=1
+    fi
+  done < "$RESTIC_SETS_FILE"
+  return "$fail"
+}
+
+cmd_forget_prune() {
+  exec 8>"$LOCK_DIR/$BRAND_SHORT-restic.lock"
+  flock -w 7200 8 || skb_die "restic lock busy"
+  R unlock >/dev/null 2>&1 || true
+  R forget --group-by host,tags --keep-daily "$RESTIC_KEEP_DAILY" \
+    --keep-weekly "$RESTIC_KEEP_WEEKLY" --keep-monthly "$RESTIC_KEEP_MONTHLY" --prune --max-unused "$RESTIC_PRUNE_MAX_UNUSED"
+}
+
+# Restore RESTORE_TEST_APP (relative path in the snapshot) from the newest
+# snapshot carrying it, plus RESTORE_TEST_SAMPLES random files from the set
+# RESTORE_TEST_SAMPLE_TAG, then compare sha256 against the ZFS snapshot the
+# backup was taken from (or, if that snapshot has expired, the live file
+# when size and mtime still match). Writes a report and sends it as info
+# (pass) or crit (fail).
+cmd_restore_test() {
+  # Hold source provenance stable while backup cleanup releases old captures.
+  exec 8>"$LOCK_DIR/$BRAND_SHORT-restic.lock"
+  flock -w 7200 8 || skb_die "restic lock busy"
+  local tmp; tmp=$(mktemp -d /var/tmp/restoretest.XXXXXX)
+  trap 'rm -rf "$tmp"' RETURN
+  skb_discover_datasets
+  local ok=0 bad=0 skipped=0 total=0 lines=()
+  compare_tree() {   # $1 restored root (contains the RESTIC_SRC_MNT prefix), $2 tag
+    local rroot="$1" tag="$2" srcsnap mnt ref f rel live owner ds inner
+    while IFS= read -r -d '' f; do
+      rel="${f#"$rroot$RESTIC_SRC_MNT"/}"
+      owner=$(skb_path_owner "$rel") || return 1
+      IFS=$'\t' read -r ds inner live <<<"$owner"
+      mnt=$(skb_mountpoint "$ds"); rel="$inner"; ref=""
+      if [ -r "$STATE_DIR/restic-tree-src-$tag" ]; then
+        srcsnap=$(awk -F@ -v ds="$ds" '$1==ds{print;exit}' "$STATE_DIR/restic-tree-src-$tag")
+      else
+        srcsnap=$(cat "$STATE_DIR/restic-src-$tag" 2>/dev/null || true)
+      fi
+      if [ -n "$srcsnap" ] && [[ "$srcsnap" = "$ds@"* ]] && zfs list -H "$srcsnap" >/dev/null 2>&1; then
+        ref="$mnt/.zfs/snapshot/${srcsnap#*@}"
+      fi
+      total=$((total + 1))
+      if [ -n "$ref" ] && [ -f "$ref/$rel" ]; then live="$ref/$rel"
+      elif [ -f "$mnt/$rel" ] && [ "$(stat -c %s.%Y "$mnt/$rel")" = "$(stat -c %s.%Y "$f")" ]; then live="$mnt/$rel"
+      else skipped=$((skipped + 1)); continue; fi
+      if [ "$(sha256sum < "$f")" = "$(sha256sum < "$live")" ]; then ok=$((ok + 1)); else bad=$((bad + 1)); lines+=("MISMATCH $rel"); skb_log "MISMATCH $rel"; fi
+    done < <(find "$rroot" -type f -print0)
+  }
+  if [ -n "$RESTORE_TEST_APP" ]; then
+    local tag; tag=$(awk '!/^#/ && $2=="apps"{print $1; exit}' "$RESTIC_SETS_FILE")
+    R restore latest --tag "$tag" --include "$RESTIC_SRC_MNT/$RESTORE_TEST_APP" --target "$tmp/app" >/dev/null
+    compare_tree "$tmp/app" "$tag"
+    lines+=("app $RESTORE_TEST_APP from set $tag restored")
+  fi
+  if [ -n "$RESTORE_TEST_SAMPLE_TAG" ] && [ "$RESTORE_TEST_SAMPLES" -gt 0 ]; then
+    local inc=() p
+    while IFS= read -r p; do inc+=(--include "$p"); done < <(
+      R ls latest --tag "$RESTORE_TEST_SAMPLE_TAG" --json 2>/dev/null \
+        | python3 -c 'import sys,json
+for l in sys.stdin:
+    try: o=json.loads(l)
+    except Exception: continue
+    if o.get("type")=="file" and o.get("size",0)>0: print(o["path"])' \
+        | shuf -n "$RESTORE_TEST_SAMPLES")
+    if [ ${#inc[@]} -gt 0 ]; then
+      R restore latest --tag "$RESTORE_TEST_SAMPLE_TAG" "${inc[@]}" --target "$tmp/sample" >/dev/null
+      compare_tree "$tmp/sample" "$RESTORE_TEST_SAMPLE_TAG"
+      lines+=("${#inc[@]} sample file(s) from set $RESTORE_TEST_SAMPLE_TAG restored")
+    fi
+  fi
+  skb_log "restore-test: total=$total ok=$ok mismatch=$bad skipped=$skipped"
+  local result=FAIL report body
+  if [ "$bad" -eq 0 ] && [ "$ok" -gt 0 ]; then result=PASS; fi
+  lines+=("files: total=$total sha256-matched=$ok mismatch=$bad skipped=$skipped" "" "RESULT: $result")
+  report=$(printf '%s\n' "${lines[@]}" | skb_report "restore-test-$(date -u +%Y%m%dT%H%M%SZ).txt" "restore test")
+  body=$(cat "$report")
+  printf '%s\n' "$body"
+  if [ "$result" = PASS ]; then
+    date +%s > "$STATE_DIR/restic-restoretest-ok"
+    skb_notify info "$BRAND_SHORT-restore-test" "restore test passed on $RESTIC_HOST" "$body"
+    return 0
+  fi
+  skb_notify crit "$BRAND_SHORT-restore-test" "restore test FAILED on $RESTIC_HOST" "$body"
+  return 1
+}
+
+ONLY=()
+case "${1:-}" in
+  init) if R snapshots >/dev/null 2>&1; then skb_log "repository already initialised"; else R init; fi ;;
+  backup) shift; ONLY=("$@"); cmd_backup ;;
+  forget-prune) cmd_forget_prune ;;
+  check) R check --read-data-subset="${2:-$RESTIC_CHECK_SUBSET}" ;;
+  restore-test) cmd_restore_test ;;
+  snapshots) R snapshots --latest 1 --group-by host,tags ;;
+  *) echo "usage: $BRAND_SHORT restic init | backup [TAG]... | forget-prune | check [SUBSET] | restore-test | snapshots" >&2
+     exit 2 ;;
+esac

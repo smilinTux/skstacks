@@ -1,0 +1,3 @@
+#!/bin/bash
+# {{ skb.branding.product_name }} command line, installed by the deploy.
+exec {{ skb_libdir }}/backup --conf {{ skb_conf }} "$@"

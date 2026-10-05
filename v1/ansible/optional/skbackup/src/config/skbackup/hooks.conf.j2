@@ -1,0 +1,5 @@
+# {{ skb.branding.product_name }}: dump hooks, run in order by sync before it freezes the data.
+#   NAME  TIMEOUT_SECONDS  COMMAND...   (run with bash -c)
+{% for h in skb.dumps.hooks %}
+{{ h.name }} {{ h.timeout | default(1800) | int }} {{ h.command }}
+{% endfor %}

@@ -113,6 +113,7 @@ PREFIXES = ("ansible.builtin.", "ansible.legacy.")
 # These are TEST DOUBLES for live-cluster answers (docker service ls, node
 # hostnames, cert lookups), never real state. Anything not listed gets "".
 FAKE_STDOUT = {
+    "skb_dataset_tree": "tank/data",
     "fence_service_detection": "skfenceha",
     "traefik_detection": "skfenceha",
     "socket_proxy_detection": "skfenceha",

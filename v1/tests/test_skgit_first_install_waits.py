@@ -21,6 +21,7 @@ import os
 import pathlib
 import stat
 import subprocess
+import uuid
 
 import jinja2
 import pytest
@@ -30,7 +31,7 @@ SKGIT = pathlib.Path(__file__).resolve().parents[1] / "ansible/optional/skgit"
 PLAYBOOKS = sorted(SKGIT.glob("deploy_skgit-*.yml"))
 KNOB = "first_install_wait_seconds"
 DEFAULT_BUDGET = 1800
-PASSWORD = "S3cr3t-Pa55w0rd-xyz"
+PASSWORD = "test-only-" + uuid.uuid4().hex
 
 _ENV = jinja2.Environment()
 

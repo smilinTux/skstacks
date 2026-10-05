@@ -1,0 +1,37 @@
+# managed-by: {{ skb_short }}
+# Rendered by the {{ skb.branding.product_name }} deploy; edits are overwritten.
+# Tier 1 snapshots of the data target. Snapshots named pre-* (the pre-deploy
+# helper) are not sanoid's and are pruned by the helper itself.
+
+[{{ skb.data_dataset }}]
+	use_template = {{ skb_short }}
+{% if skb.datasets.recursive | bool %}
+	recursive = yes
+{% endif %}
+
+[template_{{ skb_short }}]
+	frequently = 0
+	hourly = {{ skb.snapshots.retention.hourly | default(0) | int }}
+	daily = {{ skb.snapshots.retention.daily | default(0) | int }}
+	weekly = {{ skb.snapshots.retention.weekly | default(0) | int }}
+	monthly = {{ skb.snapshots.retention.monthly | default(0) | int }}
+	yearly = {{ skb.snapshots.retention.yearly | default(0) | int }}
+	autosnap = yes
+	autoprune = yes
+{% if skb.datasets.recursive | bool %}
+{% for ds, retention in skb.datasets.retention | dictsort %}
+
+[{{ ds }}]
+	use_template = {{ skb_short }}
+{% for tier, count in retention | dictsort %}
+	{{ tier }} = {{ count | int }}
+{% endfor %}
+{% endfor %}
+{% for ds in skb.datasets.exclude %}
+
+[{{ ds }}]
+	recursive = yes
+	autosnap = no
+	autoprune = no
+{% endfor %}
+{% endif %}

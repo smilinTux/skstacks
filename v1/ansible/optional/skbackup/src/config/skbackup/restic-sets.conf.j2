@@ -1,0 +1,12 @@
+# {{ skb.branding.product_name }}: offsite sets in run order (small first). Rendered by the deploy.
+#   TAG apps                                   every copied app, with its excludes
+#   TAG paths REL[,REL...] [--exclude=PATTERN] PATTERN with "/" is anchored at the snapshot root
+{% for s in skb.offsite.sets %}
+{% if s.kind == 'apps' %}
+{{ s.name }} apps{% if s.limit_upload_kbps is defined %} limit-upload={{ s.limit_upload_kbps | int }}{% endif %}{% if s.pack_size_mib is defined %} pack-size={{ s.pack_size_mib | int }}{% endif %}
+
+{% else %}
+{{ s.name }} paths {{ s.paths | join(',') }}{% for e in s.excludes | default([]) %} --exclude={{ e }}{% endfor %}{% if s.limit_upload_kbps is defined %} limit-upload={{ s.limit_upload_kbps | int }}{% endif %}{% if s.pack_size_mib is defined %} pack-size={{ s.pack_size_mib | int }}{% endif %}
+
+{% endif %}
+{% endfor %}

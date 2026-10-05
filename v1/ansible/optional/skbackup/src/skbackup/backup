@@ -1,0 +1,117 @@
+#!/bin/bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Host-level backup engine for the storage host that serves a cluster's data
+# (ZFS). The deploy installs a wrapper, /usr/local/sbin/<short_name>, that
+# runs this with --conf. Commands:
+#   sync              tier 2 (+ tier 3 dump hooks): per-app copy from a frozen snapshot
+#   restic ...        tier 4 + 5: init, backup, forget-prune, check, restore-test, snapshots
+#   check [--notify]  tier 6: staleness and health (exit 1 = something to look at)
+#   predeploy ...     tier 1 helper: pre-deploy snapshot of the data dataset
+#   status, help, --version
+# Every name it prints comes from the config's brand block.
+set -euo pipefail
+umask 077
+PATH=${BACKUP_TEST_PATH:+$BACKUP_TEST_PATH:}/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+ENGINE_VERSION=2.0.0
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+export BACKUP_LIB="$HERE/lib.sh"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --conf) [ $# -ge 2 ] || { echo "--conf needs a file" >&2; exit 2; }; BACKUP_CONF=$2; shift 2 ;;
+    --conf=*) BACKUP_CONF=${1#--conf=}; shift ;;
+    *) break ;;
+  esac
+done
+export BACKUP_CONF="${BACKUP_CONF:-}"
+if [ -z "$BACKUP_CONF" ] || [ ! -r "$BACKUP_CONF" ]; then
+  echo "config file not found or not readable: ${BACKUP_CONF:-<none>}" >&2
+  exit 2
+fi
+# shellcheck source=lib.sh
+. "$BACKUP_LIB"
+skb_load_conf
+
+usage() {
+  skb_banner
+  cat <<USAGE
+
+usage: $BRAND_SHORT <command> [args]
+
+commands:
+  sync [--app NAME]...   per-app copy from a frozen snapshot into the backup pool (runs dump hooks first)
+  restic init            create the offsite repository if it does not exist
+  restic backup [SET]... upload the newest snapshot of the data (every set, or only SETs)
+  restic forget-prune    apply the retention and prune the repository
+  restic check [SUBSET]  verify the repository (SUBSET like 5% also reads data)
+  restic restore-test    restore an app and sample files, compare sha256, report
+  restic snapshots       newest snapshot per set
+  check [--notify]       staleness and health of every tier; --notify sends alerts
+  predeploy PURPOSE      snapshot the data before a deploy (pre-PURPOSE-<time>)
+  predeploy --list       the pre-deploy snapshots
+  status                 what is configured and when each tier last succeeded
+  help                   this text
+USAGE
+  printf '\n'
+  skb_footer
+}
+
+stamp_age() {
+  local f=$STATE_DIR/$1
+  if [ -r "$f" ]; then printf '%sh ago' "$(skb_age_h "$(cat "$f")")"; else printf 'never'; fi
+}
+
+status() {
+  skb_banner
+  printf '\nhost %s, data %s\n' "$RESTIC_HOST" "$SRC_DATASET"
+  printf '  tier 1  snapshots    newest %s\n' "$(skb_newest_snapshot "$SRC_DATASET" "$SANOID_PREFIX" 2>/dev/null || true)"
+  if [ -n "$BAK_ROOT" ] && [ -r "$APPS_FILE" ]; then
+    printf '  tier 2  copy         into %s\n' "$BAK_ROOT"
+    local raw parsed name
+    while IFS= read -r raw; do
+      parsed=$(skb_parse_app_line "$raw") || continue
+      name=${parsed%%$'\t'*}
+      printf '            %-28s last copy %s\n' "$name" "$(stamp_age "last-ok-$name")"
+    done < "$APPS_FILE"
+  else
+    printf '  tier 2  copy         off\n'
+  fi
+  if [ -n "$RESTIC_SETS_FILE" ] && [ -r "$RESTIC_SETS_FILE" ]; then
+    printf '  tier 4  offsite\n'
+    local tag
+    while read -r tag _; do
+      case "$tag" in ''|\#*) continue ;; esac
+      printf '            %-28s last upload %s\n' "$tag" "$(stamp_age "restic-last-ok-$tag")"
+    done < "$RESTIC_SETS_FILE"
+    printf '  tier 5  restore test last pass %s\n' "$(stamp_age restic-restoretest-ok)"
+  else
+    printf '  tier 4  offsite      off\n'
+  fi
+  if [ -r "$REPORT_DIR/check-latest.txt" ]; then
+    printf '  tier 6  last check   %s\n' "$(grep '^RESULT:' "$REPORT_DIR/check-latest.txt" | cut -d' ' -f2-)"
+  fi
+  printf '\n'
+  skb_footer
+}
+
+cmd=${1:-help}
+[ $# -eq 0 ] || shift
+case "$cmd" in
+  help | -h | --help) usage ;;
+  --version | version) printf '%s %s\n' "$BRAND_PRODUCT" "$ENGINE_VERSION" ;;
+  status) status ;;
+  sync | restic | check | predeploy)
+    if [ -n "${HEALTHCHECKS_ENV_FILE:-}" ]; then
+      trap 'result=$?; trap - EXIT; skb_healthcheck "$result" "$cmd"; exit "$result"' EXIT
+      trap 'exit 143' TERM
+      trap 'exit 130' INT
+      result=0
+      "$HERE/$cmd" "$@" || result=$?
+      exit "$result"
+    fi
+    exec "$HERE/$cmd" "$@" ;;
+
+  *) echo "$BRAND_SHORT: unknown command '$cmd' (see: $BRAND_SHORT help)" >&2; exit 2 ;;
+esac

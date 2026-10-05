@@ -1,0 +1,108 @@
+# {{ skb.branding.product_name }} configuration, rendered by the deploy. Edits are overwritten on
+# the next deploy: change the instance vault instead. Shell syntax, sourced as root.
+# No secrets here: the restic repository and password live in RESTIC_ENV_FILE (0600).
+{% macro q(v) %}{{ v | default('', true) | string | quote }}{% endmacro %}
+
+# brand
+BRAND_PRODUCT={{ q(skb.branding.product_name) }}
+BRAND_SHORT={{ q(skb_short) }}
+BRAND_TAGLINE={{ q(skb.branding.tagline) }}
+BRAND_ALERT_PREFIX={{ q(skb.branding.alert_prefix) }}
+BRAND_FOOTER={{ q(skb.branding.report_footer) }}
+BRAND_CONTACT={{ q(skb.branding.contact) }}
+BRAND_LOGO_URL={{ q(skb.branding.logo_url) }}
+BRAND_CREDITS_TEXT={{ q(skb.branding.credits_text if (skb.branding.credits | bool) else '') }}
+UNIT_BASE={{ q(skb_unit_base) }}
+{% if skb.host_label %}
+RESTIC_HOST={{ q(skb.host_label) }}
+{% endif %}
+
+# tier 1: the data dataset (sanoid snapshots it) and the pre-deploy helper
+SRC_DATASET={{ q(skb.data_dataset) }}
+SANOID_PREFIX="autosnap_"
+PREDEPLOY_KEEP_DAYS={{ skb.snapshots.predeploy_keep_days | int }}
+PREDEPLOY_KEEP_MIN={{ skb.snapshots.predeploy_keep_min | int }}
+
+# tier 2: per-app copy into the backup pool
+BAK_ROOT={{ q(skb['copy'].target if (skb['copy'].enabled | bool) else '') }}
+APPS_FILE={{ q(skb_confdir ~ '/apps.conf') }}
+SNAP_PREFIX_SYNC={{ q(skb_short) }}
+RSYNC_BWLIMIT={{ skb['copy'].bwlimit_kbps | int }}
+
+# tier 3: dump hooks and freshness
+HOOKS_FILE={{ q(skb_confdir ~ '/hooks.conf') }}
+DUMP_MAX_AGE_H={{ skb.dumps.max_age_hours | int }}
+
+# tier 4: restic
+RESTIC_ENV_FILE={{ q(skb_confdir ~ '/offsite.env') }}
+RESTIC_SETS_FILE={{ q((skb_confdir ~ '/restic-sets.conf') if (skb.offsite.enabled | bool) else '') }}
+RESTIC_LIMIT_UPLOAD={{ skb.offsite.limit_upload_kbps | int }}
+RESTIC_KEEP_DAILY={{ skb.offsite.forget.daily | int }}
+RESTIC_KEEP_WEEKLY={{ skb.offsite.forget.weekly | int }}
+RESTIC_KEEP_MONTHLY={{ skb.offsite.forget.monthly | int }}
+RESTIC_CACHE_DIR="/var/cache/restic"
+RESTIC_SRC_MNT={{ q(skb.offsite.mount_path or ('/run/' ~ skb_short ~ '/src')) }}
+RESTIC_SEED_GRACE_D={{ skb.offsite.seed_grace_days | int }}
+
+# tier 5: restore test
+RESTORE_TEST_APP={{ q(skb.restore_test.app if (skb.restore_test.enabled | bool) else '') }}
+RESTORE_TEST_SAMPLE_TAG={{ q(skb.restore_test.sample_set if (skb.restore_test.enabled | bool) else '') }}
+RESTORE_TEST_SAMPLES={{ skb.restore_test.samples | int }}
+
+# state
+STATE_DIR={{ q(skb_statedir) }}
+REPORT_DIR={{ q(skb_statedir ~ '/reports') }}
+LOCK_DIR="/run/lock"
+
+# tier 6: staleness and health thresholds, notifications
+MAX_AGE_SANOID_MIN={{ skb.alerts.max_age.snapshot_minutes | int }}
+MAX_AGE_SKBAK_H={{ skb.alerts.max_age.copy_hours | int }}
+MAX_AGE_RESTIC_H={{ skb.alerts.max_age.offsite_hours | int }}
+CHECK_RESTIC_REPO={{ 1 if (skb.alerts.check_repo | bool) else 0 }}
+POOL_CAP_WARN={{ skb.alerts.pool_capacity_pct | int }}
+THINPOOL={{ q(skb.alerts.thinpool) }}
+THINPOOL_WARN={{ skb.alerts.thinpool_pct | int }}
+NOTIFY_MODE={{ q(skb.alerts.notifier) }}
+NOTIFY_LOG={{ q(skb_statedir ~ '/alerts.log') }}
+NOTIFY_COMMAND={{ q(skb.alerts.command) }}
+{% if skb.datasets.recursive | bool %}
+SRC_RECURSIVE=1
+SRC_EXCLUDES={{ q(skb.datasets.exclude | join(' ')) }}
+SRC_INCLUDE_PRIVATE={{ q(skb.datasets.include_private | join(' ')) }}
+{% endif %}
+{% if skb.snapshots.adopt_existing | bool %}
+SNAP_ADOPT_EXISTING=1
+{% endif %}
+{% for key, variable in [('pack_size_mib','RESTIC_PACK_SIZE'), ('compression','RESTIC_COMPRESSION'), ('read_concurrency','RESTIC_READ_CONCURRENCY'), ('retry_lock','RESTIC_RETRY_LOCK'), ('prune_max_unused','RESTIC_PRUNE_MAX_UNUSED'), ('check_subset','RESTIC_CHECK_SUBSET')] %}
+{% if key in (skbackup | default({})).get('offsite', {}) %}
+{{ variable }}={{ q(skb.offsite[key]) }}
+{% endif %}
+{% endfor %}
+{% if 'exclude_caches' in (skbackup | default({})).get('offsite', {}) %}
+RESTIC_EXCLUDE_CACHES={{ 1 if (skb.offsite.exclude_caches | bool) else 0 }}
+{% endif %}
+{% if 'exclude_if_present' in (skbackup | default({})).get('offsite', {}) %}
+RESTIC_EXCLUDE_MARKERS={{ q(skb.offsite.exclude_if_present | join(' ')) }}
+{% endif %}
+{% if skb.alerts.healthchecks_url %}
+HEALTHCHECKS_ENV_FILE={{ q(skb_confdir ~ '/healthchecks.env') }}
+{% endif %}
+{% if (skb.datasets.recursive | bool) and skb.datasets.retention %}
+{% set ages = namespace(values=[]) %}
+{% for ds, override in skb.datasets.retention | dictsort %}
+{% set retention = skb.snapshots.retention | combine(override) %}
+{% if (retention.hourly | default(0) | int) == 0 %}
+{% if (retention.daily | default(0) | int) > 0 %}
+{% set interval = 1440 %}
+{% elif (retention.weekly | default(0) | int) > 0 %}
+{% set interval = 10080 %}
+{% else %}
+{% set interval = 44640 %}
+{% endif %}
+{% set ages.values = ages.values + [ds ~ '=' ~ (interval + (skb.alerts.max_age.snapshot_minutes | int))] %}
+{% endif %}
+{% endfor %}
+{% if ages.values %}
+SRC_MAX_AGES={{ q(ages.values | join(' ')) }}
+{% endif %}
+{% endif %}

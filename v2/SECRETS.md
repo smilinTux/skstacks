@@ -957,7 +957,7 @@ sksso scope (Authentik SSO):
 - bootstrap_email
 - bootstrap_password
 
-skbackup scope (Duplicati / backup):
+skbackup scope (restic / backup):
 - encryption_passphrase (offer to generate)
 - s3_access_key (or leave empty if no S3)
 - s3_secret_key

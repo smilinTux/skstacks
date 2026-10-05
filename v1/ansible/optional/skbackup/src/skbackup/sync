@@ -1,0 +1,159 @@
+#!/bin/bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# sync: tier 2 (and the tier 3 dump hooks). Per-app copy of the data dataset
+# from a frozen ZFS snapshot into per-app datasets on a separate local backup
+# pool, then a daily/weekly/monthly history snapshot per app. Runs ON the
+# storage host as root, reads the snapshot locally (never over NFS),
+# throttled (RSYNC_BWLIMIT, default 10000 KiB/s: see the README).
+#
+# Order: dump hooks (HOOKS_FILE) -> dump freshness (warn only) -> one atomic
+# snapshot of the data dataset -> rsync per app -> history snapshots.
+#
+# Usage: sync [--dry-run] [--app NAME]...
+set -euo pipefail
+PATH=${BACKUP_TEST_PATH:+$BACKUP_TEST_PATH:}/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# shellcheck source=lib.sh
+. "${BACKUP_LIB:-$(dirname "$(readlink -f "$0")")/lib.sh}"
+skb_load_conf
+[ -n "$BAK_ROOT" ] || skb_die "BAK_ROOT is not set"
+[ -r "$APPS_FILE" ] || skb_die "apps file not readable: $APPS_FILE"
+
+DRY=0; ONLY=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dry-run) DRY=1; shift ;;
+    --app) ONLY+=("$2"); shift 2 ;;
+    *) echo "usage: $BRAND_SHORT sync [--dry-run] [--app NAME]..." >&2; exit 2 ;;
+  esac
+done
+run() { if [ "$DRY" = 1 ]; then echo "DRY: $*"; else "$@"; fi; }
+
+mkdir -p "$STATE_DIR" "$LOCK_DIR"
+exec 9>"$LOCK_DIR/$BRAND_SHORT-sync.lock"
+flock -n 9 || skb_die "another $BRAND_SHORT sync holds the lock"
+
+skb_discover_datasets
+TS=$(date -u +%Y%m%dT%H%M%SZ)
+SNAP="${SNAP_PREFIX_SYNC}-${TS}"
+
+# Validate all selected sources before any side effects.
+while IFS= read -r raw; do
+  if parsed=$(skb_parse_app_line "$raw"); then
+    IFS=$'\t' read -r name src _ _ _ _ <<<"$parsed"
+    if [ ${#ONLY[@]} -gt 0 ] && [[ ! " ${ONLY[*]} " == *" $name "* ]]; then continue; fi
+    skb_copy_owner "$src" >/dev/null || skb_die "copy source refused: $src"
+  else
+    code=$?; [ "$code" != 2 ] || skb_die "invalid apps record"
+  fi
+done < "$APPS_FILE"
+
+# 0. dump hooks: produce dumps INSIDE the data dataset before it is frozen.
+#    HOOKS_FILE line: NAME TIMEOUT_SECONDS COMMAND... (run with bash -c).
+#    A failed hook is recorded for check and logged; it does not stop the copy.
+if [ -n "$HOOKS_FILE" ] && [ -r "$HOOKS_FILE" ]; then
+  while IFS= read -r raw; do
+    raw="${raw%%#*}"
+    read -r hname htmo hcmd <<<"$raw" || true
+    if [ -z "${hname:-}" ] || [ -z "${hcmd:-}" ]; then continue; fi
+    skb_log "dump hook $hname (timeout ${htmo}s)"
+    if [ "$DRY" = 1 ]; then echo "DRY: timeout $htmo bash -c $hcmd"; continue; fi
+    if timeout "$htmo" bash -c "$hcmd"; then
+      rm -f "$STATE_DIR/hook-failed-$hname"
+    else
+      date +%s > "$STATE_DIR/hook-failed-$hname"
+      skb_log "WARN dump hook $hname failed"
+    fi
+  done < "$HOOKS_FILE"
+fi
+
+# 1. dump freshness, checked on the live tree before freezing it (warn only:
+#    a stale sidecar must not stop every other app from being copied).
+STALE=()
+while IFS= read -r raw; do
+  parsed=$(skb_parse_app_line "$raw") || continue
+  IFS=$'\t' read -r name src _ _ _ opts <<<"$parsed"
+  for o in $opts; do
+    case "$o" in
+      dump=*)
+        owner=$(skb_path_owner "$src") || skb_die "invalid dump source"
+        IFS=$'\t' read -r _ _ live <<<"$owner"
+        d="$live/${o#dump=}"
+        newest=$(find "$d" -maxdepth 1 -type f -size +0 -printf '%T@\n' 2>/dev/null | sort -rn | head -1)
+        if [ -z "$newest" ] || [ "$(skb_age_h "${newest%.*}")" -ge "$DUMP_MAX_AGE_H" ]; then
+          STALE+=("$name:${o#dump=}")
+          date +%s > "$STATE_DIR/dump-stale-$name"
+        else
+          rm -f "$STATE_DIR/dump-stale-$name"
+        fi ;;
+    esac
+  done
+done < "$APPS_FILE"
+[ ${#STALE[@]} -eq 0 ] || skb_log "WARN stale or missing dumps (older than ${DUMP_MAX_AGE_H}h): ${STALE[*]}"
+
+# Freeze each selected owning dataset once; clean up even on partial failure.
+declare -A FROZEN_DATASETS=()
+# shellcheck disable=SC2317,SC2329
+cleanup() {
+  local ds
+  for ds in "${!FROZEN_DATASETS[@]}"; do
+    [ "$DRY" = 1 ] || zfs destroy "$ds@$SNAP" 2>/dev/null || true
+  done
+}
+trap cleanup EXIT
+trap 'exit 143' TERM INT
+
+DOW=$(date +%u); DOM=$(date +%d)
+FAIL=0; DONE=0
+while IFS= read -r raw; do
+  parsed=$(skb_parse_app_line "$raw") || continue
+  IFS=$'\t' read -r name src kd kw km opts <<<"$parsed"
+  if [ ${#ONLY[@]} -gt 0 ] && [[ ! " ${ONLY[*]} " == *" $name "* ]]; then continue; fi
+  owner=$(skb_copy_owner "$src") || skb_die "invalid copy source"
+  IFS=$'\t' read -r ds inner live <<<"$owner"
+  if [ -z "${FROZEN_DATASETS[$ds]:-}" ]; then
+    run zfs snapshot "$ds@$SNAP"
+    FROZEN_DATASETS[$ds]=1
+  fi
+  FROZEN="$(skb_mountpoint "$ds")/.zfs/snapshot/$SNAP"
+  [ "$DRY" = 1 ] || [ -d "$FROZEN" ] || skb_die "snapshot dir not visible: $FROZEN"
+  src="$inner"
+  dst="$BAK_ROOT/$name"
+  if ! zfs list -H "$dst" >/dev/null 2>&1; then
+    run zfs create -p "$dst"
+  fi
+  dmnt=$(skb_mountpoint "$dst" 2>/dev/null || echo "/nonexistent/$name")
+  if [ ! -d "$FROZEN/$src" ] && [ "$DRY" = 0 ]; then
+    skb_log "FAIL $name: source $src missing in snapshot"; FAIL=1; continue
+  fi
+  ex=()
+  # shellcheck disable=SC2086
+  for o in $opts; do case "$o" in --exclude=*) ex+=("$o") ;; esac; done
+  # shellcheck disable=SC2086
+  mapfile -t nx < <(skb_newest_excludes "$FROZEN/$src" $opts)
+  skb_log "== $name: $src -> $dst"
+  t0=$(date +%s)
+  if run ionice -c3 nice -n19 rsync -aHAX --numeric-ids --delete --delete-excluded \
+        --bwlimit="$RSYNC_BWLIMIT" --stats "${ex[@]}" "${nx[@]}" \
+        "$FROZEN/$src/" "$dmnt/" > "$STATE_DIR/rsync-$name.log" 2>&1; then
+    grep -E '^(Number of regular files transferred|Total file size|Total transferred file size|Number of files:)' \
+      "$STATE_DIR/rsync-$name.log" | tr '\n' ' ' | sed "s/^/$name: /" || true
+    echo " ($(( $(date +%s) - t0 ))s)"
+    run zfs snapshot "$dst@daily-$TS"
+    [ "$DOW" = 7 ] && run zfs snapshot "$dst@weekly-$TS"
+    [ "$DOM" = 01 ] && run zfs snapshot "$dst@monthly-$TS"
+    for k in "daily:$kd" "weekly:$kw" "monthly:$km"; do
+      p=${k%%:*}; n=${k##*:}
+      zfs list -H -t snapshot -o name -s creation -d 1 "$dst" 2>/dev/null \
+        | { grep -F "@$p-" || true; } | skb_prune_list "$n" \
+        | while IFS= read -r s; do run zfs destroy "$s"; done
+    done
+    [ "$DRY" = 1 ] || date +%s > "$STATE_DIR/last-ok-$name"
+    DONE=$((DONE + 1))
+  else
+    skb_log "FAIL $name: rsync exit $?, see $STATE_DIR/rsync-$name.log"; FAIL=1
+  fi
+done < "$APPS_FILE"
+
+skb_log "done: $DONE app(s) copied, fail=$FAIL"
+exit "$FAIL"

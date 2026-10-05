@@ -1,0 +1,140 @@
+#!/bin/bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# check: tier 6, read-only staleness and health check for every tier.
+# Prints one line per check ("OK ..." / "STALE ..." / "WARN ..." / "PENDING ...")
+# and exits 1 if any line is STALE or WARN. Changes nothing but its report.
+#
+#   check              for a person, or the alert host over ssh (alert-host-check)
+#   check --notify     also send one alert per STALE/WARN line through the
+#                      configured notifier (the local check timer uses this)
+#
+# The restic tier is judged from the state files of the last good run per
+# set (no repository call, so an hourly check costs no B2 transactions).
+# CHECK_RESTIC_REPO=1 also asks the repository for its newest snapshot per
+# set, which catches a repository that lost snapshots or became unreachable.
+set -uo pipefail
+PATH=${BACKUP_TEST_PATH:+$BACKUP_TEST_PATH:}/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# shellcheck source=lib.sh
+. "${BACKUP_LIB:-$(dirname "$(readlink -f "$0")")/lib.sh}"
+skb_load_conf
+NOTIFY=0
+[ "${1:-}" = --notify ] && NOTIFY=1
+now=$(date +%s); rc=0
+LINES=()
+bad()  { LINES+=("$1 $2"); echo "$1 $2"; rc=1; }
+good() { LINES+=("OK $1"); echo "OK $1"; }
+note() { LINES+=("$1"); echo "$1"; }
+
+# Tier 1: every included dataset, never prune externally created snapshots.
+skb_discover_datasets
+for ds in "${SKB_DATASETS[@]}"; do
+  s=$(skb_newest_snapshot "$ds" "$SANOID_PREFIX")
+  if [ -z "$s" ]; then bad STALE "tier1: no ${SANOID_PREFIX}* snapshot of $ds"
+  else
+    age=$(( (now - $(skb_snap_epoch "$s")) / 60 ))
+    max_age="$MAX_AGE_SANOID_MIN"
+    for policy in $SRC_MAX_AGES; do
+      [ "${policy%=*}" != "$ds" ] || max_age="${policy##*=}"
+    done
+    if [ "$age" -gt "$max_age" ]; then bad STALE "tier1: newest $s is ${age}m old (max ${max_age}m)"
+    else good "tier1: $s ${age}m"; fi
+  fi
+  if [ "$SNAP_ADOPT_EXISTING" = 1 ]; then
+    while IFS= read -r external; do
+      case "${external#*@}" in "$SANOID_PREFIX"*|pre-*|"$SNAP_PREFIX_SYNC"-*) continue;; esac
+      note "EXTERNAL tier1: $external provenance=external-tool retention=unmanaged"
+    done < <(zfs list -H -t snapshot -o name -s creation -d 1 "$ds")
+  fi
+done
+
+# Tier 2: newest daily-* snapshot per app dataset; tier 3 dump freshness.
+if [ -n "$BAK_ROOT" ] && [ -r "$APPS_FILE" ]; then
+  while IFS= read -r raw; do
+    parsed=$(skb_parse_app_line "$raw") || continue
+    name=${parsed%%$'\t'*}
+    s=$(skb_newest_snapshot "$BAK_ROOT/$name" daily- 2>/dev/null)
+    if [ -z "$s" ]; then bad STALE "tier2: $name has no daily snapshot"; continue; fi
+    age=$(skb_age_h "$(skb_snap_epoch "$s")")
+    if [ "$age" -ge "$MAX_AGE_SKBAK_H" ]; then bad STALE "tier2: $name newest $s is ${age}h old"
+    else good "tier2: $name ${age}h"; fi
+    [ -e "$STATE_DIR/dump-stale-$name" ] && bad WARN "tier3: $name dump older than ${DUMP_MAX_AGE_H}h at last sync"
+  done < "$APPS_FILE"
+fi
+for f in "$STATE_DIR"/hook-failed-*; do
+  [ -e "$f" ] || continue
+  bad WARN "tier3: dump hook ${f##*/hook-failed-} failed at last sync"
+done
+
+# Tier 4: last successful restic run per set (state files, no repo access).
+if [ -n "$RESTIC_SETS_FILE" ] && [ -r "$RESTIC_SETS_FILE" ]; then
+  while read -r tag _; do
+    case "$tag" in ''|\#*) continue ;; esac
+    f="$STATE_DIR/restic-last-ok-$tag"
+    if [ -r "$f" ]; then
+      age=$(skb_age_h "$(cat "$f")")
+      if [ "$age" -ge "$MAX_AGE_RESTIC_H" ]; then bad STALE "tier4: restic set $tag last ok ${age}h ago"
+      else good "tier4: $tag ${age}h"; fi
+    elif [ -r "$STATE_DIR/restic-seed-started-$tag" ] \
+         && [ $(( (now - $(cat "$STATE_DIR/restic-seed-started-$tag")) / 86400 )) -lt "$RESTIC_SEED_GRACE_D" ]; then
+      note "PENDING tier4: $tag first upload in progress"
+    else
+      bad STALE "tier4: restic set $tag never completed"
+    fi
+  done < "$RESTIC_SETS_FILE"
+  if [ "$CHECK_RESTIC_REPO" = 1 ]; then
+    if ! ( skb_restic_env ) 2>/dev/null; then
+      bad STALE "tier4: restic environment $RESTIC_ENV_FILE not readable"
+    else
+      skb_restic_env
+      while read -r tag _; do
+        case "$tag" in ''|\#*) continue ;; esac
+        if ! js=$(restic snapshots --no-lock --json --host "$RESTIC_HOST" --tag "$tag" 2>/dev/null); then
+          bad STALE "tier4: repository unreachable for set $tag"; continue
+        fi
+        t=$(printf '%s' "$js" | python3 -c 'import sys,json
+s=json.load(sys.stdin) or []
+print(max((x["time"] for x in s), default=""))')
+        if [ -z "$t" ]; then bad STALE "tier4: repository holds no snapshot of set $tag"; continue; fi
+        age=$(skb_age_h "$(date -d "$t" +%s)")
+        if [ "$age" -ge "$MAX_AGE_RESTIC_H" ]; then bad STALE "tier4: repository newest snapshot of set $tag is ${age}h old"
+        else good "tier4: repository $tag ${age}h"; fi
+      done < "$RESTIC_SETS_FILE"
+    fi
+  fi
+fi
+
+# Pools and thin pool.
+for p in "${SRC_DATASET%%/*}" "${BAK_ROOT%%/*}"; do
+  [ -n "$p" ] || continue
+  h=$(zpool list -H -o health "$p" 2>/dev/null || echo MISSING)
+  cap=$(zpool list -H -o capacity "$p" 2>/dev/null | tr -d %)
+  if [ "$h" != ONLINE ]; then bad WARN "pool $p health $h"
+  elif [ "${cap:-0}" -ge "$POOL_CAP_WARN" ]; then bad WARN "pool $p ${cap}% full"
+  else good "pool $p $h ${cap}%"; fi
+done
+if [ -n "$THINPOOL" ]; then
+  d=$(lvs --noheadings -o data_percent "$THINPOOL" 2>/dev/null | tr -d ' ' | cut -d. -f1)
+  if [ "${d:-0}" -ge "$THINPOOL_WARN" ]; then bad WARN "thin pool $THINPOOL data ${d}%"
+  else good "thin pool $THINPOOL ${d}%"; fi
+fi
+
+summary="all fresh"
+[ "$rc" = 0 ] || summary="$(printf '%s\n' "${LINES[@]}" | grep -cE '^(STALE|WARN) ') finding(s)"
+LINES+=("" "RESULT: $summary")
+printf '%s\n' "${LINES[@]}" | skb_report check-latest.txt "backup check" >/dev/null || true
+
+if [ "$NOTIFY" = 1 ]; then
+  for l in "${LINES[@]}"; do
+    case "$l" in
+      STALE\ *) level=crit ;;
+      WARN\ *) level=warn ;;
+      *) continue ;;
+    esac
+    item=${l#* }
+    key="$BRAND_SHORT-$(printf '%s' "${item%%:*}" | tr -c 'A-Za-z0-9._-' '-')-$(printf '%s' "$item" | sha1sum | cut -c1-8)"
+    skb_notify "$level" "$key" "$item" "$BRAND_PRODUCT on $RESTIC_HOST: $l"
+  done
+  [ "$SKB_NOTIFY_FAILED" = 0 ] || echo "WARN one or more notifications were not delivered" >&2
+fi
+exit "$rc"
