@@ -156,6 +156,62 @@ still readable), swap the mounts back to `/var/data/skhub-<env>/{html,custom_app
 and drop the hostname constraint (again in separate updates, or clear the two
 keys and redeploy), scale back up and turn maintenance off.
 
+## Local database on a pinned node
+
+By default `db` (MariaDB) and `redis` keep their data under
+`/var/data/runtime` (shared storage, NFS on a typical instance) and float
+across workers. NFS write latency there (seen as high as ~124 ms RTT on one
+instance) shows up as slow `occ` capability checks and Talk HPB backend
+timeouts. To keep them on local disk on one node:
+
+```yaml
+skhub:
+  DATA_NODE: <node hostname>               # also an inventory host
+  DB_DATA_PATH: /var/lib/skhub-<env>/db
+  REDIS_DATA_PATH: /var/lib/skhub-<env>/redis
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `DATA_NODE` | empty | Node hostname: adds `node.hostname == <DATA_NODE>` to `db` and `redis` only (after `placement_constraints`). Required with a local `DB_DATA_PATH`/`REDIS_DATA_PATH`: the play stops without it, because local data on a floating service is an empty database after the next reschedule. `db-backup`, `clamav`, `imaginary`, `collabora` and the app services keep floating. |
+| `DB_DATA_PATH` | `/var/data/runtime/skhub-<env>/db` | MariaDB datadir (`/var/lib/mysql`). A path outside `/var/data` is local disk on `DATA_NODE`. |
+| `REDIS_DATA_PATH` | `/var/data/runtime/skhub-<env>/redis` | Redis `/data`. Same rule. |
+
+A path outside `/var/data` is created on `DATA_NODE` (not recursive, same
+owner/mode as the shared-storage copy: `db` root:root 0755, `redis`
+root:root 0777, since redis runs as root in the container and forks
+background-save children) and the old `/var/data/runtime` path is no longer
+created. Local data is not on shared storage: back it up with the node, and
+keep the nightly `database-dump/` dump on shared storage as it is.
+
+### Migrating a running instance
+
+1. Pick `DATA_NODE` (normally the node already running `db`/`redis`) and
+   check its local free space against `du -sh /var/data/runtime/skhub-<env>/{db,redis}`.
+2. `occ maintenance:mode --on`, scale `db` and `redis` to 0, and wait until
+   no task is running.
+3. On `DATA_NODE`: `rsync -aHAX --numeric-ids /var/data/runtime/skhub-<env>/db/
+   <path>/db/` (same for redis). Verify: file counts and total sizes match on
+   both sides (`find <dir> | wc -l`, `du -s --apparent-size`).
+4. Swap the mounts to `<path>/db` and `<path>/redis` (a `docker service
+   update --mount-rm ... --mount-add ...` per service, plus `--constraint-add
+   node.hostname==<DATA_NODE>`), scale back to 1, verify a db ping and
+   `occ maintenance:mode --off`.
+5. Rename the old NFS dirs (for example `db.STALE-moved-to-<node>-local-<date>`)
+   so a future deploy from a template that still hardcodes the old path fails
+   loudly (no directory to bind-mount) instead of starting on stale data, and
+   leave them in place as the rollback copy. Never delete them.
+6. Set the three vault keys (`DATA_NODE`, `DB_DATA_PATH`, `REDIS_DATA_PATH`)
+   and deploy skhub so the next redeploy renders the same mounts instead of
+   reverting them.
+
+**WARNING:** do not switch a mount by hand with one
+`docker service update --mount-rm <target> --mount-add type=bind,src=...,target=<target>`.
+`--mount-rm` is applied last, so it removes BOTH the old and the new mount
+for that target, and the container starts on an empty anonymous volume. Do
+the `--mount-rm` and `--mount-add` in separate updates, or (better) redeploy
+the stack from the template.
+
 ## Talk HPB TURN
 
 With `skhub.enable_talk_hpb: true`, the `talk-hpb` service (aio-talk) runs

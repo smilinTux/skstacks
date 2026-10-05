@@ -62,12 +62,31 @@ ACME_SVC="${STACK_NAME}_traefik-acme"
 WORKER_SVC="${STACK_NAME}_traefik-worker"
 
 echo -e "${YELLOW}Restarting traefik-acme...${NC}"
+ACME_RESTARTED=0
+ACME_REPLICAS=""
 if docker service inspect "$ACME_SVC" >/dev/null 2>&1; then
+    ACME_RESTARTED=1
     DESIRED=$(docker service inspect --format '{{ '{{.Spec.Mode.Replicated.Replicas}}' }}' "$ACME_SVC" 2>/dev/null || echo "1")
     if [ -z "$DESIRED" ] || [ "$DESIRED" = "<no value>" ]; then DESIRED=1; fi
-    docker service scale "$ACME_SVC"=0 || true
+    # --detach=true makes scale fire-and-forget instead of blocking until
+    # converged with no bound of its own; timeout is a backstop in case a
+    # Swarm manager is slow to even accept the request. A Pending task
+    # (e.g. insufficient node resources) hung this call for 48+ minutes
+    # with zero output (ansible's shell: module buffers output until the
+    # task ends) on the v2.26.0 release-gate run (lane 1, 2026-10-04) --
+    # #140 bounded the worker-role poll and the service-update calls below
+    # but missed these two scale calls. The poll loop right after this is
+    # the bounded wait instead.
+    timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service scale --detach=true "$ACME_SVC"=0 || true
     sleep 2
-    docker service scale "$ACME_SVC"="$DESIRED" || true
+    timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service scale --detach=true "$ACME_SVC"="$DESIRED" || true
+
+    ACME_REPLICAS="0/0"
+    for _ in $(seq 1 36); do
+        ACME_REPLICAS=$(timeout 15 docker service ls --filter "name=${ACME_SVC}" --format "{{ '{{.Replicas}}' }}" 2>/dev/null || echo "0/0")
+        echo "$ACME_REPLICAS" | grep -qE '^([1-9][0-9]*)/\1$' && break
+        sleep 5
+    done
 else
     echo "Warning: $ACME_SVC not found, skipping restart"
 fi
@@ -107,6 +126,17 @@ else
     timeout 15 docker service logs --tail 20 "$WORKER_SVC" 2>/dev/null || echo "Could not retrieve logs for $WORKER_SVC"
     echo -e "${RED}${APP} deploy failed: worker role never converged (${WORKER_REPLICAS})${NC}"
     exit 1
+fi
+
+if [ "$ACME_RESTARTED" = 1 ]; then
+    if echo "$ACME_REPLICAS" | grep -qE '^([1-9][0-9]*)/\1$'; then
+        echo -e "${GREEN}${APP} acme-master role is healthy: ${ACME_REPLICAS}${NC}"
+    else
+        echo -e "${RED}${APP} acme-master health check: ${ACME_REPLICAS}${NC}"
+        timeout 15 docker service logs --tail 20 "$ACME_SVC" 2>/dev/null || echo "Could not retrieve logs for $ACME_SVC"
+        echo -e "${RED}${APP} deploy failed: acme-master role never converged (${ACME_REPLICAS})${NC}"
+        exit 1
+    fi
 fi
 
 echo -e "${GREEN}Deployment complete!${NC}"
