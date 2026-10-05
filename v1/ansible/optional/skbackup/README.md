@@ -73,8 +73,9 @@ survives what:
 ```
 
 - **Frozen source.** Copies and uploads never read the live tree. The copy
-  reads a snapshot taken after the dump hooks; restic reads the newest sanoid
-  snapshot. Every app is copied as of one instant.
+  reads a snapshot taken after the dump hooks. Restic reads the newest sanoid
+  snapshot in single-dataset mode, or creates one atomic capture for a tree.
+  Every app is copied as of one instant.
 - **Stable snapshot path for restic.** The snapshot is mounted read-only at
   the same path every night (`offsite.mount_path`, default
   `/run/<short_name>/src`). restic picks its parent snapshot by path; with a
@@ -277,8 +278,9 @@ truncates the only copy.
 
 ### Tier 4: offsite
 
-`<short_name> restic backup` mounts the newest `autosnap_*` snapshot at the
-stable path and backs up every set. The first seed of a large set takes
+`<short_name> restic backup` mounts frozen sources at the stable path and
+backs up every set. Single-dataset mode uses the newest `autosnap_*`; tree
+mode captures all included filesystems atomically with one common name. The first seed of a large set takes
 nights at a sane upload limit; the daily increment is then small. gzip
 defeats restic dedup; dump with `gzip --rsyncable` (or uncompressed) where
 you can. `<short_name> restic forget-prune` runs weekly (B2 class B/C
@@ -578,7 +580,7 @@ skbackup:
       - {name: cloud, kind: paths, paths: [share/cloud], limit_upload_kbps: 4000, pack_size_mib: 64}
 ```
 
-Restic selects the newest autosnap name common to all included datasets. If none is common, it selects the parent's newest and warns when a child needs its own newest autosnap. The read-only mount tree uses stable dataset-relative paths, mounts parents first and unmounts in reverse on exit or failure. Child mount directories must exist without symlinks in the parent snapshot. Paths are relative to the root; excluded descendants are also filtered when a set covers their ancestor. Tier-2 apps must fit within one included dataset; only that owning dataset is frozen. Symlink source paths are refused. Restore tests record every source snapshot and compare against the originating dataset, with the existing unchanged-live-file fallback after snapshot expiry.
+For a recursive tree, restic creates one atomic capture with a unique `<short_name>-restic-<uuid>` name on every included filesystem. An unrestricted filesystem tree uses `zfs snapshot -r`; if excluded descendants or volumes exist, one `zfs snapshot` command names only the included filesystems. This keeps excluded/private datasets and zvols untouched. A parent snapshot alone contains empty child mount directories, so every included child is mounted separately. Single-dataset mode continues to use the newest sanoid snapshot. The read-only mount tree uses stable dataset-relative paths, mounts parents first and unmounts in reverse on exit or failure. Child mount directories must exist without symlinks in the parent snapshot. Paths are relative to the root; excluded descendants are also filtered when a set covers their ancestor. Tier-2 apps must fit within one included dataset; only that owning dataset is frozen. Symlink source paths are refused. Restore tests record every source snapshot and compare against the originating dataset, with the existing unchanged-live-file fallback after snapshot expiry. The engine records capture ownership before the atomic operation, retains captures referenced by each set's last successful backup, and releases unreferenced owned captures after unmounting. A selected-set run preserves other sets' references; a failed run preserves prior successful references. External snapshots, including matching name prefixes, are never claimed or pruned. Failed unmounts retain frozen sources and return failure. These offsite captures are separate from sanoid tier-1 retention; removing a set also requires the operator to retire its provenance file before its last capture can be released.
 
 Vault options under `offsite`: `pack_size_mib: 16` (per-set override supported), `compression: auto` (`max` or `off` also accepted), `read_concurrency` (unset uses restic's default), `retry_lock: 30m`, `exclude_caches: true`, `exclude_if_present: [.nobackup]`, `prune_max_unused: 5%`, `check_subset: 2.5%`. Each set can override `limit_upload_kbps`. A weekly subset-check timer is installed for recursive trees or an explicitly configured `check_subset`; `schedule.repo_check` defaults to Sunday 15:00. Older single-dataset vaults keep identical rendered configuration and units. `restic check [SUBSET]` uses the configured subset by default.
 

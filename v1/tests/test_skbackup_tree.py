@@ -110,9 +110,10 @@ def test_copy_rejects_excluded_traversal_and_symlink_sources(tmp_path,src):
 
 @needs_restic
 def test_tree_backup_mounts_children_and_restores_from_origin(tmp_path):
-    host=tree_host(tmp_path);name=snapshot_tree(host)
+    host=tree_host(tmp_path);snapshot_tree(host)
     host.run('restic','init',check=True)
     host.run('restic','backup',check=True)
+    name=(host.state/'restic-src-users').read_text().strip().split('@')[1]
     (host.data/'share/users/file').write_text('live changed bytes')
     host.run('restic','restore-test',check=True)
     provenance=(host.state/'restic-tree-src-users').read_text()
@@ -125,16 +126,19 @@ def test_tree_backup_mounts_children_and_restores_from_origin(tmp_path):
 
 
 @needs_restic
-def test_common_snapshot_preferred_and_child_fallback_warns(tmp_path):
+def test_tree_capture_supersedes_non_atomic_sanoid_names(tmp_path):
     host=tree_host(tmp_path);old=snapshot_tree(host)
     host.zfs('snapshot','tank/data@autosnap_2027-01-16_08:00:00_hourly')
     host.run('restic','init',check=True)
     host.run('restic','backup',check=True)
-    assert old in (host.state/'restic-src-users').read_text()
+    first=(host.state/'restic-src-users').read_text().strip()
+    assert old not in first and '@skbackup-restic-' in first
     host.zfs('destroy','tank/data/share/users@'+old)
     host.zfs('snapshot','tank/data/share/users@autosnap_2027-01-17_08:00:00_hourly')
     proc=host.run('restic','backup',check=True)
-    assert 'WARN' in proc.stdout and 'fallback' in proc.stdout.lower()
+    second=(host.state/'restic-src-users').read_text().strip()
+    assert second != first and 'fallback' not in proc.stdout.lower()
+    assert len({s.split('@')[1] for s in (host.state/'restic-tree-src-users').read_text().splitlines()})==1
 
 
 @needs_restic
@@ -230,8 +234,10 @@ def test_partial_mount_failure_unmounts_parent(tmp_path):
     host.sanoid()
     host.zfs('snapshot','tank/data/shared@autosnap_only_shared')
     host.run('restic','init',check=True)
+    mount=host.bin/'mount';original=mount.read_text().split('\n',1)[1]
+    mount.write_text('#!/bin/sh\nif [ "$6" = "'+str(host.mnt/'shared')+'" ]; then exit 1; fi\n'+original)
     proc=host.run('restic','backup')
-    assert proc.returncode!=0 and 'no autosnap_' in proc.stderr
+    assert proc.returncode!=0
     state=json.loads(host.zstate.read_text())
     mounts=[e[1] for e in state['events'] if e[0]=='mount']
     unmounts=[e[1] for e in state['events'] if e[0]=='umount']
@@ -302,6 +308,7 @@ def test_timer_termination_pings_failure_and_unmounts(tmp_path):
         stdout,stderr=proc.communicate(timeout=10)
         assert proc.returncode!=0 and received==['/opaque-test-token/fail']
         assert not json.loads(host.zstate.read_text())['mounts']
+        assert not any('@skbackup-restic-' in s for s in json.loads(host.zstate.read_text())['snaps'])
         assert 'opaque-test-token' not in stdout+stderr
     finally:
         if proc.poll() is None: os.killpg(proc.pid,signal.SIGKILL);proc.wait()
@@ -310,8 +317,9 @@ def test_timer_termination_pings_failure_and_unmounts(tmp_path):
 
 @needs_restic
 def test_child_restore_detects_snapshot_corruption(tmp_path):
-    host=tree_host(tmp_path);name=snapshot_tree(host)
+    host=tree_host(tmp_path);snapshot_tree(host)
     host.run('restic','init',check=True);host.run('restic','backup',check=True)
+    name=(host.state/'restic-src-users').read_text().strip().split('@')[1]
     (host.data/'share/users/.zfs/snapshot'/name/'file').write_text('corrupted frozen bytes')
     proc=host.run('restic','restore-test')
     assert proc.returncode!=0 and 'MISMATCH' in proc.stdout and 'RESULT: FAIL' in proc.stdout

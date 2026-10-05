@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# restic: tier 4. restic from the newest sanoid snapshot of the data dataset
+# restic: tier 4. restic from frozen snapshots of the data dataset
 # to an offsite repository (B2 via its S3 endpoint, native b2:, rest:, a
 # local path). Runs ON the storage host as root. The snapshot is mounted
 # read-only at a STABLE path (RESTIC_SRC_MNT), so restic finds its parent
@@ -32,39 +32,67 @@ R() { ionice -c3 nice -n19 restic --retry-lock "$RESTIC_RETRY_LOCK" --compressio
 
 # Keep mount cleanup installed before the first mount, including partial failure.
 MOUNTED=(); TREE_SNAPS=()
+OWNED_FILE="$STATE_DIR/restic-owned-snapshots"
 # shellcheck disable=SC2317,SC2329
 unmount_tree() {
-  local i
-  for ((i=${#MOUNTED[@]}-1; i>=0; i--)); do umount "${MOUNTED[i]}" 2>/dev/null || true; done
+  local rc=$? i mounted=0 snap ds name keep=()
+  for ((i=${#MOUNTED[@]}-1; i>=0; i--)); do
+    if ! umount "${MOUNTED[i]}"; then
+      skb_log "WARN could not unmount ${MOUNTED[i]}"; mounted=1
+    fi
+  done
+  # Never release frozen sources while a mount is still in use.
+  if [ "$mounted" = 1 ]; then exit 1; fi
+  if [ "$SRC_RECURSIVE" = 1 ] && [ -f "$OWNED_FILE" ]; then
+    while IFS= read -r snap; do
+      ds="${snap%@*}"; name="${snap#*@}"
+      if { [ "$ds" != "$SRC_DATASET" ] && ! skb_dataset_under_root "$ds"; } || ! [[ "$name" =~ ^"$BRAND_SHORT-restic-"[0-9a-f]{32}$ ]]; then
+        skb_log "WARN invalid capture ownership entry"; keep+=("$snap"); continue
+      fi
+      if grep -Fqx -- "$snap" "$STATE_DIR"/restic-tree-src-* 2>/dev/null; then
+        keep+=("$snap")
+      elif zfs list -H "$snap" >/dev/null 2>&1 && ! zfs destroy "$snap"; then
+        skb_log "WARN could not release $snap"; keep+=("$snap"); rc=1
+      fi
+    done < "$OWNED_FILE"
+    : > "$OWNED_FILE.tmp"
+    [ ${#keep[@]} -eq 0 ] || printf '%s\n' "${keep[@]}" > "$OWNED_FILE.tmp"
+    mv "$OWNED_FILE.tmp" "$OWNED_FILE"
+  fi
+  exit "$rc"
 }
 mount_newest_snapshot() {
   skb_discover_datasets
-  local ds candidate name common selected rel target listing
-  SNAP=$(skb_newest_snapshot "$SRC_DATASET" "$SANOID_PREFIX")
-  [ -n "$SNAP" ] || skb_die "no ${SANOID_PREFIX}* snapshot of $SRC_DATASET"
-  selected="${SNAP#*@}"
-  if [ "$SRC_RECURSIVE" = 1 ]; then
-    listing=$(zfs list -H -t snapshot -o name -s creation -d 1 "$SRC_DATASET") || skb_die "snapshot discovery failed"
-    while IFS= read -r candidate; do
-      name="${candidate#*@}"; [[ "$name" = "$SANOID_PREFIX"* ]] || continue
-      common=1
-      for ds in "${SKB_DATASETS[@]}"; do
-        zfs list -H "$ds@$name" >/dev/null 2>&1 || { common=0; break; }
-      done
-      [ "$common" = 0 ] || selected="$name"
-    done <<<"$listing"
-    SNAP="$SRC_DATASET@$selected"
-  fi
+  local ds candidate selected rel target listing captures=()
   trap unmount_tree EXIT
   trap 'exit 143' TERM INT
+  if [ "$SRC_RECURSIVE" = 1 ]; then
+    selected="$BRAND_SHORT-restic-$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
+    for ds in "${SKB_DATASETS[@]}"; do
+      candidate="$ds@$selected"
+      ! zfs list -H "$candidate" >/dev/null 2>&1 || skb_die "capture name already exists"
+      captures+=("$candidate")
+    done
+    listing=$(zfs list -H -r -t filesystem,volume -o name "$SRC_DATASET") || skb_die "capture discovery failed"
+    # Register unique names before capture so signals also clean newly created
+    # snapshots. Ownership never comes from a name-prefix scan of the pool.
+    printf '%s\n' "${captures[@]}" >> "$OWNED_FILE"
+    if [ "$listing" = "$(printf '%s\n' "${SKB_DATASETS[@]}")" ]; then
+      zfs snapshot -r "$SRC_DATASET@$selected"
+    else
+      # One atomic operation, without capturing excluded descendants or zvols.
+      zfs snapshot "${captures[@]}"
+    fi
+    SNAP="$SRC_DATASET@$selected"
+  else
+    SNAP=$(skb_newest_snapshot "$SRC_DATASET" "$SANOID_PREFIX")
+    [ -n "$SNAP" ] || skb_die "no ${SANOID_PREFIX}* snapshot of $SRC_DATASET"
+    selected="${SNAP#*@}"
+  fi
   mkdir -p "$RESTIC_SRC_MNT"
   for ds in "${SKB_DATASETS[@]}"; do
     candidate="$ds@$selected"
-    if ! zfs list -H "$candidate" >/dev/null 2>&1; then
-      candidate=$(skb_newest_snapshot "$ds" "$SANOID_PREFIX")
-      [ -n "$candidate" ] || skb_die "no ${SANOID_PREFIX}* snapshot of $ds"
-      skb_log "WARN snapshot fallback: $ds uses $candidate"
-    fi
+    zfs list -H "$candidate" >/dev/null 2>&1 || skb_die "captured snapshot missing: $candidate"
     rel="${ds#"$SRC_DATASET"}"; target="$RESTIC_SRC_MNT$rel"
     # A child's stable mount directory must exist in the parent snapshot.
     [ -d "$target" ] || skb_die "snapshot mount directory missing: $target"
@@ -149,7 +177,8 @@ cmd_backup() {
         "${EXCL[@]}" "${PATHS[@]}"; then
       date +%s > "$STATE_DIR/restic-last-ok-$tag"
       echo "$SNAP" > "$STATE_DIR/restic-src-$tag"
-      printf '%s\n' "${TREE_SNAPS[@]}" > "$STATE_DIR/restic-tree-src-$tag"
+      printf '%s\n' "${TREE_SNAPS[@]}" > "$STATE_DIR/restic-tree-src-$tag.tmp"
+      mv "$STATE_DIR/restic-tree-src-$tag.tmp" "$STATE_DIR/restic-tree-src-$tag"
     else
       skb_log "FAIL restic set $tag"; fail=1
     fi

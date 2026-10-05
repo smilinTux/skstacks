@@ -57,21 +57,30 @@ def zfs(args):
     cmd, rest = args[0], args[1:]
     flags, opts, pos = parse(rest)
     if cmd == "snapshot":
-        snap = pos[0]
-        ds = snap.split("@")[0]
-        if ds not in st["datasets"]:
-            die(f"cannot open '{ds}': dataset does not exist")
-        if snap in st["snaps"]:
-            die(f"cannot create snapshot '{snap}': dataset already exists")
-        src = Path(st["datasets"][ds])
-        dst = snapdir(st, snap)
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        children = [Path(m) for d,m in st['datasets'].items() if d.startswith(ds+'/') and Path(m).is_relative_to(src)]
-        shutil.copytree(src, dst, symlinks=True, ignore=lambda d,n: [x for x in n if x == '.zfs' or Path(d)/x in children])
-        for child in children:
-            (dst/child.relative_to(src)).mkdir(parents=True, exist_ok=True)
-        st.setdefault('events', []).append(['snapshot', snap])
-        st["snaps"][snap] = int(os.environ.get("FAKEZFS_NOW") or time.time())
+        snaps = []
+        for snap in pos:
+            ds, name = snap.split('@', 1)
+            if ds not in st['datasets']:
+                die(f"cannot open '{ds}': dataset does not exist")
+            datasets = sorted(d for d in st['datasets'] if d == ds or ('r' in flags and d.startswith(ds+'/')))
+            snaps.extend(d+'@'+name for d in datasets)
+        # ZFS rejects the entire atomic operation if any requested name exists.
+        for snap in snaps:
+            if snap in st['snaps']:
+                die(f"cannot create snapshot '{snap}': dataset already exists")
+        created = int(os.environ.get('FAKEZFS_NOW') or time.time())
+        for snap in snaps:
+            ds = snap.split('@')[0]
+            src = Path(st['datasets'][ds])
+            dst = snapdir(st, snap)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            children = [Path(m) for d,m in st['datasets'].items() if d.startswith(ds+'/') and Path(m).is_relative_to(src)]
+            shutil.copytree(src, dst, symlinks=True, ignore=lambda d,n: [x for x in n if x == '.zfs' or Path(d)/x in children])
+            for child in children:
+                (dst/child.relative_to(src)).mkdir(parents=True, exist_ok=True)
+            st.setdefault('events', []).append(['snapshot', snap])
+            st['snaps'][snap] = created
+        st.setdefault('snapshot_calls', []).append(rest)
         save(st)
     elif cmd == "destroy":
         snap = pos[0]
@@ -123,7 +132,8 @@ def zfs(args):
             if target not in st["datasets"] and target not in st["snaps"]:
                 die(f"cannot open '{target}': dataset does not exist")
             if 'r' in flags:
-                for ds in sorted(d for d in st['datasets'] if d==target or d.startswith(target+'/')):
+                for ds in sorted(d for d in st['datasets'] if (d==target or d.startswith(target+'/')) and
+                                 (opts.get('-t') != 'filesystem' or d not in st.get('volumes', []))):
                     print(ds)
             else:
                 print(target)
