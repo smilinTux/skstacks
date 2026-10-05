@@ -92,7 +92,8 @@ def test_every_published_service_contributes_at_least_one_image():
     """Catches a template the image: regex misses: every service that ships
     a compose template must show up as the source of at least one image."""
     published_services = sorted(
-        p.name for p in (REPO_ROOT / "v1" / "ansible" / "optional").iterdir() if p.is_dir()
+        p.name for p in (REPO_ROOT / "v1" / "ansible" / "optional").iterdir()
+        if p.is_dir() and any(p.rglob("*.yml.j2"))  # host-level apps (skbackup) ship no compose
     )
     assert published_services, "expected at least one published v1 service"
     rows = run_list_images(REPO_ROOT)

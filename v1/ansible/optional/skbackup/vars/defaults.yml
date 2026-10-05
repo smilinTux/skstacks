@@ -1,0 +1,110 @@
+---
+# skbackup defaults. The deploy merges the instance vault's `skbackup:` block
+# over this (recursively; lists replace), so an instance sets only what
+# differs. Every key is documented in README.md ("Vault contract").
+skbackup_defaults:
+  # White-label layer (README "White-labelling"). Everything a customer sees
+  # on the storage host comes from here: CLI banner and help, alert subjects
+  # and bodies, reports, systemd unit descriptions and names, the install
+  # paths (/usr/local/lib/<short_name>, /etc/<short_name>, ...), restic tags.
+  branding:
+    product_name: SKBackup
+    short_name: skbackup
+    tagline: Snapshots, local copies and offsite backups for SKStacks storage hosts
+    alert_prefix: SKBackup
+    report_footer: SKBackup, part of SKStacks
+    contact: ""
+    logo_url: ""
+    credits: false
+    credits_text: Powered by SKStacks (https://github.com/smilinTux/skstacks)
+  # Optional prefix for the systemd unit NAMES: "acme-" gives
+  # acme-<short_name>-sync.timer. Descriptions always use product_name.
+  unit_prefix: ""
+  # restic --host and the host named in alerts and reports. Empty: the
+  # storage host's short hostname.
+  host_label: ""
+
+  # The ZFS dataset the swarm's NFS data lives on (required).
+  data_dataset: ""
+  datasets: {recursive: false, exclude: [], include_private: [], retention: {}}
+  state_dir: ""        # default /var/lib/<short_name>
+
+  # Tier 1: sanoid snapshots of data_dataset, plus the pre-deploy helper.
+  snapshots:
+    enabled: true
+    adopt_existing: false
+    retention: {hourly: 36, daily: 30, weekly: 8, monthly: 6}
+    predeploy_keep_days: 30
+    predeploy_keep_min: 2
+
+  # Tier 2: per-app copy from a frozen snapshot into a second pool.
+  copy:
+    enabled: false
+    target: ""          # parent dataset on the backup pool, one child per app
+    # KiB/s. 40000 on a USB SSD pool pushed NFS writes from a node to 45 s;
+    # 10000 kept them under 1.4 s. Raise only with measurements.
+    bwlimit_kbps: 10000
+    retention: {daily: 7, weekly: 4, monthly: 3}
+    # [{name, src (default: name), retention: {daily: 14},
+    #   excludes: [rsync patterns, "/x/" anchored at the app root],
+    #   newest: [{dir: database-dump, keep: 2}], dump: database-dump}]
+    apps: []
+
+  # Tier 3: dump hooks (run by sync before the snapshot) and freshness.
+  dumps:
+    max_age_hours: 26
+    hooks: []           # [{name, command, timeout: 1800}]
+
+  # Tier 4: restic from the newest sanoid snapshot, mounted at a stable path.
+  offsite:
+    enabled: false
+    repository: ""      # s3:https://s3.<region>.backblazeb2.com/<bucket>, b2:..., rest:..., /path
+    password: ""        # the restic repository password (keep an offline copy)
+    env: {}             # B2_ACCOUNT_ID/B2_ACCOUNT_KEY (mapped to AWS_* for s3:), AWS_*, B2_REGION ...
+    pack_size_mib: 16
+    compression: auto
+    read_concurrency: ""
+    retry_lock: 30m
+    exclude_caches: true
+    exclude_if_present: [.nobackup]
+    prune_max_unused: 5%
+    check_subset: 2.5%
+    limit_upload_kbps: 8000
+    mount_path: ""      # default /run/<short_name>/src
+    # [{name, kind: apps}] = every copied app with its excludes;
+    # [{name, kind: paths, paths: [rel, ...], excludes: [...]}] = anything else.
+    # Run in list order: small sets first so a multi-night seed finishes them first.
+    sets: []
+    forget: {daily: 7, weekly: 4, monthly: 6}
+    seed_grace_days: 7
+    install: apt        # apt | url | none
+    url: ""             # install: url -> a restic_<ver>_linux_<arch>.bz2 release asset
+    sha256: ""          # of that .bz2, required with install: url
+
+  # Tier 5: restore test.
+  restore_test:
+    enabled: false
+    app: ""             # src path of one copied app restored whole from the apps set
+    sample_set: ""      # a paths set to draw random files from
+    samples: 10
+
+  # Tier 6: staleness checks and alerts.
+  alerts:
+    healthchecks_url: ""
+    notifier: log       # none | log | command
+    # command: one line, split on whitespace, never run by a shell;
+    # placeholders per word: {level} {key} {subject} {message} {body}.
+    command: ""
+    check_repo: false   # also ask the repository hourly (B2 class C calls)
+    max_age: {snapshot_minutes: 120, copy_hours: 26, offsite_hours: 36}
+    pool_capacity_pct: 80
+    thinpool: ""        # an LVM thin pool under the backup pool, e.g. pve/data
+    thinpool_pct: 85
+
+  schedule:
+    sync: "*-*-* 05:30:00"
+    offsite: "*-*-* 06:30:00"
+    prune: "Sun *-*-* 13:00:00"
+    restore_test: "*-*-01 14:00:00"
+    check: "*-*-* *:17:00"
+    repo_check: "Sun *-*-* 15:00:00"

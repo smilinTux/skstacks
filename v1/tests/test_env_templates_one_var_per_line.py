@@ -13,6 +13,7 @@ undefined (all defaults) and once with every var set to a truthy stand-in
 (so the optional `{% if %}` branches render too)."""
 import pathlib
 import re
+import shlex
 
 import jinja2
 import jinja2.meta
@@ -49,6 +50,7 @@ def _tpl_env():
         undefined=jinja2.ChainableUndefined, trim_blocks=True, keep_trailing_newline=True
     )
     env.filters["bool"] = lambda v: str(v).lower() in ("1", "true", "yes", "on", "val")
+    env.filters["quote"] = lambda v: shlex.quote(str(v))  # ansible's shell-quote filter
     return env
 
 

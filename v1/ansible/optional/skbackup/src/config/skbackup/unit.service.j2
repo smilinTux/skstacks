@@ -1,0 +1,18 @@
+[Unit]
+Description={{ skb.branding.product_name }}: {{ item.desc }}
+After=zfs.target{% if item.network %} network-online.target{% endif %}{% if item.after | default('') %} {{ skb_unit_base }}-{{ item.after }}.service{% endif %}
+
+{% if item.network %}
+Wants=network-online.target
+{% endif %}
+ConditionPathExists={{ skb_conf }}
+
+[Service]
+Type=oneshot
+ExecStart={{ skb_cli }} {{ item.command }}
+Nice=19
+IOSchedulingClass=idle
+CPUSchedulingPolicy=batch
+{% for line in item.extra | default([]) %}
+{{ line }}
+{% endfor %}

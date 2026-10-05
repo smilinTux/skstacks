@@ -1,10 +1,54 @@
-# Second render pass: merged over skbackup.example.yml to drive the optional
-# hooks down their "set" path. Fake values only.
+# Second render pass: merged over skbackup.example.yml. Every tier on and a
+# white-label brand, so the set path renders the customer-branded units,
+# config files and restic credentials. Fake values only.
 skbackup:
-  passphrase: example-passphrase-not-a-secret
-  ACME_ENABLED: true
-  exclude: ["-*/cache/*"]
-  jobs:
-    - name: example-job
-      destination_url: "file:///backups/example"
-      sources: [/source/example/]
+  branding:
+    product_name: Example Vault
+    short_name: examplevault
+    tagline: Backups by Example IT
+    alert_prefix: EXAMPLE-VAULT
+    report_footer: Example IT managed backups
+    contact: support@example.test
+    logo_url: https://example.test/logo.png
+    credits: true
+  unit_prefix: example-
+  host_label: storage-1
+  copy:
+    enabled: true
+    target: backup/copies
+    apps:
+      - name: app-one
+        excludes: [/cache/]
+        newest: [{dir: database-dump, keep: 2}]
+        dump: database-dump
+        retention: {daily: 14}
+      - name: app-two-edge
+        src: runtime/app-two
+  dumps:
+    hooks:
+      - name: app-one-db
+        command: /usr/local/bin/example-dump --out /tank/data/app-one/database-dump
+        timeout: 600
+  offsite:
+    enabled: true
+    repository: s3:https://s3.example.test/example-bucket
+    password: example-restic-password-not-a-secret
+    env:
+      B2_ACCOUNT_ID: example-key-id
+      B2_ACCOUNT_KEY: example-key-not-a-secret
+      B2_REGION: example-region-1
+    install: url
+    url: https://example.test/restic_0.18.1_linux_amd64.bz2
+    sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+    sets:
+      - {name: kept-apps, kind: apps}
+      - {name: photos, kind: paths, paths: [app-three/originals], excludes: [/app-three/originals/tmp]}
+  restore_test:
+    enabled: true
+    app: app-one
+    sample_set: photos
+  alerts:
+    notifier: command
+    command: /usr/local/bin/example-alert -l {level} -k {key} {message}
+    check_repo: true
+    thinpool: vg0/data

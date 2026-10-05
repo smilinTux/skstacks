@@ -1,0 +1,38 @@
+#!/bin/bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# alert-host-check: runs on the ALERTING host (where your alert CLI lives),
+# hourly from its scheduler. Runs the read-only `check` on the storage host
+# over ssh and pages through your alert command when anything is STALE or
+# WARN. The storage host needs no outbound alert path; the alert host needs
+# key-based ssh to it (BatchMode, no password).
+#
+# Usage: alert-host-check <ssh-target> <remote-cli> <alert-prefix> <alert command...>
+#   <remote-cli>    the CLI on the storage host, e.g. /usr/local/sbin/<short_name>
+#   <alert command> words with {level} {key} {message} placeholders, e.g.
+#                   /opt/alerts/bin/send-alert -l {level} -k {key} {message}
+# Absolute paths only: cron and systemd have no login PATH.
+set -uo pipefail
+target="${1:?usage: alert-host-check <ssh-target> <remote-cli> <alert-prefix> <alert command...>}"
+cli="${2:?remote cli}"
+prefix="${3:?alert prefix}"
+shift 3
+[ $# -gt 0 ] || { echo "alert command missing" >&2; exit 2; }
+send() {  # send LEVEL KEY MESSAGE
+  local a args=()
+  for a in "${ALERT[@]}"; do
+    a=${a//\{level\}/$1}; a=${a//\{key\}/$2}; a=${a//\{message\}/$3}
+    args+=("$a")
+  done
+  "${args[@]}"
+}
+ALERT=("$@")
+out=$(/usr/bin/ssh -o BatchMode=yes -o ConnectTimeout=20 "$target" "$cli" check 2>&1)
+rc=$?
+printf '%s rc=%s\n%s\n' "$(date -u +%FT%TZ)" "$rc" "$out"
+case "$rc" in
+  0) exit 0 ;;
+  255) send warn "backup-check-unreachable" "[$prefix] warn: backup check could not reach $target over ssh" ;;
+  *) msg=$(printf '%s\n' "$out" | grep -E '^(STALE|WARN) ' | head -12)
+     send warn "backup-check-$(printf '%s' "$msg" | sha1sum | cut -c1-12)" "[$prefix] warn: backups on $target: $msg" ;;
+esac

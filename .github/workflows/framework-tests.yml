@@ -17,6 +17,9 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
       - run: pip install pytest pyyaml ansible jsonschema
+      # skbackup's engine tests drive a real local restic repository; shellcheck
+      # and jq ship with the runner image.
+      - run: sudo apt-get update -q && sudo apt-get install -y -q restic
       - run: python -m pytest -q v1/tests v2/platform/swarm/tests v2/platform/k3d/tests
 
   ansible-render:
