@@ -134,3 +134,27 @@ def test_tree_backup_refuses_private_data_before_capture(tmp_path):
     proc = host.run('restic', 'backup')
     assert proc.returncode != 0 and 'private' in proc.stderr.lower()
     assert not json.loads(host.zstate.read_text())['snaps']
+
+
+def test_restore_test_waits_for_backup_capture_lock(tmp_path):
+    import fcntl
+    import time
+    from skbackup_support import BACKUP
+    host = tree_host(tmp_path)
+    marker = host.root/'repository-read'
+    restic = host.bin/'restic'
+    restic.write_text('#!/bin/sh\ntouch '+str(marker)+'\n'); restic.chmod(0o755)
+    with (host.root/'lock/skbackup-restic.lock').open('w') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        proc = subprocess.Popen(['bash', str(BACKUP), '--conf', str(host.conf), 'restic', 'restore-test'],
+                                env=host.env(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            # Wait for the engine to reach the lock; repository access is forbidden.
+            time.sleep(0.5)
+            assert proc.poll() is None and not marker.exists()
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            proc.communicate(timeout=10)
+            assert marker.exists()
+        finally:
+            if proc.poll() is None:
+                proc.kill(); proc.communicate()

@@ -5,7 +5,7 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
-- v1 skbackup: recursive offsite backups now create one atomic snapshot name across included filesystems, then mount every child read-only at stable paths and unmount in reverse. Unrestricted trees use ZFS recursion; exclusions and zvols use one explicit atomic filesystem list. Track capture ownership and keep only per-set last-success source references, preserving external snapshots and failed-run restore sources. Single-dataset Sanoid behavior and configuration remain unchanged.
+- v1 skbackup: recursive offsite backups now create one atomic snapshot name across included filesystems, then mount every child read-only at stable paths and unmount in reverse. Unrestricted trees use ZFS recursion; exclusions and zvols use one explicit atomic filesystem list. Track capture ownership and keep only per-set last-success source references, preserving external snapshots and failed-run restore sources. Serialize restore tests with backup capture cleanup. Single-dataset Sanoid behavior and configuration remain unchanged.
 
 - v1 skbackup: opt-in recursive dataset trees with rooted exclusions and explicit private/recovery dataset consent, per-dataset sanoid retention, stable read-only restic mount trees and dataset-specific restore provenance. Local copies freeze only each selected app's owning dataset. Add restic tuning and upload overrides, weekly subset checks, optional protected healthcheck pings, and non-destructive external snapshot provenance reporting. Existing single-dataset vaults render identically, verified against a pre-extension 17-file SHA256 fixture. No live dataset changes are performed by the tests.
 

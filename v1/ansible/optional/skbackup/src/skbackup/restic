@@ -201,6 +201,9 @@ cmd_forget_prune() {
 # when size and mtime still match). Writes a report and sends it as info
 # (pass) or crit (fail).
 cmd_restore_test() {
+  # Hold source provenance stable while backup cleanup releases old captures.
+  exec 8>"$LOCK_DIR/$BRAND_SHORT-restic.lock"
+  flock -w 7200 8 || skb_die "restic lock busy"
   local tmp; tmp=$(mktemp -d /var/tmp/restoretest.XXXXXX)
   trap 'rm -rf "$tmp"' RETURN
   skb_discover_datasets
