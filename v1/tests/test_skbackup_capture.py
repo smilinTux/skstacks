@@ -49,8 +49,15 @@ def test_tree_backup_captures_once_without_sanoid_and_restores_children(tmp_path
     (host.data/'share/users/file').write_text('changed live data')
     restored = host.run('restic', 'restore-test', check=True)
     assert 'sha256-matched=1' in restored.stdout and 'RESULT: PASS' in restored.stdout
-    mounts = [e[1] for e in state['events'] if e[0] == 'mount']
-    assert [e[1] for e in state['events'] if e[0] == 'umount'] == mounts[::-1]
+    # Each run has fresh inspection paths. Require LIFO in both runs,
+    # rather than reverse the concatenated histories of separate processes.
+    stack = []
+    for event in state['events']:
+        if event[0] == 'mount':
+            stack.append(event[1])
+        elif event[0] == 'umount':
+            assert event[1] == stack.pop()
+    assert not stack
 
 
 def test_failed_unmount_retains_capture_and_reports_failure(tmp_path):
@@ -60,7 +67,10 @@ def test_failed_unmount_retains_capture_and_reports_failure(tmp_path):
     proc = host.run('restic', 'backup')
     assert proc.returncode != 0 and 'could not unmount' in proc.stdout
     state = json.loads(host.zstate.read_text())
-    assert len(state['mounts']) == 3 and len(state['snaps']) == 3
+    assert len(state['mounts']) == 4 and len(state['snaps']) == 3
+    frames = [entry for stack in state['mounts'].values() for entry in stack]
+    assert sum(entry['type'] == 'tmpfs' for entry in frames) == 1
+    assert {entry['source'] for entry in frames if entry['type'] == 'zfs'} == set(state['snaps'])
     assert set((host.state/'restic-owned-snapshots').read_text().splitlines()) == set(state['snaps'])
 
 
