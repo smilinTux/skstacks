@@ -1,0 +1,7 @@
+# Second render pass: merged over skvector.example.yml to drive the optional
+# placement and local-data knobs down their "set" path. Fake values only.
+skvector:
+  placement_constraints: ["node.role == worker"]
+  DATA_NODE: render-worker3
+  STORAGE_PATH: /var/lib/skvector-render/storage
+  SNAPSHOTS_PATH: /var/lib/skvector-render/snapshots

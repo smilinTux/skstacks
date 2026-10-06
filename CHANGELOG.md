@@ -3,6 +3,16 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased (v2.26.2)
+
+### Changes
+
+- v1: **skgraph** (FalkorDB) and **skvector** (Qdrant) can keep their data on local disk on one pinned node, the same design as skhub's `DATA_NODE` in v2.26.0. `skgraph.DATA_NODE` / `skvector.DATA_NODE` add `node.hostname == <DATA_NODE>` to `falkordb` / `qdrant` (after skgraph's `node.role == worker` and after `skvector.placement_constraints`, not added twice when the instance already sets the identical constraint); `skgraph.DATA_PATH` and `skvector.STORAGE_PATH`/`SNAPSHOTS_PATH` move the bind mounts (defaults unchanged under `/var/data/<app>-<env>`), and skvector's `skvector-<env>-storage`/`-snapshots` named volumes follow the same paths. A path outside `/var/data` is created on `DATA_NODE` (not recursive, same owner/mode as the shared-storage copy: skgraph root:root 0755, skvector 1000:1000 0755; both images run as uid 0) and the old `/var/data` path is no longer created; a local path without `DATA_NODE` stops the play, since local data on a floating service would be an empty database after the next reschedule. New READMEs for both stacks document the keys and the "Migrating a running instance" steps (scale to 0, `rsync -aHAX --numeric-ids`, verify counts and sizes, deploy from the new pin, rename the old dir to `*.STALE-moved-to-<node>-local-<date>`, never delete it). Tests: `v1/tests/test_skgraph_skvector_local_data.py` (unset knobs render byte-identical to `skstacks-v2.26.1`, against fixtures rendered from the v2.26.1 templates; the guard and directory tasks run through real `ansible-playbook`); the render gate's new `skgraph.set.yml` / `skvector.set.yml` cover the set path. **Instance action**: none; unset knobs render exactly as before. To move, follow the README migration first.
+
+### Also in this tree, not release-gated
+
+- v1: **skbackup** (restic engine replacing Duplicati, #109) is present in this tree from `skstacks-v2.26.0` onward but is not one of the skstack06 release-gate stages: it is covered by unit/render tests only (`v1/tests/test_skbackup_*`), never deployed in the skstack06 lab, and never ran through the fresh full `PROFILE=full` lane-1 run that gates this release. Do not deploy skbackup from this tag until it has been validated separately (a dedicated skstack06 stage or an instance pilot).
+
 ## skstacks-v2.26.1 - 2026-10-05
 
 ### Changes

@@ -1,0 +1,5 @@
+# Second render pass: merged over skgraph.example.yml to drive the optional
+# local-data knobs down their "set" path. Fake values only.
+skgraph:
+  DATA_NODE: render-worker3
+  DATA_PATH: /var/lib/skgraph-render/data
