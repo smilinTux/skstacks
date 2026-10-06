@@ -31,18 +31,23 @@ mkdir -p "$STATE_DIR" "$LOCK_DIR" "$RESTIC_CACHE_DIR"
 R() { ionice -c3 nice -n19 restic --retry-lock "$RESTIC_RETRY_LOCK" --compression "$RESTIC_COMPRESSION" --pack-size "${SET_PACK:-$RESTIC_PACK_SIZE}" "$@"; }
 
 # Keep mount cleanup installed before the first mount, including partial failure.
-MOUNTED=(); TREE_SNAPS=()
+MOUNTED=(); TREE_SNAPS=(); PROBE_DIRS=()
 OWNED_FILE="$STATE_DIR/restic-owned-snapshots"
 # shellcheck disable=SC2317,SC2329
 unmount_tree() {
-  local rc=$? i mounted=0 snap ds name keep=()
+  local rc=$? i mounted=0 snap ds name target keep=()
   for ((i=${#MOUNTED[@]}-1; i>=0; i--)); do
-    if ! umount "${MOUNTED[i]}"; then
-      skb_log "WARN could not unmount ${MOUNTED[i]}"; mounted=1
+    if mountpoint -q "${MOUNTED[i]}"; then
+      if ! umount "${MOUNTED[i]}"; then
+        skb_log "WARN could not unmount ${MOUNTED[i]}"; mounted=1
+      fi
+    elif [ "$?" -ne 32 ]; then
+      skb_log "WARN cannot inspect mount ${MOUNTED[i]}"; mounted=1
     fi
   done
   # Never release frozen sources while a mount is still in use.
   if [ "$mounted" = 1 ]; then exit 1; fi
+  for target in "${PROBE_DIRS[@]}"; do rmdir -- "$target" || rc=1; done
   if [ "$SRC_RECURSIVE" = 1 ] && [ -f "$OWNED_FILE" ]; then
     while IFS= read -r snap; do
       ds="${snap%@*}"; name="${snap#*@}"
@@ -61,9 +66,14 @@ unmount_tree() {
   fi
   exit "$rc"
 }
+mount_source_snapshot() {
+  # Register the intent before mount so a signal during mount also unwinds it.
+  MOUNTED+=("$2")
+  mount -t zfs -o ro "$1" "$2"
+}
 mount_newest_snapshot() {
   skb_discover_datasets
-  local ds candidate selected rel target listing captures=()
+  local ds candidate selected rel target listing child parent probe content captures=()
   trap unmount_tree EXIT
   trap 'exit 143' TERM INT
   if [ "$SRC_RECURSIVE" = 1 ]; then
@@ -90,17 +100,48 @@ mount_newest_snapshot() {
     selected="${SNAP#*@}"
   fi
   mkdir -p "$RESTIC_SRC_MNT"
+  [ ! -L "$RESTIC_SRC_MNT" ] && [ "$(realpath -m -- "$RESTIC_SRC_MNT")" = "$RESTIC_SRC_MNT" ] || skb_die "unsafe snapshot mount path: $RESTIC_SRC_MNT"
+  if [ "$SRC_RECURSIVE" = 1 ]; then
+    if mountpoint -q "$RESTIC_SRC_MNT"; then
+      skb_die "snapshot mount path already in use: $RESTIC_SRC_MNT"
+    elif [ "$?" -ne 32 ]; then
+      skb_die "cannot inspect mount $RESTIC_SRC_MNT"
+    fi
+    MOUNTED+=("$RESTIC_SRC_MNT")
+    mount -t tmpfs -o mode=0700,nosuid,nodev,noexec tmpfs "$RESTIC_SRC_MNT"
+    # Prepare stable relative paths before any read-only snapshot covers them.
+    for ds in "${SKB_DATASETS[@]}"; do
+      mkdir -p "$RESTIC_SRC_MNT${ds#"$SRC_DATASET"}"
+    done
+  fi
   for ds in "${SKB_DATASETS[@]}"; do
     candidate="$ds@$selected"
     zfs list -H "$candidate" >/dev/null 2>&1 || skb_die "captured snapshot missing: $candidate"
+    TREE_SNAPS+=("$candidate")
+    parent=0
+    for child in "${SKB_DATASETS[@]}"; do
+      if [[ "$child" = "$ds/"* ]]; then parent=1; break; fi
+    done
+    if [ "$parent" = 1 ]; then
+      # Inspect the frozen parent outside the backup tree. Keep this mount
+      # until EXIT so partial failures and signals share reverse-order cleanup.
+      probe=$(mktemp -d "$STATE_DIR/restic-source.XXXXXX")
+      PROBE_DIRS+=("$probe")
+      mount_source_snapshot "$candidate" "$probe"
+      content=$(find "$probe" -xdev -mindepth 1 -path "$probe/.zfs" -prune -o ! -type d -printf 1 -quit) || skb_die "snapshot inspection failed: $candidate"
+      if [ -z "$content" ]; then
+        skb_log "source: $candidate is a container, using prepared directories"
+        continue
+      fi
+    fi
     rel="${ds#"$SRC_DATASET"}"; target="$RESTIC_SRC_MNT$rel"
-    # A child's stable mount directory must exist in the parent snapshot.
+    # A file-holding parent may hide the scaffold. Never write into its
+    # read-only snapshot or follow a symlink to invent a child mountpoint.
     [ -d "$target" ] || skb_die "snapshot mount directory missing: $target"
     [ ! -L "$target" ] || skb_die "symlink mount directory refused: $target"
     [ "$(realpath -m -- "$target")" = "$target" ] || skb_die "unsafe snapshot mount path: $target"
-    if mountpoint -q "$target"; then umount "$target"; fi
-    mount -t zfs -o ro "$candidate" "$target"
-    MOUNTED+=("$target"); TREE_SNAPS+=("$candidate")
+    if [ "$SRC_RECURSIVE" != 1 ] && mountpoint -q "$target"; then umount "$target"; fi
+    mount_source_snapshot "$candidate" "$target"
     skb_log "source: $candidate mounted at $target"
   done
 }
