@@ -100,7 +100,8 @@ mount_newest_snapshot() {
     selected="${SNAP#*@}"
   fi
   mkdir -p "$RESTIC_SRC_MNT"
-  [ ! -L "$RESTIC_SRC_MNT" ] && [ "$(realpath -m -- "$RESTIC_SRC_MNT")" = "$RESTIC_SRC_MNT" ] || skb_die "unsafe snapshot mount path: $RESTIC_SRC_MNT"
+  [ ! -L "$RESTIC_SRC_MNT" ] || skb_die "unsafe snapshot mount path: $RESTIC_SRC_MNT"
+  [ "$(realpath -m -- "$RESTIC_SRC_MNT")" = "$RESTIC_SRC_MNT" ] || skb_die "unsafe snapshot mount path: $RESTIC_SRC_MNT"
   if [ "$SRC_RECURSIVE" = 1 ]; then
     if mountpoint -q "$RESTIC_SRC_MNT"; then
       skb_die "snapshot mount path already in use: $RESTIC_SRC_MNT"
