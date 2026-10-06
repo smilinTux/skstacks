@@ -3,6 +3,14 @@
 {%- else -%}
   {%- set _base_domain = skvector.CLUSTERNAME ~ '.' ~ skvector.DOMAIN -%}
 {%- endif -%}
+{#- Qdrant storage/snapshots on local disk on DATA_NODE: see README "Local
+    data on a pinned node". Unset keys render exactly as before. -#}
+{%- set _storage_path = skvector.STORAGE_PATH | default('/var/data/skvector-' ~ env ~ '/storage', true) | string -%}
+{%- set _snapshots_path = skvector.SNAPSHOTS_PATH | default('/var/data/skvector-' ~ env ~ '/snapshots', true) | string -%}
+{%- set _data_node = skvector.DATA_NODE | default('', true) | string -%}
+{%- set _constraints = skvector.placement_constraints | default([]) | list -%}
+{%- set _pin = 'node.hostname == ' ~ _data_node -%}
+{%- set _constraints = _constraints + ([_pin] if (_data_node and _pin not in _constraints) else []) -%}
 # Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
 #
 # This program is free software: you can redistribute it and/or modify
@@ -31,9 +39,9 @@ services:
         max-file: "{{ skvector.LOG_MAX_FILES | default('3') }}"
     volumes:
       # Main storage - NFS backed for persistence
-      - /var/data/skvector-{{ env }}/storage:/qdrant/storage
+      - {{ _storage_path }}:/qdrant/storage
       # Snapshots - NFS backed for backup/recovery
-      - /var/data/skvector-{{ env }}/snapshots:/qdrant/snapshots
+      - {{ _snapshots_path }}:/qdrant/snapshots
       # Config file for advanced settings
 {% if skvector.CONFIG_PATH is defined %}
       - {{ skvector.CONFIG_PATH }}:/qdrant/config/config.yaml:ro
@@ -52,7 +60,7 @@ services:
       mode: replicated
       replicas: 1
       placement:
-        constraints: {{ (skvector.placement_constraints | default([])) | tojson }}
+        constraints: {{ _constraints | tojson }}
       resources:
         limits:
           # Optimized for large document ingestion from SKAid
@@ -106,13 +114,13 @@ volumes:
     driver_opts:
       type: none
       o: bind
-      device: /var/data/skvector-{{ env }}/storage
+      device: {{ _storage_path }}
   skvector-{{ env }}-snapshots:
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: /var/data/skvector-{{ env }}/snapshots
+      device: {{ _snapshots_path }}
 
 networks:
   skvector-{{ env }}:

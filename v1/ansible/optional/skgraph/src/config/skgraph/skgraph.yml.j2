@@ -1,3 +1,7 @@
+{#- FalkorDB data on local disk on DATA_NODE: see README "Local data on a
+    pinned node". Unset keys render exactly as before. -#}
+{%- set _data_path = skgraph.DATA_PATH | default('/var/data/skgraph-' ~ env ~ '/data', true) | string -%}
+{%- set _data_node = skgraph.DATA_NODE | default('', true) | string -%}
 # Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
 #
 # This program is free software: you can redistribute it and/or modify
@@ -29,7 +33,7 @@ services:
       # NOTE: falkordb/falkordb stores its RDB/AOF under /var/lib/falkordb/data
       # (NOT /data). Binding the NFS dir at the image's real data dir is what
       # makes the graph data actually persist across container reschedules.
-      - /var/data/skgraph-{{ env }}/data:/var/lib/falkordb/data
+      - {{ _data_path }}:/var/lib/falkordb/data
     ports:
       # Publish FalkorDB on the host via the swarm ingress routing mesh so
       # external clients can reach it directly at
@@ -60,6 +64,9 @@ services:
       placement:
         constraints:
           - node.role == worker
+{% if _data_node %}
+          - node.hostname == {{ _data_node }}
+{% endif %}
       resources:
         limits:
           cpus: '{{ skgraph.RESOURCES_LIMITS_CPUS | default("2.00") }}'

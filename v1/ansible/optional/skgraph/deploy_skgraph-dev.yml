@@ -36,6 +36,7 @@
     env: dev
     service_name: skgraph
     service_type: optional
+    skgraph_data_path: "{{ skgraph.DATA_PATH | default('/var/data/' + app + '-' + env + '/data', true) }}"
   pre_tasks:
     - name: Select vault file based on domain and cluster
       import_tasks: ../../shared/tasks/select_vault_file.yml
@@ -43,6 +44,21 @@
     - name: Load vault file
       include_vars: "{{ vault_file_path }}"
       when: vault_file_path is defined
+
+    - name: Fail closed on a local data path without a pinned data node
+      # A path outside /var/data is local disk on one node. Without DATA_NODE
+      # swarm may reschedule falkordb elsewhere and start it on an empty
+      # directory (data loss): see README "Local data on a pinned node".
+      vars:
+        _data_node: "{{ skgraph.DATA_NODE | default('', true) | string }}"
+        _data_path: "{{ skgraph.DATA_PATH | default('/var/data/', true) | string }}"
+      assert:
+        that:
+          - (_data_node | length > 0) or _data_path.startswith('/var/data/')
+        fail_msg: >-
+          skgraph.DATA_PATH points at local disk ({{ skgraph_data_path }}) but
+          skgraph.DATA_NODE is empty. Set DATA_NODE to the node holding the data.
+        quiet: true
 
     - name: Define network variables from vault (idempotent network creation)
       # ⚠️ IMPORTANT: Network subnets MUST match shared/networks registry
@@ -76,18 +92,34 @@
         mode: 0755
       loop:
         - /var/data/{{ app }}-{{ env }}
-        - /var/data/{{ app }}-{{ env }}/data
         - /var/data/config/{{ app }}-{{ env }}
 
     - name: Set data directory ownership
+      # Only when DATA_PATH stays on /var/data; a local path is created on
+      # DATA_NODE below, and the old shared-storage path is left alone once
+      # it moved (README "Local data on a pinned node").
       file:
-        path: "{{ item }}"
+        path: "{{ skgraph_data_path }}"
         state: directory
         owner: root
         group: root
-        mode: 0755
-      loop:
-        - /var/data/{{ app }}-{{ env }}/data
+        mode: '0755'
+      when: skgraph_data_path.startswith('/var/data/')
+
+    - name: Create the {{ app }} local data directory on the data node (not recursive)
+      # falkordb/falkordb runs as root (uid 0): same owner/mode as the
+      # shared-storage copy.
+      file:
+        path: "{{ skgraph_data_path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      when: not skgraph_data_path.startswith('/var/data/')
+      # Ansible templates delegate_to before it evaluates when, so it must
+      # render with DATA_NODE unset too (the guard above requires DATA_NODE
+      # whenever this task actually runs).
+      delegate_to: "{{ skgraph.DATA_NODE | default(inventory_hostname, true) }}"
 
     - name: Process {{ app }} environment templates
       template:
