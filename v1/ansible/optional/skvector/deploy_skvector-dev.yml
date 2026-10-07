@@ -36,6 +36,8 @@
     env: dev
     service_name: skvector
     service_type: optional
+    skvector_storage_path: "{{ skvector.STORAGE_PATH | default('/var/data/' + app + '-' + env + '/storage', true) }}"
+    skvector_snapshots_path: "{{ skvector.SNAPSHOTS_PATH | default('/var/data/' + app + '-' + env + '/snapshots', true) }}"
   pre_tasks:
     - name: Select vault file based on domain and cluster
       import_tasks: ../../shared/tasks/select_vault_file.yml
@@ -43,6 +45,25 @@
     - name: Load vault file
       include_vars: "{{ vault_file_path }}"
       when: vault_file_path is defined
+
+    - name: Fail closed on local storage paths without a pinned data node
+      # A path outside /var/data is local disk on one node. Without DATA_NODE
+      # swarm may reschedule qdrant elsewhere and start it on an empty
+      # directory (data loss): see README "Local data on a pinned node".
+      vars:
+        _data_node: "{{ skvector.DATA_NODE | default('', true) | string }}"
+        _storage_path: "{{ skvector.STORAGE_PATH | default('/var/data/', true) | string }}"
+        _snapshots_path: "{{ skvector.SNAPSHOTS_PATH | default('/var/data/', true) | string }}"
+      assert:
+        that:
+          - >-
+            (_data_node | length > 0) or
+            (_storage_path.startswith('/var/data/') and _snapshots_path.startswith('/var/data/'))
+        fail_msg: >-
+          skvector.STORAGE_PATH / SNAPSHOTS_PATH point at local disk
+          ({{ skvector_storage_path }}, {{ skvector_snapshots_path }}) but
+          skvector.DATA_NODE is empty. Set DATA_NODE to the node holding the data.
+        quiet: true
 
     - name: Define network variables from vault (idempotent network creation)
       # ⚠️ IMPORTANT: Network subnets MUST match shared/networks registry
@@ -76,20 +97,41 @@
         mode: 0755
       loop:
         - /var/data/{{ app }}-{{ env }}
-        - /var/data/{{ app }}-{{ env }}/storage
-        - /var/data/{{ app }}-{{ env }}/snapshots
         - /var/data/config/{{ app }}-{{ env }}
 
     - name: Set storage directory ownership
+      # Only for paths that stay on /var/data; a local path is created on
+      # DATA_NODE below, and the old shared-storage path is left alone once
+      # it moved (README "Local data on a pinned node").
       file:
         path: "{{ item }}"
         state: directory
         owner: "1000"
         group: "1000"
-        mode: 0755
+        mode: '0755'
       loop:
-        - /var/data/{{ app }}-{{ env }}/storage
-        - /var/data/{{ app }}-{{ env }}/snapshots
+        - "{{ skvector_storage_path }}"
+        - "{{ skvector_snapshots_path }}"
+      when: item.startswith('/var/data/')
+
+    - name: Create the {{ app }} local storage and snapshot directories on the data node (not recursive)
+      # Same owner/mode as the shared-storage copy above. qdrant/qdrant runs
+      # as 0:0, so 1000:1000 is not what grants access; it keeps the local
+      # copy identical to the shared one (and fits the unprivileged image).
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "1000"
+        group: "1000"
+        mode: '0755'
+      loop:
+        - "{{ skvector_storage_path }}"
+        - "{{ skvector_snapshots_path }}"
+      when: not item.startswith('/var/data/')
+      # Ansible templates delegate_to before it evaluates when, so it must
+      # render with DATA_NODE unset too (the guard above requires DATA_NODE
+      # whenever this task actually runs).
+      delegate_to: "{{ skvector.DATA_NODE | default(inventory_hostname, true) }}"
 
     - name: Process {{ app }} environment templates
       template:
