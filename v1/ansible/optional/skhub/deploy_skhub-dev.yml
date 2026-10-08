@@ -45,6 +45,11 @@
     service_type: optional
     skhub_db_data_path: "{{ skhub.DB_DATA_PATH | default('/var/data/runtime/' + app + '-' + env + '/db') }}"
     skhub_redis_data_path: "{{ skhub.REDIS_DATA_PATH | default('/var/data/runtime/' + app + '-' + env + '/redis') }}"
+    # Public hosts the post-deploy tasks write into Nextcloud (notify_push,
+    # whiteboard, Talk signaling, Collabora WOPI). Same expressions as the
+    # Traefik routers and OVERWRITEHOST (README "Public hostnames").
+    skhub_public_host: "{{ skhub.SKHUB_HOSTNAME | default('skhub' + ('-staging' if env == 'staging' else '-dev' if env == 'dev' else '') + '.' + (skhub.DOMAIN if skhub.CLOUDFLARED | default(false) else skhub.CLUSTERNAME ~ '.' ~ skhub.DOMAIN)) }}"
+    skhub_collabora_public_host: "{{ skhub.COLLABORA_HOSTNAME | default('collabora.' + (skhub.DOMAIN if skhub.CLOUDFLARED | default(false) else skhub.CLUSTERNAME ~ '.' ~ skhub.DOMAIN)) }}"
   pre_tasks:
     - name: Select vault file based on domain and cluster
       import_tasks: ../../shared/tasks/select_vault_file.yml
@@ -641,7 +646,7 @@
     - name: Setup and verify notify_push push service binary
       shell: |
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
-        docker exec "$CONTAINER_ID" php occ notify_push:setup "https://skhub.{{ skhub.CLUSTERNAME }}.{{ skhub.DOMAIN }}/push" 2>&1 || true
+        docker exec "$CONTAINER_ID" php occ notify_push:setup "https://{{ skhub_public_host }}/push" 2>&1 || true
         BIN=/var/www/html/custom_apps/notify_push/bin/x86_64/notify_push
         for i in $(seq 1 30); do
           docker exec "$CONTAINER_ID" test -f "$BIN" 2>/dev/null && break
@@ -665,7 +670,7 @@
     - name: Configure notify_push endpoint in Nextcloud
       shell: |
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
-        docker exec "$CONTAINER_ID" php occ config:app:set notify_push base_endpoint --value="https://skhub.{{ skhub.CLUSTERNAME }}.{{ skhub.DOMAIN }}/push" 2>&1 || true
+        docker exec "$CONTAINER_ID" php occ config:app:set notify_push base_endpoint --value="https://{{ skhub_public_host }}/push" 2>&1 || true
       delegate_to: "{{ nextcloud_node.stdout | trim }}"
       when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
       tags:
@@ -687,7 +692,7 @@
     - name: Configure whiteboard integration in Nextcloud
       shell: |
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
-        docker exec "$CONTAINER_ID" php occ config:app:set whiteboard collabBackendUrl --value="wss://skhub.{{ skhub.CLUSTERNAME }}.{{ skhub.DOMAIN }}/whiteboard" 2>&1 || true
+        docker exec "$CONTAINER_ID" php occ config:app:set whiteboard collabBackendUrl --value="wss://{{ skhub_public_host }}/whiteboard" 2>&1 || true
         docker exec "$CONTAINER_ID" php occ config:app:set whiteboard jwt_secret_key --value="{{ skhub.whiteboard_jwt_secret }}" 2>&1 || true
       delegate_to: "{{ nextcloud_node.stdout | trim }}"
       when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
@@ -721,7 +726,7 @@
     - name: Configure Collabora WOPI URL in Nextcloud
       shell: |
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
-        docker exec "$CONTAINER_ID" php occ config:app:set richdocuments wopi_url --value="https://collabora.{{ skhub.CLUSTERNAME }}.{{ skhub.DOMAIN }}" 2>&1 || true
+        docker exec "$CONTAINER_ID" php occ config:app:set richdocuments wopi_url --value="https://{{ skhub_collabora_public_host }}" 2>&1 || true
       delegate_to: "{{ nextcloud_node.stdout | trim }}"
       when: >-
         (skhub.enable_collabora | default(false))
@@ -756,7 +761,7 @@
     - name: Configure Talk signaling and TURN servers in Nextcloud
       shell: |
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
-        docker exec "$CONTAINER_ID" php occ config:app:set spreed signaling_servers --value='{"servers":[{"server":"https://skhub.{{ skhub.CLUSTERNAME }}.{{ skhub.DOMAIN }}/standalone-signaling/","verify":true}],"secret":"{{ skhub.signaling_secret }}"}' 2>&1 || true
+        docker exec "$CONTAINER_ID" php occ config:app:set spreed signaling_servers --value='{"servers":[{"server":"https://{{ skhub_public_host }}/standalone-signaling/","verify":true}],"secret":"{{ skhub.signaling_secret }}"}' 2>&1 || true
         docker exec "$CONTAINER_ID" php occ config:app:set spreed turn_servers --value='[{"schemes":"turn,turns","server":"{{ skhub.TURN_DOMAIN | default(skhub.CLUSTERNAME ~ "." ~ skhub.DOMAIN, true) }}:3478","secret":"{{ skhub.turn_secret }}","protocols":"udp,tcp"}]' 2>&1 || true
       delegate_to: "{{ nextcloud_node.stdout | trim }}"
       when: >-

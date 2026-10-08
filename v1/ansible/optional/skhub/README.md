@@ -156,6 +156,32 @@ still readable), swap the mounts back to `/var/data/skhub-<env>/{html,custom_app
 and drop the hostname constraint (again in separate updates, or clear the two
 keys and redeploy), scale back up and turn maintenance off.
 
+## Public hostnames
+
+Two keys set the public names Nextcloud and Collabora answer on:
+
+```yaml
+skhub:
+  SKHUB_HOSTNAME: cloud.example.com        # the Nextcloud host users open
+  COLLABORA_HOSTNAME: office.example.com   # with enable_collabora
+```
+
+| Key | Default | Used for |
+|---|---|---|
+| `SKHUB_HOSTNAME` | `skhub[-dev\|-staging].<base domain>` | The Traefik routers (Nextcloud, notify_push, whiteboard, Talk HPB), `OVERWRITEHOST`/`TRUSTED_DOMAINS`, notify_push's `overwritehost`, and the post-deploy settings `notify_push:setup` and notify_push `base_endpoint` (`https://<host>/push`), whiteboard `collabBackendUrl` (`wss://<host>/whiteboard`) and Talk `spreed` `signaling_servers` (`https://<host>/standalone-signaling/`). |
+| `COLLABORA_HOSTNAME` | `collabora.<base domain>` | The Collabora routers, `NEXTCLOUD_RICHODOCUMENTS_CODE_URL` and the post-deploy richdocuments `wopi_url` (`https://<host>`). |
+
+`<base domain>` is `<DOMAIN>` with `CLOUDFLARED: true` and
+`<CLUSTERNAME>.<DOMAIN>` without. Before v2.26.3 the five post-deploy settings
+were hardcoded to `skhub.`/`collabora.<CLUSTERNAME>.<DOMAIN>`, so on any
+instance where that differed from the routers' host (`CLOUDFLARED`, a dev or
+staging env, or a set key) every deploy rewrote them to names the routers do
+not answer on: Talk reported the HPB as "Unknown error", and push,
+whiteboard and Collabora stopped working. They now always match the routers.
+The `talk-hpb` env (`NC_DOMAIN`, `TALK_HOST`) and the Collabora/whiteboard env
+files still build the host from `<base domain>` only and do not read these
+two keys.
+
 ## Local database on a pinned node
 
 By default `db` (MariaDB) and `redis` keep their data under

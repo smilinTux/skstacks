@@ -3,6 +3,22 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased (v2.26.3)
+
+### Upgrade notes (instances)
+
+- **skhub:** the next skhub deploy changes five Nextcloud settings (Talk `signaling_servers`, notify_push setup and `base_endpoint`, whiteboard `collabBackendUrl`, richdocuments `wopi_url`) on every instance whose public hosts are not `skhub.`/`collabora.<CLUSTERNAME>.<DOMAIN>`: `CLOUDFLARED: true`, a dev or staging env, or a set `SKHUB_HOSTNAME`/`COLLABORA_HOSTNAME`. They move to the host the routers and `OVERWRITEHOST` already use, which fixes Talk calls, push, whiteboard and Collabora there. Nothing to set beforehand; a prod instance without `CLOUDFLARED` and without those keys renders exactly as before. If you hand-corrected any of these settings, the deploy now writes the same value.
+- **skhub with `TURN_DOMAIN`:** `talk-hpb` now gets `TURN_DOMAIN` too. Before, only Nextcloud's `turn_servers` did, so every skhub deploy rebuilt `talk-hpb` without it and Janus fell back to `NC_DOMAIN` for TURN (on an instance whose `NC_DOMAIN` is proxied, ICE failed on every call until fixed by hand).
+
+### Changes
+
+- v1: **skhub** the five Nextcloud settings the post-deploy tasks write with a public URL now use the routers' own host expressions (`SKHUB_HOSTNAME`, default `skhub[-dev|-staging].<base domain>`; `COLLABORA_HOSTNAME`, default `collabora.<base domain>`; `<base domain>` honours `CLOUDFLARED`): `notify_push:setup` and notify_push `base_endpoint` (`https://<host>/push`), whiteboard `collabBackendUrl` (`wss://<host>/whiteboard`), Talk `spreed` `signaling_servers` (`https://<host>/standalone-signaling/`) and richdocuments `wopi_url`. They were hardcoded to `skhub.`/`collabora.<CLUSTERNAME>.<DOMAIN>`. A production instance on `CLOUDFLARED` had every skhub deploy point all five at names that did not resolve or reached an internal route with a self-signed certificate: Talk reported the HPB as "Unknown error" and calls could not start, until corrected by hand. For a prod instance without `CLOUDFLARED` and without the two keys all five lines render byte-identical to `skstacks-v2.26.2` (test against the v2.26.2 lines). README "Public hostnames". Tests: `v1/tests/test_skhub_public_hosts.py` (byte-identical where the old names were right; for every env, `CLOUDFLARED` and key combination the URLs equal the routers' `Host()` rules, `OVERWRITEHOST` and the Collabora code URL; secrets and `verify` unchanged). **Instance action**: none; see the upgrade note.
+- v1: **skhub** `talk-hpb.env` renders `TURN_DOMAIN` when `skhub.TURN_DOMAIN` is set (#145 only fed it to Nextcloud's `turn_servers`); unset renders exactly as before. Tests: `v1/tests/test_skhub_public_hosts.py`. **Instance action**: none.
+
+### Also in this tree, not release-gated
+
+- v1: **skbackup** (restic engine replacing Duplicati, #109) is present in this tree from `skstacks-v2.26.0` onward but is not one of the skstack06 release-gate stages: it is covered by unit/render tests only (`v1/tests/test_skbackup_*`), never deployed in the skstack06 lab, and never ran through the fresh full `PROFILE=full` lane-1 run that gates this release. Do not deploy skbackup from this tag until it has been validated separately (a dedicated skstack06 stage or an instance pilot).
+
 ## skstacks-v2.26.2 - 2026-10-06
 
 ### Changes
