@@ -45,11 +45,11 @@
     service_type: optional
     skhub_db_data_path: "{{ skhub.DB_DATA_PATH | default('/var/data/runtime/' + app + '-' + env + '/db') }}"
     skhub_redis_data_path: "{{ skhub.REDIS_DATA_PATH | default('/var/data/runtime/' + app + '-' + env + '/redis') }}"
-    # Hosts the post-deploy tasks write into Nextcloud (notify_push, whiteboard,
-    # Talk signaling, Collabora WOPI): the same keys the Traefik routers use.
-    # Unset = the old skhub./collabora.<CLUSTERNAME>.<DOMAIN> (README "Public hostnames").
-    skhub_public_host: "{{ skhub.SKHUB_HOSTNAME | default('skhub.' ~ skhub.CLUSTERNAME ~ '.' ~ skhub.DOMAIN, true) }}"
-    skhub_collabora_public_host: "{{ skhub.COLLABORA_HOSTNAME | default('collabora.' ~ skhub.CLUSTERNAME ~ '.' ~ skhub.DOMAIN, true) }}"
+    # Public hosts the post-deploy tasks write into Nextcloud (notify_push,
+    # whiteboard, Talk signaling, Collabora WOPI). Same expressions as the
+    # Traefik routers and OVERWRITEHOST (README "Public hostnames").
+    skhub_public_host: "{{ skhub.SKHUB_HOSTNAME | default('skhub' + ('-staging' if env == 'staging' else '-dev' if env == 'dev' else '') + '.' + (skhub.DOMAIN if skhub.CLOUDFLARED | default(false) else skhub.CLUSTERNAME ~ '.' ~ skhub.DOMAIN)) }}"
+    skhub_collabora_public_host: "{{ skhub.COLLABORA_HOSTNAME | default('collabora.' + (skhub.DOMAIN if skhub.CLOUDFLARED | default(false) else skhub.CLUSTERNAME ~ '.' ~ skhub.DOMAIN)) }}"
   pre_tasks:
     - name: Select vault file based on domain and cluster
       import_tasks: ../../shared/tasks/select_vault_file.yml

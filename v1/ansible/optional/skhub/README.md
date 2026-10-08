@@ -168,17 +168,19 @@ skhub:
 
 | Key | Default | Used for |
 |---|---|---|
-| `SKHUB_HOSTNAME` | `skhub[-dev\|-staging].<CLUSTERNAME>.<DOMAIN>` (`.<DOMAIN>` with `CLOUDFLARED`) | The Traefik routers (Nextcloud, notify_push, whiteboard, Talk HPB), `OVERWRITEHOST`/`TRUSTED_DOMAINS` and notify_push's `overwritehost`. The post-deploy settings `notify_push:setup` and notify_push `base_endpoint` (`https://<host>/push`), whiteboard `collabBackendUrl` (`wss://<host>/whiteboard`) and Talk `spreed` `signaling_servers` (`https://<host>/standalone-signaling/`) use it too, but fall back to `skhub.<CLUSTERNAME>.<DOMAIN>` when it is unset. |
-| `COLLABORA_HOSTNAME` | `collabora.<CLUSTERNAME>.<DOMAIN>` (`.<DOMAIN>` with `CLOUDFLARED`) | The Collabora routers and `NEXTCLOUD_RICHODOCUMENTS_CODE_URL`. The post-deploy richdocuments `wopi_url` uses it too, falling back to `collabora.<CLUSTERNAME>.<DOMAIN>` when unset. |
+| `SKHUB_HOSTNAME` | `skhub[-dev\|-staging].<base domain>` | The Traefik routers (Nextcloud, notify_push, whiteboard, Talk HPB), `OVERWRITEHOST`/`TRUSTED_DOMAINS`, notify_push's `overwritehost`, and the post-deploy settings `notify_push:setup` and notify_push `base_endpoint` (`https://<host>/push`), whiteboard `collabBackendUrl` (`wss://<host>/whiteboard`) and Talk `spreed` `signaling_servers` (`https://<host>/standalone-signaling/`). |
+| `COLLABORA_HOSTNAME` | `collabora.<base domain>` | The Collabora routers, `NEXTCLOUD_RICHODOCUMENTS_CODE_URL` and the post-deploy richdocuments `wopi_url` (`https://<host>`). |
 
-**If your public host is not `skhub.<CLUSTERNAME>.<DOMAIN>`** (a name without
-the cluster label, `CLOUDFLARED`, or a dev/staging env), set `SKHUB_HOSTNAME`
-(and `COLLABORA_HOSTNAME` with Collabora) explicitly, to the value
-`OVERWRITEHOST` already renders, BEFORE the next skhub deploy. With the key
-unset the post-deploy settings keep the `<CLUSTERNAME>` fallback, and every
-deploy rewrites them to names the routers do not answer on: Talk reports the
-HPB as "Unknown error", push, whiteboard and Collabora stop working. Setting
-the key to the value already rendered changes nothing else.
+`<base domain>` is `<DOMAIN>` with `CLOUDFLARED: true` and
+`<CLUSTERNAME>.<DOMAIN>` without. Before v2.26.3 the five post-deploy settings
+were hardcoded to `skhub.`/`collabora.<CLUSTERNAME>.<DOMAIN>`, so on any
+instance where that differed from the routers' host (`CLOUDFLARED`, a dev or
+staging env, or a set key) every deploy rewrote them to names the routers do
+not answer on: Talk reported the HPB as "Unknown error", and push,
+whiteboard and Collabora stopped working. They now always match the routers.
+The `talk-hpb` env (`NC_DOMAIN`, `TALK_HOST`) and the Collabora/whiteboard env
+files still build the host from `<base domain>` only and do not read these
+two keys.
 
 ## Local database on a pinned node
 
