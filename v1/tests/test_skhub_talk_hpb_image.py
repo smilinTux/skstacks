@@ -10,7 +10,8 @@ The old build's /start.sh ignores TURN_DOMAIN and writes no STUN/TURN into janus
 Janus offered only its private container address and calls outside the LAN failed ICE (an
 instance that fell back to the default lost call media). The new image is dinit-based, so
 when TALK_HPB_IMAGE is unset the TURN relay wrapper now execs that image's own CMD; a set
-TALK_HPB_IMAGE keeps the old supervisord default (byte-identical for pinned instances).
+TALK_HPB_IMAGE keeps the old supervisord default (byte-identical for pinned instances), except
+an image pinned to that same new digest, which gets dinit: the CMD follows the image.
 """
 import pathlib
 
@@ -63,6 +64,20 @@ def test_pinned_image_without_cmd_keeps_the_old_supervisord_default():
     old = "ghcr.io/nextcloud-releases/aio-talk:20260122_105751"
     svc = services(TALK_HPB_IMAGE=old, **RELAY)["talk-hpb"]
     assert svc["command"][-3:] == SUPERVISORD
+
+
+def test_pinned_to_the_new_digest_without_cmd_execs_dinit():
+    """The CMD follows the image, not whether it is pinned: an instance that pins
+    TALK_HPB_IMAGE to the (dinit-based) default digest must not get supervisord."""
+    for image in (DEFAULT, "ghcr.io/nextcloud-releases/aio-talk@sha256:" + DEFAULT.rsplit(":", 1)[1]):
+        svc = services(TALK_HPB_IMAGE=image, **RELAY)["talk-hpb"]
+        assert svc["command"][-len(DEFAULT_CMD):] == DEFAULT_CMD, image
+        assert "supervisord" not in svc["command"], image
+
+
+def test_empty_image_key_is_the_default_image_and_dinit():
+    svc = services(TALK_HPB_IMAGE="", TALK_HPB_CMD="", **RELAY)["talk-hpb"]
+    assert svc["command"][-len(DEFAULT_CMD):] == DEFAULT_CMD
 
 
 @pytest.mark.parametrize("image", [None, PINNED])
