@@ -3,6 +3,20 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased (v2.26.3)
+
+### Upgrade notes (instances)
+
+- **skhub:** if your public Nextcloud host (the value rendered as `OVERWRITEHOST`) is anything other than `skhub.<CLUSTERNAME>.<DOMAIN>`, set `skhub.SKHUB_HOSTNAME` to it (and `skhub.COLLABORA_HOSTNAME` to the Collabora host, with Collabora enabled) BEFORE your next skhub deploy. Every earlier skhub deploy rewrote Talk signaling, notify_push, whiteboard and the Collabora `wopi_url` to `skhub.`/`collabora.<CLUSTERNAME>.<DOMAIN>` regardless of the public host, so on such an instance each deploy broke Talk calls, push, whiteboard and Collabora until fixed by hand. If either key is already set to a host other than that pattern, those five settings change on the next deploy, to the host the routers already answer on (the fix). See the skhub README "Public hostnames".
+
+### Changes
+
+- v1: **skhub** the five Nextcloud settings the post-deploy tasks write with a public URL now follow `skhub.SKHUB_HOSTNAME` / `skhub.COLLABORA_HOSTNAME`, the keys the Traefik routers, `OVERWRITEHOST` and the Collabora code URL already used: `notify_push:setup` and notify_push `base_endpoint` (`https://<host>/push`), whiteboard `collabBackendUrl` (`wss://<host>/whiteboard`), Talk `spreed` `signaling_servers` (`https://<host>/standalone-signaling/`) and richdocuments `wopi_url` (`https://<collabora host>`). They were hardcoded to `skhub.`/`collabora.<CLUSTERNAME>.<DOMAIN>`. A production instance whose public hosts have no cluster label had every skhub deploy point all five at names that did not resolve or reached an internal route with a self-signed certificate: Talk reported the HPB as "Unknown error" and calls could not start, until corrected by hand. With both keys unset (or empty) all five lines render byte-identical to `skstacks-v2.26.2` (pinned by a test against the v2.26.2 lines); secrets, `verify` and the TURN line are unchanged. README "Public hostnames" documents both keys. Tests: `v1/tests/test_skhub_public_hosts.py` (byte-identical unset, each key drives exactly its settings, and the URLs match the routers' `Host()` rules). **Instance action**: see the upgrade note above; none if the public hosts follow the `<CLUSTERNAME>` pattern.
+
+### Also in this tree, not release-gated
+
+- v1: **skbackup** (restic engine replacing Duplicati, #109) is present in this tree from `skstacks-v2.26.0` onward but is not one of the skstack06 release-gate stages: it is covered by unit/render tests only (`v1/tests/test_skbackup_*`), never deployed in the skstack06 lab, and never ran through the fresh full `PROFILE=full` lane-1 run that gates this release. Do not deploy skbackup from this tag until it has been validated separately (a dedicated skstack06 stage or an instance pilot).
+
 ## skstacks-v2.26.2 - 2026-10-06
 
 ### Changes
