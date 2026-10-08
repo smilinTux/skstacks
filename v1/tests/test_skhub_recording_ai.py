@@ -9,9 +9,8 @@ renders and deploys exactly as before.
                                       must differ from skhub.APP_NODE)
   skhub.TALK_RECORDING_SECRET        shared secret, Nextcloud <-> recording (vault,
                                       required when enabled, 32+ chars)
-  skhub.TALK_RECORDING_MAX_CONCURRENT  talk-recording replicas (default 2): each
-                                      replica is one ffmpeg+browser worker, so this
-                                      is the concurrent-recording cap
+  skhub.TALK_RECORDING_MAX_CONCURRENT  ignored since v2.26.3 (talk-recording is
+                                      one replica; was the replica count)
 
   skhub.AI_ENABLED      installs/enables integration_openai + assistant and
                          points integration_openai at skhub.AI_BASE_URL (default false)
@@ -252,13 +251,15 @@ def test_recording_env_template_is_registered_in_every_playbook():
         assert '{ src: "talk-recording.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/talk-recording.env", mode: "0640" }' in text, env_name
 
 
-def test_recording_max_concurrent_sets_replicas(render_skhub):
+def test_recording_is_one_replica_whatever_max_concurrent_says(render_skhub):
+    # v2.26.3: several replicas behind one VIP break recording stop; see
+    # test_skhub_recording_single_ech.py.
     default = render_skhub({"TALK_RECORDING_ENABLED": True, "TALK_RECORDING_NODE": "w2",
                             "TALK_RECORDING_SECRET": "x" * 32})
-    assert default["services"]["talk-recording"]["deploy"]["replicas"] == 2
+    assert default["services"]["talk-recording"]["deploy"]["replicas"] == 1
     custom = render_skhub({"TALK_RECORDING_ENABLED": True, "TALK_RECORDING_NODE": "w2",
                            "TALK_RECORDING_SECRET": "x" * 32, "TALK_RECORDING_MAX_CONCURRENT": 3})
-    assert custom["services"]["talk-recording"]["deploy"]["replicas"] == 3
+    assert custom["services"]["talk-recording"]["deploy"]["replicas"] == 1
 
 
 def test_recording_image_pinned_by_digest_by_default(render_skhub):
