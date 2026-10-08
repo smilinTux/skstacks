@@ -44,8 +44,8 @@ skhub:
 | Key | Default | Meaning |
 |---|---|---|
 | `NEXTCLOUD_IMAGE` | `nextcloud:31.0.14` | Image for `nextcloud`, `cron` and `notify_push` (they share `/var/www/html`, so always the same image). Pin a digest (`nextcloud:<ver>@sha256:...`). Nextcloud upgrades are one-way and one major at a time: once an instance runs a newer Nextcloud, keep this set, because deploying an older image makes the entrypoint refuse to start (downgrade) and the service crash-loops. |
-| `TALK_HPB_IMAGE` | `ghcr.io/nextcloud-releases/aio-talk:20260122_105751` | Image for `talk-hpb` (with `enable_talk_hpb`). Pin a digest (`ghcr.io/nextcloud-releases/aio-talk:<tag>@sha256:...`). Set it to keep a newer aio-talk (newer signaling server) an instance already runs: unset, the next deploy puts talk-hpb back on the default. With `TALK_TURN_RELAY_IPV4` set, the relay command runs `TALK_HPB_CMD` (default `supervisord -c /supervisord.conf`, the default image's CMD); a newer aio-talk that runs dinit needs `TALK_HPB_CMD` set to its own CMD. |
-| `TALK_HPB_CMD` | `[supervisord, -c, /supervisord.conf]` | A list: the command the TURN relay wrapper execs after rewriting `relay_ipv4_addr` (only with `TALK_TURN_RELAY_IPV4`). Set it to the `TALK_HPB_IMAGE`'s own CMD (`docker image inspect -f '{{json .Config.Cmd}}'`), e.g. `[dinit, --system, --container, nats-server, eturnal, janus, signaling]` for aio-talk images that dropped supervisord. If its first word is not in the image the container exits 127 with a message naming this knob. |
+| `TALK_HPB_IMAGE` | `ghcr.io/nextcloud-releases/aio-talk:latest@sha256:831a08f9772d188e65aee2fb59ef3785d3567a1fe2fb65f0e6fd2c17a16ffc87` (v2.26.3; before: `aio-talk:20260122_105751`, whose `start.sh` ignores `TURN_DOMAIN` and writes no TURN server into `janus.jcfg`, so Janus offered only its container address and calls outside the LAN failed ICE) | Image for `talk-hpb` (with `enable_talk_hpb`). Pin a digest (`ghcr.io/nextcloud-releases/aio-talk:<tag>@sha256:...`). Set it to keep a newer aio-talk (newer signaling server) an instance already runs: unset, the next deploy puts talk-hpb back on the default. With `TALK_TURN_RELAY_IPV4` set, the relay command runs `TALK_HPB_CMD` (default `supervisord -c /supervisord.conf`, the default image's CMD); a newer aio-talk that runs dinit needs `TALK_HPB_CMD` set to its own CMD. |
+| `TALK_HPB_CMD` | follows the image: `[dinit, --system, --container, nats-server, eturnal, janus, signaling]` for the default digest (unset, or `TALK_HPB_IMAGE` pinned to it); `[supervisord, -c, /supervisord.conf]` (the pre-v2.26.3 default) for any other pinned image | A list: the command the TURN relay wrapper execs after rewriting `relay_ipv4_addr` (only with `TALK_TURN_RELAY_IPV4`). Set it to the `TALK_HPB_IMAGE`'s own CMD (`docker image inspect -f '{{json .Config.Cmd}}'`), e.g. `[dinit, --system, --container, nats-server, eturnal, janus, signaling]` for aio-talk images that dropped supervisord. If its first word is not in the image the container exits 127 with a message naming this knob. |
 | `MARIADB_IMAGE` | `mariadb:10.11.19@sha256:7db29378d4fdab73f8123bbc2b48905c90d1a4b00cf848b028f1e81e623257f2` | Image for `db` and `db-backup`. Stays on the 10.11 LTS line; a major jump (e.g. to 11.x) is a data migration this framework does not perform, so set this only to a newer 10.11.x build. |
 | `REDIS_IMAGE` | `redis:8.10.2-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0` | Image for `redis`. Stays on the 8.x line for the same reason as `MARIADB_IMAGE`. |
 | `CLAMAV_IMAGE` | `clamav/clamav:latest@sha256:ebec5bc138401b36ae987caa1a3fa3c3b2a21ed3d51f0bfa5852825e663e67b0` | Image for `clamav`. Stateless (signature database only), so tracking upstream `latest` and re-pinning the digest here is fine. |
@@ -155,6 +155,32 @@ sure the shared copy is current (run the sync service if the local disk is
 still readable), swap the mounts back to `/var/data/skhub-<env>/{html,custom_apps}`
 and drop the hostname constraint (again in separate updates, or clear the two
 keys and redeploy), scale back up and turn maintenance off.
+
+## Public hostnames
+
+Two keys set the public names Nextcloud and Collabora answer on:
+
+```yaml
+skhub:
+  SKHUB_HOSTNAME: cloud.example.com        # the Nextcloud host users open
+  COLLABORA_HOSTNAME: office.example.com   # with enable_collabora
+```
+
+| Key | Default | Used for |
+|---|---|---|
+| `SKHUB_HOSTNAME` | `skhub[-dev\|-staging].<base domain>` | The Traefik routers (Nextcloud, notify_push, whiteboard, Talk HPB), `OVERWRITEHOST`/`TRUSTED_DOMAINS`, notify_push's `overwritehost`, and the post-deploy settings `notify_push:setup` and notify_push `base_endpoint` (`https://<host>/push`), whiteboard `collabBackendUrl` (`wss://<host>/whiteboard`) and Talk `spreed` `signaling_servers` (`https://<host>/standalone-signaling/`). |
+| `COLLABORA_HOSTNAME` | `collabora.<base domain>` | The Collabora routers, `NEXTCLOUD_RICHODOCUMENTS_CODE_URL` and the post-deploy richdocuments `wopi_url` (`https://<host>`). |
+
+`<base domain>` is `<DOMAIN>` with `CLOUDFLARED: true` and
+`<CLUSTERNAME>.<DOMAIN>` without. Before v2.26.3 the five post-deploy settings
+were hardcoded to `skhub.`/`collabora.<CLUSTERNAME>.<DOMAIN>`, so on any
+instance where that differed from the routers' host (`CLOUDFLARED`, a dev or
+staging env, or a set key) every deploy rewrote them to names the routers do
+not answer on: Talk reported the HPB as "Unknown error", and push,
+whiteboard and Collabora stopped working. They now always match the routers.
+The `talk-hpb` env (`NC_DOMAIN`, `TALK_HOST`) and the Collabora/whiteboard env
+files still build the host from `<base domain>` only and do not read these
+two keys.
 
 ## Local database on a pinned node
 
@@ -285,7 +311,19 @@ Recordings land in the call starter's Talk folder (Talk's own default).
 | `TALK_RECORDING_IMAGE` | `ghcr.io/nextcloud-releases/aio-talk-recording:20260929_105435@sha256:64aa51b0279a4ab5c16249ad1e8f5e56b572ffee3947f14b64386429bc9c6696` | Pin a digest (`docker buildx imagetools inspect ghcr.io/nextcloud-releases/aio-talk-recording:<tag>`, or the registry API). |
 | `TALK_RECORDING_NODE` | none, required when enabled | Pins `talk-recording` (`node.hostname == <node>`). **Must differ from `APP_NODE`**: recording CPU must not compete with Nextcloud's own node; the deploy refuses the combination. |
 | `TALK_RECORDING_SECRET` | none, required when enabled | Shared secret (vault, 32+ characters) between Nextcloud and the recording backend (`RECORDING_SECRET` on the container, `secret` in Talk's `recording_servers`). Generate with `openssl rand -base64 32`. |
-| `TALK_RECORDING_MAX_CONCURRENT` | `2` | `talk-recording` replica count: capacity for this many simultaneous recordings, one independent ffmpeg+browser worker per replica. This is provisioned capacity, not admission control -- neither Talk nor the recording server has a native concurrency limit, and Swarm's VIP round-robins per connection, so an (N+1)th recording is not refused, it lands on an already-busy worker instead of failing. |
+| `TALK_RECORDING_MAX_CONCURRENT` | ignored | Before v2.26.3 this set the `talk-recording` replica count (default 2). It is ignored now (the deploy prints a warning when it is set): `talk-recording` runs exactly one replica. Talk reaches the recording server through the service VIP, so with several replicas the start and the stop of one recording round-robin to different replicas, the stop fails with "Trying to stop unknown recording" and an orphaned recorder stays in the call. One recording server runs concurrent recordings itself; the image has no concurrency setting. Remove the key. |
+
+The recording browser gets a locked Firefox policy,
+`talk-recording-firefox-policies.json` (rendered into
+`/var/data/config/skhub-<env>/`, bind-mounted read-only at
+`/usr/lib/firefox/distribution/policies.json`), that sets
+`network.dns.echconfig.enabled`, `network.dns.http3_echconfig.enabled` and
+`network.dns.native_https_query` to false. When the public skhub host is
+Cloudflare-proxied with an HTTPS DNS record carrying `ech=`, Firefox otherwise
+intermittently sends the ECH outer SNI (`cloudflare-ech.com`) to the
+instance's own Traefik, gets the default certificate, and the recording fails
+with `InsecureCertificate`. It is always on: harmless where no ECH record
+exists.
 
 `talk-recording` is not published externally: Nextcloud reaches it over the
 `skhub-<env>` overlay network at `http://<app>-<env>_talk-recording:1234`

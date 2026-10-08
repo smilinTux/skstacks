@@ -170,8 +170,10 @@ def test_relay_ipv4_wrapper_escapes_dollars_for_stack_deploy():
 
 
 def test_relay_ipv4_wrapper_execs_the_original_cmd():
-    cmd = _wrapper(**HOST_SET)
-    assert cmd[4:] == ["supervisord", "-c", "/supervisord.conf"]
+    # v2.26.3: the default image is the dinit-based aio-talk, so the wrapper
+    # execs its own CMD; a pinned TALK_HPB_IMAGE keeps supervisord.
+    assert _wrapper(**HOST_SET)[4:] == ["dinit", "--system", "--container", "nats-server", "eturnal", "janus", "signaling"]
+    assert _wrapper(TALK_HPB_IMAGE="ghcr.io/nextcloud-releases/aio-talk:20260122_105751", **HOST_SET)[4:] == ["supervisord", "-c", "/supervisord.conf"]
 
 
 def _run_wrapper(tmp_path, eturnal_text, **overrides):
@@ -296,8 +298,12 @@ def test_talk_hpb_cmd_replaces_the_execd_command():
     assert cmd[4:] == DINIT
 
 
-def test_talk_hpb_cmd_unset_keeps_supervisord():
-    assert _wrapper(**HOST_SET)[4:] == ["supervisord", "-c", "/supervisord.conf"]
+def test_talk_hpb_cmd_unset_keeps_supervisord_for_a_pinned_image():
+    assert _wrapper(TALK_HPB_IMAGE="ghcr.io/nextcloud-releases/aio-talk:20260122_105751", **HOST_SET)[4:] == ["supervisord", "-c", "/supervisord.conf"]
+
+
+def test_talk_hpb_cmd_unset_uses_dinit_for_the_default_image():
+    assert _wrapper(**HOST_SET)[4:] == ["dinit", "--system", "--container", "nats-server", "eturnal", "janus", "signaling"]
 
 
 def test_wrapper_fails_loudly_when_the_command_is_not_in_the_image(tmp_path):
