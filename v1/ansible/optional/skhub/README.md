@@ -311,7 +311,19 @@ Recordings land in the call starter's Talk folder (Talk's own default).
 | `TALK_RECORDING_IMAGE` | `ghcr.io/nextcloud-releases/aio-talk-recording:20260929_105435@sha256:64aa51b0279a4ab5c16249ad1e8f5e56b572ffee3947f14b64386429bc9c6696` | Pin a digest (`docker buildx imagetools inspect ghcr.io/nextcloud-releases/aio-talk-recording:<tag>`, or the registry API). |
 | `TALK_RECORDING_NODE` | none, required when enabled | Pins `talk-recording` (`node.hostname == <node>`). **Must differ from `APP_NODE`**: recording CPU must not compete with Nextcloud's own node; the deploy refuses the combination. |
 | `TALK_RECORDING_SECRET` | none, required when enabled | Shared secret (vault, 32+ characters) between Nextcloud and the recording backend (`RECORDING_SECRET` on the container, `secret` in Talk's `recording_servers`). Generate with `openssl rand -base64 32`. |
-| `TALK_RECORDING_MAX_CONCURRENT` | `2` | `talk-recording` replica count: capacity for this many simultaneous recordings, one independent ffmpeg+browser worker per replica. This is provisioned capacity, not admission control -- neither Talk nor the recording server has a native concurrency limit, and Swarm's VIP round-robins per connection, so an (N+1)th recording is not refused, it lands on an already-busy worker instead of failing. |
+| `TALK_RECORDING_MAX_CONCURRENT` | ignored | Before v2.26.3 this set the `talk-recording` replica count (default 2). It is ignored now (the deploy prints a warning when it is set): `talk-recording` runs exactly one replica. Talk reaches the recording server through the service VIP, so with several replicas the start and the stop of one recording round-robin to different replicas, the stop fails with "Trying to stop unknown recording" and an orphaned recorder stays in the call. One recording server runs concurrent recordings itself; the image has no concurrency setting. Remove the key. |
+
+The recording browser gets a locked Firefox policy,
+`talk-recording-firefox-policies.json` (rendered into
+`/var/data/config/skhub-<env>/`, bind-mounted read-only at
+`/usr/lib/firefox/distribution/policies.json`), that sets
+`network.dns.echconfig.enabled`, `network.dns.http3_echconfig.enabled` and
+`network.dns.native_https_query` to false. When the public skhub host is
+Cloudflare-proxied with an HTTPS DNS record carrying `ech=`, Firefox otherwise
+intermittently sends the ECH outer SNI (`cloudflare-ech.com`) to the
+instance's own Traefik, gets the default certificate, and the recording fails
+with `InsecureCertificate`. It is always on: harmless where no ECH record
+exists.
 
 `talk-recording` is not published externally: Nextcloud reaches it over the
 `skhub-<env>` overlay network at `http://<app>-<env>_talk-recording:1234`

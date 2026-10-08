@@ -58,6 +58,15 @@
       include_vars: "{{ vault_file_path }}"
       when: vault_file_path is defined
 
+    - name: Warn that TALK_RECORDING_MAX_CONCURRENT is ignored
+      # README "Talk recording": talk-recording is one replica since v2.26.3.
+      debug:
+        msg: >-
+          skhub.TALK_RECORDING_MAX_CONCURRENT is set ({{ skhub.TALK_RECORDING_MAX_CONCURRENT }})
+          but ignored: talk-recording runs exactly one replica (several replicas
+          behind one service VIP break recording stop). Remove the key.
+      when: skhub.TALK_RECORDING_MAX_CONCURRENT is defined
+
     - name: Validate the Talk HPB TURN settings
       # See README "Talk HPB TURN". A relay range needs host mode (through the
       # ingress, relayed peers arrive SNATed and are refused as private), host
@@ -411,6 +420,7 @@
         - { src: "collabora.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/collabora.env", mode: "0640" }
         - { src: "talk-hpb.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/talk-hpb.env", mode: "0640" }
         - { src: "talk-recording.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/talk-recording.env", mode: "0640" }
+        - { src: "talk-recording-firefox-policies.json.j2", dest: "/var/data/config/{{ app }}-{{ env }}/talk-recording-firefox-policies.json", mode: "0644" }
         - { src: "{{ app }}-db-backup.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}-db-backup.env", mode: "0640" }
         - { src: "clamd.conf.j2", dest: "/var/data/config/{{ app }}-{{ env }}/clamd.conf", mode: "0644" }
       tags:
