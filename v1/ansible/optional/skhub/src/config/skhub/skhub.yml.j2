@@ -449,8 +449,11 @@ services:
 {% set _talk_relay_min = skhub.TALK_TURN_RELAY_MIN_PORT | default('') %}
 {% set _talk_relay_max = skhub.TALK_TURN_RELAY_MAX_PORT | default('') %}
 {% set _talk_relay_ipv4 = skhub.TALK_TURN_RELAY_IPV4 | default('') %}
+{#- The relay wrapper execs TALK_HPB_CMD, else the image's own CMD: dinit for the
+    default image, supervisord for a TALK_HPB_IMAGE pinned before v2.26.3. -#}
+{% set _talk_hpb_cmd = skhub.TALK_HPB_CMD | default((['supervisord', '-c', '/supervisord.conf'] if (skhub.TALK_HPB_IMAGE | default('', true)) else ['dinit', '--system', '--container', 'nats-server', 'eturnal', 'janus', 'signaling']), true) %}
   talk-hpb:
-    image: {{ skhub.TALK_HPB_IMAGE | default('ghcr.io/nextcloud-releases/aio-talk:20260122_105751') }}
+    image: {{ skhub.TALK_HPB_IMAGE | default('ghcr.io/nextcloud-releases/aio-talk:latest@sha256:831a08f9772d188e65aee2fb59ef3785d3567a1fe2fb65f0e6fd2c17a16ffc87') }}
     env_file: /var/data/config/skhub-{{ env }}/talk-hpb.env
 {% if _talk_relay_ipv4 | string | length > 0 %}
     # aio-talk's /start.sh always writes relay_ipv4_addr = the container IP
@@ -467,7 +470,7 @@ services:
         && { command -v "$$1" >/dev/null || { echo "talk-hpb: $$1 is not in this image; set skhub.TALK_HPB_CMD to the image's own CMD" >&2; exit 127; }; }
         && exec "$$@"
       - talk-hpb-relay-addr
-{% for _arg in (skhub.TALK_HPB_CMD | default(['supervisord', '-c', '/supervisord.conf'], true)) %}
+{% for _arg in _talk_hpb_cmd %}
       - {{ _arg | string | tojson }}
 {% endfor %}
 {% endif %}
