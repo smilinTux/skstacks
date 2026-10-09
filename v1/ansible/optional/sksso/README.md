@@ -195,23 +195,38 @@ sksso:
 - Local data is not on shared storage: back it up with the node, and keep
   the nightly dump (`database-dump/`) on shared storage as it is.
 
-### Migrating an existing instance
+### Migrating a running instance
 
-1. Take a fresh dump: `docker exec <postgres task> pg_dump -U <user> <db> > database-dump/pre-move.sql`.
-2. Scale `server` and `worker` to 0, then `postgres` and `redis` to 0, and
-   wait until no task is running.
-3. On `DATA_NODE`, copy each data dir: `rsync -aHAX --numeric-ids
-   /var/data/runtime/sksso-<env>/postgres/ /var/lib/sksso/postgres/` (same
-   for redis).
-4. Verify: file counts and total sizes match on both sides
-   (`find <dir> | wc -l`, `du -s --apparent-size`).
-5. Rename the old dirs (for example `postgres.moved-<date>`) so nothing can
-   start on them by accident, and put a guard file there: a plain file at
-   the old path (`touch /var/data/runtime/sksso-<env>/postgres`) makes a
-   deploy from an old template fail loudly instead of starting an empty
-   database.
-6. Set the three vault keys and deploy. Check postgres logs show no
-   `initdb` and Authentik logins work, then remove the renamed dirs later.
+Moving a live database off NFS is a maintenance window (Authentik, and every
+forward-auth login, is down while postgres is stopped). `<old>` is
+`/var/data/runtime/sksso-<env>`, `<new>` the local paths you set; run the
+copy and checks on `DATA_NODE`, which mounts both.
+
+1. Take a fresh dump off shared storage first:
+   `docker exec <postgres container> pg_dump -Fc -U <user> <db> > pre-move.dump`.
+2. Scale to 0 in this order and wait until no task of them is running
+   (`docker service ps --filter desired-state=running`):
+   `docker service scale sksso-<env>_server=0 sksso-<env>_worker=0 sksso-<env>_postgres-db-backup=0`,
+   then `docker service scale sksso-<env>_postgres=0 sksso-<env>_redis=0`.
+   A clean postgres stop matters: a postgres killed mid-write on NFS is how
+   an instance ends up restart-looping on `lock file "postmaster.pid" is empty`.
+3. On `DATA_NODE`, copy each data dir with ownership, ACLs, xattrs and hard
+   links preserved, by number: `rsync -aHAX --numeric-ids <old>/postgres/ /var/lib/sksso/postgres/`
+   (same for `redis/`). The deploy later sets only the top dir to 999:999 0700
+   (postgres and redis both run as uid 999 in their images; never recursive).
+4. Verify by REGULAR FILES on both sides, count and byte sum:
+   `find <dir> -type f -printf '%s\n' | awk '{n++; s+=$1} END {print n, s}'`.
+   Both numbers must match. Do not compare `du -s --apparent-size`: it adds
+   directory sizes, which differ between NFS and ext4 even for an exact copy.
+5. Set `DATA_NODE`, `POSTGRES_DATA_PATH` and `REDIS_DATA_PATH` in the vault
+   and deploy the stack from the template. Check: the postgres task runs on
+   `DATA_NODE` with the new bind source (`docker service inspect`), its log
+   shows no `initdb`, and an Authentik login works.
+6. Rename the old dirs, never delete them: `mv <old>/postgres <old>/postgres.STALE-moved-to-<node>-local-<date>`
+   (same for `redis`). Then put a guard file at each old path
+   (`touch <old>/postgres`), so a deploy from an old template fails loudly
+   instead of starting an empty database. The STALE copies stay until a
+   separate, deliberate cleanup.
 
 **WARNING:** do not switch a mount by hand with one
 `docker service update --mount-rm <target> --mount-add type=bind,src=...,target=<target>`.

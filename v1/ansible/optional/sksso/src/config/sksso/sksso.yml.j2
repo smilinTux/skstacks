@@ -32,12 +32,17 @@ services:
         condition: any
         delay: 10s
     volumes:
-      - {{ sksso.POSTGRES_DATA_PATH | default('/var/data/runtime/' + app + '-' + env + '/postgres') }}:/var/lib/postgresql/data
+      - {{ sksso.POSTGRES_DATA_PATH | default('/var/data/runtime/' + app + '-' + env + '/postgres', true) }}:/var/lib/postgresql/data
       - /etc/localtime:/etc/localtime:ro
     networks:
       - {{ app }}-{{ env }}
+{# pg_isready as the configured user and database: probing as "postgres" on an
+   instance whose user is not postgres passes, but makes the server log
+   FATAL: role "postgres" does not exist on every probe. $$ = the container's
+   own env (sksso.env), not interpolated by the stack deploy. A Jinja comment
+   so the default render stays byte-identical. #}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "{{ 'pg_isready -U postgres' if (sksso.postgres_user | default('postgres', true)) == 'postgres' else 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}' }}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -125,7 +130,7 @@ services:
         condition: any
         delay: 10s
     volumes:
-      - {{ sksso.REDIS_DATA_PATH | default('/var/data/runtime/' + app + '-' + env + '/redis') }}:/data
+      - {{ sksso.REDIS_DATA_PATH | default('/var/data/runtime/' + app + '-' + env + '/redis', true) }}:/data
       - /etc/localtime:/etc/localtime:ro
     networks:
       - {{ app }}-{{ env }}
