@@ -35,8 +35,8 @@
     env: dev
     service_name: sksso
     service_type: optional
-    sksso_postgres_data_path: "{{ sksso.POSTGRES_DATA_PATH | default('/var/data/runtime/' + app + '-' + env + '/postgres') }}"
-    sksso_redis_data_path: "{{ sksso.REDIS_DATA_PATH | default('/var/data/runtime/' + app + '-' + env + '/redis') }}"
+    sksso_postgres_data_path: "{{ sksso.POSTGRES_DATA_PATH | default('/var/data/runtime/' + app + '-' + env + '/postgres', true) }}"
+    sksso_redis_data_path: "{{ sksso.REDIS_DATA_PATH | default('/var/data/runtime/' + app + '-' + env + '/redis', true) }}"
   pre_tasks:
     - name: Select vault file based on domain and cluster
       import_tasks: ../../shared/tasks/select_vault_file.yml
@@ -67,8 +67,8 @@
         that:
           - >-
             (sksso.DATA_NODE | default('') | string | length > 0) or
-            (((sksso.POSTGRES_DATA_PATH | default('/var/data/') | string).startswith('/var/data/')) and
-             ((sksso.REDIS_DATA_PATH | default('/var/data/') | string).startswith('/var/data/')))
+            (((sksso.POSTGRES_DATA_PATH | default('/var/data/', true) | string).startswith('/var/data/')) and
+             ((sksso.REDIS_DATA_PATH | default('/var/data/', true) | string).startswith('/var/data/')))
         fail_msg: >-
           sksso.POSTGRES_DATA_PATH / REDIS_DATA_PATH point at local disk
           ({{ sksso_postgres_data_path }}, {{ sksso_redis_data_path }}) but

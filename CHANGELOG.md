@@ -3,6 +3,21 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## skstacks-v2.26.4 - 2026-10-09
+
+### Upgrade notes (instances)
+
+- **sksso with a database user other than `postgres`:** the next sksso deploy changes the `postgres` healthcheck to probe as the configured user and database, so the `postgres` service is updated (one restart of postgres). An instance with `sksso.postgres_user: postgres` renders exactly as before.
+
+### Changes
+
+- v1: **sksso** the `postgres` healthcheck ran `pg_isready -U postgres`. pg_isready only needs the server to answer, so it passed, but on an instance whose database user is not `postgres` every probe made the server log `FATAL: role "postgres" does not exist` (every 10 seconds, seen on a production instance). It now runs `pg_isready -U $POSTGRES_USER -d $POSTGRES_DB` from the container's own environment (`sksso.env`, never rendered into the compose file) whenever `sksso.postgres_user` is not `postgres`; with `postgres` it renders byte-identical to `skstacks-v2.26.3`. Tests: `v1/tests/test_sksso_pg_healthcheck_and_baseline.py`. **Instance action**: none; see the upgrade note.
+- v1: **sksso** local-disk database (`DATA_NODE`, `POSTGRES_DATA_PATH`, `REDIS_DATA_PATH`, shipped in `skstacks-v2.23.0`): an empty `POSTGRES_DATA_PATH` or `REDIS_DATA_PATH` now means unset (the `/var/data/runtime` default), as for skgraph/skvector; before, an empty value rendered a bind with no source and stopped the play with a misleading "local disk without DATA_NODE" message. Unset or empty knobs render byte-identical to `skstacks-v2.26.3` (test against fixtures rendered from the v2.26.3 template). The README "Migrating a running instance" procedure is rewritten for moving a live instance off NFS (the trigger: an instance whose postgres on NFS twice crashed uncleanly and restart-looped on `lock file "postmaster.pid" is empty`): stop order, `rsync -aHAX --numeric-ids` on `DATA_NODE`, verify by regular-file count and byte sum (not `du --apparent-size`, which counts directory sizes differently on NFS and ext4), deploy, rename the old dirs to `*.STALE-moved-to-<node>-local-<date>` and never delete them. Tests: `v1/tests/test_sksso_pg_healthcheck_and_baseline.py`, `v1/tests/test_sksso_local_db.py`, `v1/tests/test_sksso_data_node_unset.py`. **Instance action**: none; to move, follow the README migration first.
+
+### Also in this tree, not release-gated
+
+- v1: **skbackup** (restic engine replacing Duplicati, #109) is present in this tree from `skstacks-v2.26.0` onward but is not one of the skstack06 release-gate stages: it is covered by unit/render tests only (`v1/tests/test_skbackup_*`), never deployed in the skstack06 lab, and never ran through the fresh full `PROFILE=full` lane-1 run that gates this release. Do not deploy skbackup from this tag until it has been validated separately (a dedicated skstack06 stage or an instance pilot).
+
 ## skstacks-v2.26.3 - 2026-10-08
 
 ### Upgrade notes (instances)
