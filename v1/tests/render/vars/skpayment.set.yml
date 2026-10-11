@@ -1,0 +1,22 @@
+# The "set" pass: every optional knob set, fake values only.
+skpayment:
+  CLOUDFLARED: true
+  HOSTNAME: pay.example.test
+  IMAGE: "registry.example.test/python-fastapi:3.12@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  APP_REPO: "https://git.example.test/example/skpayments.git"
+  APP_REF: "v1.0.0"
+  APP_SHA256: "1111111111111111111111111111111111111111111111111111111111111111"
+  DATA_NODE: render-node-1
+  DATA_PATH: /var/lib/skpayment-render/data
+  MIDDLEWARES: "default@file"
+  TLS_OPTIONS: "modern@file"
+  APPS:
+    example-app:
+      display_name: Example App
+      litellm_url: "https://llm.example.test"
+      litellm_master_key: "sk-example-not-a-secret"
+      success_url: "https://app.example.test/?payment=success"
+      cancel_url: "https://app.example.test/?payment=cancelled"
+      tiers:
+        pro: {stripe_price_id: price_example, max_budget: 10.0, budget_duration: 1d, tpm_limit: 500000, rpm_limit: 60}
+      free_tier: {max_budget: 1.0, budget_duration: 1d, tpm_limit: 100000, rpm_limit: 10}

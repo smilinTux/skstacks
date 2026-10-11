@@ -1,0 +1,75 @@
+version: '3.8'
+
+# SKPayment: multi-app Stripe subscription gateway (FastAPI on uvicorn).
+# The image only provides Python + fastapi/uvicorn/httpx; the app is the
+# pinned skpayment.py the deploy copied from the app repo (README.md).
+
+networks:
+  cloud-public-{{ env }}:
+    external: true
+  skpayment-{{ env }}:
+    external: true
+
+services:
+  skpayment:
+    # Default = skp_default_image in the playbook (a test keeps them equal);
+    # written out here so v1/scripts/list_images.py can see the pin.
+    image: {{ skpayment.IMAGE | default('ghcr.io/open-webui/open-webui:main@sha256:74093dadc9c6aabc23987a74fd8c2fb8d995b1a5b22e83b0036fb9d6af590e8c', true) }}
+    entrypoint: []
+    command: ["uvicorn", "skpayment:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]
+    working_dir: /
+    env_file:
+      - /var/data/config/skpayment-{{ env }}/skpayment.env
+    volumes:
+      - /var/data/skpayment-{{ env }}/app/skpayment.py:/skpayment.py:ro
+      - /var/data/config/skpayment-{{ env }}/apps.json:/config/apps.json:ro
+      - {{ skp_data_path }}:/data
+    # The image's own HEALTHCHECK probes its default app on :8080, which
+    # this service does not run: replace it with the gateway's /health.
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - skpayment-{{ env }}
+      - cloud-public-{{ env }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+{% if skp_data_node | length > 0 %}
+          - node.hostname == {{ skp_data_node }}
+{% endif %}
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 64M
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skpayment"
+        - "com.skt.env={{ env }}"
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.routers.{{ skp_router }}.rule=Host(`{{ skp_host }}`)"
+        - "traefik.http.routers.{{ skp_router }}.entrypoints=websecure"
+        - "traefik.http.routers.{{ skp_router }}.tls=true"
+        - "traefik.http.routers.{{ skp_router }}.tls.certresolver=main"
+        - "traefik.http.routers.{{ skp_router }}.tls.options={{ skp_tls_options }}"
+        - "traefik.http.routers.{{ skp_router }}.middlewares={{ skp_middlewares }}"
+        - "traefik.http.routers.{{ skp_router }}.service={{ skp_router }}"
+        - "traefik.http.services.{{ skp_router }}.loadbalancer.server.port=8000"
+        - "traefik.http.services.{{ skp_router }}.loadbalancer.healthcheck.path=/health"
+        - "traefik.http.services.{{ skp_router }}.loadbalancer.healthcheck.interval=30s"
+        - "traefik.http.services.{{ skp_router }}.loadbalancer.healthcheck.timeout=10s"

@@ -1,0 +1,297 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# skpayment: the SKPayment multi-app Stripe subscription gateway (FastAPI),
+# one replica behind skfenceha. The app code is NOT in this repo: the deploy
+# clones the app repo on the controller at a pinned ref, verifies the
+# file's sha256, and copies it to shared storage, where it is bind-mounted
+# read-only into a digest-pinned Python image. See README.md.
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+# Step 1: Select manager node with failover
+# Run on all hosts to ensure it executes even with -l limit
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+# Step 2: Deploy to selected manager
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skpayment
+    env: staging
+    service_name: skpayment
+    service_type: optional
+    skp_default_image: "ghcr.io/open-webui/open-webui:main@sha256:74093dadc9c6aabc23987a74fd8c2fb8d995b1a5b22e83b0036fb9d6af590e8c"
+    skp_default_repo: "https://github.com/smilinTux/skpayments.git"
+    skp_default_ref: "17b00804c204f9cd371938c701bd63039b0d1c8b"
+    skp_default_sha256: "c957335b6f910b81870b1dc229a294be8a40f1cc935688801193e00a98f83ff8"
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Resolve the skpayment settings
+      set_fact:
+        skp_base_domain: "{{ skpayment.DOMAIN | default(domain) if skpayment.CLOUDFLARED | default(false) | bool else (skpayment.CLUSTERNAME | default(cluster_name)) ~ '.' ~ (skpayment.DOMAIN | default(domain)) }}"
+        skp_image: "{{ skpayment.IMAGE | default(skp_default_image, true) }}"
+        skp_repo: "{{ skpayment.APP_REPO | default(skp_default_repo, true) }}"
+        skp_ref: "{{ skpayment.APP_REF | default(skp_default_ref, true) | string }}"
+        skp_sha256: "{{ skpayment.APP_SHA256 | default(skp_default_sha256, true) | string | lower }}"
+        skp_data_path: "{{ skpayment.DATA_PATH | default('/var/data/' + app + '-' + env + '/data', true) }}"
+        skp_data_node: "{{ skpayment.DATA_NODE | default('', true) | string }}"
+        skp_middlewares: "{{ skpayment.MIDDLEWARES | default('default-no-crowdsec@file', true) }}"
+        skp_tls_options: "{{ skpayment.TLS_OPTIONS | default('intermediate@file', true) }}"
+        skp_router: "skpayment{{ '' if env == 'prod' else '-' + env }}"
+      tags: [config]
+
+    - name: Resolve the public host
+      set_fact:
+        skp_host: "{{ skpayment.HOSTNAME | default('skpayment' + ('' if env == 'prod' else '-' + env) + '.' + skp_base_domain, true) }}"
+      tags: [config]
+
+    - name: Validate the image pin
+      assert:
+        that:
+          - "'@sha256:' in skp_image"
+        fail_msg: "ERROR: skpayment.IMAGE must be pinned by digest (@sha256:), got {{ skp_image }}"
+        quiet: true
+      tags: [config]
+
+    - name: Validate the app code pin
+      assert:
+        that:
+          - skp_repo | length > 0
+          - skp_ref is match('^[A-Za-z0-9][A-Za-z0-9._/-]*$')
+          - skp_sha256 is match('^[0-9a-f]{64}$')
+        fail_msg: >-
+          ERROR: skpayment needs APP_REPO, APP_REF (a tag or commit sha) and
+          APP_SHA256 (64 hex: the sha256 of skpayment.py at APP_REF).
+        quiet: true
+      tags: [config]
+
+    - name: Validate the public host, secrets and apps config
+      assert:
+        that:
+          - skp_host is match('^[A-Za-z0-9][A-Za-z0-9.-]*$')
+          - skpayment.STRIPE_SECRET_KEY | default('', true) | string | length > 0
+          - skpayment.STRIPE_WEBHOOK_SECRET | default('', true) | string | length > 0
+          - skpayment.APPS | default({}) is mapping
+        fail_msg: >-
+          ERROR: skpayment needs a valid HOSTNAME (or CLUSTERNAME/DOMAIN),
+          STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET in the vault, and APPS
+          (if set) a mapping.
+        quiet: true
+      tags: [config]
+
+    - name: Fail closed on a local data path without a pinned data node
+      # A path outside /var/data is local disk on one node: without DATA_NODE
+      # swarm may reschedule the service elsewhere onto an empty directory
+      # (an empty customer database). Same rule as skgraph/skvector.
+      assert:
+        that:
+          - (skp_data_node | length > 0) or skp_data_path.startswith('/var/data/')
+        fail_msg: >-
+          skpayment.DATA_PATH points at local disk ({{ skp_data_path }}) but
+          skpayment.DATA_NODE is empty. Set DATA_NODE to the node holding the data.
+        quiet: true
+      tags: [config]
+
+    - name: Define network variables from vault (idempotent network creation)
+      # Subnets: skpayment-prod 172.16.235.0/24, -staging .236, -dev .237
+      # (reserved for skpayment in v2.26.5); cloud-public-<env> is shared.
+      set_fact:
+        app_networks: "{{ skpayment.networks | default([
+          { 'name': 'skpayment-staging', 'subnet': '172.16.236.0/24', 'driver': 'overlay', 'attachable': true },
+          { 'name': 'cloud-public-staging', 'subnet': '172.16.201.0/24', 'driver': 'overlay', 'attachable': true }
+        ]) }}"
+      tags: [networks, config]
+
+  tasks:
+    - name: Deploying {{ app }}
+      debug:
+        msg: Running SKStacks deploy {{ app }} scripts...
+
+    - name: Fetch the app code at the pinned ref and verify its sha256 (controller)
+      # On the controller (the operator's git credentials reach a private app
+      # repo; the swarm nodes need none). Fails unless skpayment.py at
+      # APP_REF hashes to APP_SHA256: a moved tag or a wrong ref stops here.
+      shell: |
+        set -euo pipefail
+        d=$(mktemp -d)
+        trap '[ $? -eq 0 ] || rm -rf "$d"' EXIT
+        git clone --quiet --no-checkout {{ skp_repo | quote }} "$d/repo"
+        git -C "$d/repo" -c advice.detachedHead=false checkout --quiet --detach {{ skp_ref | quote }}
+        actual=$(sha256sum "$d/repo/skpayment.py" | cut -d' ' -f1)
+        if [ "$actual" != {{ skp_sha256 | quote }} ]; then
+          echo "skpayment.py at {{ skp_ref }} has sha256 $actual, want {{ skp_sha256 }}" >&2
+          exit 1
+        fi
+        echo "$d/repo"
+      args:
+        executable: /bin/bash
+      register: skpayment_app_src
+      changed_when: false
+      delegate_to: localhost
+      become: false
+      run_once: true
+      tags: [app]
+
+    - name: Create the {{ app }} directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - /var/data/{{ app }}-{{ env }}
+        - /var/data/{{ app }}-{{ env }}/app
+        - /var/data/config/{{ app }}-{{ env }}
+
+    - name: Create the {{ app }} data directory on shared storage (not recursive)
+      file:
+        path: "{{ skp_data_path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      when: skp_data_path.startswith('/var/data/')
+
+    - name: Create the {{ app }} local data directory on the data node (not recursive)
+      file:
+        path: "{{ skp_data_path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      when: not skp_data_path.startswith('/var/data/')
+      delegate_to: "{{ skpayment.DATA_NODE | default(inventory_hostname, true) }}"
+
+    - name: Install the pinned app code
+      copy:
+        src: "{{ skpayment_app_src.stdout }}/skpayment.py"
+        dest: "/var/data/{{ app }}-{{ env }}/app/skpayment.py"
+        owner: root
+        group: root
+        mode: '0644'
+      register: skpayment_code
+      tags: [app]
+
+    - name: Remove the controller's checkout
+      file:
+        path: "{{ skpayment_app_src.stdout | dirname }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      run_once: true
+      tags: [app]
+
+    - name: Process {{ app }} secrets env (root only)
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.env.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env"
+        owner: root
+        group: root
+        mode: '0600'
+      no_log: true
+      register: skpayment_env
+      tags: [templates]
+
+    - name: Process the {{ app }} apps config (carries per-app API keys, root only)
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/apps.json.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/apps.json"
+        owner: root
+        group: root
+        mode: '0600'
+      no_log: true
+      register: skpayment_apps
+      tags: [templates]
+
+    - name: Process {{ app }} shell env
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.sh.env.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env"
+        owner: root
+        group: root
+        mode: '0640'
+      tags: [templates]
+
+    - name: Process {{ app }} Docker Compose template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags: [compose]
+
+    - name: Create docker-compose.yml symlink
+      file:
+        src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags: [compose]
+
+    - name: Process deploy script template
+      template:
+        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/deploy"
+        owner: root
+        group: root
+        mode: '0755'
+      tags: [deploy-script]
+
+    - name: Create {{ app }} control script symlink
+      file:
+        src: "/var/data/{{ app }}-{{ env }}/deploy"
+        dest: "/var/data/deploy_{{ app }}-{{ env }}"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags: [deploy-script]
+
+    - name: Ensure overlay networks exist from app_networks variable
+      include_tasks: ../../shared/tasks/create_networks.yml
+      tags: [networks]
+
+    - name: Deploy {{ app }} stack
+      # The code, apps.json and env are bind mounts / env_file: a changed file
+      # alone does not change the service spec, so the deploy script restarts
+      # an existing service when the play changed one of them.
+      shell: |
+        cd /var/data/{{ app }}-{{ env }}
+        RESTART={{ '1' if (skpayment_code is changed or skpayment_env is changed or skpayment_apps is changed) else '0' }} ./deploy
+      register: deploy_output
+      tags: [deploy]
+
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags: [deploy]
