@@ -1,0 +1,125 @@
+# Docker Compose for sksec (CrowdSec Security) - Single & Multi-Node HA Support
+#
+# UNIFIED CONFIGURATION: Works seamlessly for both single-node and multi-node clusters
+# Traefik service auto-detection: Automatically detects skfence or skfenceha during deployment
+#
+# Single-Node Mode:
+#   - CrowdSec runs on any manager node (handles database + log analysis)
+#   - Reads Traefik logs from: /var/data/logs/{traefik_service_name}-{env}/traefik/
+#   - traefik_service_name is auto-detected (skfence or skfenceha)
+#
+# Multi-Node HA Mode:
+#   - CrowdSec pinned to ACME master node (exclusive database write access)
+#   - Reads Traefik logs from: /var/data/logs/{traefik_service_name}-{env}/traefik/acme-node/ (ACME master logs)
+#   - traefik_service_name is auto-detected (skfence or skfenceha)
+#   - Set TRAEFIK_HA_MODE=true in vault to enable HA mode
+#
+# Required environment variables (see sksec.env):
+#   - TRAEFIK_HA_MODE (optional, defaults to false/auto-detect)
+#   - CROWDSEC_BOUNCER_API_KEY
+#   - Other CrowdSec configuration variables
+
+version: '3.8'
+
+networks:
+  sksec-prod:
+    external: true
+  cloud-public-prod:
+    external: true
+
+services:
+  # CrowdSec Service - Security event analysis and threat detection
+  # In HA mode: Pinned to ACME master node (exclusive database write access)
+  # In single-node: Runs on any manager node
+  crowdsec:
+    image: crowdsecurity/crowdsec:v1.6.11@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    env_file: /var/data/config/sksec-prod/sksec.env
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    volumes:
+      # === NFS DATA - DIRECT BIND (NO NAMED VOLUME) ===
+      # CrowdSec needs to write hub data, collections, parsers during initialization
+      # acquis.yaml is copied into this directory during deployment
+      - /var/data/runtime/sksec-prod/crowdsec-config:/etc/crowdsec/
+      - /var/data/runtime/sksec-prod/crowdsec-db:/var/lib/crowdsec/data/
+      # Traefik logs (Node-aware: Mount parent directories to enable wildcard patterns)
+      # CrowdSec acquis.yaml uses wildcard patterns to read from all node-specific directories
+      # Uses detected traefik_service_name (skfence or skfenceha) - auto-detected during deployment
+      # HA mode (skfenceha): entrypoint.sh writes <log_dir>/{worker,acme}/access-<node>.log
+      # (see skfenceha logrotate.conf.j2); mount the whole log dir read-only.
+      - /var/data/logs/skfenceha-prod/traefik:/var/log/traefik:ro
+    depends_on:
+      - bouncer-traefik
+    networks:
+      - sksec-prod
+      - cloud-public-prod
+    deploy:
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: any
+        delay: 10s
+      mode: replicated
+      replicas: 1
+      placement:
+        # In HA mode: Pin to ACME master node (exclusive database write access)
+        # In single-node: Runs on any node
+        constraints:
+          - node.labels.traefik.acme.master == true
+        preferences:
+          - spread: node.labels.zone
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "cscli", "metrics", "--output", "json"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  bouncer-traefik:
+    image: docker.io/fbonalair/traefik-crowdsec-bouncer:0.5.0@sha256:1111111111111111111111111111111111111111111111111111111111111111
+    env_file: /var/data/config/sksec-prod/sksec.env
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - sksec-prod
+      - cloud-public-prod
+    deploy:
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: any
+        delay: 10s
+      mode: replicated
+      replicas: 1
+      placement:
+        preferences:
+          - spread: node.labels.zone
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
+    # Note: Bouncer healthcheck disabled due to API limitations
+    # Consider implementing custom health check if needed
+
+# No named volumes - all mounts are direct bind mounts
+# Simpler, faster, zero-config
