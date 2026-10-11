@@ -3,6 +3,17 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased
+
+### Upgrade notes (instances)
+
+- **sksec:** the next sksec deploy creates (or converges) the CrowdSec LAPI allowlist `sksec-operator` from `sksec.ALLOWLIST_CIDRS`. An instance that already created an allowlist by hand under that name keeps it: the deploy adds what is missing and REMOVES every entry not in `ALLOWLIST_CIDRS`, so put every hand-added address into the vault list first (or set `LAPI_ALLOWLIST_NAME` to another name, or `LAPI_ALLOWLIST_ENABLED: false`). The image must be CrowdSec 1.6.8 or later (the default `v1.6.11` is).
+
+### Changes
+
+- v1: **sksec** syncs `sksec.ALLOWLIST_CIDRS` into a CrowdSec LAPI centralized allowlist (CrowdSec 1.6.8+). The s02-enrich whitelist parser only drops LOCAL events, so community blocklist (CAPI), console blocklist and `cscli decisions add` decisions still reached the bouncer and could ban the operator's own ranges; LAPI applies an allowlist to every decision (a `cscli decisions add` on a listed address is refused). After the stack deploy all three playbooks include `tasks/lapi_allowlist.yml`: resolve the node running the crowdsec task with `docker service ps` (with `TRAEFIK_HA_MODE` that is the ACME master, often not the deploy node) and delegate there, wait up to `sksec.LAPI_WAIT_SECONDS` (default 300) for `cscli lapi status`, then make allowlist `sksec.LAPI_ALLOWLIST_NAME` (default `sksec-operator`) hold exactly `ALLOWLIST_CIDRS`: create it, add missing entries, remove unlisted ones, verify. An empty list empties it; other allowlists are never touched; the task reports changed only when it changed something; `cscli` runs from an argv, never a shell. `sksec.LAPI_ALLOWLIST_ENABLED: false` skips it. `ALLOWLIST_CIDRS` that is not a YAML list now fails the play. README "Allowlist" explains parser vs LAPI allowlist and how to check (`cscli allowlists check <ip>`) and unban (`cscli decisions delete --ip <ip>`). Tests: `v1/tests/test_sksec_lapi_allowlist.py` (the real task file through `ansible-playbook` against a docker test double modelled on `crowdsecurity/crowdsec:v1.6.11`: fresh, idempotent, drift, empty, rename, LAPI wait, LAPI never ready, no running task, non-list input; also checked by hand against a real v1.6.11 container). **Instance action**: see the upgrade note.
+- v1: per-router Traefik middleware knobs for the ten optional services whose router chain was hardcoded to `default-no-crowdsec@file`: `skboard`, `skgit`, `skorch`, `skpdf`, `skpeek`, `skport`, `skpulse`, `skseek`, `skstor` and `skvector` read `<svc>.TRAEFIK_MIDDLEWARES`, and skvector's gRPC router `skvector.TRAEFIK_MIDDLEWARES_GRPC` (the `skgallery.TRAEFIK_MIDDLEWARES` convention). The value replaces the whole chain, so keep skpdf's `skpdf[-env]-upload` and skvector's `skvector[-env]-buffering` when overriding. This lets an instance put a router behind `crowdsec-bouncer@file` without hand-editing live labels (which the next deploy reverted). Unset or empty renders byte-identical to `skstacks-v2.26.4` (baselines rendered from the v2.26.4 templates). Documented in `docs/v1-service-catalog.md` ("Router middleware overrides") and the service READMEs; the render gate's set pass drives every knob. Tests: `v1/tests/test_router_middlewares_knob.py`. **Instance action**: none.
+
 ## skstacks-v2.26.4 - 2026-10-09
 
 ### Upgrade notes (instances)
