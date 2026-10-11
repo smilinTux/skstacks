@@ -1,0 +1,4 @@
+# Second render pass: merged over skseek.example.yml to drive the router
+# middleware override (TRAEFIK_MIDDLEWARES) down its "set" path.
+skseek:
+  TRAEFIK_MIDDLEWARES: crowdsec-bouncer@file,default@file

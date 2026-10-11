@@ -1,0 +1,126 @@
+version: '3.8'
+
+services:
+  n8n:
+    image: "n8nio/n8n@sha256:cae1f28d585a99d9ce9a56f82fbfc99fc100862ffef988d73fa2048d2687b0cc"
+    env_file: /var/data/config/skorch-prod/skorch.env
+    logging:
+      driver: json-file
+      options:
+        max-size: 4m
+        max-file: "1"
+    volumes:
+      # N8n data directory (direct host bind mount - env aware)
+      - /var/data/skorch-prod/n8n_data:/home/node/.n8n
+      # Local files directory (direct host bind mount - env aware)
+      - /var/data/skorch-prod/local-files:/files
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - skorch-prod
+      - cloud-public-prod
+    deploy:
+      placement:
+        constraints: []
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+      mode: replicated
+      replicas: 1
+      labels:
+        # === TRAEFIK: HTTP ===
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-prod"
+        # === TRAEFIK: ROUTERS ===
+        - "traefik.http.routers.skorch.rule=Host(`skorch.render.example.test`)"
+        - "traefik.http.routers.skorch.entrypoints=websecure"
+        - "traefik.http.routers.skorch.tls=true"
+        - "traefik.http.routers.skorch.tls.certresolver=main"
+        - "traefik.http.routers.skorch.tls.options=intermediate@file"
+        - "traefik.http.routers.skorch.middlewares=default-no-crowdsec@file"
+        - "traefik.http.routers.skorch.service=skorch"
+        # === TRAEFIK: SERVICES ===
+        - "traefik.http.services.skorch.loadbalancer.server.port=5678"
+        # === STICKY SESSIONS: Required for stateful n8n application ===
+        # Even with replicas: 1, multiple Traefik workers can cause requests to be routed
+        # through different workers during updates, leading to session issues
+        # Sticky sessions ensure all requests from the same client use the same Traefik worker
+        - "traefik.http.services.skorch.loadbalancer.sticky=true"
+        - "traefik.http.services.skorch.loadbalancer.sticky.cookie=true"
+        - "traefik.http.services.skorch.loadbalancer.sticky.cookie.name=skorch_session"
+        - "traefik.http.services.skorch.loadbalancer.sticky.cookie.secure=true"
+        - "traefik.http.services.skorch.loadbalancer.sticky.cookie.httpOnly=true"
+        - "traefik.http.services.skorch.loadbalancer.sticky.cookie.sameSite=lax"
+
+  postgres:
+    image: pgvector/pgvector:pg16@sha256:0a07c4114ba6d1d04effcce3385e9f5ce305eb02e56a3d35948a415a52f193ec
+    env_file: /var/data/config/skorch-prod/postgres.env
+    environment:
+      - PGTEMP=/var/lib/postgresql/data/tmp
+    networks:
+      - skorch-prod
+    volumes:
+      - /var/data/runtime/skorch-prod/postgres:/var/lib/postgresql/data
+      - /var/data/skorch-prod/postgres-init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    deploy:
+      placement:
+        constraints: []
+      restart_policy:
+        condition: any
+        delay: 5s
+
+  redis:
+    image: redis:7.4.7-alpine
+    command: redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - skorch-prod
+    volumes:
+      - /var/data/runtime/skorch-prod/redis:/data
+      - /var/data/config/skorch-prod/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    deploy:
+      placement:
+        constraints: []
+      restart_policy:
+        condition: any
+        delay: 5s
+
+  postgres-backup:
+    image: prodrigestivill/postgres-backup-local:16-debian-d257e5d
+    env_file: /var/data/config/skorch-prod/postgres-backup.env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_EXTRA_OPTS: "-Z9 --schema=public --blobs"
+      SCHEDULE: "@daily"
+      BACKUP_KEEP_DAYS: 7
+      BACKUP_KEEP_WEEKS: 4
+      BACKUP_KEEP_MONTHS: 6
+      HEALTHCHECK_PORT: 8080
+    volumes:
+      # Database backup directory (direct host bind mount - env aware)
+      - /var/data/skorch-prod/database-backup:/backups
+    networks:
+      - skorch-prod
+    depends_on:
+      - postgres
+    deploy:
+      placement:
+        constraints: []
+      restart_policy:
+        condition: on-failure
+
+
+networks:
+  cloud-public-prod:
+    external: true
+  skorch-prod:
+    external: true

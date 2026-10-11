@@ -75,6 +75,6 @@ services:
         - "traefik.http.routers.skstor{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
         - "traefik.http.routers.skstor{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
         - "traefik.http.routers.skstor{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
-        - "traefik.http.routers.skstor{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares=default-no-crowdsec@file"
+        - "traefik.http.routers.skstor{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares={{ skstor.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file', true) }}"
         - "traefik.http.routers.skstor{% if env != 'prod' %}-{{ env }}{% endif %}.service=skstor{% if env != 'prod' %}-{{ env }}{% endif %}"
         - "traefik.http.services.skstor{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=3900"

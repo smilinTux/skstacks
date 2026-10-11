@@ -27,6 +27,7 @@ skpeek:
   INSTANCE_NAME: "SKPeek"            # optional, settings.yml general.instance_name
   DEBUG: false                       # optional, settings.yml general.debug
   THEME: "simple"                    # optional, settings.yml ui.default_theme
+  TRAEFIK_MIDDLEWARES: ""            # optional, router middleware chain (default default-no-crowdsec@file)
   extra_env:                         # optional, appended to skpeek.env
     SEARXNG_PRIVACY: "1"
 ```

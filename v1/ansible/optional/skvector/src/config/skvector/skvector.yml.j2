@@ -86,7 +86,7 @@ services:
         - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
         - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
         - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
-        - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares=skvector{% if env != 'prod' %}-{{ env }}{% endif %}-buffering,default-no-crowdsec@file"
+        - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares={{ skvector.TRAEFIK_MIDDLEWARES | default('skvector' ~ ('' if env == 'prod' else '-' ~ env) ~ '-buffering,default-no-crowdsec@file', true) }}"
         - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}.service=skvector{% if env != 'prod' %}-{{ env }}{% endif %}"
 
         # === TRAEFIK: SERVICES ===
@@ -98,7 +98,7 @@ services:
         - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}-grpc.tls=true"
         - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}-grpc.tls.certresolver=main"
         - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}-grpc.tls.options=intermediate@file"
-        - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}-grpc.middlewares=default-no-crowdsec@file"
+        - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}-grpc.middlewares={{ skvector.TRAEFIK_MIDDLEWARES_GRPC | default('default-no-crowdsec@file', true) }}"
         - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}-grpc.service=skvector{% if env != 'prod' %}-{{ env }}{% endif %}-grpc"
         - "traefik.http.services.skvector{% if env != 'prod' %}-{{ env }}{% endif %}-grpc.loadbalancer.server.port=6334"
         - "traefik.http.services.skvector{% if env != 'prod' %}-{{ env }}{% endif %}-grpc.loadbalancer.server.scheme=h2c"

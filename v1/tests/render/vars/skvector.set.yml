@@ -5,3 +5,5 @@ skvector:
   DATA_NODE: render-worker3
   STORAGE_PATH: /var/lib/skvector-render/storage
   SNAPSHOTS_PATH: /var/lib/skvector-render/snapshots
+  TRAEFIK_MIDDLEWARES: crowdsec-bouncer@file,default@file
+  TRAEFIK_MIDDLEWARES_GRPC: crowdsec-bouncer@file,default@file

@@ -1,0 +1,4 @@
+# Second render pass: merged over skport.example.yml to drive the router
+# middleware override (TRAEFIK_MIDDLEWARES) down its "set" path.
+skport:
+  TRAEFIK_MIDDLEWARES: crowdsec-bouncer@file,default@file

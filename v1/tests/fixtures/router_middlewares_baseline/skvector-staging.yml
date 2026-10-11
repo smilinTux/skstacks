@@ -1,0 +1,113 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+version: '3.8'
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.17.0
+    env_file: /var/data/config/skvector-staging/skvector.env
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    volumes:
+      # Main storage - NFS backed for persistence
+      - /var/data/skvector-staging/storage:/qdrant/storage
+      # Snapshots - NFS backed for backup/recovery
+      - /var/data/skvector-staging/snapshots:/qdrant/snapshots
+      # Config file for advanced settings
+    networks:
+      - skvector-staging
+      - cloud-public-staging
+    deploy:
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: any
+        delay: 10s
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: []
+      resources:
+        limits:
+          # Optimized for large document ingestion from SKAid
+          # Handles chunked embeddings from 150MB PDFs
+          cpus: '2.00'
+          memory: 4096M
+        reservations:
+          cpus: '0.50'
+          memory: 1024M
+      labels:
+        # === TRAEFIK: HTTP ===
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-staging"
+
+        # === TRAEFIK: REQUEST SIZE for Large Batch Uploads ===
+        # Support batch embedding uploads from SKAid document ingestion
+        - "traefik.http.middlewares.skvector-staging-buffering.buffering.maxRequestBodyBytes=104857600"
+        - "traefik.http.middlewares.skvector-staging-buffering.buffering.memRequestBodyBytes=10485760"
+
+        # === TRAEFIK: ROUTERS ===
+        - "traefik.http.routers.skvector-staging.rule=Host(`skvector-staging.render.example.test`)"
+        - "traefik.http.routers.skvector-staging.entrypoints=websecure"
+        - "traefik.http.routers.skvector-staging.tls=true"
+        - "traefik.http.routers.skvector-staging.tls.certresolver=main"
+        - "traefik.http.routers.skvector-staging.tls.options=intermediate@file"
+        - "traefik.http.routers.skvector-staging.middlewares=skvector-staging-buffering,default-no-crowdsec@file"
+        - "traefik.http.routers.skvector-staging.service=skvector-staging"
+
+        # === TRAEFIK: SERVICES ===
+        - "traefik.http.services.skvector-staging.loadbalancer.server.port=6333"
+
+        # === TRAEFIK: gRPC ROUTER (for high-performance batch operations) ===
+        - "traefik.http.routers.skvector-staging-grpc.rule=Host(`skvector-staging.render.example.test`) && PathPrefix(`/qdrant.`)"
+        - "traefik.http.routers.skvector-staging-grpc.entrypoints=websecure"
+        - "traefik.http.routers.skvector-staging-grpc.tls=true"
+        - "traefik.http.routers.skvector-staging-grpc.tls.certresolver=main"
+        - "traefik.http.routers.skvector-staging-grpc.tls.options=intermediate@file"
+        - "traefik.http.routers.skvector-staging-grpc.middlewares=default-no-crowdsec@file"
+        - "traefik.http.routers.skvector-staging-grpc.service=skvector-staging-grpc"
+        - "traefik.http.services.skvector-staging-grpc.loadbalancer.server.port=6334"
+        - "traefik.http.services.skvector-staging-grpc.loadbalancer.server.scheme=h2c"
+
+        # === TRAEFIK: HEALTH CHECK ===
+        - "traefik.http.services.skvector-staging.loadbalancer.healthcheck.path=/healthz"
+        - "traefik.http.services.skvector-staging.loadbalancer.healthcheck.interval=30s"
+        - "traefik.http.services.skvector-staging.loadbalancer.healthcheck.timeout=10s"
+
+volumes:
+  skvector-staging-storage:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/data/skvector-staging/storage
+  skvector-staging-snapshots:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/data/skvector-staging/snapshots
+
+networks:
+  skvector-staging:
+    external: true
+  cloud-public-staging:
+    external: true

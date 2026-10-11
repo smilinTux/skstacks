@@ -14,3 +14,4 @@ skpeek:
         engine: command
         command: ["echo", "{{QUERY}}"]
         shortcut: exc
+  TRAEFIK_MIDDLEWARES: crowdsec-bouncer@file,default@file

@@ -122,6 +122,9 @@ FAKE_STDOUT = {
     "skfence_logrotate_nodes": "render-node-1",
     "garage_node": "render-node-1",
     "garage_replicas": "1/1",
+    "sksec_crowdsec_node": "render-node-1",
+    "sksec_crowdsec_container": "render-container",
+    "sksec_lapi_allowlists": "[]",
 }
 
 
