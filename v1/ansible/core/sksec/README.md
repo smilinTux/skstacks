@@ -113,6 +113,42 @@ Allowlisting does not remove an existing decision: unban with
 `cscli decisions delete --ip <ip>` after adding an address that was already
 banned.
 
+## Bouncer resilience
+
+Every router behind `crowdsec-bouncer@file` asks the bouncer on every
+request, and the bouncer fails closed: with no bouncer answering, those
+routers (SSO logins included, if sksso is behind it) fail. By default it is
+one replica.
+
+- `BOUNCER_REPLICAS: 2` (or more) runs that many bouncer tasks with
+  `max_replicas_per_node: 1`, so losing one node leaves one answering. The
+  bouncer is stateless (it asks the LAPI), so replicas need nothing else.
+- `BOUNCER_HEALTHCHECK: true` renders an explicit healthcheck running the
+  image's own `/healthchecker`, with `BOUNCER_HEALTH_CHECK_INTERVAL`,
+  `_TIMEOUT`, `_RETRIES` and `_START_PERIOD`. Note that the image already
+  ships a HEALTHCHECK (`/healthchecker`, every 10s, 2 retries) that applies
+  when the knob is off; the knob makes it visible in the compose file and
+  tunable.
+
+Both default off: an instance that sets neither renders exactly as before.
+
+## Client IP
+
+The bouncer decides on the client address it derives from the request
+Traefik forwards. With `BOUNCER_TRUSTED_PROXIES` unset it trusts every hop
+(`0.0.0.0/0`) and takes the LEFTMOST `X-Forwarded-For` entry, which the
+client controls: a request through a Cloudflare-proxied hostname can carry a
+forged first entry and dodge a ban. Set `BOUNCER_TRUSTED_PROXIES` to the
+proxies in front of the bouncer: the overlay subnets Traefik reaches it
+through (`cloud-public-<env>` and `sksec-<env>`) plus, for proxied
+hostnames, the CDN's published ranges (for Cloudflare,
+https://www.cloudflare.com/ips/). The bouncer then reads
+`X-Forwarded-For` right to left and takes the first address that is not a
+trusted proxy. It is rendered as `TRUSTED_PROXIES` into `sksec.env`. The play
+refuses `0.0.0.0/0` and `::/0` (that is the unsafe default) and anything
+that is not a list of addresses or CIDRs. Check after a deploy with a banned
+test address (`cscli decisions add --ip <ip>`) through a proxied hostname.
+
 ## Required instance vars (vault)
 
 `sksec-<env>_vault.yml` (see the framework README's "Instance contract" for
@@ -157,6 +193,13 @@ sksec:
   LAPI_WAIT_SECONDS: 300         # wait for the crowdsec task and LAPI before failing
   CROWDSEC_IMAGE: ""             # default crowdsecurity/crowdsec:v1.6.11 (pin a digest here)
   BOUNCER_IMAGE: ""              # default docker.io/fbonalair/traefik-crowdsec-bouncer:0.5.0
+  BOUNCER_REPLICAS: 1            # >1: that many bouncers, one per node (see "Bouncer resilience")
+  BOUNCER_HEALTHCHECK: false     # true: explicit, tunable healthcheck on the bouncer
+  BOUNCER_HEALTH_CHECK_INTERVAL: "10s"
+  BOUNCER_HEALTH_CHECK_TIMEOUT: "5s"
+  BOUNCER_HEALTH_CHECK_RETRIES: 3
+  BOUNCER_HEALTH_CHECK_START_PERIOD: "20s"
+  BOUNCER_TRUSTED_PROXIES: []    # proxies whose X-Forwarded-For the bouncer believes (see "Client IP")
 
 # optional - override this cluster's sksec overlay network (defaults shown
 # are this framework's reserved range; must stay unique per
