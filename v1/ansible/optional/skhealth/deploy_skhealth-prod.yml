@@ -19,7 +19,7 @@
 # its config, a root-only credentials file and a systemd timer on every
 # swarm node. See README.md for the checks, the vault contract and the
 # resource cost.
-# skstacks: host-level - runs on every swarm node, not only on a manager
+# skstacks: every-node - a node-local agent (files under /etc, /usr/local, /var/lib only), installed on every swarm node
 - import_playbook: ../../shared/meta/skstack-header.yml
 
 - hosts: "{{ skhealth_hosts | default('swarm_managers:swarm_workers') }}"
