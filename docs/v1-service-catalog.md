@@ -67,6 +67,44 @@ tag yet.
 | [skwhoami](#skwhoami) | optional | traefik/whoami echo/test service | traefik/whoami `v1.12.0` | none | 3x `skwhoami0{1,2,3}[-env].<cluster>.<domain>` | none (stateless) | `CLUSTERNAME`, `DOMAIN` | none | v2.19.0 |
 | [skbackup](#skbackup) | optional (host-level) | Snapshots, per-app copies, dump hooks, restic offsite, restore tests, alerts on the storage host | sanoid + rsync + restic (host packages) | a storage host in an inventory group (default `storage_hosts`), ideally ZFS | none (no web UI, no swarm stack) | `/etc/<short_name>`, `/var/lib/<short_name>` on the storage host | `data_target`; `offsite.repository` + `offsite.password` when offsite is on | every tier toggle, `branding` (white-label) | v2.23.0 (restic; the Duplicati app of v2.19.0 to v2.22.0 is retired) |
 
+## Router middleware overrides
+
+Services whose Traefik router used to hardcode `default-no-crowdsec@file` read
+the router's whole middleware chain from one vault key, so an instance can put
+a router behind sksec's `crowdsec-bouncer@file` (or any other chain) without
+hand-editing live service labels. Same convention as
+`skgallery.TRAEFIK_MIDDLEWARES`. Unset or empty renders byte-identical to
+earlier releases. The value REPLACES the chain: copy the default and edit it,
+so a service's own middleware (skpdf's upload limit, skvector's buffering) is
+kept. `[-env]` is empty on prod and `-dev`/`-staging` otherwise.
+
+| Vault key | Router | Default chain |
+|---|---|---|
+| `skboard.TRAEFIK_MIDDLEWARES` | `skboard[-env]` | `default-no-crowdsec@file` |
+| `skgit.TRAEFIK_MIDDLEWARES` | `skgit[-env]` | `default-no-crowdsec@file` |
+| `skorch.TRAEFIK_MIDDLEWARES` | `skorch[-env]` | `default-no-crowdsec@file` |
+| `skpdf.TRAEFIK_MIDDLEWARES` | `skpdf[-env]` | `default-no-crowdsec@file,skpdf[-env]-upload` |
+| `skpeek.TRAEFIK_MIDDLEWARES` | `skpeek[-env]` | `default-no-crowdsec@file` |
+| `skport.TRAEFIK_MIDDLEWARES` | `skport[-env]` | `default-no-crowdsec@file` |
+| `skpulse.TRAEFIK_MIDDLEWARES` | `skpulse[-env]` | `default-no-crowdsec@file` |
+| `skseek.TRAEFIK_MIDDLEWARES` | `skseek[-env]` | `default-no-crowdsec@file` |
+| `skstor.TRAEFIK_MIDDLEWARES` | `skstor[-env]` (web) | `default-no-crowdsec@file` |
+| `skvector.TRAEFIK_MIDDLEWARES` | `skvector[-env]` (HTTP) | `skvector[-env]-buffering,default-no-crowdsec@file` |
+| `skvector.TRAEFIK_MIDDLEWARES_GRPC` | `skvector[-env]-grpc` | `default-no-crowdsec@file` |
+
+Example (prod, one router behind the bouncer):
+
+```yaml
+skpulse:
+  TRAEFIK_MIDDLEWARES: "crowdsec-bouncer@file,default@file"
+```
+
+skgallery (`skgallery.TRAEFIK_MIDDLEWARES`, default
+`upload-chain-no-crowdsec@file`) and skwhoami (`skwhoami.MIDDLEWARES`, a map of
+service name to chain) had their own keys already. Follow sksec's activation
+order (CHANGELOG, `skstacks-v2.22.0` upgrade notes) before pointing a real router at
+the fail-closed bouncer.
+
 ---
 
 ## Core services

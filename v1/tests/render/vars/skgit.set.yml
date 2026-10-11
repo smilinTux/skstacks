@@ -4,3 +4,4 @@ skgit:
   DIND_NODE: render-node-1
   METRICS_TOKEN: example-metrics-token-not-a-secret
   placement_constraints: ["node.role == worker"]
+  TRAEFIK_MIDDLEWARES: crowdsec-bouncer@file,default@file

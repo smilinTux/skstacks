@@ -42,7 +42,7 @@ services:
         - "traefik.http.routers.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
         - "traefik.http.routers.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
         - "traefik.http.routers.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
-        - "traefik.http.routers.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares=default-no-crowdsec@file"
+        - "traefik.http.routers.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares={{ skpeek.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file', true) }}"
         - "traefik.http.routers.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.service=skpeek{% if env != 'prod' %}-{{ env }}{% endif %}"
         # === TRAEFIK: SERVICES ===
         - "traefik.http.services.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=8080"
