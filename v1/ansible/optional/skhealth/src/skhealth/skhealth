@@ -1,0 +1,893 @@
+#!/usr/bin/python3
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+"""skhealth: lightweight infrastructure health checks with deduplicated alerts.
+
+One short-lived process per systemd timer tick (no daemon, no container).
+Python standard library only. Every external command is called by the
+absolute path in the config's "bin" map: schedulers run with a minimal PATH.
+
+Commands:
+  skhealth [run]     run the checks, alert on state changes, save the state
+  skhealth check     run the checks and print the problems (no alert, no state)
+  skhealth --test    send one test message through every configured channel
+  skhealth status    print the saved state (no secrets)
+
+Options: --config PATH (default /etc/skhealth/skhealth.json).
+"""
+from __future__ import annotations
+
+import datetime as dt
+import fcntl
+import fnmatch
+import json
+import os
+import re
+import shlex
+import socket
+import ssl
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+DEFAULT_CONFIG = "/etc/skhealth/skhealth.json"
+SAFE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+DEFAULT_BIN = {
+    "docker": "/usr/bin/docker",
+    "systemctl": "/usr/bin/systemctl",
+    "journalctl": "/usr/bin/journalctl",
+    "smartctl": "/usr/sbin/smartctl",
+    "zpool": "/usr/sbin/zpool",
+    "mdadm": "/usr/sbin/mdadm",
+    "ssh": "/usr/bin/ssh",
+    "timeout": "/usr/bin/timeout",
+    "stat": "/usr/bin/stat",
+    "openssl": "/usr/bin/openssl",
+}
+
+
+# ---------------------------------------------------------------------------
+# Small helpers
+# ---------------------------------------------------------------------------
+
+def run(argv: list[str], timeout: float = 30) -> tuple[int, str]:
+    """Run argv (never through a shell). Returns (rc, stdout+stderr).
+    rc 124 = timed out. A child stuck in uninterruptible sleep (a hung NFS
+    stat) cannot be reaped: it is abandoned instead of hanging this run."""
+    try:
+        proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, errors="replace",
+                                env={"PATH": SAFE_PATH, "LC_ALL": "C"})
+    except OSError as exc:
+        return 127, f"{os.path.basename(argv[0])}: {exc.strerror or exc}"
+    try:
+        out, _ = proc.communicate(timeout=timeout)
+        return proc.returncode, out
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            out, _ = proc.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            out = ""
+        return 124, out or ""
+
+
+def executable(path: str) -> bool:
+    return bool(path) and os.path.isfile(path) and os.access(path, os.X_OK)
+
+
+def short_host() -> str:
+    return socket.gethostname().split(".")[0]
+
+
+def first_line(text: str, limit: int = 200) -> str:
+    for line in text.splitlines():
+        if line.strip():
+            return line.strip()[:limit]
+    return ""
+
+
+def safe_key(text: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.:@/-]", "_", text)
+
+
+def read_env_file(path: str) -> dict[str, str]:
+    """KEY=VALUE lines (values shell-quoted, as the deploy renders them)."""
+    out: dict[str, str] = {}
+    try:
+        with open(path) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, rest = line.partition("=")
+                try:
+                    parts = shlex.split(rest)
+                except ValueError:
+                    parts = [rest]
+                out[key.strip()] = parts[0] if parts else ""
+    except FileNotFoundError:
+        pass
+    return out
+
+
+def parse_rfc3339(stamp: str) -> float | None:
+    """Docker timestamps: 2026-10-11T10:00:00.123456789Z (nanoseconds)."""
+    m = re.match(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(\.\d+)?(Z|[+-]\d\d:\d\d)$", stamp.strip())
+    if not m:
+        return None
+    frac = (m.group(2) or ".0")[:7]
+    tz = "+00:00" if m.group(3) == "Z" else m.group(3)
+    return dt.datetime.fromisoformat(m.group(1) + frac + tz).timestamp()
+
+
+class CheckSkipped(Exception):
+    """The check cannot run here (tool absent, not the primary): its saved
+    problems are kept as they are, never reported as recovered."""
+
+
+# ---------------------------------------------------------------------------
+# Parsers (pure functions, unit tested against fake command output)
+# ---------------------------------------------------------------------------
+
+def parse_replicas(text: str) -> tuple[int, int] | None:
+    m = re.match(r"^\s*(\d+)/(\d+)", text)
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def parse_smart(text: str, nvme_used_max_pct: int) -> list[str]:
+    """Problems in `smartctl -H -A` output. Empty list = healthy."""
+    problems = []
+    m = re.search(r"SMART overall-health self-assessment test result:\s*(\S+)", text)
+    if m and m.group(1).upper() != "PASSED":
+        problems.append(f"SMART health {m.group(1)}")
+    m = re.search(r"SMART Health Status:\s*(.+)", text)
+    if m and m.group(1).strip().upper() != "OK":
+        problems.append(f"SMART health status {m.group(1).strip()}")
+    m = re.search(r"Critical Warning:\s*(0x[0-9a-fA-F]+)", text)
+    if m and int(m.group(1), 16) != 0:
+        problems.append(f"NVMe critical warning {m.group(1)}")
+    m = re.search(r"Percentage Used:\s*(\d+)%", text)
+    if m and int(m.group(1)) >= nvme_used_max_pct:
+        problems.append(f"NVMe {m.group(1)}% used (limit {nvme_used_max_pct}%)")
+    return problems
+
+
+def parse_zpool_status(text: str) -> dict[str, str]:
+    """{pool: state} for every pool `zpool status -x` lists as unhealthy."""
+    t = text.strip()
+    if not t or t == "all pools are healthy" or t.startswith("no pools available"):
+        return {}
+    pools: dict[str, str] = {}
+    pool = None
+    for line in t.splitlines():
+        m = re.match(r"^\s*pool:\s*(\S+)", line)
+        if m:
+            pool = m.group(1)
+            pools[pool] = "unhealthy"
+            continue
+        m = re.match(r"^\s*state:\s*(\S+)", line)
+        if m and pool:
+            pools[pool] = m.group(1)
+    return pools or {"?": first_line(t)}
+
+
+def parse_mdadm_detail(text: str) -> list[str]:
+    problems = []
+    m = re.search(r"^\s*State\s*:\s*(.+)$", text, re.M)
+    if m and re.search(r"degraded|fail|inactive", m.group(1), re.I):
+        problems.append(f"state {m.group(1).strip()}")
+    m = re.search(r"^\s*Failed Devices\s*:\s*(\d+)", text, re.M)
+    if m and int(m.group(1)) > 0:
+        problems.append(f"{m.group(1)} failed device(s)")
+    return problems
+
+
+def parse_pvesm(text: str, max_pct: float) -> dict[str, str]:
+    """{storage: problem} from `pvesm status`."""
+    out = {}
+    for line in text.splitlines()[1:]:
+        cols = line.split()
+        if len(cols) < 3:
+            continue
+        name, status = cols[0], cols[2]
+        if status not in ("active", "disabled"):
+            out[name] = f"storage {status}"
+            continue
+        if status == "active" and len(cols) >= 7:
+            try:
+                pct = float(cols[6].rstrip("%"))
+            except ValueError:
+                continue
+            if pct >= max_pct:
+                out[name] = f"storage {pct:.0f}% full (limit {max_pct:g}%)"
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Checks: each returns {key: message}; a key is stable across runs
+# ---------------------------------------------------------------------------
+
+class Checker:
+    def __init__(self, cfg: dict, now: float, last_run: float | None):
+        self.cfg = cfg
+        self.bin = {**DEFAULT_BIN, **cfg.get("bin", {})}
+        self.proc = cfg.get("proc_root", "/proc")
+        self.now = now
+        self.last_run = last_run
+        self.host = cfg.get("host_label") or short_host()
+        self._swarm = None
+
+    def c(self, *path, default=None):
+        node = self.cfg.get("checks", {})
+        for p in path:
+            if not isinstance(node, dict) or p not in node:
+                return default
+            node = node[p]
+        return node
+
+    # -- swarm ---------------------------------------------------------------
+
+    def swarm_info(self) -> dict:
+        """Local node state + node list, fetched once per run."""
+        if self._swarm is not None:
+            return self._swarm
+        docker = self.bin["docker"]
+        if not executable(docker):
+            raise CheckSkipped("docker not installed")
+        rc, out = run([docker, "info", "--format",
+                       "{{.Swarm.LocalNodeState}} {{.Swarm.ControlAvailable}} {{.Swarm.NodeID}}"])
+        if rc != 0:
+            raise RuntimeError(f"docker info failed: {first_line(out)}")
+        parts = out.split()
+        info = {"state": parts[0] if parts else "", "manager": len(parts) > 1 and parts[1] == "true",
+                "node_id": parts[2] if len(parts) > 2 else "", "nodes": []}
+        if info["state"] == "active" and info["manager"]:
+            rc, out = run([docker, "node", "ls", "--format",
+                           "{{.ID}}\t{{.Hostname}}\t{{.Status}}\t{{.Availability}}\t{{.ManagerStatus}}"])
+            if rc != 0:
+                raise RuntimeError(f"docker node ls failed: {first_line(out)}")
+            for line in out.splitlines():
+                cols = line.split("\t")
+                if len(cols) >= 4:
+                    info["nodes"].append({"id": cols[0].strip(), "hostname": cols[1].strip(),
+                                          "status": cols[2].strip(), "availability": cols[3].strip(),
+                                          "manager": cols[4].strip() if len(cols) > 4 else ""})
+        self._swarm = info
+        return info
+
+    def is_primary(self) -> bool:
+        """The one host that runs the cluster-wide checks (swarm, nodes,
+        remote, tls): a named host, or the Ready manager with the lowest id."""
+        want = str(self.cfg.get("primary", "auto") or "auto")
+        if want != "auto":
+            return want == self.host
+        try:
+            info = self.swarm_info()
+        except (CheckSkipped, RuntimeError):
+            return False
+        if not info["manager"]:
+            return False
+        ready = sorted(n["id"] for n in info["nodes"]
+                       if n["manager"] in ("Leader", "Reachable") and n["status"] == "Ready")
+        return bool(ready) and ready[0] == info["node_id"]
+
+    def check_swarm(self) -> dict[str, str]:
+        info = self.swarm_info()
+        if not info["manager"]:
+            raise CheckSkipped("not a swarm manager")
+        docker = self.bin["docker"]
+        ignore = [re.compile(p) for p in self.c("swarm", "ignore_services", default=[]) or []]
+        rc, out = run([docker, "service", "ls", "--format", "{{.ID}}\t{{.Name}}\t{{.Mode}}\t{{.Replicas}}"])
+        if rc != 0:
+            raise RuntimeError(f"docker service ls failed: {first_line(out)}")
+        problems: dict[str, str] = {}
+        names: dict[str, str] = {}
+        for line in out.splitlines():
+            cols = line.split("\t")
+            if len(cols) < 4:
+                continue
+            sid, name, mode, replicas = (c.strip() for c in cols[:4])
+            if any(p.search(name) for p in ignore):
+                continue
+            names[sid] = name
+            if "job" in mode:
+                continue
+            rr = parse_replicas(replicas)
+            if rr is None:
+                continue
+            running, desired = rr
+            if running < desired:
+                stuck = " (stuck at 0)" if running == 0 else ""
+                problems[f"swarm.replicas.{name}"] = f"service {name} {running}/{desired} running{stuck}"
+        threshold = int(self.c("swarm", "crashloop_failed_tasks", default=3))
+        window = float(self.c("swarm", "crashloop_minutes", default=15)) * 60
+        if names and threshold > 0:
+            rc, out = run([docker, "service", "ps", "-q", "--filter", "desired-state=shutdown", *names.values()],
+                          timeout=60)
+            task_ids = sorted({t.strip() for t in out.split() if t.strip()}) if rc == 0 else []
+            failed: dict[str, int] = {}
+            for i in range(0, len(task_ids), 200):
+                rc, out = run([docker, "inspect", "--format",
+                               "{{.ServiceID}}\t{{.Status.State}}\t{{.Status.Timestamp}}", *task_ids[i:i + 200]],
+                              timeout=60)
+                for line in out.splitlines():
+                    cols = line.split("\t")
+                    if len(cols) < 3 or cols[1].strip() not in ("failed", "rejected"):
+                        continue
+                    ts = parse_rfc3339(cols[2])
+                    if ts is not None and self.now - ts <= window:
+                        failed[cols[0].strip()] = failed.get(cols[0].strip(), 0) + 1
+            for sid, count in failed.items():
+                if count >= threshold and sid in names:
+                    problems[f"swarm.crashloop.{names[sid]}"] = (
+                        f"service {names[sid]} crash-looping: {count} failed tasks in "
+                        f"{int(window // 60)} min")
+        return problems
+
+    def check_nodes(self) -> dict[str, str]:
+        info = self.swarm_info()
+        if not info["manager"]:
+            raise CheckSkipped("not a swarm manager")
+        ignore = self.c("nodes", "ignore_nodes", default=[]) or []
+        problems = {}
+        for n in info["nodes"]:
+            if n["hostname"] in ignore:
+                continue
+            bad = []
+            if n["status"] != "Ready":
+                bad.append(f"status {n['status']}")
+            if n["availability"] != "Active":
+                bad.append(f"availability {n['availability']}")
+            if n["manager"] == "Unreachable":
+                bad.append("manager unreachable")
+            if bad:
+                problems[f"swarm.node.{n['hostname']}"] = f"node {n['hostname']}: {', '.join(bad)}"
+        return problems
+
+    # -- host ----------------------------------------------------------------
+
+    def _mounts(self) -> list[tuple[str, str]]:
+        out = []
+        with open(os.path.join(self.proc, "mounts")) as fh:
+            for line in fh:
+                cols = line.split()
+                if len(cols) >= 3:
+                    out.append((cols[1].replace("\\040", " "), cols[2]))
+        return out
+
+    def _fs_usage(self, path: str, tmo: float) -> tuple[int, float | None]:
+        """(rc, used %). rc 2 = the path does not exist. Never os.stat a
+        path here: on a hung NFS mount that blocks this whole run."""
+        rc, out = run([self.bin["timeout"], "-k", "2", f"{tmo:g}", self.bin["stat"], "-f", "-c", "%b %f %a", path],
+                      timeout=tmo + 5)
+        if rc != 0:
+            return (2 if "No such file" in out else rc), None
+        try:
+            blocks, free, avail = (int(x) for x in out.split()[:3])
+        except ValueError:
+            return 1, None
+        used = blocks - free
+        return 0, (100.0 * used / (used + avail)) if used + avail > 0 else 0.0
+
+    def check_host(self) -> dict[str, str]:
+        problems: dict[str, str] = {}
+        tmo = float(self.c("host", "nfs_timeout_seconds", default=5))
+        max_pct = float(self.c("host", "fs_max_pct", default=85))
+        paths = list(self.c("host", "fs_paths", default=["/"]) or [])
+        if self.c("host", "nfs", default=True):
+            for mnt, fstype in self._mounts():
+                if not fstype.startswith("nfs"):
+                    continue
+                rc, out = run([self.bin["timeout"], "-k", "2", f"{tmo:g}", self.bin["stat"], "-t", mnt],
+                              timeout=tmo + 5)
+                if rc == 124 or rc == 137:
+                    problems[f"host.nfs.{mnt}"] = f"NFS mount {mnt} not responding (stat timed out after {tmo:g}s)"
+                elif rc != 0:
+                    problems[f"host.nfs.{mnt}"] = f"NFS mount {mnt} stat failed: {first_line(out)}"
+                elif self.c("host", "nfs_usage", default=True) and mnt not in paths:
+                    paths.append(mnt)
+        for path in paths:
+            if f"host.nfs.{path}" in problems:
+                continue
+            rc, pct = self._fs_usage(path, tmo)
+            if rc == 2:
+                continue  # not on this host
+            if rc != 0:
+                problems[f"host.fs.{path}"] = f"filesystem {path}: usage unreadable (rc {rc})"
+            elif pct is not None and pct >= max_pct:
+                problems[f"host.fs.{path}"] = f"filesystem {path} {pct:.0f}% full (limit {max_pct:g}%)"
+        per_cpu = float(self.c("host", "load_per_cpu_max", default=2.0))
+        if per_cpu > 0:
+            with open(os.path.join(self.proc, "loadavg")) as fh:
+                load5 = float(fh.read().split()[1])
+            cpus = int(self.cfg.get("cpus") or os.cpu_count() or 1)
+            if load5 / cpus > per_cpu:
+                problems["host.load"] = f"load {load5:.1f} over {cpus} CPUs (limit {per_cpu:g} per CPU)"
+        min_avail = float(self.c("host", "mem_available_min_pct", default=10))
+        if min_avail > 0:
+            mem = {}
+            with open(os.path.join(self.proc, "meminfo")) as fh:
+                for line in fh:
+                    k, _, v = line.partition(":")
+                    mem[k] = int(v.split()[0]) if v.split() else 0
+            if mem.get("MemTotal") and "MemAvailable" in mem:
+                pct = 100.0 * mem["MemAvailable"] / mem["MemTotal"]
+                if pct < min_avail:
+                    problems["host.memory"] = f"memory {pct:.0f}% available (limit {min_avail:g}%)"
+        psi_max = float(self.c("host", "mem_psi_full_avg60_max", default=10))
+        psi_file = os.path.join(self.proc, "pressure", "memory")
+        if psi_max > 0 and os.path.exists(psi_file):
+            with open(psi_file) as fh:
+                for line in fh:
+                    m = re.match(r"^full\s.*avg60=([\d.]+)", line)
+                    if m and float(m.group(1)) > psi_max:
+                        problems["host.memory_pressure"] = (
+                            f"memory pressure: tasks fully stalled {float(m.group(1)):.1f}% of the last minute "
+                            f"(limit {psi_max:g}%)")
+        if self.c("host", "failed_units", default=True) and executable(self.bin["systemctl"]):
+            ignore = self.c("host", "ignore_units", default=[]) or []
+            rc, out = run([self.bin["systemctl"], "--failed", "--no-legend", "--plain", "--no-pager"])
+            if rc == 0:
+                for line in out.splitlines():
+                    cols = line.split()
+                    unit = cols[0] if cols else ""
+                    if unit and not any(fnmatch.fnmatch(unit, p) for p in ignore):
+                        problems[f"host.unit.{unit}"] = f"systemd unit {unit} failed"
+        return problems
+
+    def check_oom(self) -> dict[str, str]:
+        """OOM kills in the kernel log since the last run (an event: alerted
+        once, never "recovered")."""
+        if not executable(self.bin["journalctl"]):
+            raise CheckSkipped("journalctl not installed")
+        since = int(self.last_run if self.last_run else self.now - 600)
+        rc, out = run([self.bin["journalctl"], "-k", "--since", f"@{since}", "--no-pager", "-q", "-o", "cat"])
+        if rc != 0:
+            raise RuntimeError(f"journalctl failed: {first_line(out)}")
+        victims = re.findall(r"Out of memory: Killed process \d+ \(([^)]*)\)", out)
+        if not victims:
+            victims = ["?"] * len(re.findall(r"oom-kill:", out))
+        if not victims:
+            return {}
+        names = ", ".join(sorted(set(victims)))
+        return {"host.oom": f"OOM killer fired {len(victims)} time(s) since the last run: {names}"}
+
+    # -- disks and arrays ----------------------------------------------------
+
+    def check_disks(self) -> dict[str, str]:
+        smartctl = self.bin["smartctl"]
+        if not executable(smartctl):
+            raise CheckSkipped("smartctl not installed")
+        limit = int(self.c("disks", "nvme_used_max_pct", default=90))
+        rc, out = run([smartctl, "--scan"])
+        problems = {}
+        for line in out.splitlines():
+            line = line.split("#")[0].strip()
+            m = re.match(r"^(/dev/\S+)(?:\s+-d\s+(\S+))?", line)
+            if not m:
+                continue
+            dev, dtype = m.group(1), m.group(2)
+            argv = [smartctl, "-H", "-A", "-n", "standby"] + (["-d", dtype] if dtype else []) + [dev]
+            rc, text = run(argv, timeout=60)
+            if "STANDBY" in text.upper() and "MODE" in text.upper() and rc == 2:
+                continue  # asleep: do not spin it up
+            found = parse_smart(text, limit)
+            if found:
+                problems[f"disk.{dev}"] = f"disk {dev}: {'; '.join(found)}"
+            elif rc & 0b11 and not re.search(r"(test result|Health Status):", text):
+                problems[f"disk.{dev}"] = f"disk {dev}: smartctl could not read it (rc {rc}): {first_line(text)}"
+        return problems
+
+    def check_raid(self) -> dict[str, str]:
+        problems = {}
+        ran = False
+        if executable(self.bin["zpool"]):
+            ran = True
+            rc, out = run([self.bin["zpool"], "status", "-x"], timeout=60)
+            if rc != 0 and not out.strip():
+                problems["raid.zpool"] = f"zpool status failed (rc {rc})"
+            for pool, state in parse_zpool_status(out).items():
+                problems[f"raid.zpool.{pool}"] = f"ZFS pool {pool} {state}"
+        mdstat = os.path.join(self.proc, "mdstat")
+        if os.path.exists(mdstat) and executable(self.bin["mdadm"]):
+            ran = True
+            with open(mdstat) as fh:
+                devs = re.findall(r"^(md\w+)\s*:", fh.read(), re.M)
+            for dev in devs:
+                rc, out = run([self.bin["mdadm"], "--detail", f"/dev/{dev}"], timeout=30)
+                found = parse_mdadm_detail(out)
+                if found:
+                    problems[f"raid.md.{dev}"] = f"RAID /dev/{dev}: {'; '.join(found)}"
+        if not ran:
+            raise CheckSkipped("no zpool or mdadm arrays")
+        return problems
+
+    # -- remote read-only hosts ----------------------------------------------
+
+    def _ssh(self, rh: dict, command: str) -> tuple[int, str]:
+        r = self.cfg.get("remote", {})
+        argv = [self.bin["ssh"], "-n", "-T",
+                "-i", r.get("key_file", "/etc/skhealth/remote_ed25519"),
+                "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
+                "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2",
+                "-o", f"UserKnownHostsFile={r.get('known_hosts_file', '/etc/skhealth/known_hosts')}",
+                "-o", f"StrictHostKeyChecking={'yes' if r.get('strict_host_keys', True) else 'accept-new'}",
+                "-p", str(rh.get("port", 22)), f"{rh.get('user', 'skhealth')}@{rh['host']}", command]
+        return run(argv, timeout=45)
+
+    def check_remote(self) -> dict[str, str]:
+        r = self.cfg.get("remote", {})
+        limit = int(self.c("disks", "nvme_used_max_pct", default=90))
+        max_pct = float(self.c("host", "fs_max_pct", default=85))
+        problems = {}
+        for rh in r.get("hosts", []):
+            name = rh["name"]
+            pre = f"remote.{name}"
+            commands = []
+            if rh.get("zpool", False):
+                commands.append(("zpool", "zpool status -x"))
+            for dev in rh.get("smart_devices", []):
+                commands.append((f"smart-H:{dev}", f"smartctl -H {dev}"))
+                commands.append((f"smart-A:{dev}", f"smartctl -A {dev}"))
+            if rh.get("pvesm", False):
+                commands.append(("pvesm", "pvesm status"))
+            outputs = {}
+            for tag, command in commands:
+                rc, out = self._ssh(rh, command)
+                if rc == 255:
+                    problems[f"{pre}.ssh"] = f"remote {name}: ssh failed: {first_line(out)}"
+                    break
+                if rc == 126 or "skhealth-remote: denied" in out:
+                    problems[f"{pre}.denied"] = f"remote {name}: the forced-command wrapper denied '{command}'"
+                    continue
+                outputs[tag] = (rc, out)
+            if f"{pre}.ssh" in problems:
+                continue
+            if "zpool" in outputs:
+                for pool, state in parse_zpool_status(outputs["zpool"][1]).items():
+                    problems[f"{pre}.zpool.{pool}"] = f"remote {name}: ZFS pool {pool} {state}"
+            for dev in rh.get("smart_devices", []):
+                text = outputs.get(f"smart-H:{dev}", (0, ""))[1] + "\n" + outputs.get(f"smart-A:{dev}", (0, ""))[1]
+                found = parse_smart(text, limit)
+                if found:
+                    problems[f"{pre}.disk.{dev}"] = f"remote {name}: disk {dev}: {'; '.join(found)}"
+            if "pvesm" in outputs:
+                for store, msg in parse_pvesm(outputs["pvesm"][1], max_pct).items():
+                    problems[f"{pre}.pvesm.{store}"] = f"remote {name}: {store} {msg}"
+        return problems
+
+    # -- TLS -----------------------------------------------------------------
+
+    def _cert_not_after(self, host: str, port: int, address: str | None) -> float:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        with socket.create_connection((address or host, port), timeout=10) as sock:
+            with ctx.wrap_socket(sock, server_hostname=host) as tls:
+                der = tls.getpeercert(binary_form=True)
+        pem = ssl.DER_cert_to_PEM_cert(der)
+        with tempfile.NamedTemporaryFile("w", suffix=".pem", delete=False) as fh:
+            fh.write(pem)
+            path = fh.name
+        try:
+            decoder = getattr(getattr(ssl, "_ssl", None), "_test_decode_cert", None)
+            if decoder is not None:
+                not_after = decoder(path)["notAfter"]
+            else:  # pragma: no cover - CPython always has it
+                rc, out = run([self.bin["openssl"], "x509", "-noout", "-enddate", "-in", path])
+                not_after = out.strip().split("=", 1)[1]
+        finally:
+            os.unlink(path)
+        return ssl.cert_time_to_seconds(not_after)
+
+    def check_tls(self) -> dict[str, str]:
+        warn = float(self.c("tls", "warn_days", default=21))
+        problems = {}
+        for entry in self.c("tls", "hosts", default=[]) or []:
+            if isinstance(entry, str):
+                host, _, port = entry.partition(":")
+                entry = {"host": host, "port": int(port or 443)}
+            host, port = entry["host"], int(entry.get("port", 443))
+            key = f"tls.{host}:{port}"
+            try:
+                not_after = self._cert_not_after(host, port, entry.get("address"))
+            except (OSError, ssl.SSLError, ValueError, KeyError) as exc:
+                problems[key] = f"TLS {host}:{port}: cannot read the certificate ({type(exc).__name__})"
+                continue
+            days = (not_after - self.now) / 86400
+            if days < warn:
+                state = "EXPIRED" if days < 0 else f"expires in {days:.0f} days"
+                problems[key] = f"TLS {host}:{port} certificate {state} (limit {warn:g} days)"
+        return problems
+
+
+# Check name -> (method, config switch, cluster-wide)
+CHECKS = [
+    ("swarm", "check_swarm", ("swarm", "enabled"), True),
+    ("nodes", "check_nodes", ("nodes", "enabled"), True),
+    ("host", "check_host", ("host", "enabled"), False),
+    ("oom", "check_oom", ("host", "oom"), False),
+    ("disks", "check_disks", ("disks", "enabled"), False),
+    ("raid", "check_raid", ("raid", "enabled"), False),
+    ("remote", "check_remote", None, True),
+    ("tls", "check_tls", None, True),
+]
+# Key prefixes each check owns (a skipped check keeps its saved problems).
+PREFIXES = {"swarm": ("swarm.replicas.", "swarm.crashloop."), "nodes": ("swarm.node.",),
+            "host": ("host.fs.", "host.nfs.", "host.load", "host.memory", "host.unit."),
+            "oom": ("host.oom",), "disks": ("disk.",), "raid": ("raid.",), "remote": ("remote.",),
+            "tls": ("tls.",)}
+EVENT_KEYS = ("host.oom",)
+
+
+def collect(cfg: dict, now: float, last_run: float | None) -> tuple[dict[str, str], set[str], set[str]]:
+    """Run every enabled check. Returns (problems, checks that ran, checks
+    that are disabled)."""
+    ck = Checker(cfg, now, last_run)
+    problems: dict[str, str] = {}
+    ran: set[str] = set()
+    disabled: set[str] = set()
+    primary = None
+    for name, method, switch, cluster_wide in CHECKS:
+        if switch is not None and not ck.c(*switch, default=True):
+            disabled.add(name)
+            continue
+        if name == "remote" and not cfg.get("remote", {}).get("hosts"):
+            disabled.add(name)
+            continue
+        if name == "tls" and not ck.c("tls", "hosts", default=[]):
+            disabled.add(name)
+            continue
+        if cluster_wide:
+            if primary is None:
+                primary = ck.is_primary()
+            if not primary:
+                continue
+        try:
+            found = getattr(ck, method)()
+        except CheckSkipped:
+            continue
+        except Exception as exc:  # noqa: BLE001 - one broken check must not hide the others
+            problems[f"check.{name}"] = f"check {name} failed: {type(exc).__name__}: {str(exc)[:160]}"
+            continue
+        ran.add(name)
+        problems.update({safe_key(k): v for k, v in found.items()})
+    return problems, ran, disabled
+
+
+def owner(key: str) -> str | None:
+    for name, prefixes in PREFIXES.items():
+        if key.startswith(prefixes):
+            return name
+    if key.startswith("check."):
+        return key.split(".", 1)[1]
+    return None
+
+
+def transition(state: dict, problems: dict[str, str], ran: set[str], disabled: set[str], now: float,
+               confirm_runs: int, realert_hours: float) -> tuple[dict, list[dict]]:
+    """Pure dedupe logic. state = {key: {first_seen, count, alerted,
+    last_alert, message}}. Returns (new state, events to send).
+
+    - a problem alerts once it was seen on `confirm_runs` consecutive runs;
+    - while it persists it re-alerts every `realert_hours` (0 = never);
+    - when it clears after alerting, one RECOVERED event (never for a
+      problem that cleared before it alerted);
+    - an event key (an OOM kill) alerts at once and is not kept;
+    - keys of a check that did not run (skipped, not the primary) are kept
+      as they are; keys of a disabled check are dropped silently.
+    """
+    new: dict[str, dict] = {}
+    events: list[dict] = []
+    for key, msg in sorted(problems.items()):
+        if key in EVENT_KEYS:
+            events.append({"kind": "event", "key": key, "message": msg})
+            continue
+        st = dict(state.get(key) or {"first_seen": now, "count": 0, "alerted": False, "last_alert": 0})
+        st["count"] = int(st.get("count", 0)) + 1
+        st["message"] = msg
+        if not st.get("alerted"):
+            if st["count"] >= max(1, confirm_runs):
+                st["alerted"] = True
+                st["last_alert"] = now
+                events.append({"kind": "problem", "key": key, "message": msg})
+        elif realert_hours > 0 and now - float(st.get("last_alert", 0)) >= realert_hours * 3600:
+            st["last_alert"] = now
+            hours = (now - float(st.get("first_seen", now))) / 3600
+            events.append({"kind": "still", "key": key, "message": f"{msg} (for {hours:.0f}h)"})
+        new[key] = st
+    for key, st in sorted(state.items()):
+        if key in problems or key in EVENT_KEYS:
+            continue
+        own = owner(key)
+        if own in disabled:
+            continue
+        if own is not None and own not in ran:
+            new[key] = st  # check did not run (or failed) this time: no verdict either way
+            continue
+        if st.get("alerted"):
+            events.append({"kind": "recovered", "key": key, "message": st.get("message", key)})
+    return new, events
+
+
+# ---------------------------------------------------------------------------
+# Alerting
+# ---------------------------------------------------------------------------
+
+LABELS = {"problem": "PROBLEM", "still": "STILL FAILING", "recovered": "RECOVERED", "event": "EVENT",
+          "test": "TEST"}
+
+
+def format_text(cluster: str, host: str, events: list[dict]) -> str:
+    lines = [f"[skhealth] {cluster} / {host}"]
+    for e in events:
+        lines.append(f"{LABELS.get(e['kind'], e['kind'].upper())}: {e['message']}")
+    return "\n".join(lines)
+
+
+def _post(url: str, data: bytes, ctype: str) -> None:
+    req = urllib.request.Request(url, data=data, method="POST", headers={"Content-Type": ctype})
+    with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310 - configured URL
+        resp.read()
+
+
+def send(cfg: dict, secrets: dict, cluster: str, host: str, events: list[dict]) -> tuple[int, int, list[str]]:
+    """Send events through every configured channel. Returns (channels
+    configured, channels that succeeded, error notes). Error notes never
+    carry a URL, token or chat id."""
+    text = format_text(cluster, host, events)
+    configured = ok = 0
+    notes = []
+    token = secrets.get("SKHEALTH_TELEGRAM_TOKEN", "")
+    chat = secrets.get("SKHEALTH_TELEGRAM_CHAT_ID", "")
+    if token and chat:
+        configured += 1
+        base = cfg.get("telegram_api_base", "https://api.telegram.org").rstrip("/")
+        body = urllib.parse.urlencode({"chat_id": chat, "text": text[:4000],
+                                       "disable_web_page_preview": "true"}).encode()
+        try:
+            _post(f"{base}/bot{token}/sendMessage", body, "application/x-www-form-urlencoded")
+            ok += 1
+        except urllib.error.HTTPError as exc:
+            notes.append(f"telegram: HTTP {exc.code}")
+        except (urllib.error.URLError, OSError) as exc:
+            notes.append(f"telegram: {type(exc).__name__}")
+    url = secrets.get("SKHEALTH_WEBHOOK_URL", "")
+    if url:
+        configured += 1
+        payload = {"source": "skhealth", "cluster": cluster, "host": host, "text": text, "events": events}
+        try:
+            _post(url, json.dumps(payload).encode(), "application/json")
+            ok += 1
+        except urllib.error.HTTPError as exc:
+            notes.append(f"webhook: HTTP {exc.code}")
+        except (urllib.error.URLError, OSError) as exc:
+            notes.append(f"webhook: {type(exc).__name__}")
+    return configured, ok, notes
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def load_state(path: str) -> dict:
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_state(path: str, data: dict) -> None:
+    d = os.path.dirname(path)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".state.")
+    with os.fdopen(fd, "w") as fh:
+        json.dump(data, fh, indent=1, sort_keys=True)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+
+def main(argv: list[str]) -> int:
+    os.environ["PATH"] = SAFE_PATH
+    args = list(argv)
+    config_path = DEFAULT_CONFIG
+    if "--config" in args:
+        i = args.index("--config")
+        config_path = args[i + 1]
+        del args[i:i + 2]
+    cmd = "run"
+    if "--test" in args:
+        cmd = "test"
+        args.remove("--test")
+    if args:
+        cmd = args[0]
+    if cmd in ("-h", "--help", "help"):
+        print(__doc__)
+        return 0
+    if cmd not in ("run", "check", "test", "status"):
+        print(f"skhealth: unknown command {cmd!r} (run, check, --test, status)", file=sys.stderr)
+        return 2
+    with open(config_path) as fh:
+        cfg = json.load(fh)
+    secrets = read_env_file(cfg.get("secrets_file", "/etc/skhealth/secrets.env"))
+    cluster = cfg.get("cluster") or "cluster"
+    host = cfg.get("host_label") or short_host()
+    state_dir = cfg.get("state_dir", "/var/lib/skhealth")
+    state_file = os.path.join(state_dir, "state.json")
+    now = float(cfg.get("now") or time.time())
+
+    if cmd == "test":
+        configured, ok, notes = send(cfg, secrets, cluster, host,
+                                     [{"kind": "test", "key": "test", "message": "skhealth test message"}])
+        if configured == 0:
+            print("skhealth: no alert channel configured (telegram or webhook)", file=sys.stderr)
+            return 1
+        print(f"skhealth: test message sent through {ok}/{configured} channel(s)"
+              + (f" ({'; '.join(notes)})" if notes else ""))
+        return 0 if ok == configured else 1
+
+    if cmd == "status":
+        st = load_state(state_file)
+        print(json.dumps({"cluster": cluster, "host": host, "last_run": st.get("last_run"),
+                          "telegram": bool(secrets.get("SKHEALTH_TELEGRAM_TOKEN")),
+                          "webhook": bool(secrets.get("SKHEALTH_WEBHOOK_URL")),
+                          "problems": {k: {"message": v.get("message"), "alerted": v.get("alerted"),
+                                           "count": v.get("count")}
+                                       for k, v in st.get("problems", {}).items()}}, indent=1, sort_keys=True))
+        return 0
+
+    os.makedirs(state_dir, mode=0o700, exist_ok=True)
+    with open(os.path.join(state_dir, "lock"), "w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print("skhealth: another run holds the lock; skipping")
+            return 0
+        saved = load_state(state_file)
+        problems, ran, disabled = collect(cfg, now, saved.get("last_run"))
+        if cmd == "check":
+            for key, msg in sorted(problems.items()):
+                print(f"{key}: {msg}")
+            print(f"skhealth: {len(problems)} problem(s); checks run: {', '.join(sorted(ran)) or 'none'}")
+            return 0
+        new, events = transition(saved.get("problems", {}), problems, ran, disabled, now,
+                                 int(cfg.get("confirm_runs", 2)), float(cfg.get("realert_hours", 6)))
+        delivered = True
+        if events:
+            configured, ok, notes = send(cfg, secrets, cluster, host, events)
+            for e in events:
+                print(f"{LABELS.get(e['kind'], e['kind'])}: {e['message']}")
+            if configured and not ok:
+                delivered = False
+                print(f"skhealth: alert NOT delivered ({'; '.join(notes)}); state kept, retrying next run",
+                      file=sys.stderr)
+            elif notes:
+                print(f"skhealth: partial delivery ({'; '.join(notes)})", file=sys.stderr)
+        if delivered:
+            save_state(state_file, {"version": 1, "last_run": now, "problems": new})
+        print(f"skhealth: {len(problems)} problem(s), {len(events)} alert event(s); "
+              f"checks run: {', '.join(sorted(ran)) or 'none'}")
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
