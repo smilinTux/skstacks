@@ -1,0 +1,55 @@
+#!/bin/bash
+# skhealth-remote: the forced-command wrapper for skhealth's REMOTE read-only
+# host checks. The skhealth deploy NEVER installs this on a remote host: an
+# operator copies it there (for example to /usr/local/sbin/skhealth-remote,
+# root:root 0755) and adds ONE authorized_keys line for skhealth's dedicated
+# key, see README.md "Remote read-only host checks".
+#
+#   command="/usr/local/sbin/skhealth-remote /dev/nvme0n1 /dev/sda",restrict ssh-ed25519 AAAA... skhealth@<cluster>
+#
+# The arguments are the ONLY devices smartctl may be asked about. Whatever
+# the client sends arrives in SSH_ORIGINAL_COMMAND and must equal one of:
+#
+#   zpool status -x
+#   pvesm status
+#   smartctl -H <listed device>
+#   smartctl -A <listed device>
+#
+# Anything else (another command, extra words, a device not listed, shell
+# metacharacters, an interactive login) is denied with exit 126. Nothing is
+# ever passed through a shell: the allowed command runs as a fixed argv.
+# As root it runs directly; as any other user through `sudo -n` (see the
+# README for the matching sudoers lines).
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+BIN=/usr/sbin
+SUDO=/usr/bin/sudo
+
+deny() {
+    echo "skhealth-remote: denied" >&2
+    exit 126
+}
+
+run() {
+    if [ "$(id -u)" -eq 0 ]; then
+        exec "$@"
+    fi
+    exec "$SUDO" -n "$@"
+}
+
+cmd=${SSH_ORIGINAL_COMMAND:-}
+case "$cmd" in
+    "zpool status -x") run "$BIN/zpool" status -x ;;
+    "pvesm status") run "$BIN/pvesm" status ;;
+esac
+
+if [[ $cmd =~ ^smartctl\ -([HA])\ (/dev/[A-Za-z0-9_/-]+)$ ]]; then
+    flag=${BASH_REMATCH[1]}
+    dev=${BASH_REMATCH[2]}
+    for allowed in "$@"; do
+        if [ "$allowed" = "$dev" ]; then
+            run "$BIN/smartctl" "-$flag" "$dev"
+        fi
+    done
+fi
+deny

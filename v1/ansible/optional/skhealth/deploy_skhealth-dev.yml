@@ -1,0 +1,265 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# skhealth: lightweight host-level health checks with deduplicated alerts.
+# NOT a swarm stack and no container: this play installs one Python script,
+# its config, a root-only credentials file and a systemd timer on every
+# swarm node. See README.md for the checks, the vault contract and the
+# resource cost.
+# skstacks: host-level - runs on every swarm node, not only on a manager
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+- hosts: "{{ skhealth_hosts | default('swarm_managers:swarm_workers') }}"
+  become: true
+  gather_facts: false
+  vars:
+    app: skhealth
+    env: dev
+    service_name: skhealth
+    service_type: optional
+    skh_bin: /usr/local/sbin/skhealth
+    skh_confdir: /etc/skhealth
+    skh_conf: /etc/skhealth/skhealth.json
+    skh_statedir: /var/lib/skhealth
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Load the skhealth defaults
+      include_vars: "{{ playbook_dir }}/vars/defaults.yml"
+      tags: [config]
+
+    - name: Merge the instance vault over the defaults
+      set_fact:
+        skh: "{{ skhealth_defaults | combine(skhealth | default({}), recursive=True) }}"
+      tags: [config]
+
+    - name: Validate the alert channels
+      assert:
+        that:
+          - (skh.alerts.telegram_bot_token | string | length > 0) == (skh.alerts.telegram_chat_id | string | length > 0)
+          - skh.alerts.webhook_url | string | length == 0 or skh.alerts.webhook_url is match('^https?://')
+          - skh.alerts.telegram_api_base is match('^https?://')
+        fail_msg: >-
+          ERROR: skhealth.alerts needs telegram_bot_token AND telegram_chat_id
+          (or neither), and webhook_url / telegram_api_base are http(s) URLs.
+      tags: [config]
+
+    - name: Validate the schedule and the thresholds
+      assert:
+        that:
+          - skh.schedule | string | length > 0
+          - skh.confirm_runs | int >= 1
+          - skh.realert_hours | float >= 0
+          - skh.primary == 'auto' or skh.primary is match('^[A-Za-z0-9][A-Za-z0-9.-]*$')
+          - skh.host.fs_max_pct | float > 0 and skh.host.fs_max_pct | float <= 100
+          - skh.host.nfs_timeout_seconds | int >= 1
+          - skh.swarm.crashloop_failed_tasks | int >= 0
+          - skh.tls.warn_days | int >= 0
+        fail_msg: >-
+          ERROR: invalid skhealth schedule, confirm_runs (>= 1), realert_hours,
+          primary ('auto' or a hostname) or threshold value.
+      tags: [config]
+
+    - name: Validate the remote hosts
+      assert:
+        that:
+          - item.name | default('') is match('^[A-Za-z0-9][A-Za-z0-9._-]*$')
+          - item.host | default('') is match('^[A-Za-z0-9][A-Za-z0-9.:-]*$')
+          - (item.user | default('skhealth')) is match('^[a-z_][a-z0-9_-]*$')
+          - (item.port | default(22) | int) > 0
+          - item.smart_devices | default([]) | reject('match', '^/dev/[A-Za-z0-9_/-]+$') | list | length == 0
+          - (item.zpool | default(false) | bool) or (item.pvesm | default(false) | bool) or (item.smart_devices | default([]) | length > 0)
+        fail_msg: >-
+          ERROR: skhealth.remote.hosts entry {{ item.name | default('?') }}: name
+          [A-Za-z0-9._-], host a hostname or IP, user a login name,
+          smart_devices /dev paths, and at least one of zpool, pvesm or
+          smart_devices.
+      loop: "{{ skh.remote.hosts }}"
+      loop_control:
+        label: "{{ item.name | default('?') }}"
+      tags: [config]
+
+    - name: Require the dedicated key for remote hosts
+      assert:
+        that:
+          - skh.remote.ssh_private_key | string | length > 0
+        fail_msg: >-
+          ERROR: skhealth.remote.hosts is set but skhealth.remote.ssh_private_key
+          is empty (README "Remote read-only host checks").
+      when: skh.remote.hosts | length > 0
+      tags: [config]
+
+    - name: Build the runtime config
+      set_fact:
+        skh_runtime:
+          cluster: "{{ skh.cluster_label | default('', true) or cluster_name | default('cluster') }}"
+          primary: "{{ skh.primary }}"
+          confirm_runs: "{{ skh.confirm_runs | int }}"
+          realert_hours: "{{ skh.realert_hours | float }}"
+          state_dir: "{{ skh_statedir }}"
+          secrets_file: "{{ skh_confdir }}/secrets.env"
+          telegram_api_base: "{{ skh.alerts.telegram_api_base }}"
+          checks:
+            swarm: "{{ skh.swarm }}"
+            nodes: "{{ skh.nodes }}"
+            host: "{{ skh.host }}"
+            disks: "{{ {'enabled': skh.disks.enabled, 'nvme_used_max_pct': skh.disks.nvme_used_max_pct} }}"
+            raid: "{{ skh.raid }}"
+            tls: "{{ skh.tls }}"
+          remote:
+            key_file: "{{ skh_confdir }}/remote_ed25519"
+            known_hosts_file: "{{ skh_confdir }}/known_hosts"
+            strict_host_keys: "{{ skh.remote.known_hosts | length > 0 }}"
+            hosts: "{{ skh.remote.hosts }}"
+      tags: [config]
+
+  tasks:
+    - name: Install smartmontools (local disk SMART checks)
+      apt:
+        name: smartmontools
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+      when: skh.enabled | bool and skh.disks.enabled | bool and skh.disks.install_smartmontools | bool
+      tags: [packages]
+
+    - name: Create the config and state directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      loop:
+        - "{{ skh_confdir }}"
+        - "{{ skh_statedir }}"
+      when: skh.enabled | bool
+
+    - name: Install the engine
+      copy:
+        src: "{{ playbook_dir }}/src/skhealth/skhealth"
+        dest: "{{ skh_bin }}"
+        owner: root
+        group: root
+        mode: "0755"
+      when: skh.enabled | bool
+
+    - name: Render the config
+      template:
+        src: "{{ playbook_dir }}/src/config/skhealth/skhealth.json.j2"
+        dest: "{{ skh_conf }}"
+        owner: root
+        group: root
+        mode: "0600"
+      when: skh.enabled | bool
+      tags: [config]
+
+    - name: Render the alert credentials (root only)
+      template:
+        src: "{{ playbook_dir }}/src/config/skhealth/secrets.env.j2"
+        dest: "{{ skh_confdir }}/secrets.env"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      when: skh.enabled | bool
+      tags: [config, secrets]
+
+    - name: Install the dedicated remote-check key (root only)
+      copy:
+        content: "{{ skh.remote.ssh_private_key | string | trim }}\n"
+        dest: "{{ skh_confdir }}/remote_ed25519"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      when: skh.enabled | bool and skh.remote.hosts | length > 0
+      tags: [config, secrets]
+
+    - name: Render the remote hosts' known_hosts
+      template:
+        src: "{{ playbook_dir }}/src/config/skhealth/known_hosts.j2"
+        dest: "{{ skh_confdir }}/known_hosts"
+        owner: root
+        group: root
+        mode: "0600"
+      when: skh.enabled | bool and skh.remote.hosts | length > 0
+      tags: [config]
+
+    - name: Remove the remote-check key and known_hosts when no remote host is set
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ skh_confdir }}/remote_ed25519"
+        - "{{ skh_confdir }}/known_hosts"
+      when: not (skh.enabled | bool and skh.remote.hosts | length > 0)
+      tags: [config, secrets]
+
+    - name: Render the systemd service and timer
+      template:
+        src: "{{ playbook_dir }}/src/config/skhealth/skhealth.{{ item }}.j2"
+        dest: "/etc/systemd/system/skhealth.{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: [service, timer]
+      when: skh.enabled | bool
+      tags: [units]
+
+    - name: Enable and start the timer
+      systemd:
+        name: skhealth.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: skh.enabled | bool
+      tags: [units]
+
+    - name: Check the engine runs here (no alert, no state change)
+      command: "{{ skh_bin }} check"
+      register: skh_check
+      changed_when: false
+      when: skh.enabled | bool
+      tags: [post-deploy]
+
+    - name: Current problems on this host
+      debug:
+        var: skh_check.stdout_lines
+      when: skh.enabled | bool
+      tags: [post-deploy]
+
+    - name: Stop and disable the timer (skhealth.enabled is false)
+      systemd:
+        name: skhealth.timer
+        enabled: false
+        state: stopped
+      failed_when: false
+      when: not (skh.enabled | bool)
+      tags: [units]
+
+    - name: Remove the units (skhealth.enabled is false)
+      file:
+        path: "/etc/systemd/system/skhealth.{{ item }}"
+        state: absent
+      loop: [service, timer]
+      when: not (skh.enabled | bool)
+      tags: [units]
