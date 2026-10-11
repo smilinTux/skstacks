@@ -10,3 +10,4 @@ skpdf:
   OAUTH2_CLIENT_ID: skpdf
   OAUTH2_CLIENT_SECRET: example-oauth-client-secret-not-a-secret
   AUTO_KEY: 00000000-0000-4000-8000-000000000000
+  TRAEFIK_MIDDLEWARES: crowdsec-bouncer@file,default@file

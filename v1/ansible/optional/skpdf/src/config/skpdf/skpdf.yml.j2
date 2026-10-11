@@ -54,7 +54,7 @@ services:
         # never attached to this router, so MAX_UPLOAD_SIZE / MAX_RESPONSE_SIZE had
         # no effect and large PDFs hit Traefik's defaults. Appended to the chain.
         # Bare name resolves within the same (swarm) provider, i.e. ...-upload@swarm.
-        - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares=default-no-crowdsec@file,skpdf{% if env != 'prod' %}-{{ env }}{% endif %}-upload"
+        - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares={{ skpdf.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file,skpdf' ~ ('' if env == 'prod' else '-' ~ env) ~ '-upload', true) }}"
         - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.service=skpdf{% if env != 'prod' %}-{{ env }}{% endif %}"
         # === TRAEFIK: SERVICES ===
         - "traefik.http.services.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=8080"

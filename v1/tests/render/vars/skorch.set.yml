@@ -8,3 +8,4 @@ skorch:
   TRUSTEE_C_KEY_ID: EXAMPLE0000000003
   placement_constraints: ["node.role == worker"]
   extra_env: {N8N_EXAMPLE_FLAG: "true"}
+  TRAEFIK_MIDDLEWARES: crowdsec-bouncer@file,default@file

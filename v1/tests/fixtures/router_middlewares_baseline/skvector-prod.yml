@@ -1,0 +1,113 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+version: '3.8'
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.17.0
+    env_file: /var/data/config/skvector-prod/skvector.env
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    volumes:
+      # Main storage - NFS backed for persistence
+      - /var/data/skvector-prod/storage:/qdrant/storage
+      # Snapshots - NFS backed for backup/recovery
+      - /var/data/skvector-prod/snapshots:/qdrant/snapshots
+      # Config file for advanced settings
+    networks:
+      - skvector-prod
+      - cloud-public-prod
+    deploy:
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: any
+        delay: 10s
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: []
+      resources:
+        limits:
+          # Optimized for large document ingestion from SKAid
+          # Handles chunked embeddings from 150MB PDFs
+          cpus: '2.00'
+          memory: 4096M
+        reservations:
+          cpus: '0.50'
+          memory: 1024M
+      labels:
+        # === TRAEFIK: HTTP ===
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-prod"
+
+        # === TRAEFIK: REQUEST SIZE for Large Batch Uploads ===
+        # Support batch embedding uploads from SKAid document ingestion
+        - "traefik.http.middlewares.skvector-buffering.buffering.maxRequestBodyBytes=104857600"
+        - "traefik.http.middlewares.skvector-buffering.buffering.memRequestBodyBytes=10485760"
+
+        # === TRAEFIK: ROUTERS ===
+        - "traefik.http.routers.skvector.rule=Host(`skvector.render.example.test`)"
+        - "traefik.http.routers.skvector.entrypoints=websecure"
+        - "traefik.http.routers.skvector.tls=true"
+        - "traefik.http.routers.skvector.tls.certresolver=main"
+        - "traefik.http.routers.skvector.tls.options=intermediate@file"
+        - "traefik.http.routers.skvector.middlewares=skvector-buffering,default-no-crowdsec@file"
+        - "traefik.http.routers.skvector.service=skvector"
+
+        # === TRAEFIK: SERVICES ===
+        - "traefik.http.services.skvector.loadbalancer.server.port=6333"
+
+        # === TRAEFIK: gRPC ROUTER (for high-performance batch operations) ===
+        - "traefik.http.routers.skvector-grpc.rule=Host(`skvector.render.example.test`) && PathPrefix(`/qdrant.`)"
+        - "traefik.http.routers.skvector-grpc.entrypoints=websecure"
+        - "traefik.http.routers.skvector-grpc.tls=true"
+        - "traefik.http.routers.skvector-grpc.tls.certresolver=main"
+        - "traefik.http.routers.skvector-grpc.tls.options=intermediate@file"
+        - "traefik.http.routers.skvector-grpc.middlewares=default-no-crowdsec@file"
+        - "traefik.http.routers.skvector-grpc.service=skvector-grpc"
+        - "traefik.http.services.skvector-grpc.loadbalancer.server.port=6334"
+        - "traefik.http.services.skvector-grpc.loadbalancer.server.scheme=h2c"
+
+        # === TRAEFIK: HEALTH CHECK ===
+        - "traefik.http.services.skvector.loadbalancer.healthcheck.path=/healthz"
+        - "traefik.http.services.skvector.loadbalancer.healthcheck.interval=30s"
+        - "traefik.http.services.skvector.loadbalancer.healthcheck.timeout=10s"
+
+volumes:
+  skvector-prod-storage:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/data/skvector-prod/storage
+  skvector-prod-snapshots:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/data/skvector-prod/snapshots
+
+networks:
+  skvector-prod:
+    external: true
+  cloud-public-prod:
+    external: true

@@ -1,0 +1,70 @@
+version: '3.8'
+
+# skseek: Perplexica, an AI-powered search UI that answers from live search
+# results (via SearXNG/skpeek as its backend) instead of just a model's
+# training data. Depends on skpeek being deployed on the same instance;
+# reaches it as skpeek-staging_skpeek over the shared skpeek-staging
+# overlay network rather than a public URL.
+
+services:
+  skseek:
+    image: itzcrazykns1337/perplexica:latest@sha256:343d2a02858cc3c15bb35bf94b3249923f4eb5de16eb80d266eddfef6d84951d
+    env_file: /var/data/config/skseek-staging/skseek.env
+    logging:
+      driver: json-file
+      options:
+        max-size: 4m
+        max-file: "1"
+
+    volumes:
+      - /var/data/skseek-staging/data:/home/perplexica/data:rw
+      - /var/data/config/skseek-staging/config.toml:/home/perplexica/config.toml:ro
+
+    networks:
+      - cloud-public-staging
+      - skseek-staging
+      - skpeek-staging
+
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    deploy:
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+        delay: 5s
+      labels:
+        # === TRAEFIK: HTTP ===
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-staging"
+        # === TRAEFIK: ROUTERS ===
+        - "traefik.http.routers.skseek-staging.rule=Host(`skseek-staging.render.example.test`)"
+        - "traefik.http.routers.skseek-staging.entrypoints=websecure"
+        - "traefik.http.routers.skseek-staging.tls=true"
+        - "traefik.http.routers.skseek-staging.tls.certresolver=main"
+        - "traefik.http.routers.skseek-staging.tls.options=intermediate@file"
+        - "traefik.http.routers.skseek-staging.middlewares=default-no-crowdsec@file"
+        - "traefik.http.routers.skseek-staging.service=skseek-staging"
+        # === TRAEFIK: SERVICES ===
+        - "traefik.http.services.skseek-staging.loadbalancer.server.port=3000"
+
+networks:
+  cloud-public-staging:
+    external: true
+  skseek-staging:
+    external: true
+  skpeek-staging:
+    external: true

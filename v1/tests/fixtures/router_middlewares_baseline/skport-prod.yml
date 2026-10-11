@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  portainer:
+    image: portainer/portainer-ce:2.45.1
+    env_file:
+      - /var/data/config/skport-prod/skport.env
+    volumes:
+      # Portainer's own data directory (direct bind mount, per SKStacks
+      # Volume Management Standards)
+      - /var/data/skport-prod/data:/data
+      - /etc/localtime:/etc/localtime:ro
+      # No Docker socket bind mount: Docker access goes through the
+      # skfence/skfenceha socket-proxy service via DOCKER_HOST (see
+      # skport.env.j2 and README.md "Security").
+    networks:
+      - cloud-public-prod
+      - cloud-socket-proxy-prod
+      - skport-prod
+
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+        limits:
+          memory: 1G
+          cpus: '1.0'
+      restart_policy:
+        condition: any
+        delay: 10s
+      rollback_config:
+        parallelism: 1
+      labels:
+        # === TRAEFIK: HTTP ===
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-prod"
+        # === TRAEFIK: ROUTERS ===
+        - "traefik.http.routers.skport.rule=Host(`skport.render.example.test`)"
+        - "traefik.http.routers.skport.entrypoints=websecure"
+        - "traefik.http.routers.skport.tls=true"
+        - "traefik.http.routers.skport.tls.certresolver=main"
+        - "traefik.http.routers.skport.tls.options=intermediate@file"
+        - "traefik.http.routers.skport.middlewares=default-no-crowdsec@file"
+        - "traefik.http.routers.skport.service=skport"
+        # === TRAEFIK: SERVICES ===
+        - "traefik.http.services.skport.loadbalancer.server.port=9000"
+
+networks:
+  cloud-public-prod:
+    external: true
+  cloud-socket-proxy-prod:
+    external: true
+  skport-prod:
+    external: true
