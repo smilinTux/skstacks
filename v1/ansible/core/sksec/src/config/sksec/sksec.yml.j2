@@ -117,8 +117,13 @@ services:
         condition: any
         delay: 10s
       mode: replicated
-      replicas: 1
+      replicas: {{ sksec.BOUNCER_REPLICAS | default(1, true) | int }}
       placement:
+{% if (sksec.BOUNCER_REPLICAS | default(1, true) | int) > 1 %}
+        # BOUNCER_REPLICAS > 1: one per node, so one node down never takes
+        # every forwardAuth answer (fail-closed) with it.
+        max_replicas_per_node: 1
+{% endif %}
         preferences:
           - spread: node.labels.zone
       resources:
@@ -128,8 +133,19 @@ services:
         reservations:
           cpus: '{{ sksec.BOUNCER_CPU_RESERVATION }}'
           memory: {{ sksec.BOUNCER_MEMORY_RESERVATION | default('64M') }}
+{% if sksec.BOUNCER_HEALTHCHECK | default(false) | bool %}
+    # The image's own HEALTHCHECK (/healthchecker), made explicit and tunable
+    # (sksec.BOUNCER_HEALTH_CHECK_*): an unhealthy bouncer task is replaced.
+    healthcheck:
+      test: ["CMD", "/healthchecker"]
+      interval: {{ sksec.BOUNCER_HEALTH_CHECK_INTERVAL | default('10s', true) }}
+      timeout: {{ sksec.BOUNCER_HEALTH_CHECK_TIMEOUT | default('5s', true) }}
+      retries: {{ sksec.BOUNCER_HEALTH_CHECK_RETRIES | default(3, true) }}
+      start_period: {{ sksec.BOUNCER_HEALTH_CHECK_START_PERIOD | default('20s', true) }}
+{% else %}
     # Note: Bouncer healthcheck disabled due to API limitations
     # Consider implementing custom health check if needed
+{% endif %}
 
 # No named volumes - all mounts are direct bind mounts
 # Simpler, faster, zero-config
