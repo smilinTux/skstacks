@@ -355,3 +355,18 @@
       debug: var=deploy_output.stdout_lines
       tags:
         - deploy
+
+    # The parser above only filters LOCAL detections. A LAPI allowlist is
+    # applied to every decision (CAPI community blocklist, console
+    # blocklists, cscli decisions add), so sync ALLOWLIST_CIDRS into one too.
+    - name: Sync ALLOWLIST_CIDRS into the CrowdSec LAPI allowlist
+      include_tasks:
+        file: tasks/lapi_allowlist.yml
+        apply:
+          tags:
+            - allowlist
+            - deploy
+      when: sksec.LAPI_ALLOWLIST_ENABLED | default(true) | bool
+      tags:
+        - allowlist
+        - deploy

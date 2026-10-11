@@ -58,6 +58,7 @@ skport:
   DOMAIN: "example.com"
   portainer_version: "2.45.1"   # exact Portainer CE LTS release; never a moving tag
   TZ: "America/New_York"
+  TRAEFIK_MIDDLEWARES: ""       # optional, router middleware chain (default default-no-crowdsec@file)
 ```
 
 `portainer_version` defaults to `2.45.1`, the Portainer CE long-term-support release the `lts` tag pointed at on 2026-09-26 (bump deliberately), the

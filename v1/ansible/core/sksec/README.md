@@ -62,15 +62,56 @@ bouncer: to rotate, change the key, redeploy, then
 
 ## Allowlist
 
-`sksec.ALLOWLIST_CIDRS` (list of IPs and CIDRs, default empty) renders a
-CrowdSec whitelist parser into
-`/var/data/runtime/sksec-<env>/crowdsec-config/parsers/s02-enrich/sksec-allowlist.yaml`.
-Events from those sources are dropped before any scenario sees them, so
-they never raise an alert or a local ban. List the operator's own ranges:
-LAN, any VPN address range, the cluster nodes, the overlay
-and ingress networks, and the site's own public IP (clients that reach the
-edge through hairpin NAT arrive from it). Manual `cscli decisions add` and
-blocklist decisions are not filtered. Emptying the list removes the file.
+`sksec.ALLOWLIST_CIDRS` (list of IPs and CIDRs, default empty) is the
+operator's own ranges that must never be banned: LAN, any VPN address range,
+the cluster nodes, the overlay and ingress networks, CI runners, and the
+site's own public IP (clients that reach the edge through hairpin NAT arrive
+from it). The deploy applies it in two places, because they cover different
+decisions:
+
+| Where | What it filters |
+|---|---|
+| Whitelist parser `/var/data/runtime/sksec-<env>/crowdsec-config/parsers/s02-enrich/sksec-allowlist.yaml` | LOCAL detections only: events from those sources are dropped before any scenario sees them, so they never raise an alert or a local ban. |
+| LAPI allowlist `sksec-operator` (CrowdSec 1.6.8+, default image v1.6.11) | EVERY decision LAPI hands the bouncer, including the community blocklist (CAPI), console blocklists and a manual `cscli decisions add` (refused with "is allowlisted ... use --bypass-allowlist"). |
+
+The parser alone does not stop a CAPI or blocklist decision from banning an
+allowlisted address at the bouncer; the LAPI allowlist does.
+
+After the stack deploy the playbook resolves the node running the crowdsec
+task (`docker service ps`; with `TRAEFIK_HA_MODE` that is the ACME master,
+often not the deploy node), waits until `cscli lapi status` answers (up to
+`LAPI_WAIT_SECONDS`, default 300), then makes the LAPI allowlist hold exactly
+`ALLOWLIST_CIDRS`: it creates the list when missing (description
+"sksec.ALLOWLIST_CIDRS (operator ranges, applies to CAPI/blocklist/cscli
+decisions)"), adds missing entries (comment `sksec.ALLOWLIST_CIDRS`) and
+removes entries that are no longer listed. Values are compared as written
+(`198.51.100.7` and `198.51.100.7/32` are different entries). An empty list
+empties that allowlist (the parser file is removed too); other allowlists,
+such as console-managed ones, are never touched. The task reports changed
+only when it changed something, and fails the play if LAPI never answers or
+the allowlist does not match afterwards.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `ALLOWLIST_CIDRS` | `[]` | YAML list of IPs and CIDRs (a plain string fails the play). |
+| `LAPI_ALLOWLIST_ENABLED` | `true` | `false` skips the LAPI sync (the parser is still rendered). |
+| `LAPI_ALLOWLIST_NAME` | `sksec-operator` | Name of the LAPI allowlist the deploy owns. Renaming leaves the old list in place: delete it with `cscli allowlists delete <old>`. |
+| `LAPI_WAIT_SECONDS` | `300` | How long to wait for the crowdsec task and its LAPI before failing. |
+
+Checks and fixes, inside the crowdsec container
+(`docker exec $(docker ps -q -f name=sksec-<env>_crowdsec) ...` on the node
+that runs it):
+
+```bash
+cscli allowlists inspect sksec-operator   # entries the deploy manages
+cscli allowlists check 192.0.2.10         # is this address allowlisted, and by what
+cscli decisions list --ip 192.0.2.10      # any decision still on it
+cscli decisions delete --ip 192.0.2.10    # unban an address banned before it was listed
+```
+
+Allowlisting does not remove an existing decision: unban with
+`cscli decisions delete --ip <ip>` after adding an address that was already
+banned.
 
 ## Required instance vars (vault)
 
@@ -111,6 +152,9 @@ sksec:
   INSTANCE: "primary"
   TRAEFIK_HA_MODE: false         # true pins crowdsec to the traefik.acme.master node
   ALLOWLIST_CIDRS: []            # operator-owned IPs/CIDRs never to ban
+  LAPI_ALLOWLIST_ENABLED: true   # sync ALLOWLIST_CIDRS into a LAPI allowlist (all decisions, CAPI too)
+  LAPI_ALLOWLIST_NAME: "sksec-operator"  # the LAPI allowlist the deploy owns
+  LAPI_WAIT_SECONDS: 300         # wait for the crowdsec task and LAPI before failing
   CROWDSEC_IMAGE: ""             # default crowdsecurity/crowdsec:v1.6.11 (pin a digest here)
   BOUNCER_IMAGE: ""              # default docker.io/fbonalair/traefik-crowdsec-bouncer:0.5.0
 

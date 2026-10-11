@@ -124,6 +124,9 @@ FAKE_STDOUT = {
     "garage_replicas": "1/1",
     # skpayment: the controller-side app checkout (a fixture stand-in)
     "skpayment_app_src": str(FIXTURES / "skpayment-app" / "repo"),
+    "sksec_crowdsec_node": "render-node-1",
+    "sksec_crowdsec_container": "render-container",
+    "sksec_lapi_allowlists": "[]",
 }
 
 

@@ -1,0 +1,147 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# Sync sksec.ALLOWLIST_CIDRS into a CrowdSec LAPI centralized allowlist
+# (CrowdSec 1.6.8+). Included by deploy_sksec-<env>.yml after the stack deploy.
+#
+# The s02-enrich whitelist parser only drops LOCAL events; LAPI applies an
+# allowlist to EVERY decision (community blocklist/CAPI, console blocklists,
+# `cscli decisions add`). After this runs, allowlist
+# sksec.LAPI_ALLOWLIST_NAME (default sksec-operator) holds exactly
+# ALLOWLIST_CIDRS: missing entries are added, unlisted ones removed, an
+# empty list empties it. Other allowlists are never touched.
+#
+# The crowdsec task may run on another node than this play (TRAEFIK_HA_MODE
+# pins it to the traefik.acme.master node), so the node is resolved with
+# `docker service ps` here on the manager and every docker exec is delegated
+# to it (same approach as skhub's post-deploy steps).
+
+- name: Check sksec.ALLOWLIST_CIDRS is a list
+  assert:
+    that:
+      - (sksec.ALLOWLIST_CIDRS | default([], true)) is sequence
+      - (sksec.ALLOWLIST_CIDRS | default([], true)) is not string
+      - (sksec.ALLOWLIST_CIDRS | default([], true)) is not mapping
+    fail_msg: >-
+      sksec.ALLOWLIST_CIDRS must be a YAML list of IPs/CIDRs
+      (got {{ sksec.ALLOWLIST_CIDRS | default([], true) | type_debug }}).
+    quiet: true
+
+- name: Compute the LAPI allowlist target
+  set_fact:
+    sksec_lapi_allowlist_name: "{{ sksec.LAPI_ALLOWLIST_NAME | default('sksec-operator', true) }}"
+    sksec_lapi_allowlist_desired: "{{ sksec.ALLOWLIST_CIDRS | default([], true) | map('string') | map('trim') | reject('equalto', '') | unique | list }}"
+    sksec_lapi_wait_retries: "{{ [((sksec.LAPI_WAIT_SECONDS | default(300) | int) + 4) // 5, 1] | max }}"
+
+- name: Wait for the swarm node running the CrowdSec task
+  shell: |
+    STATES=$(docker service ps "{{ app }}-{{ env }}_crowdsec" --filter "desired-state=running" --format "{{ '{{.Node}} {{.CurrentState}}' }}")
+    NODE=$(printf '%s\n' "$STATES" | awk '$2 == "Running" {print $1; exit}')
+    if [ -z "$NODE" ]; then
+      echo "{{ app }}-{{ env }}_crowdsec has no Running task yet; current: $(printf '%s' "${STATES:-no task scheduled}" | tr '\n' ';')" >&2
+      exit 1
+    fi
+    echo "$NODE"
+  register: sksec_crowdsec_node
+  until: sksec_crowdsec_node.rc == 0 and (sksec_crowdsec_node.stdout | trim | length > 0)
+  retries: "{{ sksec_lapi_wait_retries }}"
+  delay: 5
+  changed_when: false
+
+- name: Wait for the CrowdSec LAPI to answer (cscli lapi status)
+  shell: |
+    # Runs on the node hosting the task: the swarm service label pins the
+    # container exactly. Output of `lapi status` is discarded (it names the
+    # credentials file; it never prints the password, but nothing needs it).
+    CID=$(docker ps -q --filter "status=running" --filter "label=com.docker.swarm.service.name={{ app }}-{{ env }}_crowdsec" | head -1)
+    if [ -z "$CID" ]; then
+      echo "no running {{ app }}-{{ env }}_crowdsec container on this node yet" >&2
+      exit 1
+    fi
+    if ! docker exec "$CID" cscli lapi status >/dev/null 2>&1; then
+      echo "CrowdSec LAPI in $CID does not answer yet" >&2
+      exit 1
+    fi
+    echo "$CID"
+  delegate_to: "{{ sksec_crowdsec_node.stdout | trim }}"
+  register: sksec_crowdsec_container
+  until: sksec_crowdsec_container.rc == 0 and (sksec_crowdsec_container.stdout | trim | length > 0)
+  retries: "{{ sksec_lapi_wait_retries }}"
+  delay: 5
+  changed_when: false
+
+- name: Read the CrowdSec LAPI allowlists
+  command:
+    argv: [docker, exec, "{{ sksec_crowdsec_container.stdout | trim }}", cscli, allowlists, list, -o, json]
+  delegate_to: "{{ sksec_crowdsec_node.stdout | trim }}"
+  register: sksec_lapi_allowlists
+  changed_when: false
+
+- name: Find our allowlist among the LAPI allowlists
+  set_fact:
+    sksec_lapi_allowlist_ours: "{{ sksec_lapi_allowlists.stdout | from_json | default([], true) | selectattr('name', 'equalto', sksec_lapi_allowlist_name) | list }}"
+
+- name: Read the entries of our allowlist
+  set_fact:
+    sksec_lapi_allowlist_exists: "{{ sksec_lapi_allowlist_ours | length > 0 }}"
+    sksec_lapi_allowlist_current: "{{ ((sksec_lapi_allowlist_ours | first)['items'] if sksec_lapi_allowlist_ours else []) | default([], true) | map(attribute='value') | list }}"
+
+- name: Compare the LAPI allowlist with ALLOWLIST_CIDRS
+  set_fact:
+    sksec_lapi_allowlist_add: "{{ sksec_lapi_allowlist_desired | reject('in', sksec_lapi_allowlist_current) | list }}"
+    sksec_lapi_allowlist_remove: "{{ sksec_lapi_allowlist_current | reject('in', sksec_lapi_allowlist_desired) | list }}"
+
+- name: Create LAPI allowlist {{ sksec_lapi_allowlist_name }}
+  command:
+    argv:
+      - docker
+      - exec
+      - "{{ sksec_crowdsec_container.stdout | trim }}"
+      - cscli
+      - allowlists
+      - create
+      - "{{ sksec_lapi_allowlist_name }}"
+      - -d
+      - "sksec.ALLOWLIST_CIDRS (operator ranges, applies to CAPI/blocklist/cscli decisions)"
+  delegate_to: "{{ sksec_crowdsec_node.stdout | trim }}"
+  when:
+    - not (sksec_lapi_allowlist_exists | bool)
+    - sksec_lapi_allowlist_desired | length > 0
+
+- name: Add ALLOWLIST_CIDRS entries missing from the LAPI allowlist
+  command:
+    argv: "{{ ['docker', 'exec', sksec_crowdsec_container.stdout | trim, 'cscli', 'allowlists', 'add', sksec_lapi_allowlist_name] + sksec_lapi_allowlist_add + ['-d', 'sksec.ALLOWLIST_CIDRS'] }}"
+  delegate_to: "{{ sksec_crowdsec_node.stdout | trim }}"
+  when: sksec_lapi_allowlist_add | length > 0
+
+- name: Remove LAPI allowlist entries no longer in ALLOWLIST_CIDRS
+  command:
+    argv: "{{ ['docker', 'exec', sksec_crowdsec_container.stdout | trim, 'cscli', 'allowlists', 'remove', sksec_lapi_allowlist_name] + sksec_lapi_allowlist_remove }}"
+  delegate_to: "{{ sksec_crowdsec_node.stdout | trim }}"
+  when: sksec_lapi_allowlist_remove | length > 0
+
+- name: Verify the LAPI allowlist equals ALLOWLIST_CIDRS
+  command:
+    argv: [docker, exec, "{{ sksec_crowdsec_container.stdout | trim }}", cscli, allowlists, list, -o, json]
+  delegate_to: "{{ sksec_crowdsec_node.stdout | trim }}"
+  register: sksec_lapi_allowlists_after
+  changed_when: false
+  failed_when: >-
+    sksec_lapi_allowlists_after.rc != 0 or
+    (((sksec_lapi_allowlists_after.stdout | from_json | default([], true)
+       | selectattr('name', 'equalto', sksec_lapi_allowlist_name) | map(attribute='items') | first | default([], true))
+      if (sksec_lapi_allowlists_after.stdout | from_json | default([], true)
+          | selectattr('name', 'equalto', sksec_lapi_allowlist_name) | list) else [])
+     | map(attribute='value') | sort) != (sksec_lapi_allowlist_desired | sort)

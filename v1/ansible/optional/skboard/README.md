@@ -66,6 +66,7 @@ skboard:
   RESOURCES_RESERVATIONS_MEMORY: "128M"
   RESTART_POLICY_CONDITION: "any"
   RESTART_POLICY_DELAY: "10s"
+  TRAEFIK_MIDDLEWARES: "default-no-crowdsec@file"   # router middleware chain
 ```
 
 `MAILER_ENABLED` only toggles the `VIKUNJA_MAILER_ENABLED` env var; the

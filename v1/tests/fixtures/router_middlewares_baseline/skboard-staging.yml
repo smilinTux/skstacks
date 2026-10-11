@@ -1,0 +1,88 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+version: '3.8'
+
+services:
+  vikunja:
+    # Pinned: see README.md "Upgrading Vikunja" before ever bumping this.
+    image: vikunja/vikunja:0.24.6
+    env_file: /var/data/config/skboard-staging/skboard.env
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    volumes:
+      # Never mount over /app/vikunja: it is the image's install dir and
+      # holds the binary (a mount there hid it: "exec /app/vikunja/vikunja:
+      # no such file", v2.19.0 rc4). The data dir keeps its single-volume
+      # layout (vikunja.db + files/), mounted at /db, with files/ also at
+      # the image's default files path, so existing data needs no moves.
+      - /var/data/skboard-staging/data:/db
+      - /var/data/skboard-staging/data/files:/app/vikunja/files
+
+    networks:
+      - cloud-public-staging
+      - skboard-staging
+
+    # No Docker-level healthcheck: the vikunja/vikunja image ships no shell
+    # and no wget/curl (verified: docker exec fails with "executable file
+    # not found in $PATH" for both), so a CMD-style test cannot run inside
+    # the container. The upstream image itself defines no HEALTHCHECK either.
+    # Swarm still detects and restarts a genuinely crashed process via the
+    # container exit code and the restart_policy below.
+
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+        reservations:
+          cpus: '0.10'
+          memory: 128M
+      restart_policy:
+        # No max_attempts/window: with the single-node pin, one outage of that
+        # node spent the old budget of 3 and Swarm never rescheduled vikunja
+        # again (0/1 for months). See README.md "Restart policy".
+        condition: any
+        delay: 10s
+      labels:
+        # === TRAEFIK: HTTP ===
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-staging"
+        # === TRAEFIK: ROUTERS ===
+        - "traefik.http.routers.skboard-staging.rule=Host(`skboard-staging.render.example.test`)"
+        - "traefik.http.routers.skboard-staging.entrypoints=websecure"
+        - "traefik.http.routers.skboard-staging.tls=true"
+        - "traefik.http.routers.skboard-staging.tls.certresolver=main"
+        - "traefik.http.routers.skboard-staging.tls.options=intermediate@file"
+        - "traefik.http.routers.skboard-staging.middlewares=default-no-crowdsec@file"
+        - "traefik.http.routers.skboard-staging.service=skboard-staging"
+        # === TRAEFIK: SERVICES ===
+        - "traefik.http.services.skboard-staging.loadbalancer.server.port=3456"
+
+networks:
+  cloud-public-staging:
+    external: true
+  skboard-staging:
+    external: true

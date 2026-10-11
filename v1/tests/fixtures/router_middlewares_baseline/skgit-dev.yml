@@ -1,0 +1,191 @@
+version: '3.8'
+
+networks:
+  cloud-public-dev:
+    external: true
+  skgit-dev:
+    external: true
+
+services:
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:15.0.9
+    user: "1000:1000"
+    working_dir: /data
+    entrypoint: /usr/local/bin/forgejo
+    command: web
+    env_file: /var/data/config/skgit-dev/skgit.env
+    environment:
+      # === SERVER CONFIGURATION ===
+      - FORGEJO__server__ROOT_URL=https://git-dev.render.example.test/
+      - FORGEJO__server__PROTOCOL=http
+
+      # === SECURITY & PROXY ===
+      # Trust headers from Traefik so Forgejo knows it's HTTPS
+      # 10.0.0.0/8 is the internal Swarm network range
+      - FORGEJO__security__REVERSE_PROXY_LIMIT=1
+      - FORGEJO__security__REVERSE_PROXY_TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+
+      # === SESSION CONFIGURATION ===
+      # Use file-based sessions for persistence across restarts (prevents ERR_NETWORK_CHANGED)
+      # File sessions survive container restarts, unlike memory sessions
+      - FORGEJO__session__PROVIDER=file
+      - FORGEJO__session__COOKIE_SECURE=true
+      - FORGEJO__session__COOKIE_SAMESITE=lax
+    networks:
+      - skgit-dev
+      - cloud-public-dev
+    volumes:
+      # === NFS DATA - DIRECT BIND (NO NAMED VOLUME) ===
+      - /var/data/skgit-dev/data:/data
+      - /var/data/skgit-dev/config:/data/gitea/conf
+      - /var/data/logs/skgit-dev:/data/log
+      # Session files directory for file-based sessions (persistent across restarts)
+      - /var/data/runtime/skgit-dev/sessions:/data/gitea/sessions
+    # Traefik routing configured via Docker labels (Docker provider).
+    # No file provider needed - Traefik auto-discovers services via Docker Swarm provider.
+    # SSH (port 22) is exposed via a Traefik TCP router on port 222.
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: []
+      resources:
+        limits:
+          cpus: '${CPU_LIMIT}'
+          memory: 4g
+        reservations:
+          cpus: '${CPU_RESERVATION}'
+          memory: 2g
+      labels:
+        # === TRAEFIK: HTTP ===
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-dev"
+        # Main web router
+        - "traefik.http.routers.skgit-dev.rule=Host(`skgit-dev.render.example.test`)"
+        - "traefik.http.routers.skgit-dev.entrypoints=websecure"
+        - "traefik.http.routers.skgit-dev.tls=true"
+        - "traefik.http.routers.skgit-dev.tls.certresolver=main"
+        - "traefik.http.routers.skgit-dev.tls.options=intermediate@file"
+        - "traefik.http.routers.skgit-dev.middlewares=default-no-crowdsec@file"
+        - "traefik.http.routers.skgit-dev.service=skgit-dev"
+        # === CONTAINER REGISTRY ROUTER (no middleware interference) ===
+        # Dedicated route for /v2/ container registry API - higher priority to match before main router
+        - "traefik.http.routers.skgit-dev-registry.rule=Host(`skgit-dev.render.example.test`) && PathPrefix(`/v2`)"
+        - "traefik.http.routers.skgit-dev-registry.entrypoints=websecure"
+        - "traefik.http.routers.skgit-dev-registry.tls=true"
+        - "traefik.http.routers.skgit-dev-registry.tls.certresolver=main"
+        - "traefik.http.routers.skgit-dev-registry.tls.options=intermediate@file"
+        - "traefik.http.routers.skgit-dev-registry.priority=100"
+        - "traefik.http.routers.skgit-dev-registry.service=skgit-dev"
+        # Service configuration
+        - "traefik.http.services.skgit-dev.loadbalancer.server.port=3000"
+        # === STICKY SESSIONS: Required to prevent ERR_NETWORK_CHANGED errors ===
+        # Even with replicas: 1, multiple Traefik workers can cause requests to be routed
+        # through different workers, leading to connection state issues.
+        # Sticky sessions ensure all requests from the same client use the same Traefik worker.
+        - "traefik.http.services.skgit-dev.loadbalancer.sticky=true"
+        - "traefik.http.services.skgit-dev.loadbalancer.sticky.cookie=true"
+        - "traefik.http.services.skgit-dev.loadbalancer.sticky.cookie.name=skgit_session"
+        - "traefik.http.services.skgit-dev.loadbalancer.sticky.cookie.secure=true"
+        - "traefik.http.services.skgit-dev.loadbalancer.sticky.cookie.httpOnly=true"
+        - "traefik.http.services.skgit-dev.loadbalancer.sticky.cookie.sameSite=lax"
+        # === TRAEFIK: TCP (SSH) ===
+        - "traefik.tcp.routers.skgit-dev-ssh.rule=HostSNI(`*`)"
+        - "traefik.tcp.routers.skgit-dev-ssh.entrypoints=ssh"
+        - "traefik.tcp.services.skgit-dev-ssh.loadbalancer.server.port=222"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-H", "User-Agent: Health-Check", "http://localhost:3000/"]
+      interval: 60s   # Longer interval to reduce load
+      timeout: 30s    # More generous timeout for Git operations
+      retries: 2      # Fewer retries to prevent premature restarts
+      start_period: 300s  # Longer start period for Forgejo initialization
+      # Git operations can be slow, so the health check needs to be patient.
+    # Note: depends_on doesn't work in Docker Swarm mode.
+    # Forgejo retries the database connection instead (configured in app.ini).
+    # start_period gives postgres time to become ready.
+
+  postgres:
+    image: postgres:16.14@sha256:ff23cdce56cac62ada6f66013e1a50864c0abbe79d132d40b6e05bd80f378a70
+    env_file: /var/data/config/skgit-dev/postgres.env
+    environment:
+      - PGTEMP=/var/lib/postgresql/data/tmp
+    networks:
+      - skgit-dev
+    volumes:
+      # === NFS DATA - DIRECT BIND (NO NAMED VOLUME) ===
+      - /var/data/runtime/skgit-dev/postgres:/var/lib/postgresql/data
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: []
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U forgejo']
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  db-backup:
+    image: postgres:16.14@sha256:ff23cdce56cac62ada6f66013e1a50864c0abbe79d132d40b6e05bd80f378a70
+    env_file: /var/data/config/skgit-dev/postgres-backup.env
+    environment:
+      - PGTEMP=/dump/tmp
+    networks:
+      - skgit-dev
+    deploy:
+      placement:
+        constraints: []
+    volumes:
+      # === NFS DATA - DIRECT BIND (NO NAMED VOLUME) ===
+      - /var/data/skgit-dev/database-dump:/dump
+      # Config files (read-only bind mounts)
+      - /etc/localtime:/etc/localtime:ro
+    # NOTE: do NOT wrap this in `bash -c 'bash -s <<EOF ... EOF'`. An unquoted
+    # heredoc makes the OUTER shell expand ${TS}/${TMP}/${FINAL} before the inner
+    # shell ever sees them; they are unset there, so the dump redirect becomes
+    # `> ""` and every cycle dies with `: No such file or directory`. Pass the
+    # script as a single argv element instead, so exactly one shell expands it.
+    entrypoint:
+      - bash
+      - -c
+      - |
+        trap "break;exit" SIGHUP SIGINT SIGTERM
+        sleep 2m
+        while /bin/true; do
+          TS=$$(date +%d-%m-%Y_%H_%M_%S)
+          TMP=/dump/dump_$${TS}.sql.gz.tmp
+          FINAL=/dump/dump_$${TS}.sql.gz
+          set -o pipefail
+          if pg_dumpall -h postgres -U forgejo | gzip -c > "$${TMP}"; then
+            SIZE=$$(stat -c %s "$${TMP}")
+            if [ "$${SIZE}" -gt 1024 ]; then
+              mv "$${TMP}" "$${FINAL}"
+              echo "[backup] OK: $${FINAL} ($${SIZE} bytes)"
+              ls -tr /dump/dump_*.sql.gz | head -n -"$${BACKUP_NUM_KEEP}" | xargs -r rm
+            else
+              echo "[backup] FAIL: dump too small ($${SIZE} bytes), discarding" 1>&2
+              rm -f "$${TMP}"
+            fi
+          else
+            echo "[backup] FAIL: pg_dumpall pipe exited non-zero, discarding" 1>&2
+            rm -f "$${TMP}"
+          fi
+          set +o pipefail
+          sleep $${BACKUP_FREQUENCY}
+        done
+
+# Runner services (Forgejo Actions + DinD) are deployed separately via
+# skgit-runners.yml (docker compose, not swarm) so they can bind-mount the
+# host Docker socket path and run privileged/DinD containers. See
+# src/skgit/start-runners.sh and src/skgit/stop-runners.sh.
+
+# No named volumes - all mounts are direct bind mounts
+# Simpler, faster, zero-config

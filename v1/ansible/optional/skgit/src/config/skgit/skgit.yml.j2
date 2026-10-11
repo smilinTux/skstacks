@@ -67,7 +67,7 @@ services:
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
-        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares=default-no-crowdsec@file"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares={{ skgit.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file', true) }}"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.service=skgit{% if env != 'prod' %}-{{ env }}{% endif %}"
         # === CONTAINER REGISTRY ROUTER (no middleware interference) ===
         # Dedicated route for /v2/ container registry API - higher priority to match before main router
