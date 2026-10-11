@@ -68,10 +68,15 @@ def _env():
     return e
 
 
+# skorch's templates read the combined fact `skorch_cfg` (vault `skorch.*` over
+# the play's defaults; see test_skorch_extra_vars_precedence.py), never `skorch`.
+CONTEXT_NAME = {"skorch": "skorch_cfg"}
+
+
 def render(svc, env="prod", **over):
     return _env().from_string(compose_path(svc).read_text()).render(
         app=svc, env=env, domain="example.test", cluster_name="render",
-        **{svc: dict(example_vars(svc), **over)})
+        **{CONTEXT_NAME.get(svc, svc): dict(example_vars(svc), **over)})
 
 
 def router_middlewares(text, svc, env, sfx):

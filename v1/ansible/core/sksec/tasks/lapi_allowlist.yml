@@ -89,14 +89,19 @@
   register: sksec_lapi_allowlists
   changed_when: false
 
-- name: Compare the LAPI allowlist with ALLOWLIST_CIDRS
-  vars:
-    _ours: "{{ sksec_lapi_allowlists.stdout | from_json | default([], true) | selectattr('name', 'equalto', sksec_lapi_allowlist_name) | list }}"
-    _current: "{{ ((_ours | first)['items'] if _ours else []) | default([], true) | map(attribute='value') | list }}"
+- name: Find our allowlist among the LAPI allowlists
   set_fact:
-    sksec_lapi_allowlist_exists: "{{ _ours | length > 0 }}"
-    sksec_lapi_allowlist_add: "{{ sksec_lapi_allowlist_desired | reject('in', _current) | list }}"
-    sksec_lapi_allowlist_remove: "{{ _current | reject('in', sksec_lapi_allowlist_desired) | list }}"
+    sksec_lapi_allowlist_ours: "{{ sksec_lapi_allowlists.stdout | from_json | default([], true) | selectattr('name', 'equalto', sksec_lapi_allowlist_name) | list }}"
+
+- name: Read the entries of our allowlist
+  set_fact:
+    sksec_lapi_allowlist_exists: "{{ sksec_lapi_allowlist_ours | length > 0 }}"
+    sksec_lapi_allowlist_current: "{{ ((sksec_lapi_allowlist_ours | first)['items'] if sksec_lapi_allowlist_ours else []) | default([], true) | map(attribute='value') | list }}"
+
+- name: Compare the LAPI allowlist with ALLOWLIST_CIDRS
+  set_fact:
+    sksec_lapi_allowlist_add: "{{ sksec_lapi_allowlist_desired | reject('in', sksec_lapi_allowlist_current) | list }}"
+    sksec_lapi_allowlist_remove: "{{ sksec_lapi_allowlist_current | reject('in', sksec_lapi_allowlist_desired) | list }}"
 
 - name: Create LAPI allowlist {{ sksec_lapi_allowlist_name }}
   command:
