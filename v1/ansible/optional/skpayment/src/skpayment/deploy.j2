@@ -45,9 +45,9 @@ docker stack deploy \
     --with-registry-auth \
     "${STACK_NAME}"
 
-if [ "${RESTART:-0}" = 1 ] && preexisted "${SERVICE}"; then
-    echo "Restarting ${SERVICE}: its code, apps.json or env changed"
-    timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=true "${SERVICE}" >/dev/null || true
+if [ "${RESTART:-0}" = 1 ]; then
+    echo "The play changed the code, apps.json or env of ${SERVICE}"
+    preexisted "${SERVICE}" && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=true "${SERVICE}" || true
 fi
 
 echo "Waiting for ${SERVICE} to converge..."

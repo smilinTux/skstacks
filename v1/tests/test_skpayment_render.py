@@ -229,3 +229,14 @@ def test_fetch_fails_on_an_unknown_ref(tmp_path, app_repo):
     out = ok(tmp_path, BASE | {"APP_REPO": str(repo), "APP_REF": "v9.9.9", "APP_SHA256": digest})
     proc = subprocess.run(["bash", str(fetch_script(out))], capture_output=True, text=True)
     assert proc.returncode != 0 and proc.stdout == ""
+
+
+def test_compose_default_image_equals_the_playbook_pin():
+    """The image default is written out in the compose template (so
+    list_images.py and the image canary see the pin) and in the playbook
+    (for the digest assert); they must never drift apart."""
+    tpl = (rp.ANSIBLE / "optional/skpayment/src/config/skpayment/skpayment.yml.j2").read_text()
+    assert f"default('{DEFAULT_IMAGE}', true)" in tpl
+    for env in ("dev", "staging", "prod"):
+        pb = (rp.ANSIBLE / f"optional/skpayment/deploy_skpayment-{env}.yml").read_text()
+        assert f'skp_default_image: "{DEFAULT_IMAGE}"' in pb, env

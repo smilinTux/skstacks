@@ -12,7 +12,9 @@ networks:
 
 services:
   skpayment:
-    image: {{ skp_image }}
+    # Default = skp_default_image in the playbook (a test keeps them equal);
+    # written out here so v1/scripts/list_images.py can see the pin.
+    image: {{ skpayment.IMAGE | default('ghcr.io/open-webui/open-webui:main@sha256:74093dadc9c6aabc23987a74fd8c2fb8d995b1a5b22e83b0036fb9d6af590e8c', true) }}
     entrypoint: []
     command: ["uvicorn", "skpayment:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]
     working_dir: /
