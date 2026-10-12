@@ -1,0 +1,14 @@
+[Unit]
+Description=skhealth: infrastructure health checks and alerts
+After=network-online.target docker.service
+Wants=network-online.target
+ConditionPathExists={{ skh_conf }}
+
+[Service]
+Type=oneshot
+ExecStart={{ skh_bin }} run
+Nice=10
+IOSchedulingClass=idle
+CPUQuota=25%
+MemoryMax=128M
+TimeoutStartSec=4min

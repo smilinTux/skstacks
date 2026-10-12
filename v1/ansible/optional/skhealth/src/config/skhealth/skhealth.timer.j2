@@ -1,0 +1,10 @@
+[Unit]
+Description=skhealth: infrastructure health checks and alerts (timer)
+
+[Timer]
+OnCalendar={{ skh.schedule }}
+RandomizedDelaySec=20
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

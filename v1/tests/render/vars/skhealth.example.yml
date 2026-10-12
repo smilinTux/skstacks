@@ -1,0 +1,4 @@
+# Public, obviously fake example vault for the real-Ansible render gate
+# (v1/tests/render/render_playbooks.py). Minimal: every optional block unset
+# (no alert channel, no remote host, no TLS host). example.test only.
+skhealth: {}

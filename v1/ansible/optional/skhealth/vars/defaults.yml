@@ -1,0 +1,60 @@
+---
+# skhealth defaults. The instance vault's `skhealth:` block is merged over
+# this (recursively), so a vault sets only what it changes. README.md
+# documents every key.
+skhealth_defaults:
+  enabled: true
+  # Names in every message: "[skhealth] <cluster_label> / <host>".
+  # Empty cluster_label: the inventory's cluster_name.
+  cluster_label: ""
+  # The one host that runs the cluster-wide checks (swarm services, nodes,
+  # remote hosts, TLS): "auto" = the Ready manager with the lowest node id
+  # (recomputed every run, so it moves when that manager goes down), or a
+  # host's short hostname.
+  primary: auto
+  # systemd OnCalendar for the timer.
+  schedule: "*:0/5"
+  # A problem alerts after this many consecutive runs (2 x 5 min: a service
+  # restarting during a deploy does not page anyone).
+  confirm_runs: 2
+  # Re-alert while a problem persists (0 = never).
+  realert_hours: 6
+  alerts:
+    telegram_bot_token: ""
+    telegram_chat_id: ""
+    telegram_api_base: "https://api.telegram.org"
+    webhook_url: ""
+  swarm:
+    enabled: true
+    crashloop_failed_tasks: 3
+    crashloop_minutes: 15
+    ignore_services: []     # regexes on the service name
+  nodes:
+    enabled: true
+    ignore_nodes: []        # hostnames
+  host:
+    enabled: true
+    fs_paths: ["/"]
+    fs_max_pct: 85
+    nfs: true
+    nfs_usage: true
+    nfs_timeout_seconds: 5
+    load_per_cpu_max: 2.0
+    mem_available_min_pct: 10
+    mem_psi_full_avg60_max: 10
+    oom: true
+    failed_units: true
+    ignore_units: []        # shell globs on unit names
+  disks:
+    enabled: true
+    install_smartmontools: true
+    nvme_used_max_pct: 90
+  raid:
+    enabled: true
+  remote:
+    hosts: []               # [{name, host, port: 22, user: skhealth, zpool: false, smart_devices: [], pvesm: false}]
+    ssh_private_key: ""     # the dedicated read-only key (OpenSSH private key text)
+    known_hosts: []         # known_hosts lines for the remote hosts
+  tls:
+    hosts: []               # ["host", "host:port", {host, port, address}]
+    warn_days: 21

@@ -1,0 +1,29 @@
+# The "set" pass: every optional block on, fake values only.
+skhealth:
+  cluster_label: render-site
+  primary: render-node-1
+  confirm_runs: 3
+  realert_hours: 12
+  alerts:
+    telegram_bot_token: "123456:example-telegram-token-not-a-secret"
+    telegram_chat_id: "-1001234567890"
+    webhook_url: "https://hooks.example.test/skhealth/example-not-a-secret"
+  swarm:
+    ignore_services: ["^skmon-"]
+  host:
+    fs_paths: ["/", "/var/lib/docker"]
+    ignore_units: ["apt-daily*"]
+  remote:
+    hosts:
+      - name: nas
+        host: 192.0.2.10
+        port: 2222
+        zpool: true
+        smart_devices: ["/dev/nvme0n1", "/dev/sda"]
+        pvesm: true
+    ssh_private_key: "example-ssh-private-key-not-a-secret"
+    known_hosts:
+      - "[192.0.2.10]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExampleExampleExampleExampleExample"
+  tls:
+    hosts: ["www.example.test", "mail.example.test:465"]
+    warn_days: 14

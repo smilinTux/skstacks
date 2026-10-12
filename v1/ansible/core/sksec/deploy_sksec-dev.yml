@@ -44,6 +44,21 @@
       include_vars: "{{ vault_file_path }}"
       when: vault_file_path is defined
 
+    - name: Validate the bouncer knobs (BOUNCER_REPLICAS, BOUNCER_TRUSTED_PROXIES)
+      vars:
+        _sksec_proxies: "{{ sksec.BOUNCER_TRUSTED_PROXIES | default([], true) }}"
+      assert:
+        that:
+          - (sksec.BOUNCER_REPLICAS | default('') | string) is match('^([1-9][0-9]*)?$')
+          - _sksec_proxies is sequence and _sksec_proxies is not string and _sksec_proxies is not mapping
+          - _sksec_proxies | map('string') | reject('match', '^[0-9A-Fa-f:.]+(/[0-9]{1,3})?$') | list | length == 0
+          - _sksec_proxies | map('string') | select('match', '^(0\\.0\\.0\\.0|::)/0$') | list | length == 0
+        fail_msg: >-
+          ERROR: sksec.BOUNCER_REPLICAS must be a whole number >= 1, and
+          sksec.BOUNCER_TRUSTED_PROXIES a YAML list of IP addresses or CIDRs
+          (not 0.0.0.0/0 or ::/0, which is the unsafe default it replaces).
+        quiet: true
+
     - name: Define default network variables when not provided in vault
       # ⚠️ IMPORTANT: Network subnets MUST match shared/networks registry
       # Reference: See shared/networks for all registered network subnets

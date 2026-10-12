@@ -1,0 +1,3 @@
+{% for line in skh.remote.known_hosts %}
+{{ line | string | trim }}
+{% endfor %}
