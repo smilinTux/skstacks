@@ -13,15 +13,22 @@ changed, and exits.
 
 ## Resource cost
 
-Per run, measured on a skstack06 lab node (see Testing):
+Measured on skstack06 lab nodes (2 vCPU, Ubuntu 24.04), one full check pass:
 
 | | |
 |---|---|
 | Processes between runs | none (a systemd timer only) |
-| One run | about 0.3 to 2 s wall time, under 25 MB RSS, a few `docker`/`systemctl` calls |
+| One run, ordinary node | about 0.4 s wall, 0.35 s CPU |
+| One run, the primary (adds swarm services, tasks, nodes) | about 1.6 s wall, 0.6 s CPU |
+| Memory | the engine peaks at about 22 MiB RSS; the largest single command it runs peaks at about 45 MiB, one at a time |
 | Disk | one script, a JSON config, a state file of a few KB per node |
 | Network | the alert POSTs only (and the SSH/TLS checks on the primary) |
 | Caps | the unit runs with `Nice=10`, `IOSchedulingClass=idle`, `CPUQuota=25%`, `MemoryMax=128M`, `TimeoutStartSec=4min` |
+
+Every 5 minutes that is well under 1% of one CPU. Each run prints its own
+cost on its summary line (`cpu ...s, peak RSS ... MiB (largest command ...
+MiB)`), visible in `journalctl -u skhealth.service`, so the figures can be
+checked on any host.
 
 Compare the Prometheus/Grafana stack (`skmon`), which keeps several
 containers and a TSDB resident on the cluster around the clock. skhealth does

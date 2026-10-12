@@ -35,6 +35,7 @@ import fnmatch
 import json
 import os
 import re
+import resource
 import shlex
 import socket
 import ssl
@@ -788,6 +789,15 @@ def send(cfg: dict, secrets: dict, cluster: str, host: str, events: list[dict]) 
 # Main
 # ---------------------------------------------------------------------------
 
+def cost() -> str:
+    """This run's own cost, for the summary line: CPU seconds and peak RSS of
+    the engine and of its largest child command (ru_maxrss is in KiB)."""
+    me = resource.getrusage(resource.RUSAGE_SELF)
+    ch = resource.getrusage(resource.RUSAGE_CHILDREN)
+    cpu = me.ru_utime + me.ru_stime + ch.ru_utime + ch.ru_stime
+    return f"cpu {cpu:.2f}s, peak RSS {me.ru_maxrss / 1024:.1f} MiB (largest command {ch.ru_maxrss / 1024:.1f} MiB)"
+
+
 def load_state(path: str) -> dict:
     try:
         with open(path) as fh:
@@ -867,7 +877,7 @@ def main(argv: list[str]) -> int:
         if cmd == "check":
             for key, msg in sorted(problems.items()):
                 print(f"{key}: {msg}")
-            print(f"skhealth: {len(problems)} problem(s); checks run: {', '.join(sorted(ran)) or 'none'}")
+            print(f"skhealth: {len(problems)} problem(s); {cost()}; checks run: {', '.join(sorted(ran)) or 'none'}")
             return 0
         new, events = transition(saved.get("problems", {}), problems, ran, disabled, now,
                                  int(cfg.get("confirm_runs", 2)), float(cfg.get("realert_hours", 6)))
@@ -884,7 +894,7 @@ def main(argv: list[str]) -> int:
                 print(f"skhealth: partial delivery ({'; '.join(notes)})", file=sys.stderr)
         if delivered:
             save_state(state_file, {"version": 1, "last_run": now, "problems": new})
-        print(f"skhealth: {len(problems)} problem(s), {len(events)} alert event(s); "
+        print(f"skhealth: {len(problems)} problem(s), {len(events)} alert event(s); {cost()}; "
               f"checks run: {', '.join(sorted(ran)) or 'none'}")
         return 0
 

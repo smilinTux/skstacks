@@ -249,3 +249,14 @@ def test_a_second_run_holding_the_lock_skips(host):
         fcntl.flock(fh, fcntl.LOCK_EX)
         r = skhealth(host, now=1000)
     assert r.returncode == 0 and "holds the lock" in r.stdout
+
+
+def test_summary_line_reports_the_runs_own_cost(host):
+    """README "Resource cost" is backed by this line: every run and check
+    prints its CPU seconds and peak RSS (the lab stage records it)."""
+    import re
+    for args in ((), ("check",)):
+        out = skhealth(host, *args, now=1000).stdout.splitlines()[-1]
+        m = re.search(r"cpu (\d+\.\d\d)s, peak RSS (\d+\.\d) MiB \(largest command (\d+\.\d) MiB\); checks run: ", out)
+        assert m, out
+        assert 1.0 < float(m.group(2)) < 128.0, "the engine's own RSS, under the unit's MemoryMax"
