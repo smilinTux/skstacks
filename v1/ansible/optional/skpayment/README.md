@@ -61,7 +61,7 @@ skpayment:
   DATA_PATH: ""                   # default /var/data/skpayment-<env>/data (SQLite, bound at /data)
   DATA_NODE: ""                   # pin the service to this node (required with a local DATA_PATH)
   MIDDLEWARES: ""                 # default default-no-crowdsec@file (see "CrowdSec" below)
-  TLS_OPTIONS: ""                 # default intermediate@file
+  TLS_OPTIONS: ""                 # default intermediate@file; "none" = no tls.options label (Traefik default options)
   networks: []                    # override the overlay networks (subnet registry)
 ```
 
@@ -70,6 +70,7 @@ skpayment:
 | `IMAGE` | `ghcr.io/open-webui/open-webui:main@sha256:74093dad...` | Used only as a Python base with fastapi/uvicorn/httpx, the same image digest the hand-deployed gateway ran. Any digest-pinned image with Python 3.10+ and those three packages works; a small dedicated image would pull far less (about 1.7 GB compressed for this one). The deploy refuses an image without `@sha256:`. The image's own HEALTHCHECK probes :8080, which nothing serves here, so the service sets its own on `:8000/health`. |
 | `APP_REF` / `APP_SHA256` | the app repo's first release commit and its file hash | Both are required in effect: the ref says where, the hash proves what. |
 | `DATA_PATH` / `DATA_NODE` | shared storage, floating | SQLite over NFS works for this write volume (a few rows per subscription event). For local disk set both; the play stops on a local `DATA_PATH` without `DATA_NODE`, same rule as skgraph/skvector. |
+| `TLS_OPTIONS` | `intermediate@file` (sniStrict) | A file-provider TLS option. `none` omits the label, so the router gets Traefik's default TLS options (the built-in option named `default` cannot be referenced as `default@file`: Traefik rejects the router with "unknown TLS options"). With sniStrict, a host without a certificate fails the handshake (a lab without ACME). |
 | `HOSTNAME` | `skpayment[-env].<base domain>` | `<base domain>` is `DOMAIN` with `CLOUDFLARED: true`, else `CLUSTERNAME.DOMAIN` (the same expressions the skhub routers use since v2.26.3). The gateway's `BASE_URL` is `https://<HOSTNAME>`. |
 
 Secrets: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` and every

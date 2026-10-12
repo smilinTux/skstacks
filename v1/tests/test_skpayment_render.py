@@ -240,3 +240,12 @@ def test_compose_default_image_equals_the_playbook_pin():
     for env in ("dev", "staging", "prod"):
         pb = (rp.ANSIBLE / f"optional/skpayment/deploy_skpayment-{env}.yml").read_text()
         assert f'skp_default_image: "{DEFAULT_IMAGE}"' in pb, env
+
+
+def test_tls_options_none_omits_the_label(tmp_path):
+    """TLS_OPTIONS: none leaves the router on Traefik's default TLS options
+    (a "default@file" reference is rejected by Traefik as unknown)."""
+    lab = labels(compose(ok(tmp_path, BASE | {"TLS_OPTIONS": "none"})))
+    assert not [k for k in lab if k.endswith(".tls.options")]
+    assert lab["traefik.http.routers.skpayment.tls"] == "true"
+    assert lab["traefik.http.routers.skpayment.tls.certresolver"] == "main"
