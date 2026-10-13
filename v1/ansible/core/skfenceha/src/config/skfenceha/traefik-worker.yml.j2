@@ -84,6 +84,15 @@ entryPoints:
         - "{{ ip }}"
 {% endfor %}
 {% endif %}
+{% if skfenceha.DROP_FORWARDED_HEADERS | default([]) | length > 0 %}
+    # skfenceha.DROP_FORWARDED_HEADERS instance var: removed before any
+    # router sees the request (middleware in dynamic/middlewares.yml). With
+    # TRUSTED_PROXIES behind a tunnel/CDN, a client-sent X-Forwarded-Host
+    # would otherwise reach the apps as trusted.
+    http:
+      middlewares:
+        - drop-forwarded-headers@file
+{% endif %}
 {% if skfenceha.WORKER_RESPONDING_TIMEOUTS | default({}) %}
     # skfenceha.WORKER_RESPONDING_TIMEOUTS instance var (map, rendered
     # verbatim). Long read/write timeouts keep multi-GB uploads/downloads
