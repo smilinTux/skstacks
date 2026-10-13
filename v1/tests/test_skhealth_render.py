@@ -162,6 +162,9 @@ def test_the_engine_reads_the_rendered_files(full, tmp_path):
     ({"remote": {"hosts": [{"name": "nas", "host": "192.0.2.1", "smart_devices": ["/dev/sda; id"]}],
                  "ssh_private_key": "k"}}, "smart_devices"),
     ({"remote": {"hosts": [{"name": "nas", "host": "192.0.2.1"}], "ssh_private_key": "k"}}, "at least one of"),
+    ({"disks": {"devices": ["/dev/sda; id"]}}, "disks.devices"),
+    ({"disks": {"devices": ["sda"]}}, "disks.devices"),
+    ({"disks": {"devices": "/dev/sda"}}, "disks.devices"),
     ({"confirm_runs": 0}, "confirm_runs"),
     ({"primary": "bad host"}, "primary"),
 ])
@@ -176,3 +179,17 @@ def test_disabled_installs_nothing(tmp_path):
     assert res["status"] in ("PASS", "FAIL")
     got = files(out) if out.exists() else set()
     assert not [f for f in got if f.startswith(("etc/", "_copy/"))], sorted(got)
+
+
+def test_local_smart_device_list_reaches_the_runtime_config(tmp_path):
+    devs = ["/dev/disk/by-id/nvme-Example_SSD_1TB_S0000000", "/dev/disk/by-id/nvme-eui.0000000000000001"]
+    res, out = render(tmp_path, {"disks": {"devices": devs}})
+    assert res["status"] == "PASS", (res["findings"], res["log"][-3000:])
+    cfg = json.loads((out / "etc/skhealth/skhealth.json").read_text())
+    assert cfg["checks"]["disks"] == {"devices": devs, "enabled": True, "nvme_used_max_pct": 90}
+
+
+def test_unset_or_empty_device_list_leaves_the_config_unchanged(minimal, tmp_path):
+    res, out = render(tmp_path, {"disks": {"devices": []}})
+    assert res["status"] == "PASS", (res["findings"], res["log"][-3000:])
+    assert (out / "etc/skhealth/skhealth.json").read_bytes() == (minimal / "etc/skhealth/skhealth.json").read_bytes()
