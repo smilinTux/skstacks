@@ -1,0 +1,71 @@
+#!/bin/sh
+# skgym-backup: archive the openGym data dir (/data, read-only) into /backup.
+# Installed by the skgym deploy (copied verbatim) and run by the stack's
+# `backup` service. POSIX sh: the api image is alpine (busybox tar/gzip/find).
+#
+#   skgym-backup loop   sleep BACKUP_START_DELAY, then one archive every
+#                       BACKUP_FREQUENCY seconds (the service's command)
+#   skgym-backup once   one archive now (manual use, skbackup hooks)
+#
+# Every archive gets its own name (the date is taken per run), is written to
+# a hidden temp file, checked (gzip and tar can read it back, and it holds
+# ./secret) and only then renamed into place, so a failed run never replaces
+# or removes a good archive. Archives older than BACKUP_KEEP_DAYS are pruned
+# only after a good one was written, so a run of failures never ages out the
+# last good copy. The archives hold passkey credentials and the session
+# secret: umask 077, root only.
+#
+# openGym writes every file to a temp name and renames it over the real one,
+# so each file in the archive is a complete version; files written between
+# two reads may come from slightly different moments (crash-consistent, the
+# same as a snapshot). The `*.tmp` files of an in-flight write are skipped.
+set -u
+umask 077
+
+DATA=${SKGYM_BACKUP_DATA:-/data}
+OUT=${SKGYM_BACKUP_OUT:-/backup}
+KEEP_DAYS=${BACKUP_KEEP_DAYS:-7}
+FREQUENCY=${BACKUP_FREQUENCY:-86400}
+START_DELAY=${BACKUP_START_DELAY:-60}
+
+log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) skgym-backup: $*"; }
+
+backup_once() {
+    stamp=$(date -u +%Y%m%dT%H%M%SZ)
+    final="$OUT/skgym-$stamp.tar.gz"
+    tmp="$OUT/.skgym-$stamp.tar.gz.partial"
+    rm -f "$tmp"
+    if tar -C "$DATA" --exclude='*.tmp' -czf "$tmp" . \
+        && [ -s "$tmp" ] \
+        && gzip -t "$tmp" \
+        && tar -tzf "$tmp" | grep -qx './secret'; then
+        mv -f "$tmp" "$final"
+        log "wrote $final ($(wc -c <"$final") bytes)"
+        find "$OUT" -maxdepth 1 -type f -name 'skgym-*.tar.gz' -mtime +"$KEEP_DAYS" -exec rm -f {} \;
+        return 0
+    fi
+    rm -f "$tmp"
+    log "ERROR: backup failed, kept the previous archives"
+    return 1
+}
+
+case "${1:-loop}" in
+once)
+    backup_once
+    ;;
+loop)
+    trap 'exit 0' TERM INT
+    log "first archive in ${START_DELAY}s, then every ${FREQUENCY}s, keeping ${KEEP_DAYS} days"
+    sleep "$START_DELAY" &
+    wait $!
+    while :; do
+        backup_once || true
+        sleep "$FREQUENCY" &
+        wait $!
+    done
+    ;;
+*)
+    echo "usage: skgym-backup [loop|once]" >&2
+    exit 2
+    ;;
+esac
