@@ -166,6 +166,10 @@ def test_cloudflared_base_domain_without_hostname(tmp_path):
 @pytest.mark.parametrize("over,needle", [
     ({"IMAGE": "ghcr.io/open-webui/open-webui:main"}, "pinned by digest"),
     ({"STRIPE_SECRET_KEY": ""}, "STRIPE_SECRET_KEY and"),
+    ({"STRIPE_WEBHOOK_SECRET": ""}, "both or neither"),
+    ({"STRIPE_SECRET_KEY": ""}, "both or neither"),
+    ({"STRIPE_SECRET_KEY": "", "STRIPE_WEBHOOK_SECRET": "", "APP_REF": "17b00804c204f9cd371938c701bd63039b0d1c8b",
+      "APP_SHA256": "c957335b6f910b81870b1dc229a294be8a40f1cc935688801193e00a98f83ff8"}, "accepts unsigned webhooks"),
     ({"APP_SHA256": "abc"}, "APP_SHA256 (64 hex"),
     ({"APP_REF": "main; id"}, "APP_REF (a tag"),
     ({"DATA_PATH": "/var/lib/skpayment/data"}, "DATA_NODE is empty"),
@@ -249,3 +253,39 @@ def test_tls_options_none_omits_the_label(tmp_path):
     assert not [k for k in lab if k.endswith(".tls.options")]
     assert lab["traefik.http.routers.skpayment.tls"] == "true"
     assert lab["traefik.http.routers.skpayment.tls.certresolver"] == "main"
+
+
+# --- "Stripe not configured" mode (card 1c2347e9) ------------------------------------
+
+APP_REF_DEFAULT = "d3138a22b8b24553ebf552fed7315c8d413cd399"     # smilinTux/skpayments v1.1.0
+APP_SHA256_DEFAULT = "5a88f86bf6b22ba991568152cd3341d80afa67e003478787fb7eaa1186093d8e"
+
+
+def test_both_stripe_secrets_empty_is_allowed_and_renders_empty_values(tmp_path):
+    out = ok(tmp_path, BASE | {"STRIPE_SECRET_KEY": "", "STRIPE_WEBHOOK_SECRET": ""})
+    env = env_file(out)
+    assert env["STRIPE_SECRET_KEY"] == "" and env["STRIPE_WEBHOOK_SECRET"] == ""
+    assert env["BASE_URL"] == "https://skpayment.render.example.test"
+
+
+def test_both_stripe_secrets_absent_is_allowed(tmp_path):
+    vault = {k: v for k, v in BASE.items() if not k.startswith("STRIPE_")}
+    env = env_file(ok(tmp_path, vault))
+    assert env["STRIPE_SECRET_KEY"] == "" and env["STRIPE_WEBHOOK_SECRET"] == ""
+
+
+def test_default_app_pin_is_the_release_that_rejects_unverified_webhooks(base_out):
+    """17b0080 accepted any unsigned webhook when STRIPE_WEBHOOK_SECRET was
+    empty; v1.1.0 (d3138a2) answers 503 instead. The fetch script pins both
+    the commit and the file hash."""
+    body = fetch_script(base_out).read_text()
+    assert APP_REF_DEFAULT in body and APP_SHA256_DEFAULT in body
+    for env in ("dev", "staging", "prod"):
+        pb = (rp.ANSIBLE / f"optional/skpayment/deploy_skpayment-{env}.yml").read_text()
+        assert f'skp_default_ref: "{APP_REF_DEFAULT}"' in pb and f'skp_default_sha256: "{APP_SHA256_DEFAULT}"' in pb
+
+
+def test_old_app_pin_still_deploys_with_secrets_set(tmp_path):
+    """An instance that pins the old release and HAS a webhook secret keeps working."""
+    ok(tmp_path, BASE | {"APP_REF": "17b00804c204f9cd371938c701bd63039b0d1c8b",
+                         "APP_SHA256": "c957335b6f910b81870b1dc229a294be8a40f1cc935688801193e00a98f83ff8"})

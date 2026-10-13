@@ -43,8 +43,13 @@
     service_type: optional
     skp_default_image: "ghcr.io/open-webui/open-webui:main@sha256:74093dadc9c6aabc23987a74fd8c2fb8d995b1a5b22e83b0036fb9d6af590e8c"
     skp_default_repo: "https://github.com/smilinTux/skpayments.git"
-    skp_default_ref: "17b00804c204f9cd371938c701bd63039b0d1c8b"
-    skp_default_sha256: "c957335b6f910b81870b1dc229a294be8a40f1cc935688801193e00a98f83ff8"
+    # smilinTux/skpayments v1.1.0: "Stripe not configured" mode, unverified
+    # webhooks rejected (the first release, 17b0080, accepted them).
+    skp_default_ref: "d3138a22b8b24553ebf552fed7315c8d413cd399"
+    skp_default_sha256: "5a88f86bf6b22ba991568152cd3341d80afa67e003478787fb7eaa1186093d8e"
+    # skpayment.py of 17b0080: with STRIPE_WEBHOOK_SECRET empty it ACCEPTS
+    # unsigned webhooks, so it never runs without a webhook secret.
+    skp_sha256_accepts_unsigned_webhooks: ["c957335b6f910b81870b1dc229a294be8a40f1cc935688801193e00a98f83ff8"]
   pre_tasks:
     - name: Select vault file based on domain and cluster
       import_tasks: ../../shared/tasks/select_vault_file.yml
@@ -96,13 +101,24 @@
       assert:
         that:
           - skp_host is match('^[A-Za-z0-9][A-Za-z0-9.-]*$')
-          - skpayment.STRIPE_SECRET_KEY | default('', true) | string | length > 0
-          - skpayment.STRIPE_WEBHOOK_SECRET | default('', true) | string | length > 0
+          - (skpayment.STRIPE_SECRET_KEY | default('', true) | string | length > 0) == (skpayment.STRIPE_WEBHOOK_SECRET | default('', true) | string | length > 0)
           - skpayment.APPS | default({}) is mapping
         fail_msg: >-
           ERROR: skpayment needs a valid HOSTNAME (or CLUSTERNAME/DOMAIN),
-          STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET in the vault, and APPS
-          (if set) a mapping.
+          STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET: both or neither (both
+          empty = "Stripe not configured" mode), and APPS (if set) a mapping.
+        quiet: true
+      tags: [config]
+
+    - name: Refuse "Stripe not configured" mode on an app release that accepts unsigned webhooks
+      assert:
+        that:
+          - (skpayment.STRIPE_WEBHOOK_SECRET | default('', true) | string | length > 0) or (skp_sha256 not in skp_sha256_accepts_unsigned_webhooks)
+        fail_msg: >-
+          ERROR: STRIPE_WEBHOOK_SECRET is empty and APP_REF/APP_SHA256 pin an
+          skpayment.py that accepts unsigned webhooks without one (anyone
+          could grant a tier). Use the default app pin (v1.1.0 or later), or
+          set the Stripe secrets.
         quiet: true
       tags: [config]
 
