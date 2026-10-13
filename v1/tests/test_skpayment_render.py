@@ -2,7 +2,8 @@
 with a given vault, and the controller-side code fetch it renders executed
 against a local git repo: digest-pinned image, the app code pinned by ref
 AND sha256, the router built from the framework's host expressions, the
-crowdsec middleware knob, the data path knob, and secrets kept out of the
+crowdsec middleware knobs (site router with CrowdSec, the Stripe webhook
+router exempt and higher priority), the data path knob, and secrets kept out of the
 compose file."""
 import hashlib
 import json
@@ -99,7 +100,7 @@ def test_default_service_reproduces_the_hand_deployed_gateway(base_out):
     assert svc["networks"] == ["skpayment-prod", "cloud-public-prod"]
 
 
-def test_default_router_uses_the_framework_host_and_no_crowdsec_chain(base_out):
+def test_default_routers_use_the_framework_host_crowdsec_on_the_site_webhook_exempt(base_out):
     lab = labels(compose(base_out))
     assert lab == {
         "com.skt.app": "skpayment", "com.skt.env": "prod",
@@ -110,8 +111,17 @@ def test_default_router_uses_the_framework_host_and_no_crowdsec_chain(base_out):
         "traefik.http.routers.skpayment.tls": "true",
         "traefik.http.routers.skpayment.tls.certresolver": "main",
         "traefik.http.routers.skpayment.tls.options": "intermediate@file",
-        "traefik.http.routers.skpayment.middlewares": "default-no-crowdsec@file",
+        "traefik.http.routers.skpayment.middlewares": "default@file",
         "traefik.http.routers.skpayment.service": "skpayment",
+        "traefik.http.routers.skpayment-webhook.rule":
+            "Host(`skpayment.render.example.test`) && Path(`/webhook/stripe`)",
+        "traefik.http.routers.skpayment-webhook.priority": "1000",
+        "traefik.http.routers.skpayment-webhook.entrypoints": "websecure",
+        "traefik.http.routers.skpayment-webhook.tls": "true",
+        "traefik.http.routers.skpayment-webhook.tls.certresolver": "main",
+        "traefik.http.routers.skpayment-webhook.tls.options": "intermediate@file",
+        "traefik.http.routers.skpayment-webhook.middlewares": "default-no-crowdsec@file",
+        "traefik.http.routers.skpayment-webhook.service": "skpayment",
         "traefik.http.services.skpayment.loadbalancer.server.port": "8000",
         "traefik.http.services.skpayment.loadbalancer.healthcheck.path": "/health",
         "traefik.http.services.skpayment.loadbalancer.healthcheck.interval": "30s",
@@ -289,3 +299,122 @@ def test_old_app_pin_still_deploys_with_secrets_set(tmp_path):
     """An instance that pins the old release and HAS a webhook secret keeps working."""
     ok(tmp_path, BASE | {"APP_REF": "17b00804c204f9cd371938c701bd63039b0d1c8b",
                          "APP_SHA256": "c957335b6f910b81870b1dc229a294be8a40f1cc935688801193e00a98f83ff8"})
+
+
+# --- CrowdSec on the site, the Stripe webhook exempted (two routers) -----------------
+
+STRIPE_WEBHOOK_IPS = [   # https://stripe.com/files/ips/ips_webhooks.json, fetched 2026-10-13
+    "3.18.12.63", "3.69.109.8", "3.120.168.93", "3.130.192.231", "13.235.14.237", "13.235.122.149",
+    "18.211.135.69", "35.154.171.200", "35.157.207.129", "52.15.183.38", "54.88.130.119",
+    "54.88.130.237", "54.187.174.169", "54.187.205.235", "54.187.216.72",
+]
+
+
+def routers(lab):
+    return sorted({k.split(".")[3] for k in lab if k.startswith("traefik.http.routers.")})
+
+
+def effective_priority(lab, router):
+    """Traefik's router priority: the explicit label, else the rule's length."""
+    explicit = lab.get(f"traefik.http.routers.{router}.priority")
+    return int(explicit) if explicit is not None else len(lab[f"traefik.http.routers.{router}.rule"])
+
+
+def test_default_splits_into_a_crowdsec_site_router_and_an_exempt_webhook_router(base_out):
+    lab = labels(compose(base_out))
+    assert routers(lab) == ["skpayment", "skpayment-webhook"]
+    assert lab["traefik.http.routers.skpayment.middlewares"] == "default@file"
+    w = "traefik.http.routers.skpayment-webhook"
+    assert lab[f"{w}.rule"] == "Host(`skpayment.render.example.test`) && Path(`/webhook/stripe`)"
+    assert lab[f"{w}.middlewares"] == "default-no-crowdsec@file"
+    assert lab[f"{w}.entrypoints"] == "websecure"
+    assert lab[f"{w}.tls"] == "true"
+    assert lab[f"{w}.tls.certresolver"] == "main"
+    assert lab[f"{w}.tls.options"] == "intermediate@file"
+    assert lab[f"{w}.service"] == "skpayment"      # the same backend, no second service
+    assert not [k for k in lab if ".middlewares.skpayment" in k]   # no IP allowlist by default
+
+
+def test_webhook_router_outranks_the_site_router(base_out):
+    lab = labels(compose(base_out))
+    assert lab["traefik.http.routers.skpayment-webhook.priority"] == "1000"
+    assert "traefik.http.routers.skpayment.priority" not in lab
+    assert effective_priority(lab, "skpayment-webhook") > effective_priority(lab, "skpayment")
+
+
+def test_webhook_router_outranks_a_long_hostname(tmp_path):
+    lab = labels(compose(ok(tmp_path, BASE | {"HOSTNAME": "pay." + "a" * 200 + ".example.test"})))
+    assert effective_priority(lab, "skpayment-webhook") > effective_priority(lab, "skpayment")
+
+
+def test_webhook_knobs_set(tmp_path):
+    lab = labels(compose(ok(tmp_path, BASE | {
+        "MIDDLEWARES": "crowdsec-bouncer@file,default-no-crowdsec@file",
+        "WEBHOOK_PATH": "/stripe/webhook",
+        "WEBHOOK_MIDDLEWARES": "default-no-crowdsec@file,gzip@file",
+        "WEBHOOK_PRIORITY": 500,
+        "TLS_OPTIONS": "none"})))
+    assert lab["traefik.http.routers.skpayment.middlewares"] == "crowdsec-bouncer@file,default-no-crowdsec@file"
+    w = "traefik.http.routers.skpayment-webhook"
+    assert lab[f"{w}.rule"] == "Host(`skpayment.render.example.test`) && Path(`/stripe/webhook`)"
+    assert lab[f"{w}.middlewares"] == "default-no-crowdsec@file,gzip@file"
+    assert lab[f"{w}.priority"] == "500"
+    assert not [k for k in lab if k.endswith(".tls.options")]
+
+
+def test_webhook_path_none_keeps_a_single_router(tmp_path):
+    lab = labels(compose(ok(tmp_path, BASE | {"WEBHOOK_PATH": "none"})))
+    assert routers(lab) == ["skpayment"]
+    assert lab["traefik.http.routers.skpayment.middlewares"] == "default@file"
+
+
+def test_webhook_ip_allowlist_default_is_stripes_published_list(tmp_path):
+    lab = labels(compose(ok(tmp_path, BASE | {"WEBHOOK_IP_ALLOWLIST": True})))
+    m = "traefik.http.middlewares.skpayment-stripe-ips.ipallowlist"
+    assert lab[f"{m}.sourcerange"] == ",".join(STRIPE_WEBHOOK_IPS)
+    assert f"{m}.ipstrategy.depth" not in lab
+    # the allowlist runs first, then the (no-CrowdSec) chain; the site router is untouched
+    assert lab["traefik.http.routers.skpayment-webhook.middlewares"] == "skpayment-stripe-ips,default-no-crowdsec@file"
+    assert lab["traefik.http.routers.skpayment.middlewares"] == "default@file"
+
+
+def test_webhook_ip_allowlist_custom_ranges_and_depth(tmp_path):
+    lab = labels(compose(ok(tmp_path, BASE | {"WEBHOOK_IP_ALLOWLIST": True,
+                                              "WEBHOOK_SOURCE_RANGES": ["192.0.2.0/24", "198.51.100.7"],
+                                              "WEBHOOK_IP_STRATEGY_DEPTH": 1})))
+    m = "traefik.http.middlewares.skpayment-stripe-ips.ipallowlist"
+    assert lab[f"{m}.sourcerange"] == "192.0.2.0/24,198.51.100.7"
+    assert lab[f"{m}.ipstrategy.depth"] == "1"
+
+
+@pytest.mark.parametrize("env,router", [("dev", "skpayment-dev"), ("staging", "skpayment-staging")])
+def test_non_prod_webhook_router_and_allowlist_names(tmp_path, env, router):
+    lab = labels(compose(ok(tmp_path, BASE | {"WEBHOOK_IP_ALLOWLIST": True}, env), env))
+    assert routers(lab) == [router, f"{router}-webhook"]
+    assert lab[f"traefik.http.routers.{router}-webhook.service"] == router
+    assert lab[f"traefik.http.routers.{router}-webhook.middlewares"] == \
+        f"{router}-stripe-ips,default-no-crowdsec@file"
+    assert f"traefik.http.middlewares.{router}-stripe-ips.ipallowlist.sourcerange" in lab
+
+
+@pytest.mark.parametrize("over,needle", [
+    ({"WEBHOOK_PATH": "webhook/stripe"}, "WEBHOOK_PATH"),
+    ({"WEBHOOK_PATH": "/webhook`) || Host(`x"}, "WEBHOOK_PATH"),
+    ({"WEBHOOK_PRIORITY": "high"}, "WEBHOOK_PRIORITY"),
+    ({"WEBHOOK_PRIORITY": -1}, "WEBHOOK_PRIORITY"),
+    ({"WEBHOOK_MIDDLEWARES": "default-no-crowdsec@file`"}, "WEBHOOK_MIDDLEWARES"),
+    ({"WEBHOOK_IP_ALLOWLIST": True, "WEBHOOK_SOURCE_RANGES": "3.18.12.63"}, "WEBHOOK_SOURCE_RANGES"),
+    ({"WEBHOOK_IP_ALLOWLIST": True, "WEBHOOK_SOURCE_RANGES": ["not an ip"]}, "WEBHOOK_SOURCE_RANGES"),
+    ({"WEBHOOK_IP_ALLOWLIST": True, "WEBHOOK_IP_STRATEGY_DEPTH": "x"}, "WEBHOOK_IP_STRATEGY_DEPTH"),
+])
+def test_invalid_webhook_knobs_stop_the_play(tmp_path, over, needle):
+    res, _ = render(tmp_path, BASE | over)
+    assert res["status"] == "FAIL"
+    assert needle in res["log"], res["log"][-2000:]
+
+
+def test_stripe_ip_default_is_identical_in_every_env_playbook():
+    for env in ("dev", "staging", "prod"):
+        pb = yaml.safe_load((rp.ANSIBLE / f"optional/skpayment/deploy_skpayment-{env}.yml").read_text())
+        play_vars = next(p["vars"] for p in pb if "vars" in p and "skp_default_image" in p["vars"])
+        assert play_vars["skp_default_stripe_webhook_ips"] == STRIPE_WEBHOOK_IPS, env
