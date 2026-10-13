@@ -3,7 +3,7 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
-## skstacks-v2.26.7 - unreleased
+## skstacks-v2.26.7 - 2026-10-13
 
 ### Upgrade notes (instances)
 
@@ -12,6 +12,8 @@ Each entry says what an instance must do, if anything.
 ### Added
 
 - v1: **skpayment** router knobs `WEBHOOK_PATH` (default `/webhook/stripe`, `none` = one router), `WEBHOOK_MIDDLEWARES` (default `default-no-crowdsec@file`), `WEBHOOK_PRIORITY` (default 1000), and an optional Stripe IP allowlist on the webhook router: `WEBHOOK_IP_ALLOWLIST` (default false), `WEBHOOK_SOURCE_RANGES` (default Stripe's published webhook IPs as of 2026-10-13), `WEBHOOK_IP_STRATEGY_DEPTH` (for a proxy in front of Traefik). `MIDDLEWARES` and the webhook knobs are validated (no stray characters in a label). Tests: `v1/tests/test_skpayment_render.py` (+17: both routers, priority order including a long hostname, every knob, non-prod names, invalid values, the IP list identical in every env playbook).
+
+The skstack06 skpayment stage gains a check for this release: skfenceha's live Traefik API must show the site router on `default@file` and the webhook router on `Path(/webhook/stripe)` with `default-no-crowdsec@file` at priority 1000 above it, both enabled on one service, and a neighbouring path must land on the site router.
 
 ## skstacks-v2.26.6 - 2026-10-13
 
