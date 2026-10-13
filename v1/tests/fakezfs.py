@@ -8,11 +8,13 @@ Datasets are directories. `zfs snapshot DS@N` copies the dataset's tree
 (minus .zfs) to <mountpoint>/.zfs/snapshot/N, so a snapshot is frozen like a
 real one. Snapshot creation time is $FAKEZFS_NOW when set (to age a snapshot
 on purpose), else now. `mount -t zfs -o ro DS@N DIR` makes DIR a symlink to
-that snapshot directory. Only the flag shapes the engine uses are
+that snapshot directory. Stacked mounts and tmpfs directory scaffolding are also modeled; mkdir
+refuses new directories in a read-only snapshot. Only engine flag shapes are
 supported; anything else exits 2 so a new call shape fails loudly."""
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
 import uuid
@@ -153,47 +155,80 @@ def zpool(args):
 
 def mount(args):
     flags, opts, pos = parse(args)
-    snap, mnt = pos
+    source, mnt = pos
     st = load()
-    if opts.get('-o') != 'ro' or snap not in st['snaps']:
-        die('fakezfs: only existing read-only snapshots can be mounted', 2)
-    target = snapdir(st, snap)
+    fs = opts.get('-t')
+    if fs == 'zfs':
+        if opts.get('-o') != 'ro' or source not in st['snaps']:
+            die('fakezfs: only existing read-only snapshots can be mounted', 2)
+        target = snapdir(st, source)
+        ds = source.split('@')[0]
+        overlay = bool(st.get('mounts')) or any(d.startswith(ds+'/') for d in st['datasets'])
+    elif fs == 'tmpfs':
+        if source != 'tmpfs' or opts.get('-o') != 'mode=0700,nosuid,nodev,noexec':
+            die('fakezfs: unsupported tmpfs mount', 2)
+        target, overlay = None, True
+    else:
+        die('fakezfs: unsupported filesystem', 2)
     m = Path(mnt)
-    ds = snap.split('@')[0]
-    use_overlay = bool(st.get('mounts')) or any(d.startswith(ds+'/') for d in st['datasets'])
-    if use_overlay:
+    if not m.is_dir():
+        die('fakezfs: mount directory missing')
+    if overlay:
         stash = STATE.parent/'mount-stash'/uuid.uuid4().hex
         stash.parent.mkdir(exist_ok=True)
         m.rename(stash)
-        shutil.copytree(target,m,symlinks=True)
-        st.setdefault('mounts', {})[str(m)] = str(stash)
+        if target is None:
+            m.mkdir(mode=0o700)
+        else:
+            shutil.copytree(target, m, symlinks=True)
     else:
+        stash = ''
         m.rmdir()
         m.symlink_to(target)
-        st.setdefault('mounts', {})[str(m)] = ''
-    st.setdefault('events', []).append(['mount',str(m)])
+    st.setdefault('mounts', {}).setdefault(str(m), []).append(
+        {'stash': str(stash), 'type': fs, 'source': source})
+    st.setdefault('events', []).append(['mount', str(m), fs, source])
     save(st)
 
 
 def umount(args):
-    m = Path(args[-1]);st=load()
+    m = Path(args[-1]); st = load()
     if str(m) not in st.get('mounts', {}):
-        die('fakezfs: not mounted',32)
-    stash=st['mounts'].pop(str(m))
+        die('fakezfs: not mounted', 32)
+    if any(p.startswith(str(m)+'/') for p in st['mounts']):
+        die('fakezfs: child mount busy', 32)
+    entry = st['mounts'][str(m)].pop()
+    if not st['mounts'][str(m)]:
+        del st['mounts'][str(m)]
+    stash = entry['stash']
     if stash:
         shutil.rmtree(m)
         Path(stash).rename(m)
     else:
-        m.unlink();m.mkdir()
-    st.setdefault('events', []).append(['umount',str(m)])
+        m.unlink(); m.mkdir()
+    st.setdefault('events', []).append(['umount', str(m)])
     save(st)
 
 
+def mkdir(args):
+    """Refuse new directories inside read-only mounts, as the kernel would."""
+    st = load()
+    _, _, paths = parse(args)
+    for name in paths:
+        path = Path(name)
+        parents = [p for p in st.get('mounts', {}) if name == p or name.startswith(p+'/')]
+        if parents:
+            nearest = max(parents, key=len)
+            if st['mounts'][nearest][-1]['type'] == 'zfs' and not path.is_dir():
+                die('fakezfs: read-only snapshot directory')
+    sys.exit(subprocess.run(['/usr/bin/mkdir', *args]).returncode)
+
+
 def mountpoint(args):
-    sys.exit(0 if str(Path(args[-1])) in load().get('mounts',{}) else 1)
+    sys.exit(0 if str(Path(args[-1])) in load().get('mounts',{}) else 32)
 
 
 if __name__ == "__main__":
     prog = Path(sys.argv[1]).name
     {"zfs": zfs, "zpool": zpool, "mount": mount, "umount": umount,
-     "mountpoint": mountpoint}[prog](sys.argv[2:])
+     "mountpoint": mountpoint, "mkdir": mkdir}[prog](sys.argv[2:])
