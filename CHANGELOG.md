@@ -3,6 +3,16 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## skstacks-v2.26.7 - unreleased
+
+### Upgrade notes (instances)
+
+- **skpayment:** the payment site now sits behind CrowdSec and only the Stripe webhook is exempt. The role renders two routers: the site router (`Host`) with `MIDDLEWARES`, whose default moves from `default-no-crowdsec@file` to `default@file` (CrowdSec when skfenceha has `CROWDSEC_ENABLED`), and a new `skpayment[-env]-webhook` router for the exact path `/webhook/stripe` with `default-no-crowdsec@file` and priority 1000, so Stripe's callers are never banned. The exemption relies on the app's Stripe signature check (every app release verifies it when `STRIPE_WEBHOOK_SECRET` is set; v1.1.0 also refuses replays and refuses every webhook without a secret). The next deploy changes the live router labels. To keep the old single-router layout set `WEBHOOK_PATH: none` and `MIDDLEWARES: default-no-crowdsec@file`.
+
+### Added
+
+- v1: **skpayment** router knobs `WEBHOOK_PATH` (default `/webhook/stripe`, `none` = one router), `WEBHOOK_MIDDLEWARES` (default `default-no-crowdsec@file`), `WEBHOOK_PRIORITY` (default 1000), and an optional Stripe IP allowlist on the webhook router: `WEBHOOK_IP_ALLOWLIST` (default false), `WEBHOOK_SOURCE_RANGES` (default Stripe's published webhook IPs as of 2026-10-13), `WEBHOOK_IP_STRATEGY_DEPTH` (for a proxy in front of Traefik). `MIDDLEWARES` and the webhook knobs are validated (no stray characters in a label). Tests: `v1/tests/test_skpayment_render.py` (+17: both routers, priority order including a long hostname, every knob, non-prod names, invalid values, the IP list identical in every env playbook).
+
 ## skstacks-v2.26.6 - 2026-10-13
 
 ### Upgrade notes (instances)

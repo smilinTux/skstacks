@@ -35,8 +35,9 @@ What the play does:
    (per-app config including LiteLLM master keys, 0600, bind-mounted
    read-only at `/config/apps.json`) into `/var/data/config/skpayment-<env>/`.
 4. Deploys stack `skpayment-<env>`, service `skpayment`: `node.role ==
-   worker`, networks `skpayment-<env>` and `cloud-public-<env>`, Traefik
-   router on `websecure` with the `main` cert resolver. A redeploy that
+   worker`, networks `skpayment-<env>` and `cloud-public-<env>`, two Traefik
+   routers on `websecure` with the `main` cert resolver (the site, and the
+   Stripe webhook path; see "CrowdSec"). A redeploy that
    changed the code, `apps.json` or the env file restarts the service (bind
    mounts do not change the service spec by themselves).
 
@@ -60,7 +61,13 @@ skpayment:
   APP_SHA256: ""                  # default 5a88f86bf6b22ba991568152cd3341d80afa67e003478787fb7eaa1186093d8e
   DATA_PATH: ""                   # default /var/data/skpayment-<env>/data (SQLite, bound at /data)
   DATA_NODE: ""                   # pin the service to this node (required with a local DATA_PATH)
-  MIDDLEWARES: ""                 # default default-no-crowdsec@file (see "CrowdSec" below)
+  MIDDLEWARES: ""                 # site router; default default@file (see "CrowdSec" below)
+  WEBHOOK_PATH: ""                # default /webhook/stripe; "none" = one router for everything
+  WEBHOOK_MIDDLEWARES: ""         # webhook router; default default-no-crowdsec@file
+  WEBHOOK_PRIORITY: ""            # webhook router priority; default 1000
+  WEBHOOK_IP_ALLOWLIST: false     # true: only WEBHOOK_SOURCE_RANGES reach the webhook path
+  WEBHOOK_SOURCE_RANGES: []       # default: Stripe's published webhook IPs (below)
+  WEBHOOK_IP_STRATEGY_DEPTH: ""   # Traefik ipStrategy.depth for the allowlist; default unset
   TLS_OPTIONS: ""                 # default intermediate@file; "none" = no tls.options label (Traefik default options)
   networks: []                    # override the overlay networks (subnet registry)
 ```
@@ -95,14 +102,56 @@ spec's env).
 
 ### CrowdSec
 
-`MIDDLEWARES` defaults to `default-no-crowdsec@file`, matching the
-hand-deployed gateway. Whether that was deliberate is unknown. A plausible
-reason is that Stripe's webhook callers must never be banned; the risk of the
-default is that the public checkout and webhook endpoints get no CrowdSec
-protection when the instance runs sksec. To put it behind the framework's
-normal chain set `MIDDLEWARES: default@file` (which includes CrowdSec when
-skfenceha has `CROWDSEC_ENABLED`), and allowlist Stripe's webhook source IPs
-in sksec first.
+A payment page should sit behind CrowdSec, but Stripe's webhook callers must
+never be banned (a banned Stripe IP silently stops subscription updates). So
+the role renders two routers on the same host and service:
+
+| Router | Rule | Middlewares (default) | Priority |
+|---|---|---|---|
+| `skpayment[-env]` (site) | `Host(<HOSTNAME>)` | `MIDDLEWARES`: `default@file` | Traefik default (the rule's length) |
+| `skpayment[-env]-webhook` | `Host(<HOSTNAME>) && Path(<WEBHOOK_PATH>)` | `WEBHOOK_MIDDLEWARES`: `default-no-crowdsec@file` | `WEBHOOK_PRIORITY`: 1000 |
+
+`default@file` includes the CrowdSec bouncer when the instance's skfenceha
+has `CROWDSEC_ENABLED` (and sksec runs); otherwise it is the same chain
+without it. Set `MIDDLEWARES` to the instance's own CrowdSec chain if it
+uses a different name. The webhook router matches only the exact path
+`WEBHOOK_PATH` (the app's handler is `POST /webhook/stripe`), so checkout,
+portal, status and every other path stay on the CrowdSec router. Both
+routers share TLS settings and the backend.
+
+Why the exemption is safe: the app verifies every webhook's
+`Stripe-Signature` (HMAC-SHA256 with `STRIPE_WEBHOOK_SECRET`) and answers
+400 to a missing, wrong or (from v1.1.0) replayed signature, and 503 to every
+webhook when no webhook secret is set. The deploy already refuses the one
+app release that accepted unsigned webhooks without a secret (see "Stripe not
+configured"). The webhook router keeps the rate limit, security headers and
+error pages of `default-no-crowdsec@file`.
+
+`WEBHOOK_PATH: none` restores the single-router layout (everything on
+`MIDDLEWARES`); before v2.26.7 the only router used
+`default-no-crowdsec@file`, so an instance that wants the old behaviour sets
+`WEBHOOK_PATH: none` and `MIDDLEWARES: default-no-crowdsec@file`.
+
+#### Optional: Stripe IP allowlist on the webhook path
+
+`WEBHOOK_IP_ALLOWLIST: true` adds an `ipAllowList` middleware
+(`skpayment[-env]-stripe-ips`, defined in the service labels) in front of
+the webhook chain, so only Stripe's published webhook source IPs reach the
+path. Off by default: the signature check already makes forged webhooks
+useless, and the list changes over time. The default list is Stripe's
+`https://stripe.com/files/ips/ips_webhooks.json` as of 2026-10-13 (15
+addresses); check it before enabling and override with
+`WEBHOOK_SOURCE_RANGES` (a list of IPs/CIDRs) when Stripe updates it.
+
+The allowlist checks the address Traefik considers the client. With
+Traefik receiving connections directly (host-mode ports, or PROXY protocol
+from the HA ingress) that is the real caller and no depth is needed. Behind
+another proxy (a Cloudflare tunnel or proxied DNS record) the connection
+comes from the proxy: set `WEBHOOK_IP_STRATEGY_DEPTH` to the position of the
+real client in `X-Forwarded-For` counted from the right (usually `1` behind
+one proxy), and only when Traefik's entrypoint trusts that proxy's forwarded
+headers; otherwise every webhook is refused with 403. Verify with a Stripe
+test-mode event after enabling.
 
 ## Migrating a hand-deployed gateway
 
@@ -110,7 +159,9 @@ The hand-deployed stack (`skpayment`, code at `/var/data/skpayment/skpayment.py`
 database in a named volume bound to `/var/data/skpayment`, config at
 `/var/data/config/skpayment/apps.json`) maps onto this role as:
 
-- `HOSTNAME: pay.<domain>`, `MIDDLEWARES: default-no-crowdsec@file` (default),
+- `HOSTNAME: pay.<domain>` (the hand-deployed router used
+  `default-no-crowdsec@file` for everything; the role defaults put the site
+  behind `default@file` and exempt only the webhook path, see "CrowdSec"),
   `APP_REF`/`APP_SHA256` (defaults: v1.1.0. The hand-deployed file is the
   first release, `17b0080`, sha256 `c957335b...`; check with `sha256sum`.
   The default upgrades it to v1.1.0, which rejects unverified webhooks);

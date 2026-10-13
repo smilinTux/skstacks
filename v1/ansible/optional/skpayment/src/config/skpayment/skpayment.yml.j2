@@ -75,3 +75,26 @@ services:
         - "traefik.http.services.{{ skp_router }}.loadbalancer.healthcheck.path=/health"
         - "traefik.http.services.{{ skp_router }}.loadbalancer.healthcheck.interval=30s"
         - "traefik.http.services.{{ skp_router }}.loadbalancer.healthcheck.timeout=10s"
+{% if skp_webhook_path != 'none' %}
+        # Stripe webhook: its own router for the exact path, higher priority than
+        # the site router (whose default priority is its rule length), on the same
+        # service, without CrowdSec so Stripe's callers are never banned. The app
+        # rejects any webhook whose Stripe signature does not verify.
+        - "traefik.http.routers.{{ skp_router }}-webhook.rule=Host(`{{ skp_host }}`) && Path(`{{ skp_webhook_path }}`)"
+        - "traefik.http.routers.{{ skp_router }}-webhook.priority={{ skp_webhook_priority }}"
+        - "traefik.http.routers.{{ skp_router }}-webhook.entrypoints=websecure"
+        - "traefik.http.routers.{{ skp_router }}-webhook.tls=true"
+        - "traefik.http.routers.{{ skp_router }}-webhook.tls.certresolver=main"
+{% if skp_tls_options != 'none' %}
+        - "traefik.http.routers.{{ skp_router }}-webhook.tls.options={{ skp_tls_options }}"
+{% endif %}
+        - "traefik.http.routers.{{ skp_router }}-webhook.middlewares={{ (skp_router ~ '-stripe-ips,') if skp_webhook_ip_allowlist | bool else '' }}{{ skp_webhook_middlewares }}"
+        - "traefik.http.routers.{{ skp_router }}-webhook.service={{ skp_router }}"
+{% if skp_webhook_ip_allowlist | bool %}
+        # Optional: only Stripe's published webhook IPs reach the webhook path.
+        - "traefik.http.middlewares.{{ skp_router }}-stripe-ips.ipallowlist.sourcerange={{ skp_webhook_source_ranges | join(',') }}"
+{% if skp_webhook_ip_depth | length > 0 %}
+        - "traefik.http.middlewares.{{ skp_router }}-stripe-ips.ipallowlist.ipstrategy.depth={{ skp_webhook_ip_depth }}"
+{% endif %}
+{% endif %}
+{% endif %}

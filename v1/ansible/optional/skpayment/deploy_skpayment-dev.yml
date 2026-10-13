@@ -50,6 +50,24 @@
     # skpayment.py of 17b0080: with STRIPE_WEBHOOK_SECRET empty it ACCEPTS
     # unsigned webhooks, so it never runs without a webhook secret.
     skp_sha256_accepts_unsigned_webhooks: ["c957335b6f910b81870b1dc229a294be8a40f1cc935688801193e00a98f83ff8"]
+    # Stripe's published webhook source IPs (https://stripe.com/files/ips/ips_webhooks.json,
+    # fetched 2026-10-13). Used only with WEBHOOK_IP_ALLOWLIST: true (off by default).
+    skp_default_stripe_webhook_ips:
+      - "3.18.12.63"
+      - "3.69.109.8"
+      - "3.120.168.93"
+      - "3.130.192.231"
+      - "13.235.14.237"
+      - "13.235.122.149"
+      - "18.211.135.69"
+      - "35.154.171.200"
+      - "35.157.207.129"
+      - "52.15.183.38"
+      - "54.88.130.119"
+      - "54.88.130.237"
+      - "54.187.174.169"
+      - "54.187.205.235"
+      - "54.187.216.72"
   pre_tasks:
     - name: Select vault file based on domain and cluster
       import_tasks: ../../shared/tasks/select_vault_file.yml
@@ -67,7 +85,17 @@
         skp_sha256: "{{ skpayment.APP_SHA256 | default(skp_default_sha256, true) | string | lower }}"
         skp_data_path: "{{ skpayment.DATA_PATH | default('/var/data/' + app + '-' + env + '/data', true) }}"
         skp_data_node: "{{ skpayment.DATA_NODE | default('', true) | string }}"
-        skp_middlewares: "{{ skpayment.MIDDLEWARES | default('default-no-crowdsec@file', true) }}"
+        # Site router: the normal chain (CrowdSec when the instance enables it).
+        skp_middlewares: "{{ skpayment.MIDDLEWARES | default('default@file', true) }}"
+        # Stripe webhook router: exact path, higher priority, no CrowdSec (Stripe's
+        # callers must never be banned; the app verifies every webhook's signature).
+        # WEBHOOK_PATH none = one router for everything (the pre-v2.26.7 layout).
+        skp_webhook_path: "{{ skpayment.WEBHOOK_PATH | default('/webhook/stripe', true) | string }}"
+        skp_webhook_middlewares: "{{ skpayment.WEBHOOK_MIDDLEWARES | default('default-no-crowdsec@file', true) }}"
+        skp_webhook_priority: "{{ skpayment.WEBHOOK_PRIORITY | default(1000, true) | string }}"
+        skp_webhook_ip_allowlist: "{{ skpayment.WEBHOOK_IP_ALLOWLIST | default(false) | bool }}"
+        skp_webhook_source_ranges: "{{ skpayment.WEBHOOK_SOURCE_RANGES | default(skp_default_stripe_webhook_ips, true) }}"
+        skp_webhook_ip_depth: "{{ skpayment.WEBHOOK_IP_STRATEGY_DEPTH | default('', true) | string }}"
         skp_tls_options: "{{ skpayment.TLS_OPTIONS | default('intermediate@file', true) }}"
         skp_router: "skpayment{{ '' if env == 'prod' else '-' + env }}"
       tags: [config]
@@ -108,6 +136,42 @@
           STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET: both or neither (both
           empty = "Stripe not configured" mode), and APPS (if set) a mapping.
         quiet: true
+      tags: [config]
+
+    - name: Validate the router knobs
+      assert:
+        that:
+          - skp_middlewares is match('^[A-Za-z0-9@._,-]+$')
+        fail_msg: "ERROR: skpayment.MIDDLEWARES must be a comma-separated list of middleware names, got {{ skp_middlewares }}"
+        quiet: true
+      tags: [config]
+
+    - name: Validate the webhook router knobs
+      assert:
+        that:
+          - skp_webhook_path == 'none' or skp_webhook_path is match('^/[A-Za-z0-9._~/-]*$')
+          - skp_webhook_priority is match('^[0-9]+$') and skp_webhook_priority | int > 0
+          - skp_webhook_middlewares is match('^[A-Za-z0-9@._,-]+$')
+        fail_msg: >-
+          ERROR: skpayment.WEBHOOK_PATH must be an absolute path (or none), got
+          {{ skp_webhook_path }}; WEBHOOK_PRIORITY a positive integer, got
+          {{ skp_webhook_priority }}; WEBHOOK_MIDDLEWARES a comma-separated list of
+          middleware names, got {{ skp_webhook_middlewares }}.
+        quiet: true
+      tags: [config]
+
+    - name: Validate the optional webhook IP allowlist
+      assert:
+        that:
+          - skp_webhook_source_ranges is sequence and skp_webhook_source_ranges is not string
+          - skp_webhook_source_ranges | length > 0
+          - skp_webhook_source_ranges | map('string') | reject('match', '^[0-9A-Fa-f:.]+(/[0-9]{1,3})?$') | list | length == 0
+          - skp_webhook_ip_depth == '' or skp_webhook_ip_depth is match('^[0-9]+$')
+        fail_msg: >-
+          ERROR: with WEBHOOK_IP_ALLOWLIST, skpayment.WEBHOOK_SOURCE_RANGES must be a
+          non-empty list of IPs/CIDRs and WEBHOOK_IP_STRATEGY_DEPTH a non-negative integer.
+        quiet: true
+      when: skp_webhook_ip_allowlist | bool and skp_webhook_path != 'none'
       tags: [config]
 
     - name: Refuse "Stripe not configured" mode on an app release that accepts unsigned webhooks
