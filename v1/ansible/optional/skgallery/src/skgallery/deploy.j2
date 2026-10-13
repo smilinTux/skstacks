@@ -93,7 +93,7 @@ echo -e "${GREEN}Pre-deployment checks passed${NC}"
 # ---------------------------------------------------------------------------
 echo -e "${YELLOW}Deploying ${STACK_NAME} stack...${NC}"
 cd "${CONFIG_DIR}"
-record_preexisting "${STACK_NAME}_immich-server" "${STACK_NAME}_immich-machine-learning" "${STACK_NAME}_redis" "${STACK_NAME}_database"
+record_preexisting "${STACK_NAME}_immich-server" "${STACK_NAME}_immich-machine-learning" "${STACK_NAME}_redis"
 docker stack deploy -c "${COMPOSE_FILE}" "${STACK_NAME}"
 
 # ---------------------------------------------------------------------------
@@ -107,8 +107,13 @@ sleep 10
 # ---------------------------------------------------------------------------
 echo -e "${YELLOW}Updating services...${NC}"
 
-# Update each service with proper handling
-for SERVICE in immich-server immich-machine-learning redis database; do
+# Update each service with proper handling. NOT the database: it has no
+# bind-mounted config (its env_file values, image, resources and healthcheck
+# are all in the service spec), so `docker stack deploy` above already
+# restarts it exactly when its image or config changed. A forced restart on
+# every deploy only killed an in-flight postgres-db-backup dump and dropped
+# every Immich DB connection.
+for SERVICE in immich-server immich-machine-learning redis; do
     SERVICE_FULL="${STACK_NAME}_${SERVICE}"
     if docker service ls --format "{{ '{{' }}.Name{{ '}}' }}" | grep -q "^${SERVICE_FULL}$"; then
         echo -e "${BLUE}  -> Updating ${SERVICE}...${NC}"
