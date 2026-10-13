@@ -1,0 +1,6 @@
+# Public, obviously fake example vault for the real-Ansible render gate
+# (v1/tests/render/render_playbooks.py). example.test only; no real secrets.
+skgym:
+  CLUSTERNAME: render
+  DOMAIN: example.test
+  SESSION_SECRET: "example-session-secret-not-a-secret-0123456789"

@@ -14,7 +14,7 @@ instance contract.
 - **Core** (`v1/ansible/core/`, one per cluster): skfence, skfenceha (HA
   alternative to skfence), skha, sksec.
 - **Optional** (`v1/ansible/optional/`, deploy the ones you want): skboard,
-  skbook, skdash, skdesk, skform, skgallery, skgit, skgraph, skhub, skmail,
+  skbook, skdash, skdesk, skform, skgallery, skgit, skgraph, skgym, skhub, skmail,
   skmem-pg, skmesh, skmon, skorch, skpdf, skpeek, skport, skpulse, skreg,
   skseek, sksso, skstor, sksync, skvector, skwhoami, skbackup.
 

@@ -1,0 +1,186 @@
+version: '3.8'
+
+# skgym: openGym, upstream images pinned by digest (README.md).
+#   api    Node API, keeps everything in /data (JSON files, uploads, the
+#          session secret). Exactly one replica: it holds the database in
+#          memory and writes it back to one directory.
+#   web    nginx: the built app plus a proxy of /api/ to `api`, so the app
+#          and the API share one origin (passkeys need that).
+#   backup tar.gz of /data on a schedule into BACKUP_PATH (skbackup picks
+#          the newest up); same image as api, so no extra pull.
+{% set hc_interval = skgym.HEALTH_CHECK_INTERVAL | default('30s', true) %}
+{% set hc_timeout = skgym.HEALTH_CHECK_TIMEOUT | default('10s', true) %}
+{% set hc_retries = skgym.HEALTH_CHECK_RETRIES | default(3, true) | int %}
+{% set hc_start = skgym.HEALTH_CHECK_START_PERIOD | default('30s', true) %}
+{% set data_constraints = (skgym.PLACEMENT_CONSTRAINTS | default(['node.role == worker'], true)) + (['node.hostname == ' + skg_data_node] if skg_data_node else []) %}
+{% set web_constraints = skgym.WEB_PLACEMENT_CONSTRAINTS | default(['node.role == worker'], true) %}
+
+networks:
+  cloud-public-{{ env }}:
+    external: true
+  skgym-{{ env }}:
+    external: true
+
+services:
+  api:
+    # Default = skg_default_api_image in the playbook (a test keeps them equal).
+    image: {{ skgym.API_IMAGE | default('ghcr.io/duartesantos8/opengym-api:1.4.1@sha256:4bc07fe7d1f05a57c0fa25da3563d54dfe27223506637d67fc64088a2a2f140b', true) }}
+    env_file:
+      - /var/data/config/skgym-{{ env }}/skgym.env
+    volumes:
+      - {{ skg_data_path }}:/data
+    # The image's own HEALTHCHECK runs every 5 minutes; probe the same
+    # endpoint (503 when /data is not writable) on the framework's schedule.
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/api/health"]
+      interval: {{ hc_interval }}
+      timeout: {{ hc_timeout }}
+      retries: {{ hc_retries }}
+      start_period: {{ hc_start }}
+    networks:
+      - skgym-{{ env }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: {{ data_constraints | tojson }}
+      resources:
+        limits:
+          cpus: '{{ skgym.API_CPUS | default("0.50", true) }}'
+          memory: {{ skgym.API_MEMORY_LIMIT | default("384M", true) }}
+        reservations:
+          memory: {{ skgym.API_MEMORY_RESERVATION | default("64M", true) }}
+      # stop-first (the default): two api tasks on one data dir would each
+      # keep their own copy of the database in memory.
+      update_config:
+        order: stop-first
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skgym"
+        - "com.skt.env={{ env }}"
+
+  web:
+    image: {{ skgym.WEB_IMAGE | default('ghcr.io/duartesantos8/opengym-web:1.4.1@sha256:e32cae9d2f4aad0c5e1b7888c9bfc712b2306ddfe3c65bc4cfefd4b0002e86d3', true) }}
+    environment:
+      # 8080: the image runs as uid 101; no privileged port needed.
+      NGINX_PORT: "8080"
+      BACKEND: api
+      PORT: "3000"
+      RESOLVER: 127.0.0.11
+      CF_CONNECTING_IP: ""
+      BASE_PATH: ""
+      MEDIA_UPLOAD_MAX: "{{ skgym.MEDIA_UPLOAD_MAX | default('48m', true) }}"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/"]
+      interval: {{ hc_interval }}
+      timeout: {{ hc_timeout }}
+      retries: {{ hc_retries }}
+      start_period: {{ hc_start }}
+    networks:
+      - skgym-{{ env }}
+      - cloud-public-{{ env }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    deploy:
+      mode: replicated
+      replicas: {{ skgym.WEB_REPLICAS | default(1) | int }}
+      placement:
+        constraints: {{ web_constraints | tojson }}
+      resources:
+        limits:
+          cpus: '{{ skgym.WEB_CPUS | default("0.25", true) }}'
+          memory: {{ skgym.WEB_MEMORY_LIMIT | default("64M", true) }}
+        reservations:
+          memory: {{ skgym.WEB_MEMORY_RESERVATION | default("16M", true) }}
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skgym"
+        - "com.skt.env={{ env }}"
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+{% if skg_sso_middleware %}
+        # SSO_MIDDLEWARE (forward auth) guards the app shell only. /api/ stays
+        # outside it: the phone app and the passkey ceremonies call /api/
+        # without the SSO cookie, and openGym signs every API call itself.
+        - "traefik.http.routers.{{ skg_router }}.rule=Host(`{{ skg_host }}`) && PathPrefix(`/api/`)"
+{% else %}
+        - "traefik.http.routers.{{ skg_router }}.rule=Host(`{{ skg_host }}`)"
+{% endif %}
+        - "traefik.http.routers.{{ skg_router }}.entrypoints=websecure"
+        - "traefik.http.routers.{{ skg_router }}.tls=true"
+        - "traefik.http.routers.{{ skg_router }}.tls.certresolver=main"
+{% if skg_tls_options != 'none' %}
+        - "traefik.http.routers.{{ skg_router }}.tls.options={{ skg_tls_options }}"
+{% endif %}
+        - "traefik.http.routers.{{ skg_router }}.middlewares={{ skg_middlewares }}"
+        - "traefik.http.routers.{{ skg_router }}.service={{ skg_router }}"
+{% if skg_sso_middleware %}
+        - "traefik.http.routers.{{ skg_router }}-ui.rule=Host(`{{ skg_host }}`)"
+        - "traefik.http.routers.{{ skg_router }}-ui.entrypoints=websecure"
+        - "traefik.http.routers.{{ skg_router }}-ui.tls=true"
+        - "traefik.http.routers.{{ skg_router }}-ui.tls.certresolver=main"
+{% if skg_tls_options != 'none' %}
+        - "traefik.http.routers.{{ skg_router }}-ui.tls.options={{ skg_tls_options }}"
+{% endif %}
+        - "traefik.http.routers.{{ skg_router }}-ui.middlewares={{ skg_middlewares }},{{ skg_sso_middleware }}"
+        - "traefik.http.routers.{{ skg_router }}-ui.service={{ skg_router }}"
+{% endif %}
+        - "traefik.http.services.{{ skg_router }}.loadbalancer.server.port=8080"
+        - "traefik.http.services.{{ skg_router }}.loadbalancer.healthcheck.path=/api/health"
+        - "traefik.http.services.{{ skg_router }}.loadbalancer.healthcheck.interval=30s"
+        - "traefik.http.services.{{ skg_router }}.loadbalancer.healthcheck.timeout=10s"
+
+{% if skgym.BACKUP_ENABLED | default(true) | bool %}
+  backup:
+    image: {{ skgym.API_IMAGE | default('ghcr.io/duartesantos8/opengym-api:1.4.1@sha256:4bc07fe7d1f05a57c0fa25da3563d54dfe27223506637d67fc64088a2a2f140b', true) }}
+    entrypoint: ["/bin/sh", "/usr/local/bin/skgym-backup"]
+    command: ["loop"]
+    environment:
+      BACKUP_FREQUENCY: "{{ skgym.BACKUP_FREQUENCY | default(86400, true) | int }}"
+      BACKUP_KEEP_DAYS: "{{ skgym.BACKUP_KEEP_DAYS | default(7, true) | int }}"
+      BACKUP_START_DELAY: "{{ skgym.BACKUP_START_DELAY | default(60) | int }}"
+    volumes:
+      - {{ skg_data_path }}:/data:ro
+      - {{ skg_backup_path }}:/backup
+      - /var/data/skgym-{{ env }}/bin/skgym-backup:/usr/local/bin/skgym-backup:ro
+    # The image's HEALTHCHECK probes the api on :3000, which this container
+    # does not run.
+    healthcheck:
+      disable: true
+    networks:
+      - skgym-{{ env }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 4m
+        max-file: "2"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: {{ data_constraints | tojson }}
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          memory: 16M
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skgym"
+        - "com.skt.env={{ env }}"
+{% endif %}
