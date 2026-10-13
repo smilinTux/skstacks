@@ -292,6 +292,39 @@ skhub:
   TALK_TURN_RELAY_IPV4: 203.0.113.10
 ```
 
+## Mail (SMTP)
+
+Nextcloud only reads the image's `SMTP_*` variables (rendered into
+`skhub.env`) on its FIRST install. An existing install keeps whatever
+`config.php` has, so before v2.26.6 a vault change, or an instance installed
+without them, never reached Nextcloud and it sent no mail. With
+`skhub.smtp_enabled: true` every deploy now applies the vault values to
+Nextcloud's system config after the stack is up (`tasks/mail_config.yml`):
+
+| Vault key | Nextcloud key | Notes |
+|---|---|---|
+| `smtp_enabled` | | `false` or unset (default): nothing runs, nothing renders differently |
+| `smtp_host` | `mail_smtphost` | required when enabled |
+| `smtp_port` | `mail_smtpport` (integer) | required, 1-65535 |
+| `smtp_secure` | `mail_smtpsecure` | `ssl` (implicit TLS), `tls`, or empty |
+| `smtp_authtype` | `mail_smtpauthtype` | default `LOGIN` |
+| `smtp_name` | `mail_smtpname` | required |
+| `smtp_password` | `mail_smtppassword` | required, secret |
+| `mail_from_address` | `mail_from_address` | the local part, required |
+| `mail_domain` | `mail_domain` | required |
+
+Fixed: `mail_smtpmode` and `mail_sendmailmode` = `smtp`, `mail_smtpauth` =
+`true`. The settings travel to the container on stdin, never on a command
+line; `files/nextcloud-mail-config.php` (run with `php -r` as
+`www-data`) compares them with the effective config (`config.php` merged with
+`config/*.config.php`; the password by sha256) and writes only on a real
+difference, through `occ config:import` on a 0600 temp file that it then
+overwrites and removes. The task is `no_log` and prints key names only
+(`CHANGED: ...` or `UNCHANGED`); a redeploy with matching values reports
+no change. Before the first deploy on a running instance whose mail already
+works, make the vault values match the live `config.php` (otherwise the
+deploy replaces them). Test with **Settings > Basic settings > Send email**.
+
 ## Talk recording and local AI
 
 Both default OFF: an instance that does not set these keys renders and

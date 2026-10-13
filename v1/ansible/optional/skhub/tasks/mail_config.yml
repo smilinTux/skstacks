@@ -1,0 +1,71 @@
+---
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Apply the vault mail settings (skhub.smtp_*) to Nextcloud's system config.
+# README "Mail (SMTP)". The skhub.env SMTP_* variables only reach Nextcloud
+# on its FIRST install (the image's install step); an existing install keeps
+# whatever config.php had, so a vault change, or an instance installed
+# without them, never sent mail. Off unless skhub.smtp_enabled.
+#
+# The settings (with the password) go to the container on STDIN, never on
+# argv; files/nextcloud-mail-config.php (the code, no secrets) compares
+# them with the effective config (password by sha256), and only on a real
+# difference writes a 0600 temp file, runs `occ config:import` and removes
+# it. changed only when it wrote. no_log: stdin carries the password.
+#
+# Expects: app, env, playbook_dir, skhub, nextcloud_container, nextcloud_node.
+
+- name: Apply the vault mail settings to Nextcloud (config:import, idempotent)
+  shell: |
+    set -euo pipefail
+    docker exec -i -u www-data "{{ nextcloud_container.stdout | trim }}" php -r "$SKHUB_MAIL_PHP"
+  args:
+    executable: /bin/bash
+    stdin: >-
+      {{ {'system': {
+          'mail_smtpmode': 'smtp',
+          'mail_sendmailmode': 'smtp',
+          'mail_smtphost': skhub.smtp_host | string,
+          'mail_smtpport': skhub.smtp_port | int,
+          'mail_smtpsecure': skhub.smtp_secure | default('', true) | string,
+          'mail_smtpauth': true,
+          'mail_smtpauthtype': skhub.smtp_authtype | default('LOGIN', true) | string,
+          'mail_smtpname': skhub.smtp_name | string,
+          'mail_smtppassword': skhub.smtp_password | string,
+          'mail_from_address': skhub.mail_from_address | string,
+          'mail_domain': skhub.mail_domain | string,
+      }} | to_json }}
+  environment:
+    SKHUB_MAIL_PHP: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/files/nextcloud-mail-config.php') }}"
+  delegate_to: "{{ nextcloud_node.stdout | trim }}"
+  register: skhub_mail_config
+  changed_when: skhub_mail_config.stdout is search('^CHANGED', multiline=True)
+  when: >-
+    (skhub.smtp_enabled | default(false) | bool)
+    and nextcloud_container is defined and nextcloud_container.stdout is defined
+    and (nextcloud_container.stdout | trim | length > 0)
+  no_log: true
+  tags:
+    - post-deploy
+    - mail
+
+- name: Report the mail settings result (key names only)
+  debug:
+    msg: "{{ skhub_mail_config.stdout | default('') }}"
+  when: (skhub.smtp_enabled | default(false) | bool) and skhub_mail_config is not skipped
+  tags:
+    - post-deploy
+    - mail
