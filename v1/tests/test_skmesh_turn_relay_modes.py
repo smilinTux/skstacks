@@ -155,11 +155,20 @@ IMAGE_VARS = {
 }
 
 
-def test_image_defaults_unchanged():
+NETBIRD_080 = {
+    # NetBird v0.80.0 (2026-10-01), multi-arch OCI index digests from the registry.
+    "management": "netbirdio/management:0.80.0@sha256:8bb1b26f3c8de72420c6a0dd40b979e619f8d05c6b3154e74efc0f471f4967fc",
+    "signal": "netbirdio/signal:0.80.0@sha256:d0fe9d51cdbac2542dffabc85066d897f628cca57f1aa08328639777b496d5b4",
+    "relay": "netbirdio/relay:0.80.0@sha256:1aff236dc73fde48857d6619816f442daa1035758f4d38a208c7b46752836484",
+    # dashboard v2.94.0 (2026-09-28), the release paired with management 0.80.
+    "dashboard": "netbirdio/dashboard:v2.94.0@sha256:70e0fc6dd3b7758148d182fb55ecd8d4f9ce01e9bba56c9389224e0b8354009d",
+}
+
+
+def test_image_defaults():
     svcs = _compose(dict(BASE))["services"]
-    assert svcs["management"]["image"] == "netbirdio/management:0.79.0"
-    assert svcs["signal"]["image"] == "netbirdio/signal:0.79.0"
-    assert svcs["relay"]["image"] == "netbirdio/relay:0.79.0"
+    for svc, image in NETBIRD_080.items():
+        assert svcs[svc]["image"] == image, svc
     assert svcs["postgres"]["image"] == "postgres:16.15-alpine"
     assert svcs["postgres-db-backup"]["image"].startswith("postgres:16.14@sha256:")
 

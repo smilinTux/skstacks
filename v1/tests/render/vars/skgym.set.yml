@@ -1,0 +1,49 @@
+# The "set" pass: every optional knob set, fake values only.
+skgym:
+  CLOUDFLARED: true
+  HOSTNAME: gym.example.test
+  API_IMAGE: "registry.example.test/opengym-api:1.4.1@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  WEB_IMAGE: "registry.example.test/opengym-web:1.4.1@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  DATA_NODE: render-node-1
+  DATA_PATH: /var/lib/skgym-render/data
+  BACKUP_PATH: /var/lib/skgym-render/backup
+  PLACEMENT_CONSTRAINTS: ["node.role == worker", "node.labels.skgym == true"]
+  WEB_PLACEMENT_CONSTRAINTS: ["node.role == manager"]
+  WEB_REPLICAS: 2
+  TRAEFIK_MIDDLEWARES: "crowdsec-bouncer@file,default@file"
+  SSO_MIDDLEWARE: "authentik@file"
+  TLS_OPTIONS: "none"
+  RP_NAME: "Example Gym"
+  FIRST_USER_ADMIN: false
+  ADMIN_UIDS: "exampleuid1,exampleuid2"
+  INVITE_ONLY: true
+  ALLOW_GUEST: false
+  PASSWORD_LOGIN: true
+  DEFAULT_LANG: "pt-BR"
+  SESSION_DAYS: 30
+  AUDIT_LOG: false
+  AUDIT_IP: "net"
+  AUDIT_MAX: 0
+  AUDIT_DAYS: 30
+  MEDIA_UPLOADS: false
+  MEDIA_QUOTA_MB: 50
+  MEDIA_UPLOAD_MAX: "64m"
+  VAPID_SUBJECT: "mailto:admin@example.test"
+  COACH_DISABLED: false
+  TZ: "Europe/Zurich"
+  HEALTH_CHECK_INTERVAL: "15s"
+  HEALTH_CHECK_TIMEOUT: "5s"
+  HEALTH_CHECK_RETRIES: 5
+  HEALTH_CHECK_START_PERIOD: "60s"
+  API_CPUS: "1.00"
+  API_MEMORY_LIMIT: "512M"
+  API_MEMORY_RESERVATION: "128M"
+  WEB_CPUS: "0.50"
+  WEB_MEMORY_LIMIT: "128M"
+  WEB_MEMORY_RESERVATION: "32M"
+  BACKUP_ENABLED: true
+  BACKUP_FREQUENCY: 3600
+  BACKUP_KEEP_DAYS: 14
+  BACKUP_START_DELAY: 10
+  extra_env:
+    MEDIA_GC_GRACE_DAYS: "30"

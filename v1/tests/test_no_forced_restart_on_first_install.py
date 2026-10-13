@@ -121,9 +121,11 @@ esac
 CASES = [
     ("skbook", ["skbook-dev_bookstack", "skbook-dev_db", "skbook-dev_db-backup"], "docker-compose.yml"),
     ("skgit", ["skgit-dev_forgejo", "skgit-dev_postgres", "skgit-dev_db-backup"], "docker-compose.yml"),
+    # skgallery's database is never force-updated (v2.26.6): see
+    # test_skgallery_db_not_force_restarted.py.
     ("skgallery", [
         "skgallery-dev_immich-server", "skgallery-dev_immich-machine-learning",
-        "skgallery-dev_redis", "skgallery-dev_database",
+        "skgallery-dev_redis",
     ], "skgallery.yml"),
 ]
 

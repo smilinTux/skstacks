@@ -1,0 +1,21 @@
+# skstacks-deploy probe declaration. Format documented at the framework root, tools dir, deploy-tool docs.
+services: [api, web, backup]
+
+mode: swarm
+
+# openGym rewrites its own JSON files on boot when a release changes their
+# shape (db.json, state-<uid>.json): an older image may not read them back.
+# Never auto-restore; restore the newest backup archive by hand instead.
+schema_changing: true
+
+# Checked against "<base_url><path>" (base_url comes from the instance's
+# skstacks-deploy.yml: services.skgym.base_url).
+http_checks:
+  - name: app-shell
+    path: /
+    method: GET
+    expect_status: 200
+  - name: api-health
+    path: /api/health
+    method: GET
+    expect_status: 200

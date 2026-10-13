@@ -54,7 +54,7 @@ The play targets `swarm_managers:swarm_workers` (every node). Override with
 |---|---|---|
 | `/usr/local/sbin/skhealth` | 0755 | the engine (`src/skhealth/skhealth`) |
 | `/etc/skhealth/skhealth.json` | 0600 | runtime config (no secrets) |
-| `/etc/skhealth/secrets.env` | 0600 | Telegram token and chat id, webhook URL: only the lines that are set |
+| `/etc/skhealth/secrets.env` | 0600 | Telegram token and chat id, webhook URL, webhook HMAC secret: only the lines that are set |
 | `/etc/skhealth/remote_ed25519`, `known_hosts` | 0600 | only when remote hosts are configured |
 | `/etc/systemd/system/skhealth.{service,timer}` | 0644 | the oneshot unit and its timer |
 | `/var/lib/skhealth/state.json` | 0600 | dedupe state (written by the engine) |
@@ -97,6 +97,24 @@ JSON: `{"source": "skhealth", "cluster", "host", "text", "events": [{"kind",
 saved, so the same changes are sent on the next run. Without any channel, the
 changes only go to the journal.
 
+**Signed webhooks** (optional, for receivers that reject unsigned posts, such
+as the Hermes webhook platform): with `alerts.webhook_hmac_secret` set, every
+webhook POST carries
+
+- `X-Webhook-Signature: <hex HMAC-SHA256 of the raw request body>` (the body
+  bytes are exactly those sent; verify before parsing);
+- `X-Request-ID: skhealth-<cluster>-<host>-<hash>`, an idempotency id over the
+  run's (kind, key) pairs and the saved state's last run. The retry of an
+  undelivered change set repeats the id (its state was not saved), so a
+  receiver that dedupes on it does not act twice; every later change set gets
+  a new one. `--test` gets a fresh id each time.
+
+The secret lives only in the root-only `secrets.env`
+(`SKHEALTH_WEBHOOK_HMAC_SECRET`) and is never printed; `skhealth status`
+shows `webhook_signed` as true/false. Unset (the default): neither header,
+the request is unchanged. Telegram is never signed. Generate one with
+`openssl rand -hex 32` and give the receiver the same value.
+
 Secrets are read from the root-only `secrets.env` and never printed: send
 errors say `telegram: HTTP 401` or `webhook: URLError`, never a URL or token,
 and `skhealth status` shows the channels as true/false.
@@ -112,9 +130,9 @@ and `skhealth status` shows the channels as true/false.
 | load / memory | every host | 5-minute load per CPU over `load_per_cpu_max`; `MemAvailable` under `mem_available_min_pct`; PSI `full avg60` over `mem_psi_full_avg60_max` |
 | OOM | every host | an OOM-killer line in the kernel log since the last run |
 | systemd | every host | any failed unit (minus `ignore_units` globs) |
-| disks | every host | `smartctl -H` not PASSED/OK; NVMe critical warning non-zero; NVMe percentage used at or over `nvme_used_max_pct`. Skipped where smartctl is absent |
+| disks | every host | `smartctl -H` not PASSED/OK; NVMe critical warning non-zero; NVMe percentage used at or over `nvme_used_max_pct`; a disk smartctl cannot open ("device not found"); a `devices` path that does not exist ("device not found"). Skipped where smartctl is absent |
 | ZFS / md RAID | every host | `zpool status -x` lists a pool (DEGRADED, FAULTED, ...); `mdadm --detail` says degraded/failed/inactive or counts failed devices. Skipped where neither exists |
-| remote hosts | primary | the same ZFS/SMART rules, plus `pvesm status` storages not active or over `fs_max_pct`, on each configured remote host; SSH failure is its own problem |
+| remote hosts | primary | the same ZFS/SMART rules (a `smart_devices` path smartctl answers "No such device" or exit status 2 for is "device not found"), plus `pvesm status` storages not active or over `fs_max_pct`, on each configured remote host; SSH failure is its own problem |
 | TLS | primary | certificate of `host[:port]` expires within `warn_days` (or cannot be read) |
 
 **The primary.** The cluster-wide checks (services, nodes, remote hosts, TLS)
@@ -191,6 +209,7 @@ skhealth:
     telegram_chat_id: ""
     telegram_api_base: "https://api.telegram.org"
     webhook_url: ""             # gets the JSON payload above
+    webhook_hmac_secret: ""     # optional: sign webhook POSTs (needs webhook_url)
   swarm:
     enabled: true
     crashloop_failed_tasks: 3   # 0 = no crash-loop check
@@ -216,6 +235,8 @@ skhealth:
     enabled: true
     install_smartmontools: true
     nvme_used_max_pct: 90
+    # devices: []               # optional: /dev paths this host MUST have (by-id names);
+    #                           # a missing one alerts "device not found"
   raid:
     enabled: true
   remote:
@@ -227,7 +248,7 @@ skhealth:
     warn_days: 21
 ```
 
-`telegram_api_base`, `webhook_url`, the remote key and `known_hosts` are only
+`telegram_api_base`, `webhook_url`, `webhook_hmac_secret`, the remote key and `known_hosts` are only
 rendered when set; an unset block writes nothing.
 
 ## Testing
@@ -235,6 +256,8 @@ rendered when set; an unset block writes nothing.
 `v1/tests/test_skhealth_checks.py` (every check against stub commands that
 record their arguments), `test_skhealth_alerts.py` (dedupe/recovery
 transitions, end to end against a fake Telegram API and webhook),
+`test_skhealth_webhook_hmac.py` (signature and request id against a fake
+webhook that records headers),
 `test_skhealth_remote_wrapper.py` (the wrapper allowlist) and
 `test_skhealth_render.py` (the deploy through real Ansible). The skstack06
 release harness deploys it on a lab cluster, runs `--test` against a local

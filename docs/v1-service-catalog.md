@@ -48,10 +48,11 @@ tag yet.
 | [skgallery](#skgallery) | optional | Immich photo/video management | Immich `v2.7.5` + pgvector/vectorchord Postgres | none | `skgallery[-env].<cluster>.<domain>` | `skgallery-<env>/{upload,thumbs,profile,model-cache}` | `DB_PASSWORD`, `CLUSTERNAME`, `DOMAIN` | `OAUTH_ENABLED`/`SMTP_ENABLED` (false) | pending |
 | [skgit](#skgit) | optional | Forgejo git + CI runners | Forgejo `15.0.9`, runner `11.1.2` | none | `skgit[-env].<cluster>.<domain>`, ssh `:222` | `skgit-<env>/{data,config}`, `runtime/skgit-<env>/{dind-data,runner-data}` | `POSTGRES_PASSWORD`, `SHARED_SECRET`, `SECRET_KEY`, `ADMIN_EMAIL`/`PASSWORD` | Actions runner only if `SKGIT_DIND_NODE` set | pending |
 | [skgraph](#skgraph) | optional | FalkorDB graph database (Redis protocol) | FalkorDB `v4.18.8` | none | `:16379` via ingress mesh (Redis protocol, no UI) | `skgraph-<env>/data` | `FALKORDB_PASSWORD`, `CLUSTERNAME`, `DOMAIN` | none notable | **v2.11.0** |
+| [skgym](#skgym) | optional | openGym gym and body-weight tracker (passkeys, PWA) | openGym `1.4.1` api + web (upstream, digest-pinned) | skfence or skfenceha | `skgym[-env].<cluster>.<domain>` | `skgym-<env>/{data,backup}` | `SESSION_SECRET` | `INVITE_ONLY` (false), `SSO_MIDDLEWARE` (none), `DATA_NODE` (floating), `BACKUP_ENABLED` (true) | pending |
 | [skhub](#skhub) | optional | Nextcloud file sync/collaboration | Nextcloud `31.0.14`, MariaDB `10.11.7` | skstor (only if `storage_backend: skstor`) | `skhub[-env].<cluster>.<domain>` | `skhub-<env>/{data,html,config}` | `nextcloud_admin_user/_password`, `mysql_*`, `CLUSTERNAME`, `DOMAIN` | `storage_backend` (local), `enable_collabora`/`enable_talk_hpb` (false) | pending |
 | [skmail](#skmail) | optional | Full SMTP/IMAP mail server | docker-mailserver `16.0.1` | skfence/skfenceha (for ACME cert) | host ports 25/587/465/143/993 | `skmail-<env>/docker-data/dms/{maildata,mailstate}` | `CLUSTERNAME`, `DOMAIN` | `DMS_VERSION` (16.0.1), Rspamd/ClamAV/Fail2ban (all on) | v2.19.0 |
 | [skmem-pg](#skmem-pg) | optional | Postgres 17 + pgvector + pg_search + AGE | Postgres 17 custom image `pg17-bm25-age` | none | internal only, no Traefik | `runtime/skmem-pg-<env>/postgres` | `skmem_pg_password` | `skmem_pg_default_agent`/`skmem_pg_graph` | v2.14.0 |
-| [skmesh](#skmesh) | optional | Netbird self-hosted WireGuard mesh VPN | netbird `0.79.0` (mgmt/signal/relay) | sksso (OIDC app) | `skmesh.<cluster>.<domain>` (path-routed) | `skmesh-<env>/database-dump` | `NETBIRD_*` secrets, `POSTGRES_PASSWORD`, `SSO_HOST_IP` | `DEPLOY_COTURN` (false) | v2.19.0 |
+| [skmesh](#skmesh) | optional | Netbird self-hosted WireGuard mesh VPN | netbird `0.80.0` (mgmt/signal/relay), dashboard `v2.94.0` | sksso (OIDC app) | `skmesh.<cluster>.<domain>` (path-routed) | `skmesh-<env>/database-dump` | `NETBIRD_*` secrets, `POSTGRES_PASSWORD`, `SSO_HOST_IP` | `DEPLOY_COTURN` (false) | v2.19.0 |
 | [skmon](#skmon) | optional | Observability stack (metrics/logs/tracing) | Prometheus `v3.15.0`, Grafana `13.2.2`, Loki `3.5.4`, Jaeger `1.76.0` | none | `prometheus\|skmon\|alertmanager\|jaeger[-env].<cluster>.<domain>` | `skmon-<env>/{prometheus,grafana,loki-data,...}` | `GRAFANA_ADMIN_USER/_PASSWORD`, `GRAFANA_SECRET_KEY`, `CLUSTERNAME`, `DOMAIN` | `SMTP_ENABLED` (false), `EXTRA_SCRAPE_CONFIGS`, `replicas` (1; 0 = parked), `GRAFANA_PLUGINS`, `GRAFANA_BASIC_AUTH` (true), `GRAFANA_HEALTH_START_PERIOD` (60s) | v2.15.0 |
 | [skorch](#skorch) | optional | n8n workflow automation | n8n (digest-pinned) + pgvector Postgres | none | `skorch[-env].<cluster>.<domain>` | `skorch-<env>/{n8n_data,database-backup,gpg-keys}` | `POSTGRES_USER/_PASSWORD/_DB`, `REDIS_PASSWORD` | `enable_gpg_signer` (false) | v2.18.0 |
 | [skpdf](#skpdf) | optional | Stirling-PDF toolkit | Stirling-PDF `2.14.3` | none | `skpdf[-env].<cluster>.<domain>` | `skpdf-<env>/{trainingData,customFiles}` | `CLUSTERNAME`, `DOMAIN`; `SECURITY_INITIAL_PASSWORD` if login on | `SECURITY_ENABLELOGIN` (false) | v2.13.0 |
@@ -491,6 +492,37 @@ is published via the Swarm ingress mesh, reachable at `<any-node-ip>:16379`).
 `/var/lib/falkordb/data` (not `/data`). A documented trap in the template
 itself. The only access control is the Redis password; firewall the
 published port if it shouldn't be public.
+
+### skgym
+
+[openGym](https://github.com/DuarteSantos8/openGym) (AGPL-3.0): workout
+plans, guided sessions, body weight and stats, passkey sign-in. Upstream
+`api` (one replica, JSON files in `/data`) and `web` (nginx, app plus `/api`
+proxy) images by digest, and a `backup` sidecar that writes a verified
+tar.gz of the data dir for skbackup.
+
+**Prerequisites**: skfence or skfenceha (Traefik). sksso only for the
+optional forward auth (`SSO_MIDDLEWARE`); openGym has no OIDC.
+
+**Minimal vault snippet**:
+
+```yaml
+skgym:
+  SESSION_SECRET: "<openssl rand -hex 32>"
+  CLUSTERNAME: "<cluster>"
+  DOMAIN: "example.com"
+```
+
+**Deploy**: `deploy_skgym-<env>.yml`, standard invocation. Then create your
+own profile (it becomes the admin), set `INVITE_ONLY: true` and redeploy.
+
+**Health check**: `curl -s https://skgym.<cluster>.<domain>/api/health`.
+
+**Gotchas**: passkeys are bound to the exact host (`RP_ID`); changing the
+host locks existing passkeys out (enable `PASSWORD_LOGIN` first). Never put
+`/api/` behind forward auth. The `web` image carries exercise media licensed
+to openGym only: reference the upstream image, never rebuild or republish
+it. See the [README](../v1/ansible/optional/skgym/README.md).
 
 ### skhub
 

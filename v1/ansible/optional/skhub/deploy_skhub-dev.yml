@@ -169,6 +169,26 @@
           from skhub.APP_NODE) and skhub.TALK_RECORDING_SECRET (32+ characters).
         quiet: true
 
+    - name: Validate the mail settings when skhub.smtp_enabled
+      # README "Mail (SMTP)". The post-deploy task (tasks/mail_config.yml)
+      # writes them into Nextcloud's config; refuse a half-set block early.
+      vars:
+        _smtp_port: "{{ skhub.smtp_port | default('', true) | string }}"
+      assert:
+        that:
+          - >-
+            not (skhub.smtp_enabled | default(false) | bool) or (
+            skhub.smtp_host | default('', true) | string | length > 0
+            and _smtp_port is match('^[0-9]+$') and (_smtp_port | int) > 0 and (_smtp_port | int) < 65536
+            and skhub.smtp_name | default('', true) | string | length > 0
+            and skhub.smtp_password | default('', true) | string | length > 0
+            and skhub.mail_from_address | default('', true) | string | length > 0
+            and skhub.mail_domain | default('', true) | string | length > 0)
+        fail_msg: >-
+          skhub.smtp_enabled needs smtp_host, smtp_port (1-65535), smtp_name,
+          smtp_password, mail_from_address and mail_domain.
+        quiet: true
+
     - name: Fail closed on local AI without a gateway base URL and an API key
       # README "Talk recording and local AI". integration_openai needs a
       # service URL and an API key before the post-deploy occ config means
@@ -974,6 +994,12 @@
       tags:
         - post-deploy
         - maintenance
+
+    - name: Apply the vault mail settings to Nextcloud
+      import_tasks: tasks/mail_config.yml
+      tags:
+        - post-deploy
+        - mail
 
     - name: Configure local AI (integration_openai, assistant)
       import_tasks: tasks/ai_config.yml

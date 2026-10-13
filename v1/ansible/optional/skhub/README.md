@@ -292,6 +292,40 @@ skhub:
   TALK_TURN_RELAY_IPV4: 203.0.113.10
 ```
 
+## Mail (SMTP)
+
+Nextcloud only reads the image's `SMTP_*` variables (rendered into
+`skhub.env`) on its FIRST install. An existing install keeps whatever
+`config.php` has, so before v2.26.6 a vault change, or an instance installed
+without them, never reached Nextcloud and it sent no mail. With
+`skhub.smtp_enabled: true` every deploy now applies the vault values to
+Nextcloud's system config after the stack is up (`tasks/mail_config.yml`):
+
+| Vault key | Nextcloud key | Notes |
+|---|---|---|
+| `smtp_enabled` | | `false` or unset (default): nothing runs, nothing renders differently |
+| `smtp_host` | `mail_smtphost` | required when enabled |
+| `smtp_port` | `mail_smtpport` (integer) | required, 1-65535 |
+| `smtp_secure` | `mail_smtpsecure` | `ssl` (implicit TLS), `tls`, or empty |
+| `smtp_authtype` | `mail_smtpauthtype` | default `LOGIN` |
+| `smtp_name` | `mail_smtpname` | required |
+| `smtp_password` | `mail_smtppassword` | required, secret |
+| `mail_from_address` | `mail_from_address` | the local part, required |
+| `mail_domain` | `mail_domain` | required |
+
+Fixed: `mail_smtpmode` and `mail_sendmailmode` = `smtp`, `mail_smtpauth` =
+`true`. The settings travel to the container on stdin, never on a command
+line; `files/nextcloud-mail-config.php` (run with `php -r` as
+`www-data`) compares them with what `config.php` holds (the password by
+sha256; a value only in the image's env-driven `smtp.config.php` does not
+count, so it is written into `config.php` too) and writes only on a real
+difference, through `occ config:import` on a 0600 temp file that it then
+overwrites and removes. The task is `no_log` and prints key names only
+(`CHANGED: ...` or `UNCHANGED`); a redeploy with matching values reports
+no change. Before the first deploy on a running instance whose mail already
+works, make the vault values match the live `config.php` (otherwise the
+deploy replaces them). Test with **Settings > Basic settings > Send email**.
+
 ## Talk recording and local AI
 
 Both default OFF: an instance that does not set these keys renders and
@@ -311,6 +345,7 @@ Recordings land in the call starter's Talk folder (Talk's own default).
 | `TALK_RECORDING_IMAGE` | `ghcr.io/nextcloud-releases/aio-talk-recording:20260929_105435@sha256:64aa51b0279a4ab5c16249ad1e8f5e56b572ffee3947f14b64386429bc9c6696` | Pin a digest (`docker buildx imagetools inspect ghcr.io/nextcloud-releases/aio-talk-recording:<tag>`, or the registry API). |
 | `TALK_RECORDING_NODE` | none, required when enabled | Pins `talk-recording` (`node.hostname == <node>`). **Must differ from `APP_NODE`**: recording CPU must not compete with Nextcloud's own node; the deploy refuses the combination. |
 | `TALK_RECORDING_SECRET` | none, required when enabled | Shared secret (vault, 32+ characters) between Nextcloud and the recording backend (`RECORDING_SECRET` on the container, `secret` in Talk's `recording_servers`). Generate with `openssl rand -base64 32`. |
+| `TALK_RECORDING_CPUS_LIMIT`, `TALK_RECORDING_CPUS_RESERVATION`, `TALK_RECORDING_MEMORY_LIMIT`, `TALK_RECORDING_MEMORY_RESERVATION` | `2.0`, `1.0`, `4G`, `1G` | Swarm resources of `talk-recording` (limits and reservations; CPUs as a decimal string, memory as a Docker size such as `4G`). The recorder encodes with software ffmpeg, so the CPU limit sets the recorded frame rate: on an older-generation Xeon without AVX2 a 1080p recording at the default 2.0 CPUs records at about 2 fps. Raise `TALK_RECORDING_CPUS_LIMIT` (about 4-6 on such CPUs) on a `TALK_RECORDING_NODE` that has the cores. |
 | `TALK_RECORDING_MAX_CONCURRENT` | ignored | Before v2.26.3 this set the `talk-recording` replica count (default 2). It is ignored now (the deploy prints a warning when it is set): `talk-recording` runs exactly one replica. Talk reaches the recording server through the service VIP, so with several replicas the start and the stop of one recording round-robin to different replicas, the stop fails with "Trying to stop unknown recording" and an orphaned recorder stays in the call. One recording server runs concurrent recordings itself; the image has no concurrency setting. Remove the key. |
 
 The recording browser gets a locked Firefox policy,
