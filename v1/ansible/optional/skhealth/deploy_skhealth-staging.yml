@@ -97,6 +97,17 @@
         label: "{{ item.name | default('?') }}"
       tags: [config]
 
+    - name: Validate the local SMART device list
+      assert:
+        that:
+          - skh.disks.devices | default([]) is sequence
+          - skh.disks.devices | default([]) is not string
+          - skh.disks.devices | default([]) | reject('match', '^/dev/[A-Za-z0-9_./:-]+$') | list | length == 0
+        fail_msg: >-
+          ERROR: skhealth.disks.devices must be a list of /dev paths
+          (for example /dev/disk/by-id/<name>).
+      tags: [config]
+
     - name: Require the dedicated key for remote hosts
       assert:
         that:
@@ -121,7 +132,7 @@
             swarm: "{{ skh.swarm }}"
             nodes: "{{ skh.nodes }}"
             host: "{{ skh.host }}"
-            disks: "{{ {'enabled': skh.disks.enabled, 'nvme_used_max_pct': skh.disks.nvme_used_max_pct} }}"
+            disks: "{{ {'enabled': skh.disks.enabled, 'nvme_used_max_pct': skh.disks.nvme_used_max_pct} | combine({'devices': skh.disks.devices} if skh.disks.devices | default([]) | length > 0 else {}) }}"
             raid: "{{ skh.raid }}"
             tls: "{{ skh.tls }}"
           remote:

@@ -112,9 +112,9 @@ and `skhealth status` shows the channels as true/false.
 | load / memory | every host | 5-minute load per CPU over `load_per_cpu_max`; `MemAvailable` under `mem_available_min_pct`; PSI `full avg60` over `mem_psi_full_avg60_max` |
 | OOM | every host | an OOM-killer line in the kernel log since the last run |
 | systemd | every host | any failed unit (minus `ignore_units` globs) |
-| disks | every host | `smartctl -H` not PASSED/OK; NVMe critical warning non-zero; NVMe percentage used at or over `nvme_used_max_pct`. Skipped where smartctl is absent |
+| disks | every host | `smartctl -H` not PASSED/OK; NVMe critical warning non-zero; NVMe percentage used at or over `nvme_used_max_pct`; a disk smartctl cannot open ("device not found"); a `devices` path that does not exist ("device not found"). Skipped where smartctl is absent |
 | ZFS / md RAID | every host | `zpool status -x` lists a pool (DEGRADED, FAULTED, ...); `mdadm --detail` says degraded/failed/inactive or counts failed devices. Skipped where neither exists |
-| remote hosts | primary | the same ZFS/SMART rules, plus `pvesm status` storages not active or over `fs_max_pct`, on each configured remote host; SSH failure is its own problem |
+| remote hosts | primary | the same ZFS/SMART rules (a `smart_devices` path smartctl answers "No such device" or exit status 2 for is "device not found"), plus `pvesm status` storages not active or over `fs_max_pct`, on each configured remote host; SSH failure is its own problem |
 | TLS | primary | certificate of `host[:port]` expires within `warn_days` (or cannot be read) |
 
 **The primary.** The cluster-wide checks (services, nodes, remote hosts, TLS)
@@ -216,6 +216,8 @@ skhealth:
     enabled: true
     install_smartmontools: true
     nvme_used_max_pct: 90
+    # devices: []               # optional: /dev paths this host MUST have (by-id names);
+    #                           # a missing one alerts "device not found"
   raid:
     enabled: true
   remote:

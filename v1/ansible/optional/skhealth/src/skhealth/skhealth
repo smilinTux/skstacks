@@ -171,6 +171,25 @@ def parse_smart(text: str, nvme_used_max_pct: int) -> list[str]:
     return problems
 
 
+SMART_HEALTH_RE = re.compile(r"(test result|Health Status):")
+SMART_NOT_FOUND_RE = re.compile(r"No such (device|file or directory)", re.I)
+SMART_REASON_RE = re.compile(r"(No such|failed|error|denied|required|unknown|specify)", re.I)
+
+
+def smart_unreadable(rc: int, text: str) -> str | None:
+    """Why smartctl could not read the device at all, or None when it could.
+    smartctl exit bit 1 (value 2) = the device could not be opened (a missing
+    path, a swapped disk, an unknown USB bridge); bit 0 (value 1) = command
+    line or sudo failure. Bits 2+ describe the disk itself and are left to
+    parse_smart(). A missing device must never read as healthy."""
+    reason = next((l.strip()[:200] for l in text.splitlines() if SMART_REASON_RE.search(l)), first_line(text))
+    if SMART_NOT_FOUND_RE.search(text) or (rc & 0b10 and not SMART_HEALTH_RE.search(text)):
+        return f"device not found (smartctl rc {rc}): {reason}"
+    if rc & 0b01 and not SMART_HEALTH_RE.search(text):
+        return f"smartctl could not read it (rc {rc}): {reason}"
+    return None
+
+
 def parse_zpool_status(text: str) -> dict[str, str]:
     """{pool: state} for every pool `zpool status -x` lists as unhealthy."""
     t = text.strip()
@@ -480,21 +499,33 @@ class Checker:
         limit = int(self.c("disks", "nvme_used_max_pct", default=90))
         rc, out = run([smartctl, "--scan"])
         problems = {}
+        targets: list[tuple[str, str | None]] = []
         for line in out.splitlines():
             line = line.split("#")[0].strip()
             m = re.match(r"^(/dev/\S+)(?:\s+-d\s+(\S+))?", line)
-            if not m:
-                continue
-            dev, dtype = m.group(1), m.group(2)
+            if m:
+                targets.append((m.group(1), m.group(2)))
+        # disks.devices: paths this host must have (by-id names survive
+        # renumbering). A missing one alerts and is not queried; a present one
+        # the scan did not list is checked by its own path.
+        seen = {os.path.realpath(dev) for dev, _ in targets}
+        for dev in self.c("disks", "devices", default=[]) or []:
+            if not os.path.exists(dev):
+                problems[f"disk.{dev}"] = f"disk {dev}: device not found"
+            elif os.path.realpath(dev) not in seen:
+                seen.add(os.path.realpath(dev))
+                targets.append((dev, None))
+        for dev, dtype in targets:
             argv = [smartctl, "-H", "-A", "-n", "standby"] + (["-d", dtype] if dtype else []) + [dev]
             rc, text = run(argv, timeout=60)
             if "STANDBY" in text.upper() and "MODE" in text.upper() and rc == 2:
                 continue  # asleep: do not spin it up
             found = parse_smart(text, limit)
+            unreadable = smart_unreadable(rc, text)
             if found:
                 problems[f"disk.{dev}"] = f"disk {dev}: {'; '.join(found)}"
-            elif rc & 0b11 and not re.search(r"(test result|Health Status):", text):
-                problems[f"disk.{dev}"] = f"disk {dev}: smartctl could not read it (rc {rc}): {first_line(text)}"
+            elif unreadable:
+                problems[f"disk.{dev}"] = f"disk {dev}: {unreadable}"
         return problems
 
     def check_raid(self) -> dict[str, str]:
@@ -566,10 +597,19 @@ class Checker:
                 for pool, state in parse_zpool_status(outputs["zpool"][1]).items():
                     problems[f"{pre}.zpool.{pool}"] = f"remote {name}: ZFS pool {pool} {state}"
             for dev in rh.get("smart_devices", []):
-                text = outputs.get(f"smart-H:{dev}", (0, ""))[1] + "\n" + outputs.get(f"smart-A:{dev}", (0, ""))[1]
+                got = [outputs[t] for t in (f"smart-H:{dev}", f"smart-A:{dev}") if t in outputs]
+                if not got:
+                    continue  # denied: already its own problem
+                rc = 0
+                for code, _ in got:
+                    rc |= code
+                text = "\n".join(out for _, out in got)
                 found = parse_smart(text, limit)
+                unreadable = smart_unreadable(rc, text)
                 if found:
                     problems[f"{pre}.disk.{dev}"] = f"remote {name}: disk {dev}: {'; '.join(found)}"
+                elif unreadable:
+                    problems[f"{pre}.disk.{dev}"] = f"remote {name}: disk {dev}: {unreadable}"
             if "pvesm" in outputs:
                 for store, msg in parse_pvesm(outputs["pvesm"][1], max_pct).items():
                     problems[f"{pre}.pvesm.{store}"] = f"remote {name}: {store} {msg}"
