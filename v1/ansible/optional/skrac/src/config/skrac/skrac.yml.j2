@@ -114,7 +114,9 @@ services:
 {% if skr_tls_options != 'none' %}
         - "traefik.http.routers.{{ skr_router }}.tls.options={{ skr_tls_options }}"
 {% endif %}
-        - "traefik.http.routers.{{ skr_router }}.priority=1"
+        # 5: above skfenceha's per-domain catch-alls (priority 1, error
+        # pages; a tie loses to them), below the agent router (100).
+        - "traefik.http.routers.{{ skr_router }}.priority=5"
         - "traefik.http.routers.{{ skr_router }}.middlewares={{ skr_middlewares }}{{ ',' + skr_sso_middleware if skr_sso_middleware else '' }}"
         - "traefik.http.routers.{{ skr_router }}.service={{ skr_router }}"
         - "traefik.http.services.{{ skr_router }}.loadbalancer.server.port={{ skr_internal_port }}"

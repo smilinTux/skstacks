@@ -125,7 +125,12 @@ def test_default_router_splits_agent_paths_from_everything_else(base_out):
     assert lab["traefik.http.routers.skrac-agent.priority"] == "100"
     assert lab["traefik.http.routers.skrac-agent.middlewares"] == "default-no-crowdsec@file"
     assert lab["traefik.http.routers.skrac.rule"] == "Host(`skrac.render.example.test`)"
-    assert lab["traefik.http.routers.skrac.priority"] == "1"
+    # Above skfenceha's per-domain catch-all routers (priority 1, error
+    # pages): at 1 the tie went to the catch-all and the UI answered 404
+    # (skstack06 lab, 2026-10-13). Below the agent router (100).
+    assert lab["traefik.http.routers.skrac.priority"] == "5"
+    catch_all = (rp.ANSIBLE / "core/skfenceha/src/config/skfenceha/routers.yml.j2").read_text()
+    assert "priority: 1\n" in catch_all
     assert lab["traefik.http.routers.skrac.middlewares"] == "default-no-crowdsec@file"
     assert lab["traefik.http.services.skrac.loadbalancer.server.port"] == "4430"
     assert lab["traefik.http.services.skrac.loadbalancer.server.scheme"] == "http"

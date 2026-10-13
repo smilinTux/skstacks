@@ -187,7 +187,7 @@ every agent's websocket upgrade and every unauthenticated installer
 download into an Authentik login page, breaking all of them; none of
 those callers carry a browser session. The compose template renders TWO
 routers: `<router>-agent` (those paths plus `/health.ashx`, priority 100,
-`AGENT_TRAEFIK_MIDDLEWARES`) and `<router>` (everything else, priority 1,
+`AGENT_TRAEFIK_MIDDLEWARES`) and `<router>` (everything else, priority 5, above skfenceha's priority-1 catch-alls,
 `TRAEFIK_MIDDLEWARES` plus the optional `SSO_MIDDLEWARE`). CrowdSec
 (`crowdsec-bouncer@file`) is fine on agent paths by default
 (`AGENT_TRAEFIK_MIDDLEWARES` defaults to the same chain as
