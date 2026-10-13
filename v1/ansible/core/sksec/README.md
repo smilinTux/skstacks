@@ -186,9 +186,10 @@ What this does not do: the bouncer image reads only `X-Forwarded-For` and
 `X-Real-Ip`, not `CF-Connecting-IP`; the real address comes from the
 `X-Forwarded-For` the edge sets. Trusting the connector also makes Traefik
 pass the other `X-Forwarded-*` headers that arrived through it to the apps
-unchanged (an edge such as Cloudflare forwards a client-sent
-`X-Forwarded-Host`), so check that the apps behind it do not build links
-from `X-Forwarded-Host` without their own trusted-domain list.
+unchanged: an edge such as Cloudflare forwards a client-sent
+`X-Forwarded-Host`, and Authentik builds absolute URLs from it. Set
+skfenceha `DROP_FORWARDED_HEADERS: [X-Forwarded-Host]` together with step 1
+(skfenceha README); apps then use the `Host` header Traefik routed on.
 
 Verify after a deploy: a request through the tunnel logs your own public
 address as `ClientHost`; `cscli decisions add --ip <that address>

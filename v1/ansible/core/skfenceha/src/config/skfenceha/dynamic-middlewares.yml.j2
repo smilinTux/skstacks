@@ -33,6 +33,17 @@ http:
 {% endfor %}
 {% endif %}
 
+{% if skfenceha.DROP_FORWARDED_HEADERS | default([]) | length > 0 %}
+    # skfenceha.DROP_FORWARDED_HEADERS: the websecure entrypoint applies this
+    # to every router (traefik-worker.yml); an empty value removes the header.
+    drop-forwarded-headers:
+      headers:
+        customRequestHeaders:
+{% for h in skfenceha.DROP_FORWARDED_HEADERS %}
+          {{ h }}: ""
+{% endfor %}
+
+{% endif %}
     # Default middleware chain applied to most routers.
     default:
       chain:
