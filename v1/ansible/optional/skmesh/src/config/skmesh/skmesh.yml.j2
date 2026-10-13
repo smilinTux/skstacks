@@ -99,7 +99,7 @@ services:
     logging: *logging
 
   management:
-    image: {{ skmesh.MANAGEMENT_IMAGE | default('netbirdio/management:0.79.0') }}
+    image: {{ skmesh.MANAGEMENT_IMAGE | default('netbirdio/management:0.80.0@sha256:8bb1b26f3c8de72420c6a0dd40b979e619f8d05c6b3154e74efc0f471f4967fc') }}
     container_name: skmesh-management
     env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
 {% if _mode == 'authentik' %}
@@ -161,7 +161,7 @@ services:
       - postgres
 
   signal:
-    image: {{ skmesh.SIGNAL_IMAGE | default('netbirdio/signal:0.79.0') }}
+    image: {{ skmesh.SIGNAL_IMAGE | default('netbirdio/signal:0.80.0@sha256:d0fe9d51cdbac2542dffabc85066d897f628cca57f1aa08328639777b496d5b4') }}
     container_name: skmesh-signal
     env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
     networks:
@@ -188,7 +188,7 @@ services:
       - management
 
   relay:
-    image: {{ skmesh.RELAY_IMAGE | default('netbirdio/relay:0.79.0') }}
+    image: {{ skmesh.RELAY_IMAGE | default('netbirdio/relay:0.80.0@sha256:1aff236dc73fde48857d6619816f442daa1035758f4d38a208c7b46752836484') }}
     env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
     # Peers dial wss://<NB_EXPOSED_ADDRESS host>/relay; Traefik terminates
     # TLS on :443 and forwards the WebSocket here in plain HTTP.
@@ -219,11 +219,9 @@ services:
     # DASHBOARD_IMAGE lets an instance pin its own dashboard image instead
     # of the framework default, e.g. a private branded fork it already
     # depends on (that image is not published here - see README). Default:
-    # upstream public netbird dashboard, pinned by digest since
-    # netbirdio/dashboard publishes no semver release tags (only "main"
-    # and per-commit "sha-*" tags), so a digest is the only reproducible
-    # pin available as a framework default.
-    image: {{ skmesh.DASHBOARD_IMAGE | default('netbirdio/dashboard@sha256:ffb9fb785589ac4a523c1bd7a6ecb035478922fdad01e84368fb36818ca8f7b0') }}
+    # the upstream dashboard release paired with the management version
+    # (dashboard v2.94.0 for NetBird 0.80), tag plus digest.
+    image: {{ skmesh.DASHBOARD_IMAGE | default('netbirdio/dashboard:v2.94.0@sha256:70e0fc6dd3b7758148d182fb55ecd8d4f9ce01e9bba56c9389224e0b8354009d') }}
     container_name: skmesh-dashboard
     env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
     networks:

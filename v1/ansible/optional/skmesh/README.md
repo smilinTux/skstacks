@@ -16,10 +16,9 @@ already running a private, branded dashboard fork (for example
 swapped out from under it on the next deploy from this framework - the
 default is deliberately not the only option.
 
-Default (unset): the upstream `netbirdio/dashboard` image, pinned by
-digest (see `src/config/skmesh/skmesh.yml.j2`), since that image publishes
-no semver release tags, only `main` and per-commit `sha-*` tags - a digest
-is the only reproducible pin available as a framework default. This is not
+Default (unset): the upstream `netbirdio/dashboard` release paired with the
+pinned NetBird version, tag plus digest (`v2.94.0` for NetBird 0.80.0; see
+`src/config/skmesh/skmesh.yml.j2`). This is not
 pullable from a private fork's own registry, so an instance that depends
 on one (see "Instance notes" below) must set `DASHBOARD_IMAGE` explicitly;
 this framework does not ship or publish that fork's image.
@@ -117,6 +116,17 @@ for traffic that cannot go peer to peer.
 `MANAGEMENT_IMAGE`, `SIGNAL_IMAGE`, `RELAY_IMAGE`, `POSTGRES_IMAGE` and
 `POSTGRES_BACKUP_IMAGE` (optional) override the framework defaults, e.g. to
 pin `tag@sha256:digest`.
+
+Defaults: NetBird `0.80.0` (management, signal, relay) and dashboard
+`v2.94.0`, each pinned as `tag@sha256:<multi-arch index digest>`.
+
+**Upgrading from 0.79.0 (framework v2.26.5 and older).** The NetBird 0.80.0
+release notes list no breaking change and no manual step. Management's
+automatic schema migration at start adds a `public_id` column (indexed) to
+the policies, routes and network resources tables: additive, nothing is
+rewritten. Take a database dump first (the `postgres-db-backup` sidecar's
+latest dump, or `pg_dump` by hand), then redeploy. Rolling back to 0.79.0
+leaves the extra columns in place, which 0.79.0 ignores.
 
 ## Required instance vars (vault)
 
