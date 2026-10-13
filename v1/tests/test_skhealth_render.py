@@ -165,6 +165,7 @@ def test_the_engine_reads_the_rendered_files(full, tmp_path):
     ({"disks": {"devices": ["/dev/sda; id"]}}, "disks.devices"),
     ({"disks": {"devices": ["sda"]}}, "disks.devices"),
     ({"disks": {"devices": "/dev/sda"}}, "disks.devices"),
+    ({"alerts": {"webhook_hmac_secret": "s"}}, "webhook_hmac_secret needs webhook_url"),
     ({"confirm_runs": 0}, "confirm_runs"),
     ({"primary": "bad host"}, "primary"),
 ])
@@ -193,3 +194,18 @@ def test_unset_or_empty_device_list_leaves_the_config_unchanged(minimal, tmp_pat
     res, out = render(tmp_path, {"disks": {"devices": []}})
     assert res["status"] == "PASS", (res["findings"], res["log"][-3000:])
     assert (out / "etc/skhealth/skhealth.json").read_bytes() == (minimal / "etc/skhealth/skhealth.json").read_bytes()
+
+
+def test_webhook_hmac_secret_lands_only_in_secrets_env(tmp_path):
+    vault = {"alerts": {"webhook_url": "https://hooks.example.test/h", "webhook_hmac_secret": "hmac-example-not-a-secret"}}
+    res, out = render(tmp_path, vault)
+    assert res["status"] == "PASS", (res["findings"], res["log"][-3000:])
+    assert env_values(out / "etc/skhealth/secrets.env") == {
+        "SKHEALTH_WEBHOOK_URL": "https://hooks.example.test/h",
+        "SKHEALTH_WEBHOOK_HMAC_SECRET": "hmac-example-not-a-secret",
+    }
+    assert "hmac-example-not-a-secret" not in (out / "etc/skhealth/skhealth.json").read_text()
+
+
+def test_full_vault_without_hmac_renders_no_hmac_line(full):
+    assert "SKHEALTH_WEBHOOK_HMAC_SECRET" not in (full / "etc/skhealth/secrets.env").read_text()

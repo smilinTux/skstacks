@@ -57,9 +57,11 @@
           - (skh.alerts.telegram_bot_token | string | length > 0) == (skh.alerts.telegram_chat_id | string | length > 0)
           - skh.alerts.webhook_url | string | length == 0 or skh.alerts.webhook_url is match('^https?://')
           - skh.alerts.telegram_api_base is match('^https?://')
+          - skh.alerts.webhook_hmac_secret | default('') | string | length == 0 or skh.alerts.webhook_url | string | length > 0
         fail_msg: >-
           ERROR: skhealth.alerts needs telegram_bot_token AND telegram_chat_id
-          (or neither), and webhook_url / telegram_api_base are http(s) URLs.
+          (or neither), webhook_url / telegram_api_base are http(s) URLs, and
+          webhook_hmac_secret needs webhook_url.
       tags: [config]
 
     - name: Validate the schedule and the thresholds

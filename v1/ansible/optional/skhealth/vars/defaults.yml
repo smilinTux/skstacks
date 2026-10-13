@@ -24,6 +24,9 @@ skhealth_defaults:
     telegram_chat_id: ""
     telegram_api_base: "https://api.telegram.org"
     webhook_url: ""
+    # Optional: sign each webhook POST (X-Webhook-Signature: hex HMAC-SHA256
+    # of the raw body) and add an idempotency X-Request-ID. Needs webhook_url.
+    webhook_hmac_secret: ""
   swarm:
     enabled: true
     crashloop_failed_tasks: 3

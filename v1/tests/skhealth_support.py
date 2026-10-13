@@ -7,7 +7,7 @@
   asserts on the exact arguments the engine passed, not only on what it
   did with the output. A stub answers from a rules file: the first rule
   whose argv prefix matches gives (rc, stdout).
-* ``Hook`` is a local HTTP server that records every POST (path and body):
+* ``Hook`` is a local HTTP server that records every POST (path, body, headers by lower-case name):
   the fake Telegram API and the fake webhook.
 """
 from __future__ import annotations
@@ -119,7 +119,7 @@ class FakeHost:
 class _Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):  # noqa: N802
         body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
-        self.server.posts.append({"path": self.path, "body": body.decode()})
+        self.server.posts.append({"path": self.path, "body": body.decode(), "headers": {k.lower(): v for k, v in self.headers.items()}})
         code = self.server.status
         self.send_response(code)
         self.end_headers()

@@ -8,6 +8,7 @@ skhealth:
     telegram_bot_token: "123456:example-telegram-token-not-a-secret"
     telegram_chat_id: "-1001234567890"
     webhook_url: "https://hooks.example.test/skhealth/example-not-a-secret"
+    webhook_hmac_secret: "example-hmac-secret-not-a-secret"
   swarm:
     ignore_services: ["^skmon-"]
   host:
