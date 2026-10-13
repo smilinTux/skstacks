@@ -109,6 +109,39 @@
         quiet: true
       tags: [config]
 
+    - name: Collect the oidc-only keys a local-mode vault still sets
+      # AUTH_MODE: local is the standalone path (MeshCentral accounts, no
+      # SSO, no Authentik objects). A vault that says local but also asks
+      # for Authentik provisioning, the forward-auth gate, the OIDC
+      # redirect or OIDC credentials contradicts itself: refuse it and name
+      # the keys instead of silently ignoring half of it. LOCAL_LOGIN_HIDDEN
+      # in local mode would hide the only login there is. Only key NAMES
+      # are collected, never values.
+      set_fact:
+        skr_local_conflicts: >-
+          {{ ([] if not (skrac.AUTHENTIK_PROVISION | default(false) | bool) else ['AUTHENTIK_PROVISION'])
+             + ([] if not skr_sso_middleware else ['SSO_MIDDLEWARE'])
+             + ([] if not (skrac.OIDC_AUTO_REDIRECT | default(false, true) | bool) else ['OIDC_AUTO_REDIRECT'])
+             + ([] if not (skrac.LOCAL_LOGIN_HIDDEN | default(false, true) | bool) else ['LOCAL_LOGIN_HIDDEN'])
+             + (['OIDC_ISSUER', 'OIDC_CLIENT_ID', 'OIDC_CLIENT_SECRET']
+                | select('in', skrac | dict2items | rejectattr('value', 'in', ['', none]) | map(attribute='key') | list)
+                | list) }}
+      when: skrac is defined and skrac is mapping and skr_auth_mode == 'local'
+      tags: [config]
+
+    - name: Refuse a local-mode vault that also configures SSO
+      assert:
+        that:
+          - skr_local_conflicts | default([]) | length == 0
+        fail_msg: >-
+          ERROR: skrac.AUTH_MODE is 'local' (standalone, no SSO) but the
+          skrac vault block also sets {{ skr_local_conflicts | default([]) | join(', ') }},
+          which only apply to AUTH_MODE 'oidc' (Authentik). Either set
+          AUTH_MODE: oidc, or remove those keys. See README.md "Sign-in,
+          SSO and the first admin".
+        quiet: true
+      tags: [config]
+
     - name: Validate the image pin and the public host
       assert:
         that:
@@ -139,7 +172,8 @@
       tags: [config]
 
     - name: Define network variables from vault (idempotent network creation)
-      # Subnets: skrac-prod 172.16.238.0/24, -staging .239, -dev .240
+      # Subnets: skrac-prod 172.16.238.0/24, -staging .239, -dev .245
+      # (.240 is sksec-dev)
       # (reserved for skrac); cloud-public-<env> is shared. Override with
       # the flat per-env skrac_<env>_networks (catalog naming convention).
       set_fact:

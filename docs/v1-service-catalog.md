@@ -817,9 +817,12 @@ hand-run/orphaned MeshCentral instance; see the role README's
 "Re-enrolling the existing meshagents" for migrating agents off an old
 server.
 
-**Prerequisites**: none for `AUTH_MODE: local` (default). For
-`AUTH_MODE: oidc`, an Authentik OAuth2/OIDC provider + application on this
-cluster's sksso instance (manual, or `AUTHENTIK_PROVISION: true`).
+**Prerequisites**: none for `AUTH_MODE: local` (default, standalone:
+MeshCentral local accounts, no SSO in front). For `AUTH_MODE: oidc`, an
+Authentik OAuth2/OIDC provider + application on this cluster's sksso
+instance (manual, or `AUTHENTIK_PROVISION: true`). The play refuses
+`AUTH_MODE: local` combined with SSO-only keys (`AUTHENTIK_PROVISION`,
+`SSO_MIDDLEWARE`, `OIDC_*`, `LOCAL_LOGIN_HIDDEN`) and names them.
 
 **Minimal vault snippet**:
 

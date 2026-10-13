@@ -103,7 +103,7 @@ below is a separate, optional, extra layer, off by default).
 2. Set `OIDC_ISSUER` to that application's issuer URL, typically
    `https://<sso host>/application/o/<app slug>/`.
 3. `OIDC_GROUP_CLAIM` (default `groups`) and `OIDC_ADMIN_GROUP` (default
-   `skadmin`, the nor cluster's admin-group convention) map an Authentik
+   `skadmin`, the SKStacks admin-group convention) map an Authentik
    group onto MeshCentral's site-admin role via the id token's groups
    claim (Authentik's default `profile` scope mapping already includes
    it). `OIDC_NEW_ACCOUNTS` (default `true`) lets MeshCentral create a
@@ -127,7 +127,20 @@ below is a separate, optional, extra layer, off by default).
    way in is OIDC or an admin-created local account.
 
 `AUTH_MODE: local` (the default) renders no `authStrategies` block at all:
-local accounts only, exactly like a hand-run MeshCentral.
+local accounts only, exactly like a hand-run MeshCentral. This is the
+standalone path: no SSO in front, no Authentik objects, CrowdSec optional
+(`TRAEFIK_MIDDLEWARES`). The first account created on the empty server
+becomes the site admin.
+
+**Contradictory configs are refused.** In `AUTH_MODE: local` the play fails
+before touching anything, naming the offending keys, when the vault also
+sets any of `AUTHENTIK_PROVISION: true`, a non-empty `SSO_MIDDLEWARE`,
+`OIDC_AUTO_REDIRECT: true`, `LOCAL_LOGIN_HIDDEN: true` (it would hide the
+only login there is), or a non-empty `OIDC_ISSUER` / `OIDC_CLIENT_ID` /
+`OIDC_CLIENT_SECRET` (only the key name is ever printed). Those keys only
+mean something in `AUTH_MODE: oidc`: switch the mode or remove them.
+Empty or `false` values are fine. The agent router is identical in both
+modes and never carries `SSO_MIDDLEWARE`.
 
 ### Traefik, agents and the reverse-proxy trap
 
@@ -239,9 +252,10 @@ ansible-playbook -i envs/prod/inventory.ini \
   --vault-password-file ~/.vault_pass_env/.<instance>_prod_vault_pass
 ```
 
-The play: checks the vault (fails on `AUTH_MODE: oidc` without a full
-Authentik config, an image without a digest, or a local data path without
-`DATA_NODE`), creates the directories, writes `config.json`, installs the
+The play: checks the vault (fails on an unknown `AUTH_MODE`, on
+`AUTH_MODE: oidc` without a full Authentik config, on `AUTH_MODE: local`
+combined with SSO-only keys, an image without a digest, or a local data
+path without `DATA_NODE`), creates the directories, writes `config.json`, installs the
 backup script and the compose file, ensures the networks, deploys stack
 `skrac-<env>`, and restarts `server` when the config changed (a bind mount
 does not change the service spec by itself).
@@ -312,10 +326,9 @@ override with the flat per-env `skrac_<env>_networks` list.
 
 ## Re-enrolling the existing meshagents
 
-The orphaned MeshCentral server this role replaces (`holorac`) was
-decommissioned and its data deleted: its agent root certificate no longer
-exists anywhere. The `meshagent.service` agents left polling it on
-norap1001, norap1002, norap1003, norap1021 and Chef's laptop therefore
+When skrac replaces an older MeshCentral server whose data is gone, that
+server's agent root certificate no longer exists anywhere. The
+`meshagent.service` agents left polling it therefore
 **cannot be re-pointed with a config edit**: an existing MeshCentral agent
 pins the OLD server's root certificate hash, and that hash check fails
 closed against any other server, including a new skrac instance,
@@ -342,7 +355,7 @@ answers 404) before installing the new one.
 
 | Network | Subnet |
 |---|---|
-| `skrac-prod` / `-staging` / `-dev` | `172.16.238.0/24` / `172.16.239.0/24` / `172.16.240.0/24` |
+| `skrac-prod` / `-staging` / `-dev` | `172.16.238.0/24` / `172.16.239.0/24` / `172.16.245.0/24` |
 | `cloud-public-<env>` | framework-shared Traefik network |
 
 ## Verification

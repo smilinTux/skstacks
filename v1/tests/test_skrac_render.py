@@ -156,7 +156,7 @@ def test_config_json_is_root_only_and_never_logged(base_out):
 
 
 @pytest.mark.parametrize("env,host,router,subnet", [
-    ("dev", "skrac-dev.render.example.test", "skrac-dev", "172.16.240.0/24"),
+    ("dev", "skrac-dev.render.example.test", "skrac-dev", "172.16.245.0/24"),
     ("staging", "skrac-staging.render.example.test", "skrac-staging", "172.16.239.0/24"),
 ])
 def test_dev_and_staging_hosts_routers_and_subnets(tmp_path, env, host, router, subnet):
@@ -236,6 +236,49 @@ def test_oidc_mode_without_a_full_authentik_config_fails_loudly(tmp_path, vault)
     log = fails(tmp_path, vault)
     assert "OIDC_ISSUER, OIDC_CLIENT_ID and OIDC_CLIENT_SECRET" in log
     assert "too-short" not in log
+
+
+# AUTH_MODE local is the standalone path: a vault that also asks for SSO
+# contradicts itself and must be refused, naming the conflicting keys.
+SECRET = "example-oidc-client-secret-0123456789"
+
+
+@pytest.mark.parametrize("extra,keys", [
+    ({"AUTHENTIK_PROVISION": True}, ["AUTHENTIK_PROVISION"]),
+    ({"SSO_MIDDLEWARE": "authentik@file"}, ["SSO_MIDDLEWARE"]),
+    ({"OIDC_AUTO_REDIRECT": True}, ["OIDC_AUTO_REDIRECT"]),
+    ({"LOCAL_LOGIN_HIDDEN": True}, ["LOCAL_LOGIN_HIDDEN"]),
+    ({"OIDC_ISSUER": "https://sso.example.test/application/o/skrac/"}, ["OIDC_ISSUER"]),
+    ({"OIDC_CLIENT_ID": "cid"}, ["OIDC_CLIENT_ID"]),
+    ({"OIDC_CLIENT_SECRET": SECRET}, ["OIDC_CLIENT_SECRET"]),
+    ({"AUTHENTIK_PROVISION": True, "SSO_MIDDLEWARE": "authentik@file"},
+     ["AUTHENTIK_PROVISION", "SSO_MIDDLEWARE"]),
+], ids=["provision", "forward-auth", "auto-redirect", "login-hidden", "issuer", "client-id",
+        "client-secret", "provision+forward-auth"])
+@pytest.mark.parametrize("explicit", [True, False], ids=["explicit-local", "default-local"])
+def test_local_mode_refuses_sso_settings_and_names_the_keys(tmp_path, extra, keys, explicit):
+    vault = BASE | extra | ({"AUTH_MODE": "local"} if explicit else {})
+    log = fails(tmp_path, vault)
+    assert "AUTH_MODE is 'local'" in log
+    assert "sets " + ", ".join(keys) + "," in log
+    assert SECRET not in log
+
+
+def test_local_mode_accepts_sso_keys_that_are_empty_or_off(tmp_path, base_out):
+    off = {"AUTH_MODE": "local", "AUTHENTIK_PROVISION": False, "SSO_MIDDLEWARE": "",
+           "OIDC_AUTO_REDIRECT": False, "LOCAL_LOGIN_HIDDEN": False,
+           "OIDC_ISSUER": "", "OIDC_CLIENT_ID": "", "OIDC_CLIENT_SECRET": ""}
+    out = ok(tmp_path, BASE | off)
+    assert (out / "var/data/config/skrac-prod/skrac.yml").read_text() == \
+        (base_out / "var/data/config/skrac-prod/skrac.yml").read_text()
+    assert config_json(out) == config_json(base_out)
+
+
+def test_oidc_mode_still_allows_forward_auth_and_hidden_password_form(set_out):
+    # The set pass is oidc + SSO_MIDDLEWARE + LOCAL_LOGIN_HIDDEN +
+    # OIDC_AUTO_REDIRECT: none of those are conflicts in oidc mode.
+    lab = labels(compose(set_out)["services"]["server"])
+    assert lab["traefik.http.routers.skrac.middlewares"].endswith(",authentik@file")
 
 
 def test_bad_auth_mode_fails(tmp_path):
