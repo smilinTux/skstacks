@@ -34,8 +34,17 @@ backup_once() {
     stamp=$(date -u +%Y%m%dT%H%M%SZ)
     final="$OUT/skgym-$stamp.tar.gz"
     tmp="$OUT/.skgym-$stamp.tar.gz.partial"
-    rm -f "$tmp"
-    if tar -C "$DATA" --exclude='*.tmp' -czf "$tmp" . \
+    st="$OUT/.skgym-$stamp.status"
+    rm -f "$tmp" "$st"
+    # tar | gzip as an explicit pipeline, not `tar -czf`: with -z, tar opens
+    # the archive in a forked gzip child, which can create the file AFTER a
+    # failed tar exited and the cleanup below ran (a stray partial). Here the
+    # shell creates the file and the pipeline has ended before any check.
+    # POSIX sh has no pipefail: tar's own exit status goes through a file.
+    { tar -C "$DATA" --exclude='*.tmp' -cf - .; echo $? >"$st"; } | gzip -c >"$tmp"
+    rc=$(cat "$st" 2>/dev/null || echo 1)
+    rm -f "$st"
+    if [ "$rc" = 0 ] \
         && [ -s "$tmp" ] \
         && gzip -t "$tmp" \
         && tar -tzf "$tmp" | grep -qx './secret'; then
