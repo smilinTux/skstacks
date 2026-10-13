@@ -1,0 +1,43 @@
+# The "set" pass: every optional knob set, fake values only, AUTH_MODE oidc.
+skrac:
+  CLOUDFLARED: true
+  HOSTNAME: skrac.example.test
+  MESHCENTRAL_IMAGE: "registry.example.test/meshcentral:1.2.6@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  DATA_NODE: render-node-1
+  DATA_PATH: /var/lib/skrac-render/data
+  FILES_PATH: /var/lib/skrac-render/files
+  BACKUP_PATH: /var/lib/skrac-render/backup
+  PLACEMENT_CONSTRAINTS: ["node.role == worker", "node.labels.skrac == true"]
+  TRAEFIK_MIDDLEWARES: "crowdsec-bouncer@file,default@file"
+  AGENT_TRAEFIK_MIDDLEWARES: "default@file"
+  SSO_MIDDLEWARE: "authentik@file"
+  TLS_OPTIONS: "none"
+  INTERNAL_PORT: 8443
+  TRUSTED_PROXY_CIDR: "192.0.2.0/24"
+  AUTH_MODE: "oidc"
+  OIDC_ISSUER: "https://sso.example.test/application/o/skrac/"
+  OIDC_CLIENT_ID: "example-oidc-client-id"
+  OIDC_CLIENT_SECRET: "example-oidc-client-secret-0123456789"
+  OIDC_GROUP_CLAIM: "groups"
+  OIDC_ADMIN_GROUP: "skadmin"
+  OIDC_NEW_ACCOUNTS: true
+  OIDC_AUTO_REDIRECT: true
+  LOCAL_LOGIN_HIDDEN: true
+  LOCAL_NEW_ACCOUNTS: false
+  TITLE: "Example SKRac"
+  TITLE2: "Remote Access"
+  SERVER_CPUS: "2.00"
+  SERVER_MEMORY_LIMIT: "1536M"
+  SERVER_MEMORY_RESERVATION: "256M"
+  HEALTH_CHECK_INTERVAL: "15s"
+  HEALTH_CHECK_TIMEOUT: "5s"
+  HEALTH_CHECK_RETRIES: 5
+  HEALTH_CHECK_START_PERIOD: "60s"
+  BACKUP_ENABLED: true
+  BACKUP_FREQUENCY: 3600
+  BACKUP_KEEP_DAYS: 14
+  BACKUP_START_DELAY: 10
+  BACKUP_INCLUDE_FILES: true
+  EXTRA_CONFIG:
+    settings:
+      wsCompression: true

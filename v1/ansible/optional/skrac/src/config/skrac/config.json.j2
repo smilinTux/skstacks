@@ -1,0 +1,60 @@
+{#
+skrac: MeshCentral config.json, written straight into the data directory
+(root 0600, no_log: it may carry the Authentik client secret) so it is
+backed up and restored together with the certificates and the NeDB
+database it describes (README.md "Secrets vs settings").
+
+Reverse-proxy shape (the classic MeshCentral-behind-a-proxy trap, see
+README "Traefik, agents and the reverse-proxy trap"): Traefik terminates
+TLS with its own Let's Encrypt certificate and forwards plain HTTP to
+`server` on settings.port; settings.aliasPort (443) is the port MeshCentral
+tells agents and the web UI it is really reachable on; settings.tlsOffload
+/ trustedProxy name the proxy whose X-Forwarded-* headers are trusted (the
+cloud-public-<env> overlay subnet, by default); domains[""].certUrl is the
+https URL MeshCentral fetches ON ITS OWN to learn the certificate agents
+actually see (Traefik's), which is what lets agent cert-hash pinning work
+at all when the server and the public-facing certificate are not the same
+process.
+#}
+{% set oidc_strategy = {} %}
+{% if skr_auth_mode == 'oidc' %}
+{% set oidc_strategy = {
+  'oidc': {
+    'issuer': skrac.OIDC_ISSUER,
+    'client': {
+      'client_id': skrac.OIDC_CLIENT_ID,
+      'client_secret': skrac.OIDC_CLIENT_SECRET
+    },
+    'newAccounts': skrac.OIDC_NEW_ACCOUNTS | default(true, true) | bool,
+    'groups': {
+      'claim': skrac.OIDC_GROUP_CLAIM | default('groups', true),
+      'siteadmin': [skrac.OIDC_ADMIN_GROUP | default('skadmin', true)]
+    }
+  }
+} %}
+{% endif %}
+{% set domain_block = {
+  'title': skrac.TITLE | default('skrac', true),
+  'title2': skrac.TITLE2 | default('', true),
+  'certUrl': 'https://' + skr_host + '/',
+  'newAccounts': skrac.LOCAL_NEW_ACCOUNTS | default(false, true) | bool,
+  'showPasswordLogin': not (skrac.LOCAL_LOGIN_HIDDEN | default(false, true) | bool),
+  'authStrategies': oidc_strategy
+} %}
+{% set redirect_extra = ({'unknownUserRootRedirect': 'auth-oidc'}
+  if (skr_auth_mode == 'oidc' and (skrac.OIDC_AUTO_REDIRECT | default(false, true) | bool))
+  else {}) %}
+{% set domain_block = domain_block | combine(redirect_extra) %}
+{% set config = {
+  'settings': {
+    'cert': skr_host,
+    'port': skr_internal_port,
+    'aliasPort': 443,
+    'tlsOffload': skr_trusted_proxy,
+    'trustedProxy': skr_trusted_proxy
+  },
+  'domains': {
+    '': domain_block
+  }
+} %}
+{{ (config | combine(skrac.EXTRA_CONFIG | default({}, true), recursive=true)) | to_nice_json }}
