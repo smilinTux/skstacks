@@ -32,3 +32,11 @@ skhub:
   AI_ENABLED: true
   AI_BASE_URL: http://gw.example:18780/v1
   AI_API_KEY: example-ai-api-key-not-a-secret
+  smtp_enabled: true
+  smtp_host: smtp.example.test
+  smtp_port: 587
+  smtp_secure: tls
+  smtp_name: hub@example.test
+  smtp_password: example-smtp-password-not-a-secret
+  mail_from_address: hub
+  mail_domain: example.test
