@@ -22,7 +22,7 @@
 #
 # The settings (with the password) go to the container on STDIN, never on
 # argv; files/nextcloud-mail-config.php (the code, no secrets) compares
-# them with the effective config (password by sha256), and only on a real
+# them with config.php (password by sha256), and only on a real
 # difference writes a 0600 temp file, runs `occ config:import` and removes
 # it. changed only when it wrote. no_log: stdin carries the password.
 #

@@ -6,9 +6,11 @@
 //   docker exec -i -u www-data <cid> php -r "$SKHUB_MAIL_PHP" < {"system": {...}}
 // No opening tag on purpose: `php -r` takes bare code.
 //
-// Idempotent: compares the wanted keys with the EFFECTIVE config (config.php
-// merged with config/*.config.php, the way Nextcloud reads it; the password
-// by sha256 only) and writes nothing when they match. Otherwise it writes the
+// Idempotent: compares the wanted keys with what config/config.php holds
+// (the password by sha256 only) and writes nothing when they match. Only
+// config.php counts: values that an image-provided config/smtp.config.php
+// derives from SMTP_* env vanish when that env does, so they are written
+// into config.php too. Otherwise it writes the
 // settings to a 0600 temp file, runs `occ config:import <file>` from an argv
 // array (no shell), overwrites and removes the file, and re-checks.
 // Prints "UNCHANGED", or "CHANGED: <key names>". Never prints a value.
@@ -24,19 +26,11 @@ $want = $input['system'];
 $secret_keys = ['mail_smtppassword'];
 
 function skhub_mail_effective($root) {
-    $merged = [];
-    $files = array_merge([$root . '/config/config.php'], glob($root . '/config/*.config.php') ?: []);
-    foreach ($files as $file) {
-        if (!is_file($file)) {
-            continue;
-        }
-        $CONFIG = [];
-        include $file;
-        if (is_array($CONFIG)) {
-            $merged = array_merge($merged, $CONFIG);
-        }
+    $CONFIG = [];
+    if (is_file($root . '/config/config.php')) {
+        include $root . '/config/config.php';
     }
-    return $merged;
+    return is_array($CONFIG) ? $CONFIG : [];
 }
 
 function skhub_mail_differs($want, $have, $secret_keys) {

@@ -316,8 +316,9 @@ Nextcloud's system config after the stack is up (`tasks/mail_config.yml`):
 Fixed: `mail_smtpmode` and `mail_sendmailmode` = `smtp`, `mail_smtpauth` =
 `true`. The settings travel to the container on stdin, never on a command
 line; `files/nextcloud-mail-config.php` (run with `php -r` as
-`www-data`) compares them with the effective config (`config.php` merged with
-`config/*.config.php`; the password by sha256) and writes only on a real
+`www-data`) compares them with what `config.php` holds (the password by
+sha256; a value only in the image's env-driven `smtp.config.php` does not
+count, so it is written into `config.php` too) and writes only on a real
 difference, through `occ config:import` on a 0600 temp file that it then
 overwrites and removes. The task is `no_log` and prints key names only
 (`CHANGED: ...` or `UNCHANGED`); a redeploy with matching values reports

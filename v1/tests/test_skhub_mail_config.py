@@ -5,7 +5,7 @@ only on its first install: an existing install never got mail_* keys and
 sent no mail (seen for months on a production instance). Now a post-deploy
 task (tasks/mail_config.yml) feeds the settings on STDIN to
 files/nextcloud-mail-config.php inside the container, which compares
-them with the effective config (password by sha256), and only on a real
+them with config.php (password by sha256), and only on a real
 difference runs `occ config:import` on a 0600 temp file it then removes.
 
 Three layers:
@@ -148,13 +148,14 @@ def test_type_difference_counts(tmp_path):
 
 
 @needs_php
-def test_values_from_an_additional_config_file_count_as_effective(tmp_path):
-    """The image's smtp.config.php (fed from SMTP_* env) already provides the
-    same values: nothing to write."""
+def test_values_only_in_an_additional_config_file_are_still_written(tmp_path):
+    """The image's smtp.config.php derives mail_* from SMTP_* env, which an
+    existing install may not have (or may lose): config.php itself must hold
+    the keys, so they are written there."""
     root = nc_root(tmp_path, config={"instanceid": "x"}, extra={"smtp.config.php": WANT})
     r = apply(root)
-    assert r.stdout.strip() == "UNCHANGED"
-    assert not (root / "import.log").exists()
+    assert r.stdout.startswith("CHANGED: ")
+    assert effective(root)["mail_smtphost"] == "smtp.example.test"
 
 
 @needs_php
