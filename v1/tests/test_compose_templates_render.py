@@ -42,7 +42,7 @@ def test_skmesh_dashboard_defaults_to_the_upstream_digest_pin():
     out = env.from_string(SKMESH.read_text()).render(env="prod", skmesh=dict(_SKMESH_BASE_VARS))
     doc = yaml.safe_load(out)
     image = doc["services"]["dashboard"]["image"]
-    assert image.startswith("netbirdio/dashboard@sha256:")
+    assert image.startswith("netbirdio/dashboard:v") and "@sha256:" in image
 
 
 def test_skmesh_dashboard_image_is_overridable_per_instance():
