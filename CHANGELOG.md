@@ -7,11 +7,16 @@ Each entry says what an instance must do, if anything.
 
 ### Upgrade notes (instances)
 
+- **sksec:** the deploy now refuses a `CROWDSEC_AGENT_HOST` without a port (a bare `crowdsec` made the bouncer dial the LAPI on 80 instead of 8080, fail every check and answer 403 on every protected router); leave it unset for `sksec-<env>_crowdsec:8080`, which an empty value now also renders. With skfenceha the next sksec deploy also writes the bouncer middleware (`sksec.yml`) into `dynamic_acme/`, so the ACME-master Traefik loads `crowdsec-bouncer@file` and its routers on the `default` chain stop being disabled (that chain names the bouncer once skfenceha has `CROWDSEC_ENABLED`). Behind a tunnel or CDN (cloudflared), see the sksec README "Behind a tunnel or CDN": skfenceha `TRUSTED_PROXIES` + sksec `BOUNCER_TRUSTED_PROXIES` + `ALLOWLIST_CIDRS` together give CrowdSec and the bouncer the real client address; no new knob, nothing changes for an instance that sets none of them.
 - **skpayment:** the payment site now sits behind CrowdSec and only the Stripe webhook is exempt. The role renders two routers: the site router (`Host`) with `MIDDLEWARES`, whose default moves from `default-no-crowdsec@file` to `default@file` (CrowdSec when skfenceha has `CROWDSEC_ENABLED`), and a new `skpayment[-env]-webhook` router for the exact path `/webhook/stripe` with `default-no-crowdsec@file` and priority 1000, so Stripe's callers are never banned. The exemption relies on the app's Stripe signature check (every app release verifies it when `STRIPE_WEBHOOK_SECRET` is set; v1.1.0 also refuses replays and refuses every webhook without a secret). The next deploy changes the live router labels. To keep the old single-router layout set `WEBHOOK_PATH: none` and `MIDDLEWARES: default-no-crowdsec@file`.
 
 ### Added
 
 - v1: **skpayment** router knobs `WEBHOOK_PATH` (default `/webhook/stripe`, `none` = one router), `WEBHOOK_MIDDLEWARES` (default `default-no-crowdsec@file`), `WEBHOOK_PRIORITY` (default 1000), and an optional Stripe IP allowlist on the webhook router: `WEBHOOK_IP_ALLOWLIST` (default false), `WEBHOOK_SOURCE_RANGES` (default Stripe's published webhook IPs as of 2026-10-13), `WEBHOOK_IP_STRATEGY_DEPTH` (for a proxy in front of Traefik). `MIDDLEWARES` and the webhook knobs are validated (no stray characters in a label). Tests: `v1/tests/test_skpayment_render.py` (+17: both routers, priority order including a long hostname, every knob, non-prod names, invalid values, the IP list identical in every env playbook).
+
+### Fixed
+
+- v1: **sksec** `CROWDSEC_AGENT_HOST` validated as `<host>:<port>` before anything is written; an empty value renders the default instead of an empty host; the bouncer middleware reaches skfenceha's `dynamic_acme/` as well as `dynamic/` (skfence unchanged). README: "Behind a tunnel or CDN" recipe. Tests: `v1/tests/test_sksec_tunnel_real_ip.py` (24).
 
 The skstack06 skpayment stage gains a check for this release: skfenceha's live Traefik API must show the site router on `default@file` and the webhook router on `Path(/webhook/stripe)` with `default-no-crowdsec@file` at priority 1000 above it, both enabled on one service, and a neighbouring path must land on the site router.
 

@@ -149,6 +149,52 @@ refuses `0.0.0.0/0` and `::/0` (that is the unsafe default) and anything
 that is not a list of addresses or CIDRs. Check after a deploy with a banned
 test address (`cscli decisions add --ip <ip>`) through a proxied hostname.
 
+### Behind a tunnel or CDN
+
+When public traffic reaches Traefik through a tunnel connector (for example
+Cloudflare's `cloudflared` pointed at `https://localhost:443`), Traefik sees
+the connector's address for every visitor, and by default it drops the
+edge's `X-Forwarded-For` because that address is not trusted. CrowdSec then
+attributes all visitors to one internal address (which the stock
+`crowdsecurity/whitelists` parser discards), and the bouncer checks that one
+address: nobody arriving through the tunnel can ever be banned. Three
+existing knobs fix it, and an instance that sets none of them renders
+exactly as before:
+
+1. skfenceha `TRUSTED_PROXIES`: the connector's source address as Traefik
+   sees it, and nothing wider. A connector on the host network of a Traefik
+   node reaching a host-mode published port arrives from the
+   `docker_gwbridge` gateway (usually `172.18.0.1/32`); check `ClientHost` in
+   the access log. Traefik then keeps the edge's `X-Forwarded-For` (the edge
+   appends the real client as the last entry) and, because the access log
+   sets `ClientHost` to that header, CrowdSec's `crowdsecurity/traefik-logs`
+   parser takes its last entry as the source IP. A forged first entry does
+   not move it. This is a Traefik static-config change: the workers must be
+   restarted to load it.
+2. sksec `BOUNCER_TRUSTED_PROXIES`: the overlay subnets Traefik reaches the
+   bouncer through (`cloud-public-<env>`, `sksec-<env>`) plus the connector
+   address from step 1. The bouncer walks `X-Forwarded-For` right to left
+   and takes the first untrusted entry, the real client. Never set step 1
+   without this: with it unset the bouncer takes the leftmost entry, which
+   the client controls.
+3. sksec `ALLOWLIST_CIDRS`: the connector address and the internal ranges
+   (RFC 1918, CGNAT/Tailscale, loopback), so that neither a local detection
+   nor a community or manual decision can ever ban the tunnel or the
+   cluster itself.
+
+What this does not do: the bouncer image reads only `X-Forwarded-For` and
+`X-Real-Ip`, not `CF-Connecting-IP`; the real address comes from the
+`X-Forwarded-For` the edge sets. Trusting the connector also makes Traefik
+pass the other `X-Forwarded-*` headers that arrived through it to the apps
+unchanged (an edge such as Cloudflare forwards a client-sent
+`X-Forwarded-Host`), so check that the apps behind it do not build links
+from `X-Forwarded-Host` without their own trusted-domain list.
+
+Verify after a deploy: a request through the tunnel logs your own public
+address as `ClientHost`; `cscli decisions add --ip <that address>
+--duration 2m` turns it into a 403 through the tunnel, and
+`cscli decisions delete --ip <that address>` back into the normal answer.
+
 ## Required instance vars (vault)
 
 `sksec-<env>_vault.yml` (see the framework README's "Instance contract" for
@@ -162,7 +208,7 @@ sksec:
   # CLUSTERNAME: "<your-cluster-name>"
   # DOMAIN: "<your-domain>"
   APP_ENV: "prod"          # or dev/staging - must match the env you deploy
-  CROWDSEC_AGENT_HOST: "sksec-prod_crowdsec:8080"
+  CROWDSEC_AGENT_HOST: "sksec-prod_crowdsec:8080"  # <host>:<port>; unset = this default, a bare name is refused
   GID: "1000"
   COLLECTIONS: "crowdsecurity/linux crowdsecurity/traefik"
   LOG_LEVEL: "info"
