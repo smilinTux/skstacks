@@ -97,6 +97,18 @@
       include_vars: "{{ vault_file_path }}"
       when: vault_file_path is defined
 
+    - name: Validate skfenceha.DROP_FORWARDED_HEADERS (list of header names)
+      vars:
+        _drop_headers: "{{ skfenceha.DROP_FORWARDED_HEADERS | default([], true) }}"
+      assert:
+        that:
+          - _drop_headers is sequence and _drop_headers is not string and _drop_headers is not mapping
+          - _drop_headers | map('string') | reject('match', '^[A-Za-z0-9][A-Za-z0-9-]*$') | list | length == 0
+        fail_msg: >-
+          ERROR: skfenceha.DROP_FORWARDED_HEADERS must be a YAML list of HTTP
+          header names, e.g. [X-Forwarded-Host].
+        quiet: true
+
     - name: Define default network variables when not provided in vault
       set_fact:
         app_networks: "{{ skfenceha_prod_networks | default([

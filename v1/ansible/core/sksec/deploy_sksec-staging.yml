@@ -59,6 +59,19 @@
           (not 0.0.0.0/0 or ::/0, which is the unsafe default it replaces).
         quiet: true
 
+    # fbonalair's bouncer appends no port: a bare service name dials the
+    # LAPI on 80 while it listens on 8080, every check fails, and the
+    # bouncer fails closed (403 on every protected router).
+    - name: Validate CROWDSEC_AGENT_HOST (<host>:<port>)
+      assert:
+        that:
+          - (sksec.CROWDSEC_AGENT_HOST | default('', true) | string) is match('^([A-Za-z0-9._-]+:[0-9]{1,5})?$')
+        fail_msg: >-
+          ERROR: sksec.CROWDSEC_AGENT_HOST must be <host>:<port> with no scheme,
+          e.g. sksec-{{ env }}_crowdsec:8080 (leave it unset for that default).
+          Without the port the bouncer dials port 80 and answers 403 to everything.
+        quiet: true
+
     - name: Define default network variables when not provided in vault
       # ⚠️ IMPORTANT: Network subnets MUST match shared/networks registry
       # Reference: See shared/networks for all registered network subnets
@@ -302,23 +315,29 @@
     # No file provider deployment needed - all labels in compose file per new SOP
     # Certificates: Provided by traefik-certs-dumper (runs on skfence/skfenceha ACME master node)
 
-    - name: Ensure Traefik dynamic directory exists
+    # skfenceha runs two Traefik roles: the workers read dynamic/, the
+    # ACME master reads dynamic_acme/. Both chains name crowdsec-bouncer@file
+    # once skfenceha has CROWDSEC_ENABLED, so both need the middleware, or
+    # every router there using it is disabled. skfence has one dir.
+    - name: Ensure the Traefik dynamic directories exist
       ansible.builtin.file:
-        path: "/var/data/config/{{ traefik_service_name | default('skfence') }}-{{ env }}/dynamic"
+        path: "/var/data/config/{{ traefik_service_name | default('skfence') }}-{{ env }}/{{ item }}"
         state: directory
         owner: root
         group: root
         mode: '0755'
+      loop: "{{ ['dynamic'] + (['dynamic_acme'] if (traefik_service_name | default('skfence')) == 'skfenceha' else []) }}"
       tags:
         - templates
 
     - name: Deploy CrowdSec bouncer middleware configuration (flat structure)
       ansible.builtin.template:
         src: "{{ playbook_dir }}/src/config/{{ app }}/sksec-dynamic.yml.j2"
-        dest: "/var/data/config/{{ traefik_service_name | default('skfence') }}-{{ env }}/dynamic/sksec.yml"
+        dest: "/var/data/config/{{ traefik_service_name | default('skfence') }}-{{ env }}/{{ item }}/sksec.yml"
         owner: root
         group: root
         mode: '0644'
+      loop: "{{ ['dynamic'] + (['dynamic_acme'] if (traefik_service_name | default('skfence')) == 'skfenceha' else []) }}"
       tags:
         - templates
 

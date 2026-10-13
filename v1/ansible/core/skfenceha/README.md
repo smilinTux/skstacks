@@ -10,6 +10,22 @@ Vault vars, TLS modes, the dashboard host override and access-log header
 redaction are documented in `v1/ansible/core/skfence/README.md`; the
 published-service catalog entry is in `docs/v1-service-catalog.md`.
 
+**Behind a tunnel or CDN (`TRUSTED_PROXIES` + `DROP_FORWARDED_HEADERS`)**:
+`TRUSTED_PROXIES` (list) renders `forwardedHeaders.trustedIPs` on the
+worker's `web` and `websecure` entrypoints, so Traefik keeps the
+`X-Forwarded-For` a tunnel connector or CDN sends (the real client; the
+access log records it as `ClientHost`, which CrowdSec reads; see the sksec
+README "Behind a tunnel or CDN"). Traefik then trusts every `X-Forwarded-*`
+header from those sources, and an edge such as Cloudflare passes a
+client-sent `X-Forwarded-Host` through unchanged: apps that build absolute
+URLs from it (Authentik does) can be made to emit links to a forged host.
+`DROP_FORWARDED_HEADERS: [X-Forwarded-Host]` removes those headers on the
+`websecure` entrypoint before any router (a `drop-forwarded-headers@file`
+entrypoint middleware); apps fall back to the `Host` header Traefik routed
+on, and Traefik's forwardAuth still sends the real host. Both are static
+configuration: restart the workers after changing them. Unset: nothing
+renders differently.
+
 **Instance-owned dynamic files (`EXTRA_DYNAMIC_FILES`)**: the playbooks render
 a fixed set of Traefik dynamic files (`routers.yml`, `services.yml`,
 `middlewares.yml`, `tls.yml`). An instance that needs routes of its own (for
