@@ -9,8 +9,9 @@
 #
 # Every archive gets its own name (the date is taken per run), is written to
 # a hidden temp file, checked (gzip and tar can read it back, and it holds
-# ./secret) and only then renamed into place, so a failed run never replaces
-# or removes a good archive. Archives older than BACKUP_KEEP_DAYS are pruned
+# ./secret: `tar -t` of that one member, no pipe into grep) and only then
+# renamed into place, so a failed run never replaces or removes a good
+# archive. Archives older than BACKUP_KEEP_DAYS are pruned
 # only after a good one was written, so a run of failures never ages out the
 # last good copy. The archives hold passkey credentials and the session
 # secret: umask 077, root only.
@@ -47,7 +48,7 @@ backup_once() {
     if [ "$rc" = 0 ] \
         && [ -s "$tmp" ] \
         && gzip -t "$tmp" \
-        && tar -tzf "$tmp" | grep -qx './secret'; then
+        && tar -tzf "$tmp" ./secret >/dev/null 2>&1; then
         mv -f "$tmp" "$final"
         log "wrote $final ($(wc -c <"$final") bytes)"
         find "$OUT" -maxdepth 1 -type f -name 'skgym-*.tar.gz' -mtime +"$KEEP_DAYS" -exec rm -f {} \;
