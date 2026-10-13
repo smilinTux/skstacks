@@ -51,13 +51,13 @@ skpayment:
   DOMAIN: example.com             # default: inventory domain
   CLOUDFLARED: false              # true: default host is under DOMAIN, not CLUSTERNAME.DOMAIN
   HOSTNAME: ""                    # public host; default skpayment[-dev|-staging].<base domain>
-  STRIPE_SECRET_KEY: "sk_live_..."      # required
-  STRIPE_WEBHOOK_SECRET: "whsec_..."    # required
+  STRIPE_SECRET_KEY: "sk_live_..."      # both or neither; both empty = "Stripe not configured"
+  STRIPE_WEBHOOK_SECRET: "whsec_..."    # both or neither
   APPS: {}                        # the apps.json content (see the app repo's apps-example.json)
   IMAGE: ""                       # default below; must carry @sha256:
   APP_REPO: ""                    # default https://github.com/smilinTux/skpayments.git
-  APP_REF: ""                     # default 17b00804c204f9cd371938c701bd63039b0d1c8b
-  APP_SHA256: ""                  # default c957335b6f910b81870b1dc229a294be8a40f1cc935688801193e00a98f83ff8
+  APP_REF: ""                     # default d3138a22b8b24553ebf552fed7315c8d413cd399 (v1.1.0)
+  APP_SHA256: ""                  # default 5a88f86bf6b22ba991568152cd3341d80afa67e003478787fb7eaa1186093d8e
   DATA_PATH: ""                   # default /var/data/skpayment-<env>/data (SQLite, bound at /data)
   DATA_NODE: ""                   # pin the service to this node (required with a local DATA_PATH)
   MIDDLEWARES: ""                 # default default-no-crowdsec@file (see "CrowdSec" below)
@@ -68,10 +68,24 @@ skpayment:
 | Key | Default | Notes |
 |---|---|---|
 | `IMAGE` | `ghcr.io/open-webui/open-webui:main@sha256:74093dad...` | Used only as a Python base with fastapi/uvicorn/httpx, the same image digest the hand-deployed gateway ran. Any digest-pinned image with Python 3.10+ and those three packages works; a small dedicated image would pull far less (about 1.7 GB compressed for this one). The deploy refuses an image without `@sha256:`. The image's own HEALTHCHECK probes :8080, which nothing serves here, so the service sets its own on `:8000/health`. |
-| `APP_REF` / `APP_SHA256` | the app repo's first release commit and its file hash | Both are required in effect: the ref says where, the hash proves what. |
+| `APP_REF` / `APP_SHA256` | the app repo's `v1.1.0` commit and its file hash | Both are required in effect: the ref says where, the hash proves what. Before v2.26.6 the default was the first release (`17b0080`), which accepted unsigned webhooks when `STRIPE_WEBHOOK_SECRET` was empty. |
+| `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | none | Both set, or both empty ("Stripe not configured", below). One without the other is refused. |
 | `DATA_PATH` / `DATA_NODE` | shared storage, floating | SQLite over NFS works for this write volume (a few rows per subscription event). For local disk set both; the play stops on a local `DATA_PATH` without `DATA_NODE`, same rule as skgraph/skvector. |
 | `TLS_OPTIONS` | `intermediate@file` (sniStrict) | A file-provider TLS option. `none` omits the label, so the router gets Traefik's default TLS options (the built-in option named `default` cannot be referenced as `default@file`: Traefik rejects the router with "unknown TLS options"). With sniStrict, a host without a certificate fails the handshake (a lab without ACME). |
 | `HOSTNAME` | `skpayment[-env].<base domain>` | `<base domain>` is `DOMAIN` with `CLOUDFLARED: true`, else `CLUSTERNAME.DOMAIN` (the same expressions the skhub routers use since v2.26.3). The gateway's `BASE_URL` is `https://<HOSTNAME>`. |
+
+### Stripe not configured
+
+With both Stripe secrets empty (or absent) the gateway still deploys and
+starts: `/health` answers 200 with `"stripe_configured": false`, `/status`
+works, `/checkout/<app>` and `/portal/<app>` answer 503 "Stripe not
+configured", and `/webhook/stripe` answers 503 to EVERY request, signed or
+not. Use it to stand the gateway up before a Stripe account exists, instead
+of placeholder keys. The deploy refuses this mode when `APP_REF`/`APP_SHA256`
+pin the first app release (`17b0080`), whose code ACCEPTED unsigned webhooks
+without a webhook secret (anyone could have posted
+`checkout.session.completed` and been granted a tier). From v1.1.0 the app
+also refuses signed events older than 5 minutes (replays).
 
 Secrets: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` and every
 `APPS.<app>.litellm_master_key` are secrets. They are only written to the two
@@ -97,8 +111,9 @@ database in a named volume bound to `/var/data/skpayment`, config at
 `/var/data/config/skpayment/apps.json`) maps onto this role as:
 
 - `HOSTNAME: pay.<domain>`, `MIDDLEWARES: default-no-crowdsec@file` (default),
-  `APP_REF`/`APP_SHA256` (defaults: the deployed file hashes to the default
-  `APP_SHA256`; check with `sha256sum` before deploying);
+  `APP_REF`/`APP_SHA256` (defaults: v1.1.0. The hand-deployed file is the
+  first release, `17b0080`, sha256 `c957335b...`; check with `sha256sum`.
+  The default upgrades it to v1.1.0, which rejects unverified webhooks);
 - `APPS`: the current `apps.json` content, moved into the vault;
 - the database: either `DATA_PATH: /var/data/skpayment` (keeps the file where
   it is; `skpayment.db` lives directly in it) or copy `skpayment.db` into
