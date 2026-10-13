@@ -150,7 +150,11 @@ another proxy (a Cloudflare tunnel or proxied DNS record) the connection
 comes from the proxy: set `WEBHOOK_IP_STRATEGY_DEPTH` to the position of the
 real client in `X-Forwarded-For` counted from the right (usually `1` behind
 one proxy), and only when Traefik's entrypoint trusts that proxy's forwarded
-headers; otherwise every webhook is refused with 403. Verify with a Stripe
+headers; otherwise every webhook is refused with 403. Behind a Cloudflare
+tunnel (cloudflared) the real caller may only arrive in `Cf-Connecting-Ip`,
+which `ipAllowList` cannot read, and Traefik sees the tunnel's own address:
+leave the allowlist off there. The same applies to CrowdSec itself: the
+bouncer can only ban the address Traefik passes it. Verify with a Stripe
 test-mode event after enabling.
 
 ## Migrating a hand-deployed gateway
