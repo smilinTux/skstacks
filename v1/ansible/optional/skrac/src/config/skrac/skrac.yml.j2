@@ -33,6 +33,9 @@ services:
     volumes:
       - {{ skr_data_path }}:/opt/meshcentral/meshcentral-data
       - {{ skr_files_path }}:/opt/meshcentral/meshcentral-files
+{% if skr_extra_ca %}
+      - /var/data/config/skrac-{{ env }}/extra-ca.pem:/opt/meshcentral/extra-ca.pem:ro
+{% endif %}
     # /health.ashx is the image's own unauthenticated probe endpoint; node
     # is always present (it is the entrypoint), so the healthcheck needs no
     # curl/wget that a slimmer base image might drop.
@@ -42,6 +45,17 @@ services:
       timeout: {{ hc_timeout }}
       retries: {{ hc_retries }}
       start_period: {{ hc_start }}
+{% if skr_extra_ca %}
+    environment:
+      NODE_EXTRA_CA_CERTS: /opt/meshcentral/extra-ca.pem
+{% endif %}
+{% if skr_auth_mode == 'oidc' and skr_sso_host_ip %}
+    # MeshCentral fetches the OIDC discovery document, the token and the
+    # userinfo from the issuer host itself: pin it to SSO_HOST_IP (the edge)
+    # when that name does not resolve from inside the cluster.
+    extra_hosts:
+      - "{{ skrac.OIDC_ISSUER | urlsplit('hostname') }}:{{ skr_sso_host_ip }}"
+{% endif %}
     networks:
       - skrac-{{ env }}
       - cloud-public-{{ env }}

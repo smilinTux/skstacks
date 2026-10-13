@@ -68,6 +68,8 @@
         skr_data_node: "{{ skrac.DATA_NODE | default('', true) | string }}"
         skr_middlewares: "{{ skrac.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file', true) }}"
         skr_sso_middleware: "{{ skrac.SSO_MIDDLEWARE | default('', true) | string }}"
+        skr_sso_host_ip: "{{ skrac.SSO_HOST_IP | default('', true) | string }}"
+        skr_extra_ca: "{{ skrac.EXTRA_CA_CERT | default('', true) | string }}"
         skr_tls_options: "{{ skrac.TLS_OPTIONS | default('intermediate@file', true) }}"
         skr_internal_port: "{{ skrac.INTERNAL_PORT | default(4430, true) | int }}"
         skr_auth_mode: "{{ skrac.AUTH_MODE | default('local', true) | lower }}"
@@ -113,7 +115,7 @@
       # AUTH_MODE: local is the standalone path (MeshCentral accounts, no
       # SSO, no Authentik objects). A vault that says local but also asks
       # for Authentik provisioning, the forward-auth gate, the OIDC
-      # redirect or OIDC credentials contradicts itself: refuse it and name
+      # redirect, SSO_HOST_IP or OIDC credentials contradicts itself: refuse it and name
       # the keys instead of silently ignoring half of it. LOCAL_LOGIN_HIDDEN
       # in local mode would hide the only login there is. Only key NAMES
       # are collected, never values.
@@ -121,6 +123,7 @@
         skr_local_conflicts: >-
           {{ ([] if not (skrac.AUTHENTIK_PROVISION | default(false) | bool) else ['AUTHENTIK_PROVISION'])
              + ([] if not skr_sso_middleware else ['SSO_MIDDLEWARE'])
+             + ([] if not skr_sso_host_ip else ['SSO_HOST_IP'])
              + ([] if not (skrac.OIDC_AUTO_REDIRECT | default(false, true) | bool) else ['OIDC_AUTO_REDIRECT'])
              + ([] if not (skrac.LOCAL_LOGIN_HIDDEN | default(false, true) | bool) else ['LOCAL_LOGIN_HIDDEN'])
              + (['OIDC_ISSUER', 'OIDC_CLIENT_ID', 'OIDC_CLIENT_SECRET']
@@ -147,9 +150,11 @@
         that:
           - "'@sha256:' in skr_image"
           - skr_host is match('^[A-Za-z0-9][A-Za-z0-9.-]*$')
+          - (not skr_sso_host_ip) or (skr_sso_host_ip is match('^[0-9A-Fa-f.:]+$'))
         fail_msg: >-
-          ERROR: skrac.MESHCENTRAL_IMAGE must be pinned by digest (@sha256:)
-          and HOSTNAME (or CLUSTERNAME/DOMAIN) must be a plain host name.
+          ERROR: skrac.MESHCENTRAL_IMAGE must be pinned by digest (@sha256:),
+          HOSTNAME (or CLUSTERNAME/DOMAIN) must be a plain host name and
+          SSO_HOST_IP, when set, a plain IP address.
           MESHCENTRAL_IMAGE is {{ skr_image }}, host is {{ skr_host }}.
         quiet: true
       tags: [config]
@@ -253,6 +258,20 @@
       delegate_to: "{{ skrac.DATA_NODE | default(inventory_hostname, true) if not skr_data_path.startswith('/var/data/') else inventory_hostname }}"
       tags: [templates, config]
 
+    - name: Write the CA the server trusts for HTTPS to the IdP (skrac.EXTRA_CA_CERT)
+      # A private CA in front of sksso (lab/test edges). Node reads it via
+      # NODE_EXTRA_CA_CERTS in addition to its own bundle. A public cert,
+      # not a secret.
+      copy:
+        content: "{{ skr_extra_ca }}"
+        dest: "/var/data/config/{{ app }}-{{ env }}/extra-ca.pem"
+        owner: root
+        group: root
+        mode: '0644'
+      register: skrac_extra_ca
+      when: skr_extra_ca | length > 0
+      tags: [templates, config]
+
     - name: Install the backup script
       # Copied verbatim (sh, run by the backup sidecar): no Jinja in it.
       copy:
@@ -312,7 +331,7 @@
       # restarts the services that read them when the play changed one.
       shell: |
         cd /var/data/{{ app }}-{{ env }}
-        RESTART_SERVER={{ '1' if (skrac_config is changed) else '0' }} RESTART_BACKUP={{ '1' if skrac_backup_script is changed else '0' }} ./deploy
+        RESTART_SERVER={{ '1' if (skrac_config is changed or skrac_extra_ca is changed) else '0' }} RESTART_BACKUP={{ '1' if skrac_backup_script is changed else '0' }} ./deploy
       register: deploy_output
       tags: [deploy]
 

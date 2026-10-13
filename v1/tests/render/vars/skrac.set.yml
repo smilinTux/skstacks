@@ -16,6 +16,8 @@ skrac:
   TRUSTED_PROXY_CIDR: "192.0.2.0/24"
   AUTH_MODE: "oidc"
   OIDC_ISSUER: "https://sso.example.test/application/o/skrac/"
+  SSO_HOST_IP: "192.0.2.10"
+  EXTRA_CA_CERT: "-----BEGIN CERTIFICATE-----\nZXhhbXBsZQ==\n-----END CERTIFICATE-----\n"
   OIDC_CLIENT_ID: "example-oidc-client-id"
   OIDC_CLIENT_SECRET: "example-oidc-client-secret-0123456789"
   OIDC_GROUP_CLAIM: "groups"

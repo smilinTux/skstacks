@@ -102,6 +102,16 @@ below is a separate, optional, extra layer, off by default).
    if it doesn't.
 2. Set `OIDC_ISSUER` to that application's issuer URL, typically
    `https://<sso host>/application/o/<app slug>/`.
+   MeshCentral itself fetches the discovery document, the token and the
+   userinfo from that host when it starts and on every login: if the
+   name does not resolve from inside the cluster, set `SSO_HOST_IP` (the
+   edge's IP, rendered as an `extra_hosts` entry for the issuer host), and
+   if the IdP sits behind a private CA, put that CA's PEM in
+   `EXTRA_CA_CERT` (mounted read-only and loaded through
+   `NODE_EXTRA_CA_CERTS`). Neither is needed with public DNS and a public
+   certificate. If discovery fails at startup MeshCentral disables OIDC
+   for the domain and logs `OIDC: Discovery failed`; fix the reachability
+   and restart the server.
 3. `OIDC_GROUP_CLAIM` (default `groups`) and `OIDC_ADMIN_GROUP` (default
    `skadmin`, the SKStacks admin-group convention) map an Authentik
    group onto MeshCentral's site-admin role via the id token's groups
@@ -134,7 +144,8 @@ becomes the site admin.
 
 **Contradictory configs are refused.** In `AUTH_MODE: local` the play fails
 before touching anything, naming the offending keys, when the vault also
-sets any of `AUTHENTIK_PROVISION: true`, a non-empty `SSO_MIDDLEWARE`,
+sets any of `AUTHENTIK_PROVISION: true`, a non-empty `SSO_MIDDLEWARE` or
+`SSO_HOST_IP`,
 `OIDC_AUTO_REDIRECT: true`, `LOCAL_LOGIN_HIDDEN: true` (it would hide the
 only login there is), or a non-empty `OIDC_ISSUER` / `OIDC_CLIENT_ID` /
 `OIDC_CLIENT_SECRET` (only the key name is ever printed). Those keys only
@@ -281,6 +292,8 @@ skrac:
   OIDC_ISSUER: ""                           # required if AUTH_MODE: oidc
   OIDC_CLIENT_ID: ""                        # required if AUTH_MODE: oidc
   OIDC_CLIENT_SECRET: ""                    # required (16+ chars) if AUTH_MODE: oidc; secret, no_log
+  SSO_HOST_IP: ""                           # oidc only: pin the OIDC_ISSUER host to this IP (extra_hosts), e.g. the edge
+  EXTRA_CA_CERT: ""                         # PEM of a private CA in front of the IdP (NODE_EXTRA_CA_CERTS); public, not a secret
   OIDC_GROUP_CLAIM: groups
   OIDC_ADMIN_GROUP: skadmin
   OIDC_NEW_ACCOUNTS: true

@@ -111,6 +111,8 @@ def test_default_services_and_single_server_replica(base_out):
     assert server["networks"] == ["skrac-prod", "cloud-public-prod"]
     assert backup["healthcheck"] == {"disable": True}
     assert backup["entrypoint"] == ["/bin/sh", "/usr/local/bin/skrac-backup"] and backup["command"] == ["loop"]
+    assert "extra_hosts" not in server and "environment" not in server
+    assert not (base_out / "_copy/var/data/config/skrac-prod/extra-ca.pem").exists()
 
 
 def test_default_router_splits_agent_paths_from_everything_else(base_out):
@@ -183,6 +185,26 @@ def test_set_pass_oidc_strategy_and_group_claim(set_out):
     assert cfg["settings"]["wsCompression"] is True  # EXTRA_CONFIG merge
 
 
+def test_set_pass_reaches_the_issuer_by_sso_host_ip_and_trusts_the_extra_ca(set_out):
+    server = compose(set_out)["services"]["server"]
+    assert server["extra_hosts"] == ["sso.example.test:192.0.2.10"]
+    assert server["environment"] == {"NODE_EXTRA_CA_CERTS": "/opt/meshcentral/extra-ca.pem"}
+    assert "/var/data/config/skrac-prod/extra-ca.pem:/opt/meshcentral/extra-ca.pem:ro" in server["volumes"]
+    assert (set_out / "_copy/var/data/config/skrac-prod/extra-ca.pem").read_text() == SET["EXTRA_CA_CERT"]
+
+
+def test_extra_ca_alone_is_fine_in_local_mode(tmp_path):
+    server = compose(ok(tmp_path, BASE | {"EXTRA_CA_CERT": SET["EXTRA_CA_CERT"]}))["services"]["server"]
+    assert server["environment"] == {"NODE_EXTRA_CA_CERTS": "/opt/meshcentral/extra-ca.pem"}
+    assert "extra_hosts" not in server
+
+
+def test_bad_sso_host_ip_fails(tmp_path):
+    vault = BASE | {k: SET[k] for k in ("AUTH_MODE", "OIDC_ISSUER", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET")}
+    log = fails(tmp_path, vault | {"SSO_HOST_IP": "sso.example.test; rm -rf /"})
+    assert "SSO_HOST_IP, when set, a plain IP address" in log
+
+
 def test_set_pass_splits_the_router_and_sso_never_reaches_agent(set_out):
     lab = labels(compose(set_out)["services"]["server"])
     assert lab["traefik.http.routers.skrac.middlewares"] == "crowdsec-bouncer@file,default@file,authentik@file"
@@ -212,7 +234,7 @@ def test_backup_disabled_removes_the_sidecar_only(tmp_path):
 def test_empty_knobs_render_like_unset(tmp_path, base_out):
     empty = {k: "" for k in ("HOSTNAME", "MESHCENTRAL_IMAGE", "DATA_PATH", "FILES_PATH", "BACKUP_PATH",
                              "DATA_NODE", "TRAEFIK_MIDDLEWARES", "AGENT_TRAEFIK_MIDDLEWARES",
-                             "SSO_MIDDLEWARE", "TLS_OPTIONS")}
+                             "SSO_MIDDLEWARE", "TLS_OPTIONS", "SSO_HOST_IP", "EXTRA_CA_CERT")}
     out = ok(tmp_path, BASE | empty)
     assert (out / "var/data/config/skrac-prod/skrac.yml").read_text() == \
         (base_out / "var/data/config/skrac-prod/skrac.yml").read_text()
@@ -246,6 +268,7 @@ SECRET = "example-oidc-client-secret-0123456789"
 @pytest.mark.parametrize("extra,keys", [
     ({"AUTHENTIK_PROVISION": True}, ["AUTHENTIK_PROVISION"]),
     ({"SSO_MIDDLEWARE": "authentik@file"}, ["SSO_MIDDLEWARE"]),
+    ({"SSO_HOST_IP": "192.0.2.10"}, ["SSO_HOST_IP"]),
     ({"OIDC_AUTO_REDIRECT": True}, ["OIDC_AUTO_REDIRECT"]),
     ({"LOCAL_LOGIN_HIDDEN": True}, ["LOCAL_LOGIN_HIDDEN"]),
     ({"OIDC_ISSUER": "https://sso.example.test/application/o/skrac/"}, ["OIDC_ISSUER"]),
@@ -253,7 +276,7 @@ SECRET = "example-oidc-client-secret-0123456789"
     ({"OIDC_CLIENT_SECRET": SECRET}, ["OIDC_CLIENT_SECRET"]),
     ({"AUTHENTIK_PROVISION": True, "SSO_MIDDLEWARE": "authentik@file"},
      ["AUTHENTIK_PROVISION", "SSO_MIDDLEWARE"]),
-], ids=["provision", "forward-auth", "auto-redirect", "login-hidden", "issuer", "client-id",
+], ids=["provision", "forward-auth", "sso-host-ip", "auto-redirect", "login-hidden", "issuer", "client-id",
         "client-secret", "provision+forward-auth"])
 @pytest.mark.parametrize("explicit", [True, False], ids=["explicit-local", "default-local"])
 def test_local_mode_refuses_sso_settings_and_names_the_keys(tmp_path, extra, keys, explicit):
@@ -265,7 +288,7 @@ def test_local_mode_refuses_sso_settings_and_names_the_keys(tmp_path, extra, key
 
 
 def test_local_mode_accepts_sso_keys_that_are_empty_or_off(tmp_path, base_out):
-    off = {"AUTH_MODE": "local", "AUTHENTIK_PROVISION": False, "SSO_MIDDLEWARE": "",
+    off = {"AUTH_MODE": "local", "AUTHENTIK_PROVISION": False, "SSO_MIDDLEWARE": "", "SSO_HOST_IP": "",
            "OIDC_AUTO_REDIRECT": False, "LOCAL_LOGIN_HIDDEN": False,
            "OIDC_ISSUER": "", "OIDC_CLIENT_ID": "", "OIDC_CLIENT_SECRET": ""}
     out = ok(tmp_path, BASE | off)
