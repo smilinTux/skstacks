@@ -1,0 +1,6 @@
+# Public, obviously fake example vault for the real-Ansible render gate
+# (v1/tests/render/render_playbooks.py). example.test only; no real secrets.
+# Base pass: AUTH_MODE unset = local.
+skrac:
+  CLUSTERNAME: render
+  DOMAIN: example.test
