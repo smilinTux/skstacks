@@ -1,0 +1,100 @@
+# skrac AUTH_MODE: oidc, AUTHENTIK_PROVISION: true (opt-in, default off).
+# Create or update, idempotently, what MeshCentral needs on the cluster's
+# sksso (Authentik): an OAuth2/OIDC provider plus an application, with the
+# vault's own OIDC_CLIENT_ID/OIDC_CLIENT_SECRET set as the provider's
+# client id/secret, so the vault and Authentik can never drift apart.
+#
+# Uses the Authentik admin API with sksso's automation token
+# (sksso.api_token in sksso's vault; bootstrap it once per cluster with
+# sksso's src/sksso/ensure-api-token.sh). The provisioner runs in a
+# throwaway container on sksso's overlay network against sksso's server
+# directly, so it needs neither public DNS nor the edge certificate. Every
+# secret goes in on stdin; nothing secret is logged.
+#
+# This is a convenience on top of the primary, supported path: creating
+# the provider and application by hand in the Authentik UI and copying the
+# generated client id/secret into the skrac vault (README.md "Sign-in, SSO
+# and the first admin"). Leave AUTHENTIK_PROVISION unset or false to use
+# that path instead; nothing in this file runs then.
+
+- name: Locate sksso's vault (holds sksso.api_token)
+  set_fact:
+    skrac_sksso_vault_file: >-
+      {{ skrac.AUTHENTIK_VAULT_FILE | default((vault_file_path | dirname) ~ '/'
+         ~ (vault_file_path | basename | regex_replace('^skrac-', 'sksso-'))) }}
+
+- name: Load sksso's vault
+  include_vars:
+    file: "{{ skrac_sksso_vault_file }}"
+    name: skrac_sksso_vault
+  no_log: true
+
+- name: Check that sksso's vault carries the Authentik automation token
+  assert:
+    that:
+      - (skrac_sksso_vault.sksso.api_token | default('') | string | length) >= 32
+    fail_msg: >-
+      sksso.api_token (32+ chars) is missing from {{ skrac_sksso_vault_file }}.
+      Generate it (openssl rand -hex 32), add it to sksso's vault, and register it in
+      Authentik once with sksso's src/sksso/ensure-api-token.sh (see the sksso README).
+    quiet: true
+
+- name: Build the Authentik provisioner input
+  set_fact:
+    skrac_authentik_input:
+      url: "{{ skrac.AUTHENTIK_INTERNAL_URL | default('http://sksso-' ~ env ~ '_server:9000') }}"
+      host: "{{ skrac_sso_host }}"
+      token: "{{ skrac_sksso_vault.sksso.api_token }}"
+      client_id: "{{ skrac.OIDC_CLIENT_ID }}"
+      client_secret: "{{ skrac.OIDC_CLIENT_SECRET }}"
+      provider_name: "{{ skrac.AUTHENTIK_APP_SLUG | default('skrac') }}"
+      app_name: "{{ skrac.AUTHENTIK_APP_NAME | default('SKRac') }}"
+      app_slug: "{{ skrac.AUTHENTIK_APP_SLUG | default('skrac') }}"
+      launch_url: "https://{{ skr_host }}/"
+      redirect_uris:
+        - "https://{{ skr_host }}/auth-oidc-callback"
+      authorization_flow: "{{ skrac.AUTHENTIK_AUTHORIZATION_FLOW | default('default-provider-authorization-implicit-consent') }}"
+      invalidation_flow: "{{ skrac.AUTHENTIK_INVALIDATION_FLOW | default('default-provider-invalidation-flow') }}"
+      signing_key: "{{ skrac.AUTHENTIK_SIGNING_KEY | default('authentik Self-signed Certificate') }}"
+  vars:
+    skrac_sso_host: "{{ skrac.SSO_HOST | default('sso' ~ ('' if env == 'prod' else '-' ~ env) ~ '.' ~ skr_base_domain) }}"
+  no_log: true
+
+- name: Stage the Authentik provisioner
+  copy:
+    src: "{{ playbook_dir }}/src/{{ app }}/authentik_provision.py"
+    dest: "/var/data/config/{{ app }}-{{ env }}/authentik_provision.py"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Create or update the skrac provider and application in Authentik
+  command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - -i
+      - --network
+      - "{{ skrac.AUTHENTIK_NETWORK | default('sksso-' ~ env) }}"
+      - -v
+      - "/var/data/config/{{ app }}-{{ env }}/authentik_provision.py:/authentik_provision.py:ro"
+      - "{{ skrac.PROVISIONER_IMAGE | default('python:3.13.15-alpine@sha256:79e7a9b9ff1cbceff819f856fb374477792a5967759d94df266de7b7b4120e6f') }}"
+      - python
+      - /authentik_provision.py
+    stdin: "{{ skrac_authentik_input | to_json }}"
+  register: skrac_authentik_provision
+  changed_when: "'created' in skrac_authentik_provision.stdout or 'updated (' in skrac_authentik_provision.stdout"
+  failed_when: false
+  no_log: true
+
+# The provisioner prints status lines only (never a secret), so its output
+# is safe to show; the task above is no_log because its stdin is secret.
+- name: Show the Authentik provisioner result
+  debug:
+    msg: "{{ (skrac_authentik_provision.stdout_lines | default([])) + (skrac_authentik_provision.stderr_lines | default([])) }}"
+
+- name: Fail if Authentik provisioning failed
+  fail:
+    msg: "Authentik provisioning failed (rc={{ skrac_authentik_provision.rc | default('?') }}), see the lines above"
+  when: (skrac_authentik_provision.rc | default(1)) != 0

@@ -11,12 +11,13 @@ skgym:
   WEB_PLACEMENT_CONSTRAINTS: ["node.role == manager"]
   WEB_REPLICAS: 2
   TRAEFIK_MIDDLEWARES: "crowdsec-bouncer@file,default@file"
+  AUTH_MODE: sso
   SSO_MIDDLEWARE: "authentik@file"
   TLS_OPTIONS: "none"
   RP_NAME: "Example Gym"
   FIRST_USER_ADMIN: false
   ADMIN_UIDS: "exampleuid1,exampleuid2"
-  INVITE_ONLY: true
+  SIGNUP: open
   ALLOW_GUEST: false
   PASSWORD_LOGIN: true
   DEFAULT_LANG: "pt-BR"

@@ -1,0 +1,171 @@
+version: '3.8'
+
+# skrac: MeshCentral (remote access/management), upstream image pinned by
+# digest (README.md). One service, `server`, holds everything (NeDB
+# database, certificates, agent connections) under one data directory; a
+# `backup` sidecar (same image, no extra pull) archives it on a schedule.
+# Traefik terminates TLS (Let's Encrypt, like every other optional service)
+# and forwards plain HTTP to `server`; `server` is told the real external
+# port and the proxy it must trust (TLSOffload/TrustedProxy) and where to
+# fetch the certificate MeshAgents actually see (certUrl), so agent
+# connections and cert-hash pinning both work through the edge. The
+# agent-facing paths (/agent.ashx, /meshrelay.ashx, /meshagents,
+# /meshsettings.ashx, /devicefile.ashx, /health.ashx) get their OWN router
+# that never carries SSO_MIDDLEWARE (Authentik forward-auth would break
+# every agent and the installer download); everything else (the web UI,
+# login, the OIDC callback) goes through the normal router.
+{% set hc_interval = skrac.HEALTH_CHECK_INTERVAL | default('30s', true) %}
+{% set hc_timeout = skrac.HEALTH_CHECK_TIMEOUT | default('10s', true) %}
+{% set hc_retries = skrac.HEALTH_CHECK_RETRIES | default(3, true) | int %}
+{% set hc_start = skrac.HEALTH_CHECK_START_PERIOD | default('30s', true) %}
+{% set data_constraints = (skrac.PLACEMENT_CONSTRAINTS | default(['node.role == worker'], true)) + (['node.hostname == ' + skr_data_node] if skr_data_node else []) %}
+
+networks:
+  cloud-public-{{ env }}:
+    external: true
+  skrac-{{ env }}:
+    external: true
+
+services:
+  server:
+    # Default = skr_default_image in the playbook (a test keeps them equal).
+    image: {{ skrac.MESHCENTRAL_IMAGE | default('ghcr.io/ylianst/meshcentral:1.2.6@sha256:09c5abfcf0758f2a7ab9b43fa8acb838b92bba1498c1447fc8c09bb1d296b73e', true) }}
+    volumes:
+      - {{ skr_data_path }}:/opt/meshcentral/meshcentral-data
+      - {{ skr_files_path }}:/opt/meshcentral/meshcentral-files
+{% if skr_extra_ca %}
+      - /var/data/config/skrac-{{ env }}/extra-ca.pem:/opt/meshcentral/extra-ca.pem:ro
+{% endif %}
+    # /health.ashx is the image's own unauthenticated probe endpoint; node
+    # is always present (it is the entrypoint), so the healthcheck needs no
+    # curl/wget that a slimmer base image might drop.
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get({host:'127.0.0.1',port:{{ skr_internal_port }},path:'/health.ashx',timeout:5000},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1)).on('timeout',()=>process.exit(1))\""]
+      interval: {{ hc_interval }}
+      timeout: {{ hc_timeout }}
+      retries: {{ hc_retries }}
+      start_period: {{ hc_start }}
+{% if skr_extra_ca %}
+    environment:
+      NODE_EXTRA_CA_CERTS: /opt/meshcentral/extra-ca.pem
+{% endif %}
+{% if skr_auth_mode == 'oidc' and skr_sso_host_ip %}
+    # MeshCentral fetches the OIDC discovery document, the token and the
+    # userinfo from the issuer host itself: pin it to SSO_HOST_IP (the edge)
+    # when that name does not resolve from inside the cluster.
+    extra_hosts:
+      - "{{ skrac.OIDC_ISSUER | urlsplit('hostname') }}:{{ skr_sso_host_ip }}"
+{% endif %}
+    networks:
+      - skrac-{{ env }}
+      - cloud-public-{{ env }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    deploy:
+      mode: replicated
+      # Exactly one: NeDB (the default database) is a single-writer file,
+      # and the generated agent root certificate lives in this one data dir.
+      replicas: 1
+      placement:
+        constraints: {{ data_constraints | tojson }}
+      resources:
+        limits:
+          cpus: '{{ skrac.SERVER_CPUS | default("1.00", true) }}'
+          memory: {{ skrac.SERVER_MEMORY_LIMIT | default("768M", true) }}
+        reservations:
+          memory: {{ skrac.SERVER_MEMORY_RESERVATION | default("128M", true) }}
+      # stop-first (the default): two server tasks on one NeDB file would
+      # corrupt it, and agents would bounce between two different sessions.
+      update_config:
+        order: stop-first
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skrac"
+        - "com.skt.env={{ env }}"
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        # Agent/installer paths: no SSO_MIDDLEWARE, ever (requirement: a
+        # forward-auth in front of these breaks every agent and the
+        # install-script download, which carry no browser session).
+        - "traefik.http.routers.{{ skr_router }}-agent.rule=Host(`{{ skr_host }}`) && (PathPrefix(`/agent.ashx`) || PathPrefix(`/meshrelay.ashx`) || PathPrefix(`/meshagents`) || PathPrefix(`/meshsettings.ashx`) || PathPrefix(`/devicefile.ashx`) || PathPrefix(`/health.ashx`))"
+        - "traefik.http.routers.{{ skr_router }}-agent.entrypoints=websecure"
+        - "traefik.http.routers.{{ skr_router }}-agent.tls=true"
+        - "traefik.http.routers.{{ skr_router }}-agent.tls.certresolver=main"
+{% if skr_tls_options != 'none' %}
+        - "traefik.http.routers.{{ skr_router }}-agent.tls.options={{ skr_tls_options }}"
+{% endif %}
+        - "traefik.http.routers.{{ skr_router }}-agent.priority=100"
+        - "traefik.http.routers.{{ skr_router }}-agent.middlewares={{ skr_agent_middlewares }}"
+        - "traefik.http.routers.{{ skr_router }}-agent.service={{ skr_router }}"
+        # Everything else: the web UI, login (local and the OIDC callback),
+        # the REST API. TRAEFIK_MIDDLEWARES + the optional SSO_MIDDLEWARE
+        # (an extra forward-auth layer on top of MeshCentral's own OIDC
+        # login; off by default, see README "Sign-in, SSO and the first
+        # admin").
+        - "traefik.http.routers.{{ skr_router }}.rule=Host(`{{ skr_host }}`)"
+        - "traefik.http.routers.{{ skr_router }}.entrypoints=websecure"
+        - "traefik.http.routers.{{ skr_router }}.tls=true"
+        - "traefik.http.routers.{{ skr_router }}.tls.certresolver=main"
+{% if skr_tls_options != 'none' %}
+        - "traefik.http.routers.{{ skr_router }}.tls.options={{ skr_tls_options }}"
+{% endif %}
+        # 5: above skfenceha's per-domain catch-alls (priority 1, error
+        # pages; a tie loses to them), below the agent router (100).
+        - "traefik.http.routers.{{ skr_router }}.priority=5"
+        - "traefik.http.routers.{{ skr_router }}.middlewares={{ skr_middlewares }}{{ ',' + skr_sso_middleware if skr_sso_middleware else '' }}"
+        - "traefik.http.routers.{{ skr_router }}.service={{ skr_router }}"
+        - "traefik.http.services.{{ skr_router }}.loadbalancer.server.port={{ skr_internal_port }}"
+        - "traefik.http.services.{{ skr_router }}.loadbalancer.server.scheme=http"
+        - "traefik.http.services.{{ skr_router }}.loadbalancer.healthcheck.path=/health.ashx"
+        - "traefik.http.services.{{ skr_router }}.loadbalancer.healthcheck.interval=30s"
+        - "traefik.http.services.{{ skr_router }}.loadbalancer.healthcheck.timeout=10s"
+
+{% if skrac.BACKUP_ENABLED | default(true) | bool %}
+  backup:
+    image: {{ skrac.MESHCENTRAL_IMAGE | default('ghcr.io/ylianst/meshcentral:1.2.6@sha256:09c5abfcf0758f2a7ab9b43fa8acb838b92bba1498c1447fc8c09bb1d296b73e', true) }}
+    entrypoint: ["/bin/sh", "/usr/local/bin/skrac-backup"]
+    command: ["loop"]
+    environment:
+      BACKUP_FREQUENCY: "{{ skrac.BACKUP_FREQUENCY | default(86400, true) | int }}"
+      BACKUP_KEEP_DAYS: "{{ skrac.BACKUP_KEEP_DAYS | default(7, true) | int }}"
+      BACKUP_START_DELAY: "{{ skrac.BACKUP_START_DELAY | default(60) | int }}"
+      SKRAC_BACKUP_INCLUDE_FILES: "{{ '1' if skrac.BACKUP_INCLUDE_FILES | default(false) | bool else '0' }}"
+    volumes:
+      - {{ skr_data_path }}:/opt/meshcentral/meshcentral-data:ro
+      - {{ skr_files_path }}:/opt/meshcentral/meshcentral-files:ro
+      - {{ skr_backup_path }}:/backup
+      - /var/data/skrac-{{ env }}/bin/skrac-backup:/usr/local/bin/skrac-backup:ro
+    # The image's own HEALTHCHECK probes the server on its HTTP port, which
+    # this container does not run.
+    healthcheck:
+      disable: true
+    networks:
+      - skrac-{{ env }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 4m
+        max-file: "2"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: {{ data_constraints | tojson }}
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          memory: 16M
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skrac"
+        - "com.skt.env={{ env }}"
+{% endif %}
