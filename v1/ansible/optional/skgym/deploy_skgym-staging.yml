@@ -80,8 +80,23 @@
         skg_data_path: "{{ skgym.DATA_PATH | default('/var/data/' + app + '-' + env + '/data', true) }}"
         skg_data_node: "{{ skgym.DATA_NODE | default('', true) | string }}"
         skg_backup_path: "{{ skgym.BACKUP_PATH | default('/var/data/' + app + '-' + env + '/backup', true) }}"
-        skg_middlewares: "{{ skgym.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file', true) }}"
-        skg_sso_middleware: "{{ skgym.SSO_MIDDLEWARE | default('', true) | string }}"
+        # default-no-error-pages@file: skfenceha's error-pages middleware would
+        # replace openGym's JSON error bodies (403 invite, 409 name-taken, ...).
+        skg_middlewares: "{{ skgym.TRAEFIK_MIDDLEWARES | default('default-no-error-pages@file', true) }}"
+        # AUTH_MODE sso (default): Authentik forward auth (SSO_MIDDLEWARE,
+        # default authentik@file) on the app shell; none: openGym's own
+        # accounts only, no SSO_MIDDLEWARE allowed.
+        skg_auth_mode: "{{ skgym.AUTH_MODE | default('sso', true) | string | lower }}"
+        skg_sso_middleware: "{{ (skgym.SSO_MIDDLEWARE | default('', true) | string) if (skgym.AUTH_MODE | default('sso', true) | string | lower) != 'sso' else (skgym.SSO_MIDDLEWARE | default('authentik@file', true) | string) }}"
+        # SIGNUP auto (default): self-signup open while openGym has no
+        # profile (the first one becomes the admin), invite-only from the
+        # first deploy after one exists. The pre-SIGNUP key INVITE_ONLY still
+        # maps (true = invite, false = open) but not together with SIGNUP.
+        skg_signup: >-
+          {{ (skgym.SIGNUP | string | lower) if (skgym.SIGNUP | default('', true) | string | length > 0)
+             else ('invite' if (skgym.INVITE_ONLY | bool) else 'open') if (skgym.INVITE_ONLY is defined and skgym.INVITE_ONLY is not none and skgym.INVITE_ONLY | string | length > 0)
+             else 'auto' }}
+        skg_signup_conflict: "{{ (skgym.SIGNUP | default('', true) | string | length > 0) and (skgym.INVITE_ONLY is defined and skgym.INVITE_ONLY is not none and skgym.INVITE_ONLY | string | length > 0) }}"
         skg_tls_options: "{{ skgym.TLS_OPTIONS | default('intermediate@file', true) }}"
         skg_router: "skgym{{ '' if env == 'prod' else '-' + env }}"
       tags: [config]
@@ -103,6 +118,40 @@
           (@sha256:), HOSTNAME (or CLUSTERNAME/DOMAIN) must be a plain host name
           and WEB_REPLICAS at least 1. API_IMAGE is {{ skg_api_image }},
           WEB_IMAGE is {{ skg_web_image }}, host is {{ skg_host }}.
+        quiet: true
+      tags: [config]
+
+    - name: Fail loudly on an unknown AUTH_MODE or SIGNUP
+      assert:
+        that:
+          - skg_auth_mode in ['sso', 'none']
+          - skg_signup in ['auto', 'open', 'invite']
+        fail_msg: >-
+          ERROR: skgym.AUTH_MODE must be 'sso' or 'none' (it is
+          '{{ skg_auth_mode }}') and skgym.SIGNUP must be 'auto', 'open' or
+          'invite' (it is '{{ skg_signup }}'). See README.md "Sign-in, SSO and
+          the first admin".
+        quiet: true
+      tags: [config]
+
+    - name: Collect contradictory sign-in settings
+      # Only key NAMES and middleware names are collected, never a value
+      # from the secret side of the vault.
+      set_fact:
+        skg_auth_conflicts: >-
+          {{ (["AUTH_MODE is 'none' (no SSO) but SSO_MIDDLEWARE is set"] if (skg_auth_mode == 'none' and skg_sso_middleware | length > 0) else [])
+             + (['TRAEFIK_MIDDLEWARES carries forward auth (' ~ skg_middlewares ~ '): it would put /api/ behind it too, which breaks the phone app and passkey sign-in, and with AUTH_MODE none it is SSO under another name; use AUTH_MODE sso (SSO_MIDDLEWARE) instead']
+                if ('authentik' in skg_middlewares | lower) or (skg_sso_middleware | length > 0 and skg_sso_middleware in skg_middlewares.split(',')) else [])
+             + (['both SIGNUP and the older INVITE_ONLY are set: keep SIGNUP only'] if skg_signup_conflict | bool else []) }}
+      tags: [config]
+
+    - name: Refuse contradictory sign-in settings
+      assert:
+        that:
+          - skg_auth_conflicts | length == 0
+        fail_msg: >-
+          ERROR: the skgym vault block contradicts itself: {{ skg_auth_conflicts | join('; ') }}.
+          See README.md "Sign-in, SSO and the first admin".
         quiet: true
       tags: [config]
 
@@ -192,6 +241,63 @@
       register: skgym_secret
       delegate_to: "{{ skgym.DATA_NODE | default(inventory_hostname, true) if not skg_data_path.startswith('/var/data/') else inventory_hostname }}"
       tags: [templates]
+
+    - name: Read how many profiles openGym has (SIGNUP auto/invite)
+      # db.json holds every profile and passkey public key: no_log. A missing
+      # file (first deploy) reads as no profile at all.
+      slurp:
+        src: "{{ skg_data_path }}/db.json"
+      register: skgym_db
+      failed_when: false
+      no_log: true
+      when: skg_signup in ['auto', 'invite']
+      delegate_to: "{{ skgym.DATA_NODE | default(inventory_hostname, true) if not skg_data_path.startswith('/var/data/') else inventory_hostname }}"
+      tags: [config, templates]
+
+    - name: Refuse a db.json that is not a JSON object (SIGNUP auto/invite)
+      assert:
+        that:
+          - (skgym_db.content | default('', true) | length == 0) or ((skgym_db.content | b64decode) is match('^\\s*\\{[\\s\\S]*\\}\\s*$'))
+        fail_msg: >-
+          ERROR: {{ skg_data_path }}/db.json exists but is not a JSON object,
+          so the deploy cannot tell whether a first admin exists. Restore it
+          (openGym keeps db.json.bak) or set skgym.SIGNUP to 'open' or
+          'invite' explicitly for this deploy.
+        quiet: true
+      when: skg_signup in ['auto', 'invite']
+      tags: [config, templates]
+
+    - name: Resolve whether self-signup is open
+      set_fact:
+        skg_profiles: "{{ ((skgym_db.content | b64decode | from_json).users | default([]) | length) if (skgym_db.content | default('', true) | length > 0) else 0 }}"
+      tags: [config, templates]
+
+    - name: Resolve the INVITE_ONLY the api gets
+      set_fact:
+        skg_invite_only: "{{ skg_signup == 'invite' or (skg_signup == 'auto' and skg_profiles | int > 0) }}"
+      tags: [config, templates]
+
+    - name: Refuse invite-only on an instance with no profile yet
+      # openGym refuses every signup without an invite code and only an
+      # admin can make one: nobody could ever get in.
+      assert:
+        that:
+          - not (skg_invite_only | bool) or skg_profiles | int > 0
+        fail_msg: >-
+          ERROR: skgym sign-up would be invite-only but openGym has no profile
+          yet, so nobody could ever sign up (an invite code needs an admin).
+          Deploy with SIGNUP auto (the default) or open, create the first
+          profile (it becomes the admin), then redeploy.
+        quiet: true
+      tags: [config, templates]
+
+    - name: Report the sign-in mode
+      debug:
+        msg: >-
+          skgym auth: {{ 'sso (' ~ skg_sso_middleware ~ ' on the app shell, /api/ outside it)' if skg_auth_mode == 'sso' else 'none (openGym accounts only)' }};
+          sign-up: {{ 'invite-only' if skg_invite_only | bool else 'OPEN' }} (SIGNUP {{ skg_signup }}, {{ skg_profiles }} profile(s) on disk).
+          {{ 'Create the first profile now (it becomes the admin), then rerun this deploy: SIGNUP auto closes sign-up.' if (skg_signup == 'auto' and not (skg_invite_only | bool)) else '' }}
+      tags: [config, templates]
 
     - name: Install the backup script
       # Copied verbatim (sh, run by the backup sidecar): no Jinja in it.

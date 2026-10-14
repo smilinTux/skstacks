@@ -59,7 +59,6 @@ tag yet.
 | [skpeek](#skpeek) | optional | SearXNG metasearch engine | SearXNG (digest-pinned) + Valkey `8-alpine` | none | `skpeek[-env].<cluster>.<domain>` | `skpeek-<env>/etc` | `SECRET_KEY` | none notable | v2.16.0 |
 | [skport](#skport) | optional | Portainer CE (Swarm web UI) | Portainer CE `2.45.1` | skfence or skfenceha (socket-proxy) | `skport[-env].<cluster>.<domain>` | `skport-<env>/data` | `CLUSTERNAME`, `DOMAIN` | none (no baked admin password) | v2.19.0 |
 | [skpulse](#skpulse) | optional | Uptime Kuma status monitoring | Uptime Kuma `2.5.5` | none | `skpulse[-env].<cluster>.<domain>` | `skpulse-<env>/uptime-kuma` | `CLUSTERNAME`, `DOMAIN` | manual `discover-traefik-frontends.sh` helper | v2.16.0 |
-| [skrac](#skrac) | optional | MeshCentral remote access/management | MeshCentral `1.2.6` | sksso (optional, OIDC) | `skrac[-env].<cluster>.<domain>` (agent paths on a separate router) | `skrac-<env>/{data,files}` | `CLUSTERNAME`, `DOMAIN`; `OIDC_*` if `AUTH_MODE: oidc` | `AUTH_MODE` (local), `AUTHENTIK_PROVISION` (false) | pending |
 | [skreg](#skreg) | optional | Docker Registry v2 | `registry:2` (floating) | none | `:5000` (no Traefik/TLS) | `skreg-<env>/data` | `vault_skreg_registry_http_secret` | none | v2.14.0 |
 | [skseek](#skseek) | optional | Perplexica AI search UI | Perplexica (digest-pinned) | **skpeek** (must be deployed first, same env) | `skseek[-env].<cluster>.<domain>` | `skseek-<env>/data` | none framework-required (model keys all opt-in) | model provider keys (all off) | v2.19.0 |
 | [sksso](#sksso) | optional | Authentik OIDC identity provider | Authentik `2024.4.2` | none | `sso[-env].<cluster or bare>.<domain>` | `sksso-<env>/media`, `runtime/sksso-<env>/postgres` | `postgres_user/_password`, `authentik_secret_key`, `CLUSTERNAME`, `DOMAIN` | `csrf_extra_origins` ([]) | pending |
@@ -502,8 +501,9 @@ plans, guided sessions, body weight and stats, passkey sign-in. Upstream
 proxy) images by digest, and a `backup` sidecar that writes a verified
 tar.gz of the data dir for skbackup.
 
-**Prerequisites**: skfence or skfenceha (Traefik). sksso only for the
-optional forward auth (`SSO_MIDDLEWARE`); openGym has no OIDC.
+**Prerequisites**: skfence or skfenceha (Traefik). sksso (Authentik) with
+a forward-auth proxy provider covering the host for the default
+`AUTH_MODE: sso`; `AUTH_MODE: none` needs no sksso. openGym has no OIDC.
 
 **Minimal vault snippet**:
 
@@ -514,8 +514,10 @@ skgym:
   DOMAIN: "example.com"
 ```
 
-**Deploy**: `deploy_skgym-<env>.yml`, standard invocation. Then create your
-own profile (it becomes the admin), set `INVITE_ONLY: true` and redeploy.
+**Deploy**: `deploy_skgym-<env>.yml`, standard invocation. Sign-up is open
+on the first deploy (`SIGNUP: auto`): create your own profile (it becomes
+the admin), then rerun the same deploy with no vault change, which makes
+sign-up invite-only.
 
 **Health check**: `curl -s https://skgym.<cluster>.<domain>/api/health`.
 
@@ -840,48 +842,6 @@ shows `1/1`.
 UI, not vault. A separate `discover-traefik-frontends.sh` helper (not run by
 the playbook) can auto-register every Traefik-fronted service as a monitor
 via the Uptime Kuma API, given an `UPTIME_KUMA_API_TOKEN`.
-
-### skrac
-
-MeshCentral remote access/management: agent-based and browser-based remote
-desktop/terminal/file transfer, device inventory. Replaces a
-hand-run/orphaned MeshCentral instance; see the role README's
-"Re-enrolling the existing meshagents" for migrating agents off an old
-server.
-
-**Prerequisites**: none for `AUTH_MODE: local` (default, standalone:
-MeshCentral local accounts, no SSO in front). For `AUTH_MODE: oidc`, an
-Authentik OAuth2/OIDC provider + application on this cluster's sksso
-instance (manual, or `AUTHENTIK_PROVISION: true`). The play refuses
-`AUTH_MODE: local` combined with SSO-only keys (`AUTHENTIK_PROVISION`,
-`SSO_MIDDLEWARE`, `OIDC_*`, `LOCAL_LOGIN_HIDDEN`) and names them.
-
-**Minimal vault snippet**:
-
-```yaml
-skrac:
-  CLUSTERNAME: "<cluster>"
-  DOMAIN: "example.com"
-```
-
-**Deploy**:
-
-```bash
-ansible-playbook -i envs/prod/inventory.ini \
-  framework/v1/ansible/optional/skrac/deploy_skrac-prod.yml \
-  -e target_manager_group=swarm_managers \
-  --vault-password-file ~/.vault_pass_env/.<instance>_prod_vault_pass
-```
-
-**Health check**: `curl -s https://<host>/health.ashx` returns 200.
-
-**Gotchas**: agent endpoints (`/agent.ashx`, `/meshrelay.ashx`,
-`/meshagents`, `/meshsettings.ashx`, `/devicefile.ashx`) render on a
-SEPARATE Traefik router that never carries `SSO_MIDDLEWARE`; do not put a
-forward-auth middleware in `AGENT_TRAEFIK_MIDDLEWARES` or every agent and
-the installer download breaks. Losing `DATA_PATH` without a recent backup
-means every enrolled agent must be reinstalled (it pins the old agent root
-certificate). See the [README](../v1/ansible/optional/skrac/README.md).
 
 ### skreg
 
