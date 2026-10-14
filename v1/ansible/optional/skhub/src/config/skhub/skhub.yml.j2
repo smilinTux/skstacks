@@ -14,6 +14,10 @@
 {%- set _redis_data_path = skhub.REDIS_DATA_PATH | default('/var/data/runtime/' ~ app ~ '-' ~ env ~ '/redis', true) | string -%}
 {%- set _data_node = skhub.DATA_NODE | default('', true) | string -%}
 {%- set _data_constraints = (skhub.placement_constraints | default([])) + ((['node.hostname == ' ~ _data_node]) if _data_node else []) -%}
+{#- Extra host bind mounts for nextcloud AND cron (Nextcloud external storages
+    on host paths): see README "Extra bind mounts". Validated by the play
+    before anything is written. Empty = unchanged render. -#}
+{%- set _extra_mounts = skhub.EXTRA_MOUNTS | default([], true) -%}
 version: "3.7"
 
 services:
@@ -104,6 +108,18 @@ services:
       - /var/data/config/skhub-{{ env }}/php-timeouts.ini:/usr/local/etc/php/conf.d/zz-timeouts-custom.ini:ro
       - /var/data/config/skhub-{{ env }}/apache-timeout.conf:/etc/apache2/conf-enabled/timeout-custom.conf:ro
       - /etc/localtime:/etc/localtime:ro
+{% for m in _extra_mounts %}
+      - type: bind
+        source: {{ m.source | tojson }}
+        target: {{ m.target | tojson }}
+{% if m.readonly | default(false) %}
+        read_only: true
+{% endif %}
+{% if m.propagation | default('', true) %}
+        bind:
+          propagation: {{ m.propagation }}
+{% endif %}
+{% endfor %}
 
   db:
     image: {{ skhub.MARIADB_IMAGE | default('mariadb:10.11.19@sha256:7db29378d4fdab73f8123bbc2b48905c90d1a4b00cf848b028f1e81e623257f2') }}
@@ -282,6 +298,18 @@ services:
       - /var/data/skhub-{{ env }}/config:/var/www/html/config
       - /var/data/skhub-{{ env }}/data:/var/www/html/data
       - /var/data/skhub-{{ env }}/themes:/var/www/html/themes
+{% for m in _extra_mounts %}
+      - type: bind
+        source: {{ m.source | tojson }}
+        target: {{ m.target | tojson }}
+{% if m.readonly | default(false) %}
+        read_only: true
+{% endif %}
+{% if m.propagation | default('', true) %}
+        bind:
+          propagation: {{ m.propagation }}
+{% endif %}
+{% endfor %}
     # Do NOT set `user: www-data` here: /cron.sh runs `busybox crond`, which
     # must start as root so it can drop privileges to www-data per crontab
     # entry, or every tick fails with "can't set groups: Operation not
