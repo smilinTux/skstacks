@@ -146,6 +146,46 @@
           with no trailing slash.
         quiet: true
 
+    - name: Validate skhub.EXTRA_MOUNTS is a list of mappings
+      # README "Extra bind mounts". Checked before anything is written.
+      vars:
+        _xm: "{{ skhub.EXTRA_MOUNTS | default([], true) }}"
+      assert:
+        that:
+          - _xm is sequence and _xm is not string and _xm is not mapping
+          - _xm | reject('mapping') | list | length == 0
+        fail_msg: >-
+          skhub.EXTRA_MOUNTS must be a list of mappings
+          {source, target, readonly (optional), propagation (optional)}.
+        quiet: true
+
+    - name: Validate each skhub.EXTRA_MOUNTS item
+      # Absolute paths with no whitespace, colon, comma or trailing slash; known
+      # keys only (a typo like read_only would otherwise be ignored); targets
+      # unique and never on, under or above the Nextcloud code tree or the
+      # other fixed mounts of nextcloud/cron.
+      vars:
+        _xm: "{{ skhub.EXTRA_MOUNTS | default([], true) }}"
+      loop: "{{ skhub.EXTRA_MOUNTS | default([], true) }}"
+      loop_control:
+        label: "{{ item.target | default('?') }}"
+      assert:
+        that:
+          - item | reject('in', ['source', 'target', 'readonly', 'propagation']) | list | length == 0
+          - item.source is defined and item.source is string and item.source is match('^/[^\\s:,]*[^/\\s:,]$')
+          - item.target is defined and item.target is string and item.target is match('^/[^\\s:,]*[^/\\s:,]$')
+          - item.target is not match('^(/var/www/html|/docker-entrypoint-hooks\\.d|/usr/local/etc/php|/etc/apache2|/etc/localtime)(/|$)')
+          - item.target is not match('^(/var|/var/www|/etc|/usr|/usr/local|/usr/local/etc)$')
+          - item.readonly is not defined or item.readonly is boolean
+          - item.propagation is not defined or item.propagation in ['rprivate', 'private', 'rshared', 'shared', 'rslave', 'slave']
+          - _xm | map(attribute='target', default='') | select('equalto', item.target) | list | length == 1
+        fail_msg: >-
+          skhub.EXTRA_MOUNTS item {{ item }} is invalid: keys source, target, readonly, propagation only;
+          source and target absolute with no whitespace, colon, comma or trailing slash; target unique and not
+          on, under or above /var/www/html, /docker-entrypoint-hooks.d, /usr/local/etc/php, /etc/apache2 or
+          /etc/localtime; readonly a boolean; propagation one of rprivate, private, rshared, shared, rslave, slave.
+        quiet: true
+
     - name: Fail closed on Talk recording without a pinned node and a shared secret
       # README "Talk recording and local AI". The recording container needs
       # its own worker (ffmpeg + a headless browser, about 1-2 cores per
@@ -445,6 +485,47 @@
         - { src: "clamd.conf.j2", dest: "/var/data/config/{{ app }}-{{ env }}/clamd.conf", mode: "0644" }
       tags:
         - templates
+
+    # README "Extra bind mounts": refuse to replace the stack when a bind mount
+    # on a running service is missing from the new render (a hand-added
+    # --mount-add, or a vault key since removed): docker stack deploy would
+    # drop it silently. Runs before the compose file is rewritten, and also
+    # under --check (read-only), so a dry run shows it.
+    - name: Read the live {{ app }} bind mounts (mount drift guard)
+      # Mounts only: never print a service spec Env (env_file values land there).
+      shell: |
+        set -o pipefail
+        docker service ls -q --filter label=com.docker.stack.namespace={{ app }}-{{ env }} \
+          | xargs -r docker service inspect --format '{% raw %}{{ json .Spec.Name }} {{ json .Spec.TaskTemplate.ContainerSpec.Mounts }}{% endraw %}'
+      args:
+        executable: /bin/bash
+      register: skhub_live_mounts
+      changed_when: false
+      check_mode: false
+      tags:
+        - always
+
+    - name: Refuse a redeploy that would drop a live bind mount (mount drift guard)
+      command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ playbook_dir }}/files/skhub_mount_drift.py"
+          - --stack
+          - "{{ app }}-{{ env }}"
+        stdin: "{{ {'rendered': lookup('template', playbook_dir ~ '/src/config/' ~ app ~ '/' ~ app ~ '.yml.j2') | from_yaml, 'live': skhub_live_mounts.stdout, 'allow_drop': skhub.ALLOW_MOUNT_DROP | default(false) | bool} | to_json }}"
+      delegate_to: localhost
+      become: false
+      register: skhub_mount_drift
+      changed_when: false
+      check_mode: false
+      tags:
+        - always
+
+    - name: Show the mount drift guard result
+      debug:
+        var: skhub_mount_drift.stdout_lines
+      tags:
+        - always
 
     - name: Process {{ app }} Docker Compose template
       template:

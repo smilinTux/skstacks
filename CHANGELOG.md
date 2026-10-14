@@ -3,6 +3,17 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased (v2.26.9)
+
+### Upgrade notes (instances)
+
+- **skhub:** a redeploy now refuses to replace the stack when a bind mount on a running skhub service is missing from the new render, and names each `service: target`. An instance that added mounts by hand (`docker service update --mount-add`, or an edit of the rendered `skhub.yml`) must move them into the new `skhub.EXTRA_MOUNTS` before its next skhub deploy, or the play stops; to drop them on purpose set `skhub.ALLOW_MOUNT_DROP: true` for that one deploy. Instances without hand-added mounts render exactly as before.
+
+### Changes
+
+- v1: **skhub** `EXTRA_MOUNTS`: a list of `{source, target, readonly?, propagation?}` host bind mounts rendered into both `nextcloud` and `cron` (long-syntax binds, appended after the fixed mounts), for Nextcloud "Local" external storages on host paths. Hand-added mounts were dropped silently by the next framework redeploy (it re-renders the compose file and replaces the stack), which broke three external storages on a production instance. The play validates the list in `pre_tasks`, before anything is written: a list of mappings, known keys only, absolute paths with no whitespace, colon, comma or trailing slash, unique targets, nothing on, under or above `/var/www/html` and the other fixed nextcloud/cron mount targets, `readonly` a boolean, `propagation` a valid bind propagation. Empty (the default) renders byte-identical to before. README "Extra bind mounts". Tests: `v1/tests/test_skhub_extra_mounts.py` (render, default unchanged, every refusal); the real-Ansible render gate's `skhub.set.yml` sets it.
+- v1: **skhub** mount drift guard: before the compose file is rewritten, the play reads the running `skhub-<env>` services' bind mounts (`docker service inspect` of the mount fields only, never the spec Env) and `files/skhub_mount_drift.py` compares them with the same template rendered through Ansible's template lookup. A live bind mount whose target the new render of that service lacks stops the play, naming `service: target (source ...)`, unless `ALLOW_MOUNT_DROP: true` (then it still lists them). Runs under `--check` too (read-only), so a dry run shows it. A changed source for the same target is not a drop; services absent from the render are not judged; unreadable inspect output fails closed. Tests: the incident replayed (three mounts live, a render without them is refused for both services), a hand-added mount, the override, first deploy, ignored volume/tmpfs mounts, the guard's place before the compose write in all three env playbooks. Release-gated by the skstack06 skhub stage check `skhub_extra_mounts` (deploy with `EXTRA_MOUNTS` from a lab vault override, the mount readable inside nextcloud and cron, a redeploy without it refused by the guard, then dropped with `ALLOW_MOUNT_DROP`).
+
 ## skstacks-v2.26.8 - 2026-10-14
 
 ### Upgrade notes (instances)
