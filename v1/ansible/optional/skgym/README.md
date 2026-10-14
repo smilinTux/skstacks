@@ -79,44 +79,81 @@ into `/data/vapid.json`.
 
 openGym has its own accounts: passkeys (default) and optional name+password
 (`PASSWORD_LOGIN`). It has **no OIDC/OAuth support**, so Authentik cannot be
-its identity provider. What the framework offers instead:
+its identity provider; it can only stand in front of it. Two modes,
+`AUTH_MODE` (same two-path pattern as skmesh and skrac):
 
-- `SSO_MIDDLEWARE` (e.g. `authentik@file`): forward auth on the app shell.
-  The router then splits in two: `Host && PathPrefix(/api/)` with
-  `TRAEFIK_MIDDLEWARES` only, and `Host` (everything else) with
-  `TRAEFIK_MIDDLEWARES` plus the SSO middleware. `/api/` must stay outside
-  forward auth (upstream SELF_HOSTING.md): the phone app and its pairing
-  preflights carry no SSO cookie, and openGym authenticates every API call
-  itself. Users then sign in twice (Authentik, then their openGym passkey);
-  the gain is that nobody without an Authentik account ever sees the app.
-  Authentik needs a proxy provider in forward-auth mode for the skgym host.
-- Without SSO, lock the instance down in the app itself: the first admin,
-  then invite-only.
+- **`sso` (default): Authentik forward auth in front.** `SSO_MIDDLEWARE`
+  (default `authentik@file`, skfenceha's forward-auth middleware to the
+  sksso embedded outpost) guards the app shell. The router splits in two:
+  `Host && PathPrefix(/api/)` with `TRAEFIK_MIDDLEWARES` only, and `Host`
+  (everything else) with `TRAEFIK_MIDDLEWARES` plus the SSO middleware.
+  `/api/` must stay outside forward auth (upstream SELF_HOSTING.md): the
+  phone app and its pairing preflights carry no SSO cookie, and openGym
+  authenticates every API call itself. Users sign in twice (Authentik, then
+  their openGym passkey or password); the gain is that nobody without an
+  Authentik account ever sees the app. Authentik needs a proxy provider in
+  forward-auth mode that covers the skgym host (a domain-level provider for
+  the base domain already does; otherwise a single-application provider
+  with the skgym host as external host), bound to the embedded outpost.
+  Limit: the API is reachable without Authentik, so while sign-up is open a
+  client that talks to `/api/` directly can still register. Keep that
+  window short (the default `SIGNUP: auto` closes it on the next deploy).
+- **`none`: no SSO.** openGym's own accounts only; lock the instance down in
+  the app (invite-only, below) and, for a private instance, with an IP
+  allowlist in `TRAEFIK_MIDDLEWARES`.
 
-Bootstrap of the admin (openGym makes the FIRST profile on an empty
-instance its admin when `FIRST_USER_ADMIN` is on, the default here):
+Guards (the deploy refuses, naming the keys): an `AUTH_MODE` other than
+`sso`/`none`; `AUTH_MODE: none` with `SSO_MIDDLEWARE` set; any forward-auth
+middleware inside `TRAEFIK_MIDDLEWARES` (it would also guard `/api/`, which
+breaks the phone app and passkeys, and in `none` mode it is SSO under
+another name).
 
-1. Deploy with `INVITE_ONLY: false` (default). Before telling anyone the
-   address, open it, create your own profile (passkey, or password if
-   `PASSWORD_LOGIN: true`). It is the admin. To keep strangers out of that
-   window, deploy the first time with `SSO_MIDDLEWARE` set or
-   `TRAEFIK_MIDDLEWARES` including an IP allowlist.
-2. Set `INVITE_ONLY: true` (and `ALLOW_GUEST: false` if guests should not
-   see the app at all) and redeploy. New people now need an invite code from
-   the admin dashboard (Settings, Admin).
-3. More admins: their user ids in `ADMIN_UIDS`.
+**Sign-up: `SIGNUP`.** openGym makes the FIRST profile on an empty instance
+its admin when `FIRST_USER_ADMIN` is on (the default here), and its
+`INVITE_ONLY` setting (an api environment variable, read at start) gates
+every later signup behind a code the admin generates. openGym has no runtime
+switch for it, so the deploy sets it:
 
-An invite-only instance with no profile cannot get a first user (openGym
-refuses every signup without a code, and nobody can make a code): always do
-step 1 first.
+- `auto` (default): the deploy reads `<DATA_PATH>/db.json` (`no_log`) and
+  counts the profiles. None yet (a first deploy): sign-up is **open**, so the
+  operator can create the first profile, which becomes the admin. One or
+  more: **invite-only**. The play prints which, with the profile count.
+- `open`: always open (a public instance).
+- `invite`: always invite-only. Refused while there is no profile (nobody
+  could ever sign up: a code needs an admin).
+- The older `INVITE_ONLY: true|false` still maps to `invite`/`open`; setting
+  it together with `SIGNUP` is refused. A `db.json` that is not a JSON object
+  fails `auto` loudly (set `SIGNUP` explicitly for that deploy, or restore
+  `db.json.bak`).
+
+First admin, then close sign-up:
+
+1. Deploy (default `AUTH_MODE: sso`, `SIGNUP: auto`). The play reports
+   `sign-up: OPEN (SIGNUP auto, 0 profile(s) on disk)`.
+2. Open `https://<host>/` (through Authentik in `sso` mode) and create your
+   profile (passkey, or password with `PASSWORD_LOGIN: true`). It is the
+   admin.
+3. **Rerun the same deploy, no vault change.** It now reports
+   `sign-up: invite-only (SIGNUP auto, 1 profile(s) on disk)` and restarts
+   the api with `INVITE_ONLY=1`. Check: `curl -s https://<host>/api/config`
+   (or the admin dashboard, Settings, Admin) shows invite-only. New people
+   need an invite code from the admin dashboard. `ALLOW_GUEST: false` also
+   hides "Continue without account".
+4. More admins: their user ids in `ADMIN_UIDS`.
 
 ### Traefik and CrowdSec
 
 `TRAEFIK_MIDDLEWARES` is the router's whole middleware chain, default
-`default-no-crowdsec@file` (the framework convention). openGym is a public
-login form: on an instance running sksec, set
-`TRAEFIK_MIDDLEWARES: "crowdsec-bouncer@file,default@file"` (or
-`default@file` when skfenceha has `CROWDSEC_ENABLED`). openGym adds its own
+`default-no-error-pages@file` (skfenceha: rate limit, security headers,
+gzip). Not the usual `default-no-crowdsec@file` or `default@file`: those
+include skfenceha's `error-pages` middleware, which replaces every 400 and
+402-599 response body with an HTML page, so openGym's JSON errors (403
+`invite` after sign-up closes, 409 `name-taken`, 400 password policy) never
+reach the app and it cannot say what went wrong (found on skstack06). openGym
+is a public login form: on an instance running sksec, set
+`TRAEFIK_MIDDLEWARES: "crowdsec-bouncer@file,default-no-error-pages@file"`.
+skfence (single node) has no such chain: set its middlewares explicitly
+(e.g. `rate-limit@file,default-security-headers@file,gzip@file`). openGym adds its own
 `Access-Control-Allow-Origin` for the phone app: do not add a CORS
 middleware (two such headers break the app). `TLS_OPTIONS` defaults to
 `intermediate@file`; `none` omits the label (Traefik's default options).
@@ -199,7 +236,8 @@ ansible-playbook -i envs/prod/inventory.ini \
 ```
 
 The play: checks the vault (fails on a missing `SESSION_SECRET`, an image
-without a digest, a local data path without `DATA_NODE`), creates the
+without a digest, a local data path without `DATA_NODE`, contradictory
+sign-in settings), reads the profile count for `SIGNUP`, creates the
 directories, writes the session secret, installs the backup script and the
 env/compose files, ensures the networks, deploys stack `skgym-<env>`, and
 restarts the api when its env file or the secret changed (bind mounts and
@@ -216,10 +254,12 @@ skgym:
   DOMAIN: example.com                       # default: inventory domain
   CLOUDFLARED: false                        # true: default host is under DOMAIN, not CLUSTERNAME.DOMAIN
   HOSTNAME: ""                              # public host; default skgym[-dev|-staging].<base domain>
-  TRAEFIK_MIDDLEWARES: ""                   # default default-no-crowdsec@file
-  SSO_MIDDLEWARE: ""                        # e.g. authentik@file: forward auth on everything but /api/
+  TRAEFIK_MIDDLEWARES: ""                   # default default-no-error-pages@file (keeps openGym's JSON errors)
+  AUTH_MODE: sso                            # sso (Authentik forward auth in front) | none
+  SSO_MIDDLEWARE: ""                        # sso mode: default authentik@file, on everything but /api/; must be empty in none
   TLS_OPTIONS: ""                           # default intermediate@file; "none" = no tls.options label
-  INVITE_ONLY: false                        # true after the first admin exists (see "first admin")
+  SIGNUP: auto                              # auto (open until the first profile exists, then invite-only) | open | invite
+  # INVITE_ONLY: true                       # older spelling: true = SIGNUP invite, false = open; refused together with SIGNUP
   FIRST_USER_ADMIN: true
   ADMIN_UIDS: ""                            # comma-separated openGym user ids
   ALLOW_GUEST: true                         # "Continue without account" (data stays in the browser)

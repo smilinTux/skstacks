@@ -501,8 +501,9 @@ plans, guided sessions, body weight and stats, passkey sign-in. Upstream
 proxy) images by digest, and a `backup` sidecar that writes a verified
 tar.gz of the data dir for skbackup.
 
-**Prerequisites**: skfence or skfenceha (Traefik). sksso only for the
-optional forward auth (`SSO_MIDDLEWARE`); openGym has no OIDC.
+**Prerequisites**: skfence or skfenceha (Traefik). sksso (Authentik) with
+a forward-auth proxy provider covering the host for the default
+`AUTH_MODE: sso`; `AUTH_MODE: none` needs no sksso. openGym has no OIDC.
 
 **Minimal vault snippet**:
 
@@ -513,8 +514,10 @@ skgym:
   DOMAIN: "example.com"
 ```
 
-**Deploy**: `deploy_skgym-<env>.yml`, standard invocation. Then create your
-own profile (it becomes the admin), set `INVITE_ONLY: true` and redeploy.
+**Deploy**: `deploy_skgym-<env>.yml`, standard invocation. Sign-up is open
+on the first deploy (`SIGNUP: auto`): create your own profile (it becomes
+the admin), then rerun the same deploy with no vault change, which makes
+sign-up invite-only.
 
 **Health check**: `curl -s https://skgym.<cluster>.<domain>/api/health`.
 

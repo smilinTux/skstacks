@@ -1,0 +1,101 @@
+#!/bin/sh
+# skrac-backup: archive the MeshCentral data dir (meshcentral-data,
+# read-only) into /backup. Installed by the skrac deploy (copied verbatim)
+# and run by the stack's `backup` service. POSIX sh.
+#
+#   skrac-backup loop   sleep BACKUP_START_DELAY, then one archive every
+#                       BACKUP_FREQUENCY seconds (the service's command)
+#   skrac-backup once   one archive now (manual use, skbackup hooks)
+#
+# meshcentral-data holds config.json (which may carry the OIDC client
+# secret), the NeDB database and, critically, the agent root certificate:
+# lose that certificate and every already-enrolled agent refuses the
+# "new" server, which is why it is the one directory always archived.
+# meshcentral-files (uploaded/shared files) is large and NOT part of the
+# default archive; SKRAC_BACKUP_INCLUDE_FILES=1 writes it as a SECOND,
+# separate archive each run (so a slow files archive never delays or risks
+# the small, critical data one).
+#
+# Each archive gets its own name, is written to a hidden temp file,
+# checked (gzip and tar can read it back) and only then renamed into
+# place, so a failed run never replaces or removes a good archive.
+# Archives older than BACKUP_KEEP_DAYS are pruned only after a good one of
+# that kind was written, so a run of failures never ages out the last good
+# copy. The data archive holds the OIDC client secret and the agent root
+# key: umask 077, root only.
+set -u
+umask 077
+
+DATA=${SKRAC_BACKUP_DATA:-/opt/meshcentral/meshcentral-data}
+FILES=${SKRAC_BACKUP_FILES:-/opt/meshcentral/meshcentral-files}
+OUT=${SKRAC_BACKUP_OUT:-/backup}
+KEEP_DAYS=${BACKUP_KEEP_DAYS:-7}
+FREQUENCY=${BACKUP_FREQUENCY:-86400}
+START_DELAY=${BACKUP_START_DELAY:-60}
+INCLUDE_FILES=${SKRAC_BACKUP_INCLUDE_FILES:-0}
+
+log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) skrac-backup: $*"; }
+
+# archive_dir NAME SRC_DIR CHECK_MEMBER
+archive_dir() {
+    name=$1
+    src=$2
+    check_member=$3
+    [ -d "$src" ] || { log "ERROR: $src not found, skipping $name archive"; return 1; }
+    stamp=$(date -u +%Y%m%dT%H%M%SZ)
+    final="$OUT/$name-$stamp.tar.gz"
+    tmp="$OUT/.$name-$stamp.tar.gz.partial"
+    st="$OUT/.$name-$stamp.status"
+    rm -f "$tmp" "$st"
+    # tar | gzip as an explicit pipeline, not `tar -czf`: with -z, tar opens
+    # the archive in a forked gzip child, which can create the file AFTER a
+    # failed tar exited and the cleanup below ran (a stray partial). Here
+    # the shell creates the file and the pipeline has ended before any
+    # check. POSIX sh has no pipefail: tar's own exit status goes through a
+    # status file.
+    { tar -C "$src" --exclude='*.tmp' -cf - .; echo $? >"$st"; } | gzip -c >"$tmp"
+    rc=$(cat "$st" 2>/dev/null || echo 1)
+    rm -f "$st"
+    if [ "$rc" = 0 ] \
+        && [ -s "$tmp" ] \
+        && gzip -t "$tmp" \
+        && { [ -z "$check_member" ] || tar -tzf "$tmp" "$check_member" >/dev/null 2>&1; }; then
+        mv -f "$tmp" "$final"
+        log "wrote $final ($(wc -c <"$final") bytes)"
+        find "$OUT" -maxdepth 1 -type f -name "$name-*.tar.gz" -mtime +"$KEEP_DAYS" -exec rm -f {} \;
+        return 0
+    fi
+    rm -f "$tmp"
+    log "ERROR: $name backup failed, kept the previous archives"
+    return 1
+}
+
+backup_once() {
+    rc=0
+    archive_dir skrac "$DATA" ./config.json || rc=1
+    if [ "$INCLUDE_FILES" = "1" ]; then
+        archive_dir skrac-files "$FILES" "" || rc=1
+    fi
+    return $rc
+}
+
+case "${1:-loop}" in
+once)
+    backup_once
+    ;;
+loop)
+    trap 'exit 0' TERM INT
+    log "first archive in ${START_DELAY}s, then every ${FREQUENCY}s, keeping ${KEEP_DAYS} days"
+    sleep "$START_DELAY" &
+    wait $!
+    while :; do
+        backup_once || true
+        sleep "$FREQUENCY" &
+        wait $!
+    done
+    ;;
+*)
+    echo "usage: skrac-backup [loop|once]" >&2
+    exit 2
+    ;;
+esac
