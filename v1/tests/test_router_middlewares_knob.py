@@ -47,9 +47,11 @@ SERVICES = {
         "": ("TRAEFIK_MIDDLEWARES", lambda e: f"skvector{_sfx(e)}-buffering,default-no-crowdsec@file"),
         "-grpc": ("TRAEFIK_MIDDLEWARES_GRPC", lambda e: "default-no-crowdsec@file"),
     },
-    "skpulse": {"": ("TRAEFIK_MIDDLEWARES", lambda e: "default-no-crowdsec@file")},
     "skboard": {"": ("TRAEFIK_MIDDLEWARES", lambda e: "default-no-crowdsec@file")},
 }
+# skpulse moved to test_skpulse_render.py (AUTH_MODE sso/local changed its
+# default rendering: it no longer renders byte-identical to v2.26.4), the
+# same way skgym/skrac never joined this generic dict.
 CASES = [(svc, sfx) for svc, routers in SERVICES.items() for sfx in routers]
 OVERRIDE = "crowdsec-bouncer@file,default@file"
 
