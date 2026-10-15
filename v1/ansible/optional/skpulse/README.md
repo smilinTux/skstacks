@@ -72,7 +72,8 @@ something in `AUTH_MODE: sso`: switch the mode or remove it.
 | `BYPASS_TRAEFIK_MIDDLEWARES` | same as `TRAEFIK_MIDDLEWARES` | the `-public` router's chain; never carries SSO regardless |
 | `METRICS_BYPASS_SSO` | `false` | `true` adds the `-metrics` router (no SSO, but Kuma's own HTTP Basic Auth on `/metrics` still applies) |
 | `METRICS_TRAEFIK_MIDDLEWARES` | same as the bypass chain | the `-metrics` router's chain, independent of the other two |
-| `CLUSTERNAME` / `DOMAIN` | the play's `cluster_name` / `domain` | public host |
+| `HOSTNAME` | `skpulse[-env].<CLUSTERNAME>.<DOMAIN>` | a full override, e.g. a bare host with no cluster prefix |
+| `CLUSTERNAME` / `DOMAIN` | the play's `cluster_name` / `domain` | public host (ignored when `HOSTNAME` is set) |
 
 ## Authentik setup (manual, one app)
 
