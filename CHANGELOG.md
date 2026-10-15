@@ -3,6 +3,16 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased (v2.26.11)
+
+### Upgrade notes (instances)
+
+- **skhub:** none. `COLLABORA_IMAGE` is a bump of the default only; an instance that already overrides it is unaffected, and one on the default picks up the new digest on its next skhub deploy with no vault change.
+
+### Changes
+
+- v1: **skhub** `COLLABORA_IMAGE` default bumped to upstream `26.04.5.1.1` (`collabora/code:26.04.5.1.1@sha256:bb8f3c9c5c9016045f25fccb5f0649be94469ebc7c7cc379f3576e470cccf33d`, multi-arch index digest, verified with `docker buildx imagetools inspect`), from `26.04.4.2.1`. Same `26.04` major: the shell-less healthcheck default (`COLLABORA_HEALTHCHECK_TEST`, `coolwsd --probe --use-env-vars`, inc-a2671db2) is unchanged and still correct, no shell/curl in this image either. Upstream notes for 26.04.4.2 to 26.04.5.1: disappearing slide preview thumbnails on mobile landscape fixed, Writer comment-scrolling improved, and the editor's own health check now verifies document-processing readiness rather than bare HTTP reachability (an internal change to the image, not to how `coolwsd --probe` is invoked here). No breaking changes or Docker image structure changes found in the upstream release notes. Tests: `v1/tests/test_skhub_component_images.py::test_collabora_bumped_to_26_04`, `v1/tests/test_skhub_collabora_healthcheck.py::test_default_healthcheck_is_the_26_04_native_probe_not_curl` (both updated to assert the new digest; render-gated).
+
 ## skstacks-v2.26.10 - 2026-10-15
 
 ### Upgrade notes (instances)

@@ -33,7 +33,7 @@ SKHUB = pathlib.Path(__file__).resolve().parents[1] / "ansible/optional/skhub"
 COMPOSE = SKHUB / "src/config/skhub/skhub.yml.j2"
 BASE = {"CLUSTERNAME": "cluster1", "DOMAIN": "example.com", "enable_collabora": True}
 
-COLLABORA_26_04 = "collabora/code:26.04.4.2.1@sha256:4e983196eb9878f339cc506c38c21f1cc3473bca3d6de883c5de08f9c0cc3a6c"
+COLLABORA_26_04 = "collabora/code:26.04.5.1.1@sha256:bb8f3c9c5c9016045f25fccb5f0649be94469ebc7c7cc379f3576e470cccf33d"
 COLLABORA_25_04 = "collabora/code:25.04.8.2.1@sha256:7983fd172c69f4545f93533fee62c06fdcd1aa0806f694db7b9ec6809caa4bd8"
 NATIVE_PROBE_TEST = ["CMD", "/usr/bin/coolwsd", "--probe", "--use-env-vars"]
 CURL_TEST = ["CMD", "curl", "-f", "http://localhost:9980/hosting/discovery"]

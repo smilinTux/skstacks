@@ -19,7 +19,7 @@ BASE = {"CLUSTERNAME": "cluster1", "DOMAIN": "example.com", "enable_collabora": 
 MARIADB = "mariadb:10.11.19@sha256:7db29378d4fdab73f8123bbc2b48905c90d1a4b00cf848b028f1e81e623257f2"
 REDIS = "redis:8.10.2-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0"
 CLAMAV = "clamav/clamav:latest@sha256:ebec5bc138401b36ae987caa1a3fa3c3b2a21ed3d51f0bfa5852825e663e67b0"
-COLLABORA = "collabora/code:26.04.4.2.1@sha256:4e983196eb9878f339cc506c38c21f1cc3473bca3d6de883c5de08f9c0cc3a6c"
+COLLABORA = "collabora/code:26.04.5.1.1@sha256:bb8f3c9c5c9016045f25fccb5f0649be94469ebc7c7cc379f3576e470cccf33d"
 WHITEBOARD = "ghcr.io/nextcloud-releases/whiteboard:v2.0.0@sha256:059596633333d009890c64858f89f133ccd973a2e0823ad960a0cc05cf8657f1"
 IMAGINARY = "nextcloud/aio-imaginary:latest@sha256:15d3b439849a675d7b646db6796654ae238dd9c84ea089258d19c2fa69999cdf"
 
