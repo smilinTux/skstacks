@@ -238,6 +238,49 @@ for that target, and the container starts on an empty anonymous volume. Do
 the `--mount-rm` and `--mount-add` in separate updates, or (better) redeploy
 the stack from the template.
 
+## Extra bind mounts
+
+Host directories for Nextcloud "Local" external storages (an NFS export, a
+bindfs view, a cloud-drive FUSE mount on the nodes) go in the vault, never in
+a `docker service update --mount-add` or a hand edit of the rendered
+`skhub.yml`: every deploy re-renders the compose file from the template and
+replaces the stack, so a mount that only exists on the running service is
+gone after the next redeploy, and the storages that point at it break.
+
+```yaml
+skhub:
+  EXTRA_MOUNTS:
+    - { source: /mnt/nfs-nc/cloud, target: /mnt/cloud, propagation: rslave }
+    - { source: /srv/archive, target: /mnt/archive, readonly: true }
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `EXTRA_MOUNTS` | empty | List of bind mounts added to **both** `nextcloud` and `cron` (cron runs the background jobs and file scans on the same storages: a path only `nextcloud` sees makes those jobs fail). Each item: `source` (host path), `target` (path in the container, the external storage's `datadir`), optional `readonly` (boolean, default `false`), optional `propagation` (`rprivate`, `private`, `rshared`, `shared`, `rslave`, `slave`; use `rslave` when the source is itself a mount point that may be remounted, such as a FUSE or NFS mount). Empty renders exactly as before. |
+| `ALLOW_MOUNT_DROP` | `false` | Lets ONE deploy drop live bind mounts the new render no longer has (see the guard below). Set it for that deploy only, then remove it. |
+
+The play checks the list before it writes anything and stops on: a value that
+is not a list of mappings, an unknown key (`read_only` instead of `readonly`
+would otherwise be ignored), a relative path, whitespace, a colon or a comma
+in a path, a trailing slash, a duplicate `target`, or a `target` on, under or
+above `/var/www/html`, `/docker-entrypoint-hooks.d`, `/usr/local/etc/php`,
+`/etc/apache2` or `/etc/localtime`. The source must exist on every node that
+can run `nextcloud` or `cron` (swarm never creates a bind source: a missing
+one keeps the task at 0 replicas, which is the safe failure); the role does
+not create it, because an empty directory in place of an unmounted share
+would hide the problem.
+
+**Mount drift guard.** Before the compose file is rewritten, the play reads
+the bind mounts of the running `skhub-<env>` services (mount fields only,
+never the spec environment) and compares them with the new render. A live
+bind mount whose target the new render of that service does not have stops
+the play, naming each `service: target (source ...)`, before the stack is
+touched. Add the mount to `EXTRA_MOUNTS`, or set `ALLOW_MOUNT_DROP: true` for
+the one deploy that should drop it. The guard also runs under `--check`, so a
+dry run shows it. A changed source for the same target (for example the code
+tree moving to `WEBROOT_LOCAL_PATH`) is not a drop; services the render no
+longer has are not judged (`docker stack deploy` does not remove them).
+
 ## Talk HPB TURN
 
 With `skhub.enable_talk_hpb: true`, the `talk-hpb` service (aio-talk) runs

@@ -40,3 +40,6 @@ skhub:
   smtp_password: example-smtp-password-not-a-secret
   mail_from_address: hub
   mail_domain: example.test
+  EXTRA_MOUNTS:
+    - { source: /mnt/render/share, target: /mnt/share, propagation: rslave }
+    - { source: /mnt/render/archive, target: /mnt/archive, readonly: true }
