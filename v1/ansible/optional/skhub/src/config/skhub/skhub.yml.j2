@@ -18,12 +18,28 @@
     on host paths): see README "Extra bind mounts". Validated by the play
     before anything is written. Empty = unchanged render. -#}
 {%- set _extra_mounts = skhub.EXTRA_MOUNTS | default([], true) -%}
+{#- Pin the public skhub hostname to the cluster's own ingress inside the
+    services that call it (nextcloud, cron, talk-hpb, talk-recording), so their
+    calls to each other stay inside the cluster instead of looping out through
+    a CDN or tunnel: see README "Internal routing to the public hostname".
+    Empty = unchanged render. Validated by the play. -#}
+{%- set _internal_ingress_ip = skhub.INTERNAL_INGRESS_IP | default('', true) | string -%}
+{#- Both names: the routers' host (SKHUB_HOSTNAME) and the one talk-hpb.env
+    builds NC_DOMAIN/TALK_HOST from (always skhub[-env].<base domain>). -#}
+{%- set _skhub_default_host = 'skhub' + ('-staging' if env == 'staging' else '-dev' if env == 'dev' else '') + '.' + _base_domain -%}
+{%- set _internal_hosts = [skhub.SKHUB_HOSTNAME | default(_skhub_default_host, true), _skhub_default_host] | unique | list -%}
 version: "3.7"
 
 services:
   nextcloud:
     image: {{ skhub.NEXTCLOUD_IMAGE | default('nextcloud:31.0.14') }}
     env_file: /var/data/config/skhub-{{ env }}/skhub.env
+{% if _internal_ingress_ip %}
+    extra_hosts:
+{% for _h in _internal_hosts %}
+      - "{{ _h }}:{{ _internal_ingress_ip }}"
+{% endfor %}
+{% endif %}
     networks:
       - skhub-{{ env }}
       - cloud-public-{{ env }}
@@ -263,6 +279,12 @@ services:
 
   cron:
     image: {{ skhub.NEXTCLOUD_IMAGE | default('nextcloud:31.0.14') }}
+{% if _internal_ingress_ip %}
+    extra_hosts:
+{% for _h in _internal_hosts %}
+      - "{{ _h }}:{{ _internal_ingress_ip }}"
+{% endfor %}
+{% endif %}
     # Healthcheck probes crond itself (PID 1 is `busybox crond`), NOT log
     # freshness: at a sane loglevel a quiet instance leaves the log untouched
     # for long stretches, so a log-mtime check flaps the container.
@@ -485,6 +507,12 @@ services:
   talk-hpb:
     image: {{ skhub.TALK_HPB_IMAGE | default('ghcr.io/nextcloud-releases/aio-talk:latest@sha256:831a08f9772d188e65aee2fb59ef3785d3567a1fe2fb65f0e6fd2c17a16ffc87') }}
     env_file: /var/data/config/skhub-{{ env }}/talk-hpb.env
+{% if _internal_ingress_ip %}
+    extra_hosts:
+{% for _h in _internal_hosts %}
+      - "{{ _h }}:{{ _internal_ingress_ip }}"
+{% endfor %}
+{% endif %}
 {% if _talk_relay_ipv4 | string | length > 0 %}
     # aio-talk's /start.sh always writes relay_ipv4_addr = the container IP
     # into /conf/eturnal.yml, then execs this command. Rewrite that one line
@@ -550,6 +578,17 @@ services:
         - "traefik.http.routers.talk-hpb-secure.service=talk-hpb-svc"
         - "traefik.http.services.talk-hpb-svc.loadbalancer.server.port=8081"
         - "traefik.http.services.talk-hpb-svc.loadbalancer.server.scheme=http"
+{% if (skhub.TALK_TURN_TLS_443 | default(false) | string | lower) in ['true', 'yes', 'on', '1'] %}
+        # TURN over TLS on 443 (README "Talk HPB TURN", TALK_TURN_TLS_443):
+        # Traefik terminates TLS for the TURN host and passes plain TCP to
+        # eturnal's 3478, for clients whose network only allows 443.
+        - "traefik.tcp.routers.talk-turns.rule=HostSNI(`{{ skhub.TURN_DOMAIN }}`)"
+        - "traefik.tcp.routers.talk-turns.entrypoints=websecure"
+        - "traefik.tcp.routers.talk-turns.tls=true"
+        - "traefik.tcp.routers.talk-turns.tls.certresolver=main"
+        - "traefik.tcp.routers.talk-turns.service=talk-turns-svc"
+        - "traefik.tcp.services.talk-turns-svc.loadbalancer.server.port=3478"
+{% endif %}
 {% endif %}
 {% if skhub.TALK_RECORDING_ENABLED | default(false) %}
 {#- Talk recording server (ffmpeg + a headless browser, about 1-2 cores per
@@ -567,6 +606,12 @@ services:
   talk-recording:
     image: {{ skhub.TALK_RECORDING_IMAGE | default('ghcr.io/nextcloud-releases/aio-talk-recording:20260929_105435@sha256:64aa51b0279a4ab5c16249ad1e8f5e56b572ffee3947f14b64386429bc9c6696') }}
     env_file: /var/data/config/skhub-{{ env }}/talk-recording.env
+{% if _internal_ingress_ip %}
+    extra_hosts:
+{% for _h in _internal_hosts %}
+      - "{{ _h }}:{{ _internal_ingress_ip }}"
+{% endfor %}
+{% endif %}
     volumes:
       - /var/data/config/skhub-{{ env }}/talk-recording-firefox-policies.json:/usr/lib/firefox/distribution/policies.json:ro
     networks:
