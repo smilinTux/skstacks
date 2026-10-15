@@ -43,3 +43,7 @@ skhub:
   EXTRA_MOUNTS:
     - { source: /mnt/render/share, target: /mnt/share, propagation: rslave }
     - { source: /mnt/render/archive, target: /mnt/archive, readonly: true }
+  INTERNAL_INGRESS_IP: 192.0.2.20
+  TALK_STUN_SERVERS: ["turn.example.test:3478", "stun.example.test:443"]
+  TURN_DOMAIN: turn.example.test
+  TALK_TURN_TLS_443: true

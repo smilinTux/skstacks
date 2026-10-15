@@ -182,6 +182,37 @@ The `talk-hpb` env (`NC_DOMAIN`, `TALK_HOST`) and the Collabora/whiteboard env
 files still build the host from `<base domain>` only and do not read these
 two keys.
 
+## Internal routing to the public hostname
+
+Nextcloud, its cron, `talk-hpb` and `talk-recording` call each other by the
+public hostname: the HPB sends its backend requests and room pings to
+`https://<host>/ocs/v2.php/apps/spreed/api/v3/signaling/backend`, Nextcloud
+calls the HPB at `https://<host>/standalone-signaling/`, and the recording
+server calls both. On an instance published through a CDN or a tunnel
+(Cloudflare + cloudflared, for example) that name resolves to the CDN, so
+each of those calls leaves the cluster and comes back through the tunnel:
+extra latency, the CDN's limits, and a tunnel replica in the path of every
+backend request (resets there show up as HPB "connection reset by peer" /
+"incomplete OCS response" ping failures).
+
+```yaml
+skhub:
+  INTERNAL_INGRESS_IP: 10.20.30.40   # the cluster's own Traefik, reachable from containers
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `INTERNAL_INGRESS_IP` | unset (rendered unchanged) | An IPv4 address the containers reach the cluster's own Traefik on (443). The public skhub hostname (`SKHUB_HOSTNAME`, and also `skhub[-env].<base domain>` when that differs, the name `talk-hpb.env` builds `NC_DOMAIN`/`TALK_HOST` from) is pinned to it with `extra_hosts` in `nextcloud`, `cron`, `talk-hpb` and `talk-recording`. Nothing else changes: same URLs, same TLS name, the same certificate Traefik serves to the public. Not `0.x`, `127.x` (inside a container that is the container) or broadcast; the play refuses those. |
+
+Pick an address that does not tie the stack to one node: a keepalived
+virtual IP that follows a healthy Traefik (Traefik published in host mode
+on every manager) is the intended target, or a Traefik published through
+the Swarm ingress (then any node address works). Check it first from a
+node: `curl --resolve <host>:443:<ip> https://<host>/status.php` must answer
+200 without `-k`, or the HPB (`verify: true`) and Nextcloud will refuse the
+certificate. Browsers and phones still use the public DNS name; only the
+containers' own lookups change.
+
 ## Local database on a pinned node
 
 By default `db` (MariaDB) and `redis` keep their data under
@@ -304,7 +335,9 @@ Optional keys (all unset = the ingress behaviour above, rendered unchanged):
 | `TALK_HPB_PLACEMENT_CONSTRAINTS` | `placement_constraints` | talk-hpb's own placement. Required with `host`: host-mode ports open only on the node running the task, and that node is where the router must forward (for example `["node.hostname == <node>"]`). |
 | `TALK_TURN_RELAY_MIN_PORT`, `TALK_TURN_RELAY_MAX_PORT` | unset | A bounded relay port range, `host` mode only, at most 200 ports, 1024-65535. Passed to eturnal as `ETURNAL_RELAY_MIN_PORT`/`ETURNAL_RELAY_MAX_PORT` and published udp in host mode. Pick it outside the node's ephemeral range (`/proc/sys/net/ipv4/ip_local_port_range`, usually 32768-60999), since every port is bound on the host. |
 | `TALK_TURN_RELAY_IPV4` | unset | The address eturnal advertises for relays: the public address the router forwards to the pinned node. Needs `host` mode and a relay range. aio-talk's `start.sh` always writes the container IP, so the service command rewrites that one line of `/conf/eturnal.yml` after `start.sh` and then runs `TALK_HPB_CMD` (the image's own CMD); if the line is missing (a changed aio-talk image) the container exits with a message instead of running a TURN server that advertises the wrong address. |
-| `TURN_DOMAIN` | unset (renders `{{ CLUSTERNAME }}.{{ DOMAIN }}`, same as before this knob existed) | Overrides only the hostname Nextcloud's `turn_servers` config advertises to clients; does not change `talk-hpb`/eturnal at all. For an instance whose own ingress cannot serve TURN (inbound 3478 blocked at the ISP, for example) and that instead relays Talk's TURN/STUN through another cluster's TURN server: set `TURN_DOMAIN` to that cluster's TURN hostname and `turn_secret` to its secret; `talk-hpb`'s own eturnal then runs unused. The port (3478) and `turn_secret` are unaffected by this knob. |
+| `TURN_DOMAIN` | unset (renders `{{ CLUSTERNAME }}.{{ DOMAIN }}`, same as before this knob existed) | The TURN hostname Nextcloud's `turn_servers` config advertises to clients, and `TURN_DOMAIN` in `talk-hpb.env` (the TURN host Janus hands out). To use this cluster's own eturnal from outside the LAN, set it to a DNS name that resolves to the public address the router forwards to the pinned node (not proxied by a CDN: TURN is not HTTP). For an instance whose own ingress cannot serve TURN (inbound 3478 blocked at the ISP, for example) and that instead relays Talk's TURN/STUN through another cluster's TURN server: set `TURN_DOMAIN` to that cluster's TURN hostname and `turn_secret` to its secret; `talk-hpb`'s own eturnal then runs unused. The port (3478) and `turn_secret` are unaffected by this knob. |
+| `TALK_TURN_TLS_443` | `false` | `true` adds a Traefik TCP router (`HostSNI(TURN_DOMAIN)`, entrypoint `websecure`, certresolver `main`) that terminates TLS on 443 and passes plain TCP to eturnal's 3478, and appends a second `turn_servers` entry `turns:<TURN_DOMAIN>:443` (tcp), for clients whose network only allows 443. Needs `enable_talk_hpb` and `TURN_DOMAIN` set to a DNS name that reaches this cluster's Traefik on 443 (so not one proxied by a CDN). Relayed media still uses the udp relay range. |
+| `TALK_STUN_SERVERS` | unset (Talk's `stun_servers` left as they are) | A list of `host:port` strings (at most 10, no scheme) the post-deploy task writes to Talk's `stun_servers`, for example `[turn.example.com:3478]` to use this cluster's own eturnal (it answers STUN on 3478) instead of a public STUN server or another cluster's. Needs `enable_talk_hpb`. |
 
 The deploy playbooks refuse an inconsistent combination before rendering.
 
