@@ -132,6 +132,16 @@ def test_metrics_router_opt_in_never_sso(tmp_path):
     assert "authentik" not in lab["traefik.http.routers.skpulse-metrics.middlewares"]
 
 
+def test_hostname_override_is_a_bare_host_no_cluster_prefix(tmp_path):
+    # NAM wants a bare host (status.nativeassetmanagement.com), not the
+    # default skpulse.<cluster>.<domain>.
+    out = ok(tmp_path, BASE | {"HOSTNAME": "status.example.test"})
+    lab = labels(compose(out)["services"]["skpulse"])
+    assert lab["traefik.http.routers.skpulse.rule"] == "Host(`status.example.test`)"
+    assert "PathPrefix(`/api/push/`)" in lab["traefik.http.routers.skpulse-public.rule"]
+    assert lab["traefik.http.routers.skpulse-public.rule"].startswith("Host(`status.example.test`)")
+
+
 # --- default-unchanged: AUTH_MODE unset == AUTH_MODE sso --------------------
 
 @pytest.mark.parametrize("mode", ["SSO", "sso", ""])

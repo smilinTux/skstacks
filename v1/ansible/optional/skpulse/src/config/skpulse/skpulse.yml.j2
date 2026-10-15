@@ -39,7 +39,7 @@ version: '3.8'
 {% set skp_metrics_bypass = (skpulse.METRICS_BYPASS_SSO | default(false, true) | bool) %}
 {% set skp_metrics_middlewares = (skpulse.METRICS_TRAEFIK_MIDDLEWARES | default(skp_bypass_middlewares, true)) %}
 {% set skp_router = 'skpulse' + ('' if env == 'prod' else '-' + env) %}
-{% set skp_host_expr = ('skpulse' + ('' if env == 'prod' else '-' + env) + '.' + (skpulse.CLUSTERNAME | default(cluster_name, true)) + '.' + (skpulse.DOMAIN | default(domain, true))) %}
+{% set skp_host_expr = (skpulse.HOSTNAME | default('skpulse' + ('' if env == 'prod' else '-' + env) + '.' + (skpulse.CLUSTERNAME | default(cluster_name, true)) + '.' + (skpulse.DOMAIN | default(domain, true)), true)) %}
 
 services:
   skpulse:
