@@ -3,6 +3,18 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased (v2.26.10)
+
+### Upgrade notes (instances)
+
+- **skhub:** none. The three new keys are optional; unset or false, every file renders byte-identical to v2.26.9 and the post-deploy Talk task runs the same commands.
+
+### Changes
+
+- v1: **skhub** `INTERNAL_INGRESS_IP`: pins the public skhub hostname (and `skhub[-env].<base domain>`, the name `talk-hpb.env` builds `NC_DOMAIN`/`TALK_HOST` from, when it differs) to an address of the cluster's own Traefik with `extra_hosts`, in `nextcloud`, `cron`, `talk-hpb` and `talk-recording` only. On an instance behind a CDN tunnel the HPB's backend requests and room pings to Nextcloud, and Nextcloud's calls to the HPB, used to leave the cluster and loop back through the tunnel (a production instance logged "connection reset by peer" / "incomplete OCS response" room-ping failures through its single cloudflared replica). URLs, TLS names and certificates are unchanged, so `verify: true` keeps working; aim it at a keepalived VIP that follows a healthy Traefik so it is not a single node. The play refuses a value that is not an IPv4 address, or is `0.x`, `127.x` or broadcast. README "Internal routing to the public hostname". Tests: `v1/tests/test_skhub_internal_ingress_and_stun.py` (default and empty byte-identical in all three envs, the four services pinned and nothing else changed, `SKHUB_HOSTNAME` plus the talk-hpb name, `CLOUDFLARED`, talk/recording off, with the TURN relay wrapper, every refusal). Release-gated by the skstack06 skhub stage check `skhub_internal_ingress` (knob on from a lab vault override: the name resolves to the pinned address inside nextcloud, cron and talk-hpb while DNS answers another address, and a signed HPB backend request from talk-hpb's network namespace is accepted by Nextcloud through it).
+- v1: **skhub** `TALK_STUN_SERVERS`: a list of `host:port` strings the post-deploy Talk task writes to `spreed` `stun_servers` (so an instance can use its own eturnal for STUN, together with the existing `TURN_DOMAIN`, `TALK_TURN_PUBLISH_MODE: host`, relay range and `TALK_HPB_PLACEMENT_CONSTRAINTS` for TURN). Unset or empty, `stun_servers` is not touched. The play refuses a non-list, more than 10 entries, an entry that is not `host:port` (port 1-65535, no scheme, no whitespace), and the key without `enable_talk_hpb`. README "Talk HPB TURN" (the `TURN_DOMAIN` row now also says it sets the HPB's `TURN_DOMAIN`, which it has since v2.26.3). Tests: same file (unset/empty task unchanged, the JSON list written, signaling/TURN lines untouched, `no_log` kept, every refusal). Release-gated by the same lab check (the stored `stun_servers` read back through a masking filter, plus the existing TURN allocate on the cluster's own eturnal).
+- v1: **skhub** `TALK_TURN_TLS_443`: `true` adds a Traefik TCP router on `websecure` (`HostSNI(TURN_DOMAIN)`, TLS terminated with certresolver `main`) to eturnal's TCP 3478 on talk-hpb, and appends `turns:<TURN_DOMAIN>:443` (tcp) to Talk's `turn_servers`, so clients behind a firewall that only allows 443 can still reach TURN. Default `false` renders byte-identical (no `traefik.tcp` label, one `turn_servers` entry). The play refuses it without `enable_talk_hpb` or without a `TURN_DOMAIN` that is a dotted DNS name (no port, nothing that could break out of the `HostSNI` rule). README "Talk HPB TURN". Tests: same file (six TCP labels on talk-hpb only, the two `turn_servers` entries, every refusal, real Ansible). Release-gated by the same lab check (a TLS TURN Allocate through the HA edge on 443).
+
 ## skstacks-v2.26.9 - 2026-10-14
 
 ### Upgrade notes (instances)
