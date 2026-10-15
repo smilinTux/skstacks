@@ -52,6 +52,10 @@ IDENT = re.compile(r"[A-Za-z_][\w.]*")
 # Variable names that match SECRET_NAME but hold no secret.
 NOT_SECRET = {
     "skmail.SSL_KEY_PATH": "a host path to the TLS key, bind-mounted; the path is not the key",
+    "skpulse.BYPASS_TRAEFIK_MIDDLEWARES": "the push/status/badge router's middleware chain name, not a secret ('bypass' contains 'pass')",
+    "skpulse.METRICS_BYPASS_SSO": "a boolean toggle for the opt-in /metrics router, not a secret ('bypass' contains 'pass')",
+    "skp_bypass_middlewares": "the resolved value of BYPASS_TRAEFIK_MIDDLEWARES above, not a secret",
+    "skp_metrics_bypass": "the resolved value of METRICS_BYPASS_SSO above, not a secret",
 }
 
 # Env files proven to carry no secret, keyed by template path relative to
