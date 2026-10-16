@@ -1,24 +1,72 @@
-version: "3.7"
+{%- set _r = skreg | default({}) -%}
+{%- set _constraints = _r.placement_constraints | default([]) | list -%}
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# SKReg: Docker Registry v2. Published on the swarm ingress mesh, so every
+# node reaches it at 127.0.0.1:{{ _r.PUBLISHED_PORT | default(5000) }} (see README.md).
+version: '3.8'
 
 services:
   registry:
-    image: registry:2.8.3
+    image: registry:{{ _r.REGISTRY_VERSION | default('2.8.3') }}
+    env_file: /var/data/config/skreg-{{ env }}/skreg.env
     ports:
-      - "5000:5000"
-    environment:
-      - REGISTRY_HTTP_SECRET={{ vault_skreg_registry_http_secret }}
-      - REGISTRY_HTTP_ADDR={{ vault_skreg_registry_http_addr | default('0.0.0.0:5000') }}
+      - target: 5000
+        published: {{ _r.PUBLISHED_PORT | default(5000) }}
+        protocol: tcp
+        mode: ingress
     volumes:
+      # NFS-backed /var/data: every replica sees the same blobs
       - /var/data/skreg-{{ env }}/data:/var/lib/registry
     networks:
       - skreg-{{ env }}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:5000/v2/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "{{ _r.LOG_MAX_SIZE | default('10m') }}"
+        max-file: "{{ _r.LOG_MAX_FILES | default('3') }}"
     deploy:
+{% if (_r.MODE | default('global')) == 'global' %}
       mode: global
+{% else %}
+      mode: replicated
+      replicas: {{ _r.REPLICAS | default(1) }}
+{% endif %}
+{% if _constraints %}
+      placement:
+        constraints: {{ _constraints | tojson }}
+{% endif %}
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: stop-first
+      restart_policy:
+        condition: any
+        delay: 10s
       resources:
         reservations:
           memory: 64M
         limits:
-          memory: 128M
+          memory: {{ _r.RESOURCES_LIMITS_MEMORY | default('256M') }}
 
 networks:
   skreg-{{ env }}:

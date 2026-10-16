@@ -14,6 +14,16 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 ---
+# =============================================================================
+# SKReg (Docker Registry v2) Deployment Playbook - Production
+# =============================================================================
+# Private image registry for the cluster. Published on port 5000 through the
+# swarm ingress mesh, so every node pulls with `127.0.0.1:5000/<image>`
+# (loopback is an insecure-allowed registry by default in dockerd: no TLS,
+# no daemon.json change, no docker restart). See README.md.
+# Vault keys: skreg.REGISTRY_HTTP_SECRET (required; the legacy
+# vault_skreg_registry_http_secret is still accepted).
+# =============================================================================
 - import_playbook: ../../shared/meta/skstack-header.yml
 
 - hosts: all
@@ -40,29 +50,44 @@
     - name: Load vault file
       include_vars: "{{ vault_file_path }}"
       when: vault_file_path is defined
+
+    - name: Resolve the registry HTTP secret (skreg.REGISTRY_HTTP_SECRET, legacy vault_skreg_registry_http_secret accepted)
+      set_fact:
+        skreg_http_secret: "{{ (skreg | default({})).REGISTRY_HTTP_SECRET | default(vault_skreg_registry_http_secret | default('')) }}"
+      no_log: true
+      tags:
+        - always
+
+    - name: Refuse to deploy without a registry HTTP secret
+      # Replicas behind the ingress mesh must share one secret or uploads that
+      # span two replicas fail; an empty one makes registry generate a random
+      # secret per replica.
+      assert:
+        that:
+          - skreg_http_secret | length > 0
+        fail_msg: >-
+          Set skreg.REGISTRY_HTTP_SECRET in the {{ app }}-{{ env }} vault
+          (any long random string, e.g. openssl rand -hex 32).
+      tags:
+        - always
+
+    - name: Define default network variables when not provided in vault
+      set_fact:
+        app_networks: "{{ skreg.networks | default([
+          { 'name': 'skreg-prod', 'subnet': '172.16.62.0/24' }
+        ]) }}"
+      tags:
+        - networks
+
   tasks:
     - name: Deploying {{ app }}
       debug:
         msg: Running SKStacks deploy {{ app }} scripts...
 
-    - name: Ensure skreg-{{ env }} overlay network exists
-      community.docker.docker_network:
-        name: "skreg-{{ env }}"
-        driver: overlay
-        attachable: true
-        ipam_config:
-          - subnet: "172.16.62.0/24"
-        driver_options:
-          encrypted: "false"
-        scope: swarm
-        state: present
-      register: network_result
-      retries: 3
-      delay: 5
-      until: network_result is succeeded
-      ignore_errors: false
+    - name: Ensure overlay networks exist from app_networks variable
+      include_tasks: ../../shared/tasks/create_networks.yml
       tags:
-        - network
+        - networks
 
     - name: Create the {{ app }} directories
       file:
@@ -70,76 +95,75 @@
         state: directory
         owner: root
         group: root
-        mode: 0755
+        mode: "0755"
       loop:
         - /var/data/{{ app }}-{{ env }}
-        - /var/data/{{ app }}-{{ env }}/certs
         - /var/data/{{ app }}-{{ env }}/data
         - /var/data/config/{{ app }}-{{ env }}
 
+    - name: Process {{ app }} environment templates
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop:
+        # carries the registry HTTP secret
+        - { src: "{{ app }}.env.j2", dest: "{{ app }}.env", mode: "0600" }
+        - { src: "{{ app }}.sh.env.j2", dest: "{{ app }}.sh.env", mode: "0640" }
+      tags:
+        - templates
 
     - name: Process {{ app }} docker-compose template
-      ansible.builtin.template:
+      template:
         src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
         dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
         owner: root
         group: root
-        mode: '0600'
-        trim_blocks: false
-        lstrip_blocks: false
+        mode: "0644"
       tags:
         - templates
-    - name: Copy {{ app }} base src files
-      copy:
-          src: "{{ playbook_dir }}/src/{{ app }}"
-          dest: "/var/data/{{ app }}-{{ env }}/"
-          force: yes
-          backup: yes
+
+    - name: Create {{ app }} docker-compose.yml symlink
+      file:
+        src: /var/data/config/{{ app }}-{{ env }}/{{ app }}.yml
+        dest: /var/data/config/{{ app }}-{{ env }}/docker-compose.yml
+        force: yes
+        owner: root
+        group: root
+        # No mode: `file` follows a link, so a mode here would re-mode the target.
+        state: link
       tags:
-        - parentdir
-        - backup
+        - templates
 
     - name: Process {{ app }} deploy script template
-      ansible.builtin.template:
+      template:
         src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
         dest: "/var/data/{{ app }}-{{ env }}/deploy"
         owner: root
         group: root
-        mode: '0755'
+        mode: "0755"
       tags:
         - templates
         - deploy-script
 
     - name: Create {{ app }} control script symlink
       file:
-          src: /var/data/{{ app }}-{{ env }}/deploy
-          dest: /var/data/deploy_{{ app }}-{{ env }}
-          force: yes
-          owner: root
-          group: root
-          mode: 0755
-          state: link
-    - name: Create {{ app }} docker-compose.yaml symlink
-      file:
-          src: /var/data/config/{{ app }}-{{ env }}/{{ app }}.yml
-          dest: /var/data/config/{{ app }}-{{ env }}/docker-compose.yaml
-          force: yes
-          owner: root
-          group: root
-          # No mode: `file` follows a link, so a mode here would re-mode the
-          # target skreg.yml (0600, carries the registry HTTP secret).
-          state: link
-
-    - name: remove/create and start {{ app }} swarm stack
-      debug:
-        msg: Running SKStacks remove docker networks scripts - {{ app }}...
-
+        src: /var/data/{{ app }}-{{ env }}/deploy
+        dest: /var/data/deploy_{{ app }}-{{ env }}
+        force: yes
+        owner: root
+        group: root
+        state: link
 
     - name: Deploy {{ app }} swarm stack
       shell: /bin/bash /var/data/deploy_{{ app }}-{{ env }}
       register: shell_output
-    - debug: var=shell_output
+      tags:
+        - deploy
 
-
-
-
+    - name: Show deploy output
+      debug: var=shell_output.stdout_lines
+      tags:
+        - deploy
