@@ -3,6 +3,16 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## skstacks-v2.26.12 - 2026-10-16
+
+### Upgrade notes (instances)
+
+- **skhub, skbook:** none required. The `db-backup` service's `mariadb-dump` command gains flags only; no vault keys change and no instance action is needed. An instance picks this up on its next `skhub`/`skbook` deploy.
+
+### Changes
+
+- v1: **skhub, skbook** `db-backup` service: added `--single-transaction --quick --routines --events` to every `mariadb-dump` invocation. Incident (NAM, 2026-10-16 ~13:13-13:27Z): the daily `skhub-prod_db-backup` run took a per-database table lock for the whole dump (no `--single-transaction`), sat 13+ minutes reading `oc_filecache` into the pipe to `gzip` over NFS, queued 152 Nextcloud queries on "Waiting for table metadata lock", and hung Nextcloud + Talk (status.php timeouts, talk-hpb "context deadline exceeded", Android Talk clients failing) until the on-call killed the dump query by hand. `--single-transaction` dumps InnoDB tables from one consistent snapshot behind a brief metadata lock instead of a table lock held for the dump's whole duration; `--quick` streams rows instead of buffering the full result set in the dump process, bounding memory on large tables. `--routines --events` close a silent gap in the existing `--all-databases`/single-database dumps: stored procedures, functions and the event scheduler were not previously captured. Caveat: `--single-transaction` only guarantees a consistent snapshot for InnoDB tables; Nextcloud's own schema (`oc_*`) is InnoDB-only, so this is safe as deployed, but a MyISAM table present in any database at dump time would not be covered by the single transaction (same caveat `mariadb-dump` has always had; not new risk from this change). `--all-databases` (skhub), the target database argument (skbook), the `gzip` pipe, and the age/count retention logic are all unchanged. Every other optional stack was checked for the same pattern: all other database dump sidecars use `pg_dump` (skgallery, skmem-pg, sksso, skmesh, skgit), which already dumps a single database from one internally-consistent snapshot by design and needed no change. Tests: `v1/tests/test_db_backup_single_transaction.py` (new, render-gated; watched red before the fix, green after).
+
 ## skstacks-v2.26.11 - 2026-10-15
 
 ### Upgrade notes (instances)
