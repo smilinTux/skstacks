@@ -194,7 +194,7 @@
         group: "{{ item.owner }}"
         mode: '0700'
       loop:
-        - { path: "{{ sf_pg_path }}", owner: "999" }
+        - { path: "{{ sf_pg_path }}", owner: "70" }  # postgres uid in the alpine image
         - { path: "{{ sf_dump_path }}", owner: "root" }
       when: not (sf_external_db | bool) and item.path.startswith('/var/data/')
 
@@ -206,7 +206,7 @@
         group: "{{ item.owner }}"
         mode: '0700'
       loop:
-        - { path: "{{ sf_pg_path }}", owner: "999" }
+        - { path: "{{ sf_pg_path }}", owner: "70" }  # postgres uid in the alpine image
         - { path: "{{ sf_dump_path }}", owner: "root" }
       when: not (sf_external_db | bool) and not item.path.startswith('/var/data/')
       # Ansible templates delegate_to before it evaluates when, so it must
