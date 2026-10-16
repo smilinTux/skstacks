@@ -1,0 +1,20 @@
+#!/bin/sh -eu
+
+APPNAME="skreg"
+ENV="{{ env | default('prod') }}"
+
+# Export environment variables
+. /var/data/config/${APPNAME}-${ENV}/${APPNAME}.sh.env
+
+# Deploy stack
+docker stack deploy -c /var/data/config/${APPNAME}-${ENV}/${APPNAME}.yml ${APPNAME}-${ENV}
+
+# Remove service
+docker service rm ${APPNAME}-${ENV}_${APPNAME}
+
+# Deploy stack again
+docker stack deploy -c /var/data/config/${APPNAME}-${ENV}/${APPNAME}.yml ${APPNAME}-${ENV}
+
+# Console access inside container
+# docker exec -it $(docker ps -q -f name=${APPNAME}-${ENV}_${APPNAME}) sh
+

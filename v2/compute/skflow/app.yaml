@@ -1,7 +1,6 @@
-# SKStacks v2 — skflow app descriptor (STUB)
+# SKStacks v2: skflow app descriptor
 #
-# This is a capability stub — structure only, NO real secrets.
-# Replace CHANGEME_* placeholders with real values before deploy.
+# Structure only, NO real secrets (values come from the secret backend).
 # Provider is the recommended sovereign adapter from the skos capability map.
 #
 # See: docs/superpowers/specs/2026-06-09-skos-capability-map.md
@@ -11,7 +10,7 @@ description: "Automation / workflow — visual and code-first automation with hu
 capability: "Automation / workflow — visual and code-first agent + human-in-loop pipelines"
 depends_on: [skdata]   # wiring (bridge → skwire needs)
 scope: skflow
-version: "CHANGEME_VERSION"
+version: "1.837.0"
 platforms: [docker-swarm, kubernetes]
 # RATIFIED 2026-06-11 (stack-validation): default = Windmill (AGPL, OSI-open,
 # code-first). n8n demoted to license-flagged optional (fair-code / non-OSI,
@@ -22,21 +21,21 @@ alternates:
   - Temporal (durable workflows at scale)
   - n8n (fair-code / non-OSI — optional, license-flagged; large node ecosystem)
 
-# Secret keys this service needs (values resolved from secret backend at deploy time)
+# Secret keys this service needs (values resolved from secret backend at deploy time).
+# The UPPERCASE key is the env var name the renderer injects, so these are the
+# exact variables Windmill reads. Windmill has no initial-password or cookie
+# secret setting: the earlier windmill_superadmin_password / windmill_cookie_secret
+# placeholders mapped to nothing and were replaced.
 secrets:
-  - key: windmill_db_password
-    description: "PostgreSQL password for the Windmill database"
+  - key: database_url
+    description: "Postgres URL for Windmill (postgres://windmill:<password>@<skdata host>:5432/windmill); carries the DB password"
     rotation_days: 90
     required: true
     sensitive: true
-  - key: windmill_superadmin_password
-    description: "Initial Windmill superadmin password"
-    required: true
-    sensitive: true
-  - key: windmill_cookie_secret
-    description: "Windmill session/cookie signing secret"
+  - key: superadmin_secret
+    description: "Windmill SUPERADMIN_SECRET: bearer token acting as the virtual superadmin, for bootstrap automation (32+ chars)"
     rotation_days: 365
-    required: true
+    required: false
     sensitive: true
 
 # Non-sensitive config (overridden by overlay values)
@@ -44,10 +43,26 @@ config:
   LOG_LEVEL: INFO
   DOMAIN: "${SKSTACKS_DOMAIN}"
   CLUSTER: "${SKSTACKS_CLUSTER}"
+  MODE: standalone                       # server + worker in one process; split server/workers in v1 (optional/skflow)
+  BASE_URL: "https://skflow.${SKSTACKS_DOMAIN}"
+  DISABLE_NSJAIL: "true"                 # see v1/ansible/optional/skflow/README.md "Job isolation (nsjail)"
 
-# Health check (fill in real URL/path before deploy)
+# Health check: /api/version is unauthenticated
 healthcheck:
-  url: "https://CHANGEME_HOST.{${SKSTACKS_DOMAIN}}/healthz"
+  url: "https://skflow.${SKSTACKS_DOMAIN}/api/version"
   interval: 30s
   timeout: 5s
   retries: 3
+
+# Deploy block: Windmill in standalone mode (one container, server + worker).
+# The v1 role (v1/ansible/optional/skflow) is the production path and splits
+# server, workers, Postgres and the dump sidecar; database comes from skdata here.
+deploy:
+  container: skflow
+  image: "ghcr.io/windmill-labs/windmill:1.837.0@sha256:661aa3e338be081812ef301a2be8defc50bd9d3c4dde89f8cd53a763e6452a74"
+  ports:
+    - "8000:8000"
+  volumes:
+    - "skflow-cache:/tmp/windmill/cache"
+    - "skflow-logs:/tmp/windmill/logs"
+  healthcheck_test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:8000/api/version || exit 1"]

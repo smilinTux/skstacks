@@ -1,0 +1,285 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# skflow: Windmill (upstream github.com/windmill-labs/windmill, AGPLv3)
+# as the shared workflow engine of a cluster: `server` (UI + API), `worker`
+# (job runners), an optional `worker-native`, and its own Postgres with a
+# dump sidecar (or an external DATABASE_URL instead). Tenants (a document
+# pipeline, an agent, a webhook source) deploy their OWN stacks and reach
+# skflow over the network; nothing tenant-specific runs inside this stack.
+# Opt-in: nothing renders unless this playbook runs. See README.md.
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+# Step 1: Select manager node with failover
+# Run on all hosts to ensure it executes even with -l limit
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+# Step 2: Deploy to selected manager
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skflow
+    env: prod
+    service_name: skflow
+    service_type: optional
+    # Windmill 1.837.0, Postgres 17.7-alpine and (for the bash dump loop)
+    # Postgres 17.7 Debian, multi-arch manifest-list
+    # digests. The compose template writes the same literals so
+    # v1/scripts/list_images.py sees the pins; test_skflow_render.py keeps
+    # the two equal.
+    sf_default_image: "ghcr.io/windmill-labs/windmill:1.837.0@sha256:661aa3e338be081812ef301a2be8defc50bd9d3c4dde89f8cd53a763e6452a74"
+    sf_default_pg_image: "postgres:17.7-alpine@sha256:bb377b7239d2774ac8cc76f481596ce96c5a6b5e9d141f6d0a0ee371a6e7c0f2"
+    sf_default_pg_backup_image: "postgres:17.7@sha256:2006493727bd5277eece187319af1ef82b4cf82cf4fc1ed00da0775b646ac2a4"
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Refuse a missing skflow vault block
+      assert:
+        that:
+          - skflow is defined and skflow is mapping
+        fail_msg: >-
+          ERROR: no skflow vault block. Add `skflow:` to the skflow vault
+          file (see README.md "Configuration (vault)").
+        quiet: true
+      tags: [config]
+
+    - name: Resolve the skflow settings
+      set_fact:
+        sf_base_domain: "{{ skflow.DOMAIN | default(domain) if skflow.CLOUDFLARED | default(false) | bool else (skflow.CLUSTERNAME | default(cluster_name)) ~ '.' ~ (skflow.DOMAIN | default(domain)) }}"
+        sf_image: "{{ skflow.WINDMILL_IMAGE | default(sf_default_image, true) }}"
+        sf_pg_image: "{{ skflow.POSTGRES_IMAGE | default(sf_default_pg_image, true) }}"
+        sf_pg_backup_image: "{{ skflow.POSTGRES_BACKUP_IMAGE | default(sf_default_pg_backup_image, true) }}"
+        sf_external_db: "{{ (skflow.DATABASE_URL | default('', true) | string | length) > 0 }}"
+        sf_pg_path: "{{ skflow.POSTGRES_PATH | default('/var/data/runtime/' + app + '-' + env + '/postgres', true) }}"
+        sf_dump_path: "{{ skflow.DUMP_PATH | default('/var/data/' + app + '-' + env + '/database-dump', true) }}"
+        sf_data_node: "{{ skflow.DATA_NODE | default('', true) | string }}"
+        sf_middlewares: "{{ skflow.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file', true) }}"
+        sf_sso_middleware: "{{ skflow.SSO_MIDDLEWARE | default('', true) | string }}"
+        sf_sso_exempt: "{{ skflow.SSO_EXEMPT_PREFIXES | default(['/api/']) }}"
+        sf_outpost_service: "{{ skflow.SSO_OUTPOST_SERVICE | default('sksso' + ('' if env == 'prod' else '-' + env) + '-server@swarm', true) }}"
+        sf_tls_options: "{{ skflow.TLS_OPTIONS | default('intermediate@file', true) }}"
+        sf_router: "skflow{{ '' if env == 'prod' else '-' + env }}"
+      tags: [config]
+
+    - name: Resolve the public host
+      set_fact:
+        sf_host: "{{ skflow.HOSTNAME | default('skflow' + ('' if env == 'prod' else '-' + env) + '.' + sf_base_domain, true) }}"
+      tags: [config]
+
+    - name: Refuse a database without a password, or a weak one
+      # Either the stack runs its own Postgres (DB_PASSWORD, 16+ chars) or
+      # the instance points at an external one (DATABASE_URL). The message
+      # never prints a value.
+      assert:
+        that:
+          - sf_external_db | bool or (skflow.DB_PASSWORD | default('', true) | string | length >= 16)
+          - (skflow.SUPERADMIN_SECRET | default('', true) | string | length == 0) or (skflow.SUPERADMIN_SECRET | string | length >= 32)
+        fail_msg: >-
+          ERROR: skflow needs DB_PASSWORD (at least 16 characters) unless
+          DATABASE_URL points at an external Postgres, and SUPERADMIN_SECRET,
+          when set, must be at least 32 characters. See README.md
+          "Configuration (vault)".
+        quiet: true
+      tags: [config]
+
+    - name: Validate the image pins, the public host and the SSO knobs
+      assert:
+        that:
+          - "'@sha256:' in sf_image"
+          - "'@sha256:' in sf_pg_image"
+          - "'@sha256:' in sf_pg_backup_image"
+          - sf_host is match('^[A-Za-z0-9][A-Za-z0-9.-]*$')
+          - sf_sso_exempt is sequence and sf_sso_exempt is not string
+          - sf_sso_exempt | select('match', '^/[A-Za-z0-9._/-]*$') | list | length == sf_sso_exempt | length
+          - (skflow.WORKER_REPLICAS | default(2, true) | int) >= 1
+          - (skflow.NATIVE_WORKER_REPLICAS | default(0, true) | int) >= 0
+        fail_msg: >-
+          ERROR: skflow.WINDMILL_IMAGE, POSTGRES_IMAGE and POSTGRES_BACKUP_IMAGE must be pinned by
+          digest (@sha256:), HOSTNAME (or CLUSTERNAME/DOMAIN) must be a plain
+          host name, SSO_EXEMPT_PREFIXES a list of URL path prefixes, and
+          WORKER_REPLICAS at least 1. WINDMILL_IMAGE is {{ sf_image }},
+          POSTGRES_IMAGE is {{ sf_pg_image }}, host is {{ sf_host }}.
+        quiet: true
+      tags: [config]
+
+    - name: Fail closed on a local Postgres path without a pinned data node
+      # A path outside /var/data is local disk on one node: without
+      # DATA_NODE swarm may reschedule Postgres elsewhere and initdb an empty
+      # cluster there (every flow, script, resource and run history gone).
+      # Same rule as skvector/skrac.
+      assert:
+        that:
+          - sf_external_db | bool or (sf_data_node | length > 0) or (sf_pg_path.startswith('/var/data/') and sf_dump_path.startswith('/var/data/'))
+        fail_msg: >-
+          skflow.POSTGRES_PATH / DUMP_PATH point at local disk
+          ({{ sf_pg_path }}, {{ sf_dump_path }}) but skflow.DATA_NODE is
+          empty. Set DATA_NODE to the node holding the data.
+        quiet: true
+      tags: [config]
+
+    - name: Define network variables from vault (idempotent network creation)
+      # Subnets: skflow-prod 172.16.246.0/24, -staging .247, -dev .248
+      # (reserved for skflow); cloud-public-<env> is shared. Override with
+      # the flat per-env skflow_<env>_networks (catalog naming convention).
+      set_fact:
+        app_networks: "{{ skflow_prod_networks | default([
+          { 'name': 'skflow-prod', 'subnet': '172.16.246.0/24', 'driver': 'overlay', 'attachable': true },
+          { 'name': 'cloud-public-prod', 'subnet': '172.16.200.0/24', 'driver': 'overlay', 'attachable': true }
+        ]) }}"
+      tags: [networks, config]
+
+  tasks:
+    - name: Deploying {{ app }}
+      debug:
+        msg: Running SKStacks deploy {{ app }} scripts...
+
+    - name: Create the {{ app }} directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - /var/data/{{ app }}-{{ env }}
+        - /var/data/config/{{ app }}-{{ env }}
+        - /var/data/runtime/{{ app }}-{{ env }}
+
+    - name: Create the {{ app }} worker cache and job log directories (shared by server and workers)
+      # Windmill's own image runs as root; logs/ is where workers write job
+      # logs too large for the database and the server serves them from, so
+      # it must be the same directory on every node (/var/data).
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0750'
+      loop:
+        - /var/data/runtime/{{ app }}-{{ env }}/worker-cache
+        - /var/data/runtime/{{ app }}-{{ env }}/logs
+
+    - name: Create the {{ app }} Postgres data and dump directories on shared storage (not recursive)
+      # 999 is the postgres user of the official image.
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.owner }}"
+        mode: '0700'
+      loop:
+        - { path: "{{ sf_pg_path }}", owner: "999" }
+        - { path: "{{ sf_dump_path }}", owner: "root" }
+      when: not (sf_external_db | bool) and item.path.startswith('/var/data/')
+
+    - name: Create the {{ app }} local Postgres data and dump directories on the data node (not recursive)
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.owner }}"
+        mode: '0700'
+      loop:
+        - { path: "{{ sf_pg_path }}", owner: "999" }
+        - { path: "{{ sf_dump_path }}", owner: "root" }
+      when: not (sf_external_db | bool) and not item.path.startswith('/var/data/')
+      # Ansible templates delegate_to before it evaluates when, so it must
+      # render with DATA_NODE unset too (the guard above requires DATA_NODE
+      # whenever this task actually runs).
+      delegate_to: "{{ skflow.DATA_NODE | default(inventory_hostname, true) }}"
+
+    - name: Process {{ app }} environment templates (root only, they carry the database password)
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ item.dest }}"
+        owner: root
+        group: root
+        mode: '0600'
+      loop:
+        - { src: "skflow.env.j2", dest: "skflow.env" }
+        - { src: "postgres.env.j2", dest: "postgres.env" }
+        - { src: "postgres-backup.env.j2", dest: "postgres-backup.env" }
+      no_log: true
+      tags: [templates]
+
+    - name: Process {{ app }} Docker Compose template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags: [compose]
+
+    - name: Create docker-compose.yml symlink
+      file:
+        src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags: [compose]
+
+    - name: Process deploy script template
+      template:
+        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/deploy"
+        owner: root
+        group: root
+        mode: '0755'
+      tags: [deploy-script]
+
+    - name: Create {{ app }} control script symlink
+      file:
+        src: "/var/data/{{ app }}-{{ env }}/deploy"
+        dest: "/var/data/deploy_{{ app }}-{{ env }}"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags: [deploy-script]
+
+    - name: Ensure overlay networks exist from app_networks variable
+      include_tasks: ../../shared/tasks/create_networks.yml
+      tags: [networks]
+
+    - name: Deploy {{ app }} stack
+      # env_file contents are read by `docker stack deploy` into the service
+      # spec, so a changed password or setting rolls the services by itself;
+      # no forced restart is needed.
+      shell: |
+        cd /var/data/{{ app }}-{{ env }}
+        ./deploy
+      register: deploy_output
+      tags: [deploy]
+
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags: [deploy]

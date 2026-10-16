@@ -61,6 +61,18 @@ SIDECARS = {
                            **{"skmem_pg_" + k: v for k, v in knobs.items()}),
         "backup_keep_days", "backup_num_keep",
     ),
+    "skflow": (
+        "skflow/src/config/skflow/skflow.yml.j2",
+        "postgres-db-backup",
+        "skflow/src/config/skflow/postgres-backup.env.j2",
+        ".sql.gz",
+        lambda knobs: {"app": "skflow", "env": "prod", "sf_external_db": False,
+                       "sf_pg_path": "/var/data/runtime/skflow-prod/postgres",
+                       "sf_dump_path": "/var/data/skflow-prod/database-dump",
+                       "sf_data_node": "",
+                       "skflow": dict(DB_PASSWORD="x", **knobs)},
+        "BACKUP_KEEP_DAYS", "BACKUP_NUM_KEEP",
+    ),
     "skmesh": (
         "skmesh/src/config/skmesh/skmesh.yml.j2",
         "postgres-db-backup",

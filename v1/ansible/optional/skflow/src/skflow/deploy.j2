@@ -1,0 +1,44 @@
+#!/bin/bash
+set -e
+
+# skflow (Windmill) Deploy Script
+# Environment: {{ env }}
+APPNAME=skflow
+STACK_NAME=skflow-{{ env }}
+CONFIG_DIR="/var/data/config/${STACK_NAME}"
+COMPOSE_FILE="${CONFIG_DIR}/skflow.yml"
+SERVER="${STACK_NAME}_server"
+
+if [ ! -f "${COMPOSE_FILE}" ]; then
+    echo "Error: Compose file not found: ${COMPOSE_FILE}"
+    exit 1
+fi
+
+cd "${CONFIG_DIR}"
+
+# env_file values are copied into the service spec here, so a changed
+# setting or password rolls the affected services without a forced restart.
+docker stack deploy \
+    -c "${COMPOSE_FILE}" \
+    --prune \
+    --with-registry-auth \
+    "${STACK_NAME}"
+
+# First boot runs Windmill's database migrations before the API answers, so
+# the poll budget is generous (HEALTH_WAIT_SECONDS, default 600) and the
+# result is a warning, never a failed deploy.
+echo "Waiting for ${SERVER} to converge..."
+WAIT=${HEALTH_WAIT_SECONDS:-600}
+for _ in $(seq 1 $(( (WAIT + 4) / 5 ))); do
+    REPLICAS=$(docker service ls --filter "name=${SERVER}" --format "{% raw %}{{.Replicas}}{% endraw %}")
+    [[ -n "$REPLICAS" && "${REPLICAS%%/*}" == "${REPLICAS##*/}" && "${REPLICAS##*/}" != 0 ]] && break
+    sleep 5
+done
+if [[ -n "$REPLICAS" && "${REPLICAS%%/*}" == "${REPLICAS##*/}" && "${REPLICAS##*/}" != 0 ]]; then
+    echo "${SERVER} is running (${REPLICAS})"
+else
+    echo "${SERVER} not converged: ${REPLICAS}"
+    docker service logs --tail 20 "${SERVER}" || true
+fi
+echo "Windmill UI / API: https://{{ sf_host }}/"
+echo "Deployment complete!"
