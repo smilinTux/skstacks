@@ -2,7 +2,7 @@
 
 28 services, grouped by 4C layer. **Status:** ✅ deploy-ready (has a validated `deploy:` block, renders to Swarm compose + K8s manifests via `skrender`) · 📋 descriptor-only (capability descriptor present, `deploy:` block TODO).
 
-**Totals:** 10 ✅ deploy-ready · 18 📋 descriptor-only.
+**Totals:** 11 ✅ deploy-ready · 17 📋 descriptor-only.
 
 Every service resolves secrets from the secret backend (`skvault` / OpenBao) at deploy time — Swarm via `${ENV}`, K8s via an ESO `ExternalSecret` (`external-secrets.io/v1`) → `Secret` → `envFrom` (UPPERCASE env names). Descriptors contain **structure only, never secret values**.
 
@@ -49,7 +49,7 @@ Every service resolves secrets from the secret backend (`skvault` / OpenBao) at 
 | skdata | Relational + vector + graph + FTS Postgres | PostgreSQL 17 (pgvector + pg_search + AGE) | 📋 | [skdata.md](skdata.md) |
 | skfile | Shared file storage — POSIX RWX | JuiceFS CE (→ skobject + skdata) | 📋 | [skfile.md](skfile.md) |
 | skfiles | File sync and collaboration | Nextcloud + Syncthing | 📋 | [skfiles.md](skfiles.md) |
-| skflow | Automation / workflow — agent + human-in-loop | Windmill | 📋 | [skflow.md](skflow.md) |
+| skflow | Automation / workflow — agent + human-in-loop | Windmill | ✅ | [skflow.md](skflow.md) |
 | skmon | Observability — metrics, logs, traces (OTel) | Prometheus + Grafana + VictoriaLogs + Tempo + Alloy | 📋 | [skmon.md](skmon.md) |
 | skpulse | Uptime / status monitoring | Gatus + Blackbox Exporter | 📋 | [skpulse.md](skpulse.md) |
 

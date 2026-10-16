@@ -1,0 +1,293 @@
+version: '3.8'
+
+# skflow: Windmill, the cluster's shared workflow engine (README.md).
+# `server` serves the UI and the API on 8000 behind Traefik; `worker` runs
+# jobs (replicas from WORKER_REPLICAS); `worker-native` (opt-in,
+# NATIVE_WORKER_REPLICAS) runs only lightweight native jobs. All of them
+# read one env_file (DATABASE_URL etc.); only MODE/WORKER_GROUP differ.
+# With no external DATABASE_URL the stack runs its own Postgres and a
+# `postgres-db-backup` sidecar writing pg_dumpall archives for skbackup.
+# Tenants (document pipelines, agents) are separate stacks that call the
+# API over the network; nothing tenant-specific belongs in this file.
+{% set hc_interval = skflow.HEALTH_CHECK_INTERVAL | default('30s', true) %}
+{% set hc_timeout = skflow.HEALTH_CHECK_TIMEOUT | default('10s', true) %}
+{% set hc_retries = skflow.HEALTH_CHECK_RETRIES | default(3, true) | int %}
+{% set hc_start = skflow.HEALTH_CHECK_START_PERIOD | default('60s', true) %}
+{% set app_constraints = skflow.PLACEMENT_CONSTRAINTS | default(['node.role == worker'], true) %}
+{% set db_constraints = app_constraints + (['node.hostname == ' + sf_data_node] if sf_data_node else []) %}
+{% set own_db = not sf_external_db %}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "{{ skflow.LOG_MAX_SIZE | default('10m', true) }}"
+    max-file: "{{ skflow.LOG_MAX_FILES | default('3', true) }}"
+
+networks:
+  cloud-public-{{ env }}:
+    external: true
+  skflow-{{ env }}:
+    external: true
+
+services:
+  server:
+    # Default = sf_default_image in the playbook (a test keeps them equal).
+    image: {{ skflow.WINDMILL_IMAGE | default('ghcr.io/windmill-labs/windmill:1.837.0@sha256:661aa3e338be081812ef301a2be8defc50bd9d3c4dde89f8cd53a763e6452a74', true) }}
+    env_file: /var/data/config/skflow-{{ env }}/skflow.env
+    environment:
+      - MODE=server
+    volumes:
+      - /var/data/runtime/skflow-{{ env }}/logs:/tmp/windmill/logs
+    # /api/version is unauthenticated; curl ships in the upstream image.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:8000/api/version || exit 1"]
+      interval: {{ hc_interval }}
+      timeout: {{ hc_timeout }}
+      retries: {{ hc_retries }}
+      start_period: {{ hc_start }}
+    networks:
+      - skflow-{{ env }}
+      - cloud-public-{{ env }}
+    logging: *logging
+    deploy:
+      mode: replicated
+      replicas: {{ skflow.SERVER_REPLICAS | default(1, true) | int }}
+      placement:
+        constraints: {{ app_constraints | tojson }}
+      resources:
+        limits:
+          cpus: '{{ skflow.SERVER_CPUS | default("1.00", true) }}'
+          memory: {{ skflow.SERVER_MEMORY_LIMIT | default("2048M", true) }}
+        reservations:
+          memory: {{ skflow.SERVER_MEMORY_RESERVATION | default("256M", true) }}
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skflow"
+        - "com.skt.env={{ env }}"
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        # The UI and everything else: TRAEFIK_MIDDLEWARES plus the optional
+        # SSO_MIDDLEWARE forward-auth layer on top of Windmill's own login.
+        - "traefik.http.routers.{{ sf_router }}.rule=Host(`{{ sf_host }}`)"
+        - "traefik.http.routers.{{ sf_router }}.entrypoints=websecure"
+        - "traefik.http.routers.{{ sf_router }}.tls=true"
+        - "traefik.http.routers.{{ sf_router }}.tls.certresolver=main"
+{% if sf_tls_options != 'none' %}
+        - "traefik.http.routers.{{ sf_router }}.tls.options={{ sf_tls_options }}"
+{% endif %}
+        # 5: above skfenceha's per-domain catch-alls (priority 1).
+        - "traefik.http.routers.{{ sf_router }}.priority=5"
+        - "traefik.http.routers.{{ sf_router }}.middlewares={{ sf_middlewares }}{{ ',' + sf_sso_middleware if sf_sso_middleware else '' }}"
+        - "traefik.http.routers.{{ sf_router }}.service={{ sf_router }}"
+{% if sf_sso_middleware %}
+{% if sf_sso_exempt | length > 0 %}
+        # Paths Windmill authenticates itself (API tokens, webhooks, the
+        # UI's own cookie-authenticated calls): never behind forward auth,
+        # or every webhook and token client breaks.
+        - "traefik.http.routers.{{ sf_router }}-api.rule=Host(`{{ sf_host }}`) && ({% for p in sf_sso_exempt %}PathPrefix(`{{ p }}`){{ ' || ' if not loop.last else '' }}{% endfor %})"
+        - "traefik.http.routers.{{ sf_router }}-api.entrypoints=websecure"
+        - "traefik.http.routers.{{ sf_router }}-api.tls=true"
+        - "traefik.http.routers.{{ sf_router }}-api.tls.certresolver=main"
+{% if sf_tls_options != 'none' %}
+        - "traefik.http.routers.{{ sf_router }}-api.tls.options={{ sf_tls_options }}"
+{% endif %}
+        - "traefik.http.routers.{{ sf_router }}-api.priority=50"
+        - "traefik.http.routers.{{ sf_router }}-api.middlewares={{ sf_middlewares }}"
+        - "traefik.http.routers.{{ sf_router }}-api.service={{ sf_router }}"
+{% endif %}
+        # The Authentik outpost callback on this host goes to sksso's own
+        # Traefik service (SSO_OUTPOST_SERVICE), so the forward-auth login
+        # round trip completes without a hand-placed dynamic file.
+        - "traefik.http.routers.{{ sf_router }}-outpost.rule=Host(`{{ sf_host }}`) && PathPrefix(`/outpost.goauthentik.io/`)"
+        - "traefik.http.routers.{{ sf_router }}-outpost.entrypoints=websecure"
+        - "traefik.http.routers.{{ sf_router }}-outpost.tls=true"
+        - "traefik.http.routers.{{ sf_router }}-outpost.tls.certresolver=main"
+{% if sf_tls_options != 'none' %}
+        - "traefik.http.routers.{{ sf_router }}-outpost.tls.options={{ sf_tls_options }}"
+{% endif %}
+        - "traefik.http.routers.{{ sf_router }}-outpost.priority=100"
+        - "traefik.http.routers.{{ sf_router }}-outpost.middlewares={{ sf_middlewares }}"
+        - "traefik.http.routers.{{ sf_router }}-outpost.service={{ sf_outpost_service }}"
+{% endif %}
+        - "traefik.http.services.{{ sf_router }}.loadbalancer.server.port=8000"
+        - "traefik.http.services.{{ sf_router }}.loadbalancer.server.scheme=http"
+        - "traefik.http.services.{{ sf_router }}.loadbalancer.healthcheck.path=/api/version"
+        - "traefik.http.services.{{ sf_router }}.loadbalancer.healthcheck.interval=30s"
+        - "traefik.http.services.{{ sf_router }}.loadbalancer.healthcheck.timeout=10s"
+
+  worker:
+    image: {{ skflow.WINDMILL_IMAGE | default('ghcr.io/windmill-labs/windmill:1.837.0@sha256:661aa3e338be081812ef301a2be8defc50bd9d3c4dde89f8cd53a763e6452a74', true) }}
+    env_file: /var/data/config/skflow-{{ env }}/skflow.env
+    environment:
+      - MODE=worker
+      - WORKER_GROUP={{ skflow.WORKER_GROUP | default('default', true) }}
+    volumes:
+      - /var/data/runtime/skflow-{{ env }}/worker-cache:/tmp/windmill/cache
+      - /var/data/runtime/skflow-{{ env }}/logs:/tmp/windmill/logs
+    networks:
+      - skflow-{{ env }}
+    logging: *logging
+    deploy:
+      mode: replicated
+      replicas: {{ skflow.WORKER_REPLICAS | default(2, true) | int }}
+      placement:
+        constraints: {{ app_constraints | tojson }}
+      resources:
+        limits:
+          cpus: '{{ skflow.WORKER_CPUS | default("2.00", true) }}'
+          memory: {{ skflow.WORKER_MEMORY_LIMIT | default("2048M", true) }}
+        reservations:
+          memory: {{ skflow.WORKER_MEMORY_RESERVATION | default("256M", true) }}
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skflow"
+        - "com.skt.env={{ env }}"
+{% if (skflow.NATIVE_WORKER_REPLICAS | default(0, true) | int) > 0 %}
+
+  worker-native:
+    image: {{ skflow.WINDMILL_IMAGE | default('ghcr.io/windmill-labs/windmill:1.837.0@sha256:661aa3e338be081812ef301a2be8defc50bd9d3c4dde89f8cd53a763e6452a74', true) }}
+    env_file: /var/data/config/skflow-{{ env }}/skflow.env
+    environment:
+      - MODE=worker
+      - WORKER_GROUP=native
+      - NATIVE_MODE=true
+    volumes:
+      - /var/data/runtime/skflow-{{ env }}/logs:/tmp/windmill/logs
+    networks:
+      - skflow-{{ env }}
+    logging: *logging
+    deploy:
+      mode: replicated
+      replicas: {{ skflow.NATIVE_WORKER_REPLICAS | int }}
+      placement:
+        constraints: {{ app_constraints | tojson }}
+      resources:
+        limits:
+          cpus: '{{ skflow.NATIVE_WORKER_CPUS | default("1.00", true) }}'
+          memory: {{ skflow.NATIVE_WORKER_MEMORY_LIMIT | default("1024M", true) }}
+        reservations:
+          memory: 128M
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skflow"
+        - "com.skt.env={{ env }}"
+{% endif %}
+{% if own_db %}
+
+  postgres:
+    # Default = sf_default_pg_image in the playbook (a test keeps them equal).
+    image: {{ skflow.POSTGRES_IMAGE | default('postgres:17.7-alpine@sha256:bb377b7239d2774ac8cc76f481596ce96c5a6b5e9d141f6d0a0ee371a6e7c0f2', true) }}
+    env_file: /var/data/config/skflow-{{ env }}/postgres.env
+    environment:
+      - PGTEMP=/var/lib/postgresql/data/tmp
+    volumes:
+      - {{ sf_pg_path }}:/var/lib/postgresql/data
+    networks:
+      - skflow-{{ env }}
+    logging: *logging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U windmill -d windmill"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    deploy:
+      mode: replicated
+      # Exactly one: a single Postgres data directory.
+      replicas: 1
+      placement:
+        constraints: {{ db_constraints | tojson }}
+      resources:
+        limits:
+          cpus: '{{ skflow.POSTGRES_CPUS | default("1.00", true) }}'
+          memory: {{ skflow.POSTGRES_MEMORY_LIMIT | default("2048M", true) }}
+        reservations:
+          memory: {{ skflow.POSTGRES_MEMORY_RESERVATION | default("256M", true) }}
+      # stop-first: two Postgres on one data directory corrupt it.
+      update_config:
+        order: stop-first
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skflow"
+        - "com.skt.env={{ env }}"
+
+  postgres-db-backup:
+    # Debian variant: the dump loop needs bash, which alpine does not ship.
+    # Default = sf_default_pg_backup_image in the playbook.
+    image: {{ skflow.POSTGRES_BACKUP_IMAGE | default('postgres:17.7@sha256:2006493727bd5277eece187319af1ef82b4cf82cf4fc1ed00da0775b646ac2a4', true) }}
+    env_file: /var/data/config/skflow-{{ env }}/postgres-backup.env
+    environment:
+      - PGTEMP=/dump/tmp
+    volumes:
+      - {{ sf_dump_path }}:/dump
+    networks:
+      - skflow-{{ env }}
+    # One shell runs this script (list form, no heredoc): each run gets its
+    # own name, dumps to a hidden temp file renamed only on success, and
+    # prunes dumps older than BACKUP_KEEP_DAYS only after a good dump (a run
+    # of failures never ages out the last one). Every $ is $$ so docker
+    # stack deploy does not interpolate it.
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -o pipefail
+        trap 'exit 0' HUP INT TERM
+        rm -f /dump/.dump_*.tmp
+        sleep 2m & wait $$!
+        while true; do
+          NAME=dump_$$(date +%d-%m-%Y_%H_%M_%S).sql.gz
+          TMP=/dump/.$${NAME}.tmp
+          if pg_dumpall -h postgres -U "$${PGUSER}" | gzip -c > "$${TMP}" && [ -s "$${TMP}" ]; then
+            mv -f "$${TMP}" "/dump/$${NAME}"
+            echo "[backup] OK /dump/$${NAME} ($$(stat -c %s "/dump/$${NAME}") bytes)"
+            DAYS=$${BACKUP_KEEP_DAYS:-7}
+            [ "$${DAYS}" -ge 1 ] 2>/dev/null || DAYS=1
+            find /dump -maxdepth 1 -type f -name 'dump_*.sql.gz' ! -name "$${NAME}" -mmin +$$((DAYS * 1440)) -print -delete
+          else
+            echo "[backup] FAIL: dump failed or empty, previous dumps kept" >&2
+            rm -f "$${TMP}"
+          fi
+          sleep "$${BACKUP_FREQUENCY:-86400}" & wait $$!
+        done
+    healthcheck:
+      disable: true
+    logging: *logging
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: {{ db_constraints | tojson }}
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+        reservations:
+          memory: 32M
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skflow"
+        - "com.skt.env={{ env }}"
+{% endif %}
