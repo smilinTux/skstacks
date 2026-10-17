@@ -929,6 +929,27 @@
         - post-deploy
         - talk
 
+    - name: Configure Talk federation
+      shell: |
+        CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+        docker exec "$CONTAINER_ID" php occ config:app:set spreed federation_enabled --value=yes 2>&1 || true
+        {% if (skhub.TALK_FEDERATION_ALLOWED_GROUPS | default([], true) | length) > 0 %}
+        docker exec "$CONTAINER_ID" php occ config:app:set spreed federation_allowed_groups --value='{{ skhub.TALK_FEDERATION_ALLOWED_GROUPS | map('string') | list | to_json }}' 2>&1 || true
+        {% endif %}
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
+      when: >-
+        (skhub.enable_talk_hpb | default(false))
+        and (skhub.TALK_FEDERATION_ENABLED | default(false) | string | lower) in ['true', 'yes', 'on', '1']
+        and nextcloud_container is defined and nextcloud_container.stdout is defined
+        and (nextcloud_container.stdout | trim | length > 0)
+      # Best-effort: optional app/tuning step; a failure here must not block
+      # the deploy. Container lookup, Redis and notify_push are fatal above.
+      ignore_errors: yes
+      no_log: true
+      tags:
+        - post-deploy
+        - talk
+
     - name: Configure Talk recording
       import_tasks: tasks/recording_config.yml
       tags:

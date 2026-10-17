@@ -3,6 +3,16 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## skstacks-v2.26.13 - 2026-10-16
+
+### Upgrade notes (instances)
+
+- **skhub:** none required. Both new keys default to unset/false, which never touches `federation_enabled` or `federation_allowed_groups` (byte-identical post-deploy task behavior). An instance that wants Talk federation to another Nextcloud sets `TALK_FEDERATION_ENABLED: true` (and usually `TALK_FEDERATION_ALLOWED_GROUPS`) on its next skhub deploy; both nor (skstack01) and NAM (namstack01) already have this hot-applied via `occ config:app:set` ahead of the framework catching up, so their next deploy should set the matching vault keys or the deploy will warn (no revert: the task is additive, it never clears an existing value).
+
+### Changes
+
+- v1: **skhub** `TALK_FEDERATION_ENABLED` (bool, default `false`) and `TALK_FEDERATION_ALLOWED_GROUPS` (list of local group ids, default `[]`): new "Configure Talk federation" post-deploy task sets Talk's (`spreed`) `federation_enabled` and, when the group list is non-empty, `federation_allowed_groups` via `occ config:app:set`. Needs `enable_talk_hpb`. Context: nor and NAM (two separate Nextcloud clusters) are being cross-federated over each side's public OCM endpoint (`/ocm-provider`, `/.well-known/ocm`; both already reachable in both directions, `cloud_federation_api`/`federatedfilesharing` already enabled on both) so users (including the `lumina` agent on nor) can Talk-chat and call across the two clusters without any network-level tunnel or route between them. Federation is chat + reactions + calls (via each side's own HPB/signaling backend, both already 2.1.1, well above the 2.0 minimum for federated calls) and does not cover federated Talk file sharing. Restricted to a `federation` group on each side rather than every user. README "Talk HPB TURN" section gains the two new rows. Tests: `v1/tests/test_skhub_talk_federation.py` (new: task exists, default/falsey values never run it, `enabled` writes `federation_enabled=yes`, empty vs non-empty `TALK_FEDERATION_ALLOWED_GROUPS`, needs `enable_talk_hpb`, playbooks still parse, README documents both keys). Verified live (hot `occ config:app:set`, ahead of this framework PR, per the task's own instruction for an appconfig-only change under `sk-lock`): both instances' `occ setupchecks` report Talk "Federation: success"; an end-to-end federated-invite test between two throwaway users (one per cluster, deleted after) exchanged a chat message in both directions and both sides' chat history showed both messages.
+
 ## skstacks-v2.26.12 - 2026-10-16
 
 ### Upgrade notes (instances)
