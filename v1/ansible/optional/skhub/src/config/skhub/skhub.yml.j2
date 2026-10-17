@@ -198,7 +198,7 @@ services:
       sleep 2m
       while /bin/true; do
         BACKUP_FILE="/dump/dump_\$$(date +%d-%m-%Y_%H_%M_%S).sql.gz"
-        if mariadb-dump -h skhub-{{ env }}_db -u "\$$MYSQL_USER" --all-databases 2>/dev/null | gzip -c > "\$$BACKUP_FILE"; then
+        if mariadb-dump -h skhub-{{ env }}_db -u "\$$MYSQL_USER" --single-transaction --quick --routines --events --all-databases 2>/dev/null | gzip -c > "\$$BACKUP_FILE"; then
           FILESIZE=\$$(stat -c%s "\$$BACKUP_FILE" 2>/dev/null || echo 0)
           if [ "\$$FILESIZE" -le 100 ]; then
             echo "\$$(date): WARNING - backup file too small, removing"

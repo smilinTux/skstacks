@@ -151,7 +151,7 @@ services:
       sleep 2m
       while /bin/true; do
         BACKUP_FILE="/dump/dump_\$$(date +%d-%m-%Y_%H_%M_%S).sql.gz"
-        if mariadb-dump -h db -u "\$$MYSQL_USER" -p"\$$MYSQL_PASSWORD" "\$$MYSQL_DATABASE" 2>/dev/null | gzip -c > "\$$BACKUP_FILE"; then
+        if mariadb-dump -h db -u "\$$MYSQL_USER" -p"\$$MYSQL_PASSWORD" --single-transaction --quick --routines --events "\$$MYSQL_DATABASE" 2>/dev/null | gzip -c > "\$$BACKUP_FILE"; then
           FILESIZE=\$$(stat -c%s "\$$BACKUP_FILE" 2>/dev/null || echo 0)
           if [ "\$$FILESIZE" -le 100 ]; then
             echo "\$$(date): WARNING - backup file too small, removing"
