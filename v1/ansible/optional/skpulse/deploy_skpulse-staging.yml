@@ -14,6 +14,11 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 ---
+# skpulse: Uptime Kuma behind skfenceha. AUTH_MODE sso (default) puts
+# Authentik forward auth in front of the dashboard/login/socket.io while
+# push monitors, public status pages and badges stay reachable with no
+# session; AUTH_MODE local is Kuma's own login only, no SSO. Opt-in:
+# nothing renders unless this playbook runs. See README.md.
 - import_playbook: ../../shared/meta/skstack-header.yml
 
 # Step 1: Select manager node with failover
@@ -39,10 +44,52 @@
   pre_tasks:
     - name: Select vault file based on domain and cluster
       import_tasks: ../../shared/tasks/select_vault_file.yml
-    
+
     - name: Load vault file
       include_vars: "{{ vault_file_path }}"
       when: vault_file_path is defined
+
+    - name: Resolve the skpulse sign-in settings
+      # AUTH_MODE sso (default): Authentik forward auth (SSO_MIDDLEWARE,
+      # default authentik@file) on the dashboard/login/socket.io router.
+      # AUTH_MODE local: Kuma's own login only, no SSO_MIDDLEWARE allowed.
+      # Fail closed: an unset AUTH_MODE means sso, never no-auth.
+      set_fact:
+        skp_auth_mode: "{{ skpulse.AUTH_MODE | default('sso', true) | string | lower }}"
+        skp_sso_middleware: "{{ (skpulse.SSO_MIDDLEWARE | default('', true) | string) if (skpulse.AUTH_MODE | default('sso', true) | string | lower) != 'sso' else (skpulse.SSO_MIDDLEWARE | default('authentik@file', true) | string) }}"
+        skp_router: "skpulse{{ '' if env == 'prod' else '-' + env }}"
+      tags: [config]
+
+    - name: Fail loudly on an unknown AUTH_MODE
+      assert:
+        that:
+          - skp_auth_mode in ['sso', 'local']
+        fail_msg: >-
+          ERROR: skpulse.AUTH_MODE must be 'sso' or 'local' (it is
+          '{{ skp_auth_mode }}'). See README.md "Sign-in, SSO and the
+          first admin".
+        quiet: true
+      tags: [config]
+
+    - name: Collect contradictory sign-in settings
+      # Only key NAMES are ever collected, never a value.
+      set_fact:
+        skp_auth_conflicts: >-
+          {{ (["AUTH_MODE is 'local' (no SSO) but SSO_MIDDLEWARE is set"]
+              if (skp_auth_mode == 'local' and (skpulse.SSO_MIDDLEWARE | default('', true) | string | length > 0))
+              else []) }}
+      tags: [config]
+
+    - name: Refuse contradictory sign-in settings
+      assert:
+        that:
+          - skp_auth_conflicts | length == 0
+        fail_msg: >-
+          ERROR: the skpulse vault block contradicts itself: {{ skp_auth_conflicts | join('; ') }}.
+          Either set AUTH_MODE: sso, or remove SSO_MIDDLEWARE. See
+          README.md "Sign-in, SSO and the first admin".
+        quiet: true
+      tags: [config]
 
     - name: Define network variables from vault (required for idempotent deployment)
       # ⚠️ IMPORTANT: Network subnets MUST match shared/networks registry
@@ -166,7 +213,7 @@
       changed_when: false
       tags:
         - deploy
-      
+
     - name: Print SKPulse service status
       debug:
         msg: "SKPulse service status: {{ skpulse_service_info.stdout | default('Service check completed') }}"
@@ -174,3 +221,58 @@
       tags:
         - deploy
 
+    - name: Check whether skpulse already has a database (first-run setup not finished)
+      stat:
+        path: "/var/data/{{ app }}-{{ env }}/uptime-kuma/kuma.db"
+      register: skpulse_db_stat
+      tags:
+        - deploy
+        - authmode
+
+    - name: Find the running skpulse container (for the sign-in setting toggle)
+      shell: docker ps -q -f "name={{ app }}-{{ env }}_skpulse" | head -1
+      register: skpulse_cid
+      changed_when: false
+      failed_when: false
+      when: skpulse_db_stat.stat.exists | default(false)
+      tags:
+        - deploy
+        - authmode
+
+    - name: Count existing Kuma admin users (never flip the sign-in setting before first-run setup finishes)
+      shell: >
+        docker exec {{ skpulse_cid.stdout }} sqlite3 /app/data/kuma.db
+        "SELECT COUNT(*) FROM user;"
+      register: skpulse_user_count
+      changed_when: false
+      failed_when: false
+      when: skpulse_db_stat.stat.exists | default(false) and (skpulse_cid.stdout | default('') | length > 0)
+      tags:
+        - deploy
+        - authmode
+
+    - name: Align Kuma's own login (disableAuth) with AUTH_MODE, fail closed
+      # AUTH_MODE sso: Authentik forward auth already gates the host, so
+      # Kuma's own username/password prompt is disabled (one login, not
+      # two). AUTH_MODE local: Kuma's own login is the ONLY gate, so this
+      # ALWAYS forces disableAuth back to false (fail closed: a cluster
+      # that used to run sso and switched to local must never be left with
+      # auth disabled and no forward-auth in front). Skipped entirely until
+      # the first admin account exists (never touches a fresh, unset-up
+      # instance). This is a direct, idempotent write to Kuma's own
+      # `setting` table, the only place `disableAuth` lives (no env var,
+      # no REST endpoint before login): same class of direct app-state
+      # write as skrac's config.json.
+      shell: >
+        docker exec {{ skpulse_cid.stdout }} sqlite3 /app/data/kuma.db
+        "INSERT INTO setting (key, value, type) VALUES ('disableAuth', '{{ 'true' if skp_auth_mode == 'sso' else 'false' }}', 'general')
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value, type=excluded.type;"
+      register: skpulse_disable_auth_toggle
+      changed_when: skpulse_disable_auth_toggle.rc == 0
+      when: >
+        skpulse_db_stat.stat.exists | default(false)
+        and (skpulse_cid.stdout | default('') | length > 0)
+        and ((skpulse_user_count.stdout | default('0') | trim | regex_replace('[^0-9]', '') | default('0', true) | int) > 0)
+      tags:
+        - deploy
+        - authmode
