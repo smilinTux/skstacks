@@ -145,6 +145,33 @@ services:
       - /var/data/{{ app }}-{{ env }}/database-dump:/dump
       - /etc/localtime:/etc/localtime:ro
     entrypoint: |
+{% if skbook.BACKUP_TIME is defined %}
+      bash -c 'bash -s <<EOF
+      trap "break;exit" SIGHUP SIGINT SIGTERM
+      echo "Starting database backup service (fixed daily time)..."
+      while /bin/true; do
+        NOW_EPOCH=\$$(date +%s)
+        TARGET_EPOCH=\$$(TZ="\$$BACKUP_TZ" date -d "today \$$BACKUP_TIME" +%s)
+        if [ "\$$TARGET_EPOCH" -le "\$$NOW_EPOCH" ]; then
+          TARGET_EPOCH=\$$(TZ="\$$BACKUP_TZ" date -d "tomorrow \$$BACKUP_TIME" +%s)
+        fi
+        echo "\$$(date): next backup at \$$BACKUP_TIME \$$BACKUP_TZ"
+        sleep \$$(( TARGET_EPOCH - NOW_EPOCH ))
+        BACKUP_FILE="/dump/dump_\$$(date +%d-%m-%Y_%H_%M_%S).sql.gz"
+        if mariadb-dump -h db -u "\$$MYSQL_USER" -p"\$$MYSQL_PASSWORD" --single-transaction --quick --routines --events "\$$MYSQL_DATABASE" 2>/dev/null | gzip -c > "\$$BACKUP_FILE"; then
+          FILESIZE=\$$(stat -c%s "\$$BACKUP_FILE" 2>/dev/null || echo 0)
+          if [ "\$$FILESIZE" -le 100 ]; then
+            echo "\$$(date): WARNING - backup file too small, removing"
+            rm -f "\$$BACKUP_FILE"
+          fi
+        else
+          echo "\$$(date): ERROR - backup failed"
+          rm -f "\$$BACKUP_FILE"
+        fi
+        ls -tr /dump/dump_*.sql.gz 2>/dev/null | head -n -"\$$BACKUP_NUM_KEEP" | xargs -r rm -v
+      done
+      EOF'
+{% else %}
       bash -c 'bash -s <<EOF
       trap "break;exit" SIGHUP SIGINT SIGTERM
       echo "Starting database backup service..."
@@ -165,6 +192,7 @@ services:
         sleep "\$$BACKUP_FREQUENCY"
       done
       EOF'
+{% endif %}
     networks:
       - skbook-{{ env }}
     deploy:
