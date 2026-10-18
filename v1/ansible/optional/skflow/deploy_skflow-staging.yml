@@ -84,13 +84,13 @@
         sf_sso_exempt: "{{ skflow.SSO_EXEMPT_PREFIXES | default(['/api/']) }}"
         sf_outpost_service: "{{ skflow.SSO_OUTPOST_SERVICE | default('sksso' + ('' if env == 'prod' else '-' + env) + '-server@swarm', true) }}"
         sf_tls_options: "{{ skflow.TLS_OPTIONS | default('intermediate@file', true) }}"
-        sf_sso_host: "{{ skflow.SSO_HOST | default('sso' + ('' if env == 'prod' else '-' + env) + '.' + sf_base_domain, true) }}"
         sf_router: "skflow{{ '' if env == 'prod' else '-' + env }}"
       tags: [config]
 
     - name: Resolve the public host
       set_fact:
         sf_host: "{{ skflow.HOSTNAME | default('skflow' + ('' if env == 'prod' else '-' + env) + '.' + sf_base_domain, true) }}"
+        sf_sso_host: "{{ skflow.SSO_HOST | default('sso' + ('' if env == 'prod' else '-' + env) + '.' + sf_base_domain, true) }}"
       tags: [config]
 
     - name: Refuse a database without a password, or a weak one
