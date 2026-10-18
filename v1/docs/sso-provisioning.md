@@ -41,13 +41,23 @@ occ config:app:set user_oidc allow_multiple_user_backends --value=0   # /login r
    and prefix the returned path with the SSO origin. The link signs the person in once; they set a password under
    Settings > Change password and add an authenticator. Treat the link as a secret and send it yourself.
 3. They open the Nextcloud URL and are signed in.
-Self-service email recovery needs SMTP configured in Authentik (`AUTHENTIK_EMAIL__*`); until then use step 2.
+Self-service email recovery (the "Forgot password?" link on the login page) is enabled and needs SMTP configured in Authentik
+(`AUTHENTIK_EMAIL__*`, set via the stack vault keys `sksso.email_*`; the Gmail app password lives only in the vault).
+Invites: `POST /api/v3/core/users/<pk>/recovery_email/` with `{"email_stage": "<invite stage>", "token_duration": "days=7"}`.
 
 ## Deprovision
-Deactivate the Authentik user or remove it from `skhub-users`: no new logins. Existing Nextcloud sessions and app
-passwords remain until `v1/scripts/sso-nextcloud-deprovision.py --apply` runs; it disables Nextcloud accounts whose
-Authentik counterpart is inactive or outside `skhub-users` and never touches accounts without a counterpart.
-Run it on a schedule (for example a 15 minute Windmill schedule). Dry run is the default.
+Deactivate the Authentik user or remove it from `skhub-users`: no new logins. A disabled Nextcloud account cannot be used
+with its sessions or app passwords either (WebDAV with its app password returns 503 once disabled), but the stored app
+passwords come back to life if the account is re-enabled. `v1/scripts/sso-nextcloud-deprovision.py --apply` disables
+Nextcloud accounts whose Authentik counterpart is inactive or outside `skhub-users` and never touches accounts without
+a counterpart. Dry run is the default.
+
+Scheduled: Windmill script `f/ops/sso_deprovision` (workspace `fwe`), schedule every 15 minutes with `apply=true`.
+Credentials are Windmill secret variables under `f/ops/`: `authentik_deprovision_token` (Authentik service account
+`svc-deprovision`, role with only `authentik_core.view_user`) and `svc_provisioning_app_password` (Nextcloud service
+user `svc-provisioning`, group admin: subadmins cannot manage users that are in no group, which is the usual state of
+SSO users). Nextcloud refuses `disable` for app passwords ("Password confirmation is required"), so the secret is the
+account's long random password, not an app password. Placeholders: `<authentik-token>`, `<svc-provisioning-secret>`.
 
 ## Verified without a human
 A throwaway Authentik user with a random password drives the flow executor API through
