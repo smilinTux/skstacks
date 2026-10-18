@@ -4,6 +4,8 @@ Plan only. Nothing here is implemented except Nextcloud (see `sso-nextcloud-oidc
 (`skflow` role, PR 205). Placeholders: `*.example.com`. The inventory below comes from a live
 Swarm estate with one Authentik (`sksso`) and one Traefik edge (`skfenceha`).
 
+Operator procedures for people and passwords: [sso-user-management.md](sso-user-management.md).
+
 ## Principles
 
 1. Native OIDC (or SAML) wherever the app supports it. The app validates the token itself, so APIs,
@@ -26,7 +28,7 @@ Routers and middlewares were read from the Swarm service labels. "FA" = Authenti
 | skhub Nextcloud | `skhub` (headers, dav redirect) | local + new `user_oidc` | native OIDC (done) | NEVER FA; see nextcloud doc |
 | skhub notify_push, talk-hpb, whiteboard, collabora, imaginary | path routers on the Nextcloud host, `collabora` own host | token / shared secret | none (leave untouched) | called by Nextcloud and clients; FA breaks them |
 | skflow (Windmill) | UI router has FA, `/api/` router bypasses, `/outpost` routed | native OIDC (works) AND FA | native OIDC only; drop FA | double login; FA also gates every non-`/api/` path (editor websocket and LSP endpoints are a likely casualty, verify); webhooks live under `/api/` so they pass |
-| skfwe worker, nextcloud-mcp | no public router | bearer token / app password | none; keep internal | reached over the overlay by Windmill |
+| tenant document worker, nextcloud-mcp | no public router | bearer token / app password | none; keep internal | reached over the overlay by Windmill |
 | skmesh (NetBird) | dashboard + `/api`, `/management` (gRPC), `/signalexchange`, `/relay` | native OIDC (public client) | native OIDC (done) | never FA: gRPC, relay, signal |
 | skrac (MeshCentral) | host rule + agent-path router (`/agent.ashx`, `/meshrelay.ashx`, `/meshagents`, ...) | native OIDC provider exists | native OIDC | agent paths are machine traffic and must stay open |
 | skai (Open WebUI style) | external | native OIDC | native OIDC (done) | map `groups` claim to admin/user |

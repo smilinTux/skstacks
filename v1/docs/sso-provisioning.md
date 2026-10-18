@@ -1,6 +1,7 @@
 # People provisioning with Authentik and Nextcloud (user_oidc)
 
-Authentik is the source of truth for people. Nextcloud follows. Companion to `sso-nextcloud-oidc.md`.
+Authentik is the source of truth for people. Nextcloud follows. Companion to `sso-nextcloud-oidc.md`. Step by step operator procedures (add a person or household, remove, reset,
+recovery links, secret rotation, rollback) are in [sso-user-management.md](sso-user-management.md).
 
 ## Model
 - One Authentik user per person. Username = the Nextcloud account id (uid). Pin it in user attribute `nextcloud_uid`.
@@ -9,7 +10,7 @@ Authentik is the source of truth for people. Nextcloud follows. Companion to `ss
   adopts the existing local account with the same uid (no duplicate) or creates a new one.
 - Groups: Authentik groups named `nc-<name>` become Nextcloud group `<name>` through the `nextcloud_groups` claim.
   Only Nextcloud groups matching the provider `groupWhitelistRegex` are added or removed by SSO, so unrelated local
-  groups are never changed. Use `fwe-team` and `hh-<household>` names for IdP-managed groups.
+  groups are never changed. Use `ops-team` and `hh-<household>` names for IdP-managed groups.
 - Passwords live only in Authentik. Users create app passwords in Nextcloud for WebDAV and desktop or mobile clients.
 - Local-only accounts (break-glass admin, service accounts) have no Authentik user and never get SSO.
 
@@ -29,7 +30,7 @@ return {"nextcloud_uid": uid, "nextcloud_groups": ncgroups}
 ```
 occ config:system:set user_oidc auto_provision --type=boolean --value=true
 occ user_oidc:provider "<identifier>" --mapping-uid=nextcloud_uid --mapping-groups=nextcloud_groups \
-  --group-provisioning=1 '--group-whitelist-regex=^(fwe-team|hh-.+)$'
+  --group-provisioning=1 '--group-whitelist-regex=^(ops-team|hh-.+)$'
 occ config:app:set user_oidc allow_multiple_user_backends --value=0   # /login redirects to the IdP
 ```
 `/login?direct=1` still shows the local form (break-glass).

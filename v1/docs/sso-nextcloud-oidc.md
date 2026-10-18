@@ -4,6 +4,14 @@ Status: proven on a live prod instance (Nextcloud 34.0.4, `user_oidc` 8.11.0, Au
 Everything below uses placeholders: `cloud.example.com` is the Nextcloud host, `sso.example.com` is
 Authentik. Site values live in the operator's private config repo.
 
+> Update: the live end state moved from "log into existing accounts only" to just-in-time provisioning
+> (`auto_provision = true`, `soft_auto_provision = true`, group sync, the scope mapping falls back to the
+> Authentik username and pins it as `nextcloud_uid`, `allow_multiple_user_backends = 0` so `/login`
+> redirects to the IdP with `/login?direct=1` as break-glass). The strict mode described under "Identity
+> mapping" below (auto_provision off, fail closed mapping) is still a valid, more conservative choice for an
+> instance that must never create accounts from SSO. For the day-to-day operations of the current model
+> read [sso-provisioning.md](sso-provisioning.md) and the runbook [sso-user-management.md](sso-user-management.md).
+
 ## Decision: native OIDC, never forward auth in front of Nextcloud
 
 Do not attach an Authentik forward-auth middleware (the `authentik@file` Traefik middleware) to any
