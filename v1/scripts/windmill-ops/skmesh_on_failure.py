@@ -32,7 +32,7 @@ def main(error: dict = {}, schedule_path: str = '', path: str = '', failed_times
     err = error if isinstance(error, dict) else {'message': str(error)}
     detail = str(err.get('message') or err.get('name') or 'unknown error')[:300]
     from f.ops.notify import main as notify
-    notify(title='skmesh pending-approval check failing', severity='error',
+    notify(title='skmesh pending-approval check failing', severity='error', room='NAM Admin',
            summary='%s failed (%s in a row): %s' % (path or 'f/ops/skmesh_pending_approvals', failed_times, detail))
     _wm('POST', '/variables/update/' + LAST_VAR, {'value': str(now)})
     return {'posted': True}

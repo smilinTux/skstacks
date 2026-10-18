@@ -50,7 +50,7 @@ def message(name, email, approve_url, reminder=False):
 
 def _post(title, text):
     from f.ops.notify import main as notify
-    return notify(title=title, summary=text, severity='warn')
+    return notify(title=title, summary=text, severity='warn', room='NAM Admin')
 
 
 def plan(pending, state, now):
