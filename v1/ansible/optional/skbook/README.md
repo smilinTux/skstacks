@@ -63,6 +63,8 @@ skbook:
   EXPORT_PAGE_SIZE: letter           # default: letter
   BACKUP_FREQUENCY: 86400            # default: 86400 (seconds)
   BACKUP_NUM_KEEP: 7                 # default: 7
+  # BACKUP_TIME: "03:00"              # optional: fixed daily run HH:MM, unset = today's sleep-BACKUP_FREQUENCY loop (byte-identical render)
+  # BACKUP_TZ: America/New_York       # optional: IANA zone for BACKUP_TIME, default UTC, DST-correct
   replicas: 1                        # default: 1
 
   # mail (SMTP) - all optional, only rendered if MAIL_HOST is set
