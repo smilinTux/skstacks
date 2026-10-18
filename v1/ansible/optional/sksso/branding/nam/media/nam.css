@@ -85,3 +85,6 @@ a:hover { color: var(--nam-primary-hover); }
 /* Alerts keep readable colors */
 .pf-c-alert.pf-m-danger { border-top-color: #E74C3C; }
 .pf-c-alert.pf-m-success { border-top-color: #27AE60; }
+
+/* Hide the "Powered by authentik" footer item (always the last, text-only entry) */
+ak-brand-links li[data-kind="text"]:last-child { display: none !important; }
