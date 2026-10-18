@@ -26,6 +26,16 @@ on, and Traefik's forwardAuth still sends the real host. Both are static
 configuration: restart the workers after changing them. Unset: nothing
 renders differently.
 
+**Worker resources (`TRAEFIK_WORKER_CPUS` and friends)**: the `traefik-worker`
+tier carries every request and TLS handshake of the cluster, and a hard 0.40
+CPU limit capped large transfers (a 500 MB WebDAV download held the worker at
+the limit and ran near 15 MB/s). Defaults: `TRAEFIK_WORKER_CPUS: "2.00"`,
+`TRAEFIK_WORKER_MEMORY_LIMIT: 384M`, `TRAEFIK_WORKER_CPUS_RESERVATION: "0.08"`,
+`TRAEFIK_WORKER_MEMORY_RESERVATION: 96M`. The limit applies per manager (the
+service is global). A deploy that changes it restarts each worker in turn
+(host-mode ports, so expect a brief connection reset per node); a live
+`docker service update --limit-cpu` does the same.
+
 **Instance-owned dynamic files (`EXTRA_DYNAMIC_FILES`)**: the playbooks render
 a fixed set of Traefik dynamic files (`routers.yml`, `services.yml`,
 `middlewares.yml`, `tls.yml`). An instance that needs routes of its own (for
