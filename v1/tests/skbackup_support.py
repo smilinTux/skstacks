@@ -179,7 +179,7 @@ class FakeHost:
         self.bin = root / "fakebin"
         for d in (self.data, self.copies, self.state, self.bin, root / "etc", root / "lock", root / "cache"):
             d.mkdir(parents=True, exist_ok=True)
-        for name in ("zfs", "zpool", "mount", "umount", "mountpoint"):
+        for name in ("zfs", "zpool", "mount", "umount", "mountpoint", "mkdir"):
             shim = self.bin / name
             shim.write_text(f'#!/bin/sh\nexec {sys.executable} {FAKEZFS} "$0" "$@"\n')
             shim.chmod(0o755)

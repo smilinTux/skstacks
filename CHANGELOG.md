@@ -3,6 +3,17 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased
+
+### Upgrade notes (instances)
+
+- **skflow:** new optional role, opt-in; nothing an instance already deploys renders differently because of it. An instance that runs a hand-deployed Windmill under the stack name `skflow-<env>` follows the README's "Migrating a hand-deployed Windmill" before its first framework deploy.
+
+### Changes
+
+- v1: new optional role **skflow** (`v1/ansible/optional/skflow`): [Windmill](https://github.com/windmill-labs/windmill) (AGPLv3), the ratified provider of the `skflow` capability, as a cluster's shared workflow engine. Services `server` (UI/API on 8000, healthcheck `/api/version`), `worker` (`WORKER_REPLICAS`, default 2, `WORKER_GROUP`), optional `worker-native` (`NATIVE_WORKER_REPLICAS`), and its own Postgres (`postgres:17.7-alpine`, stop-first, one replica) with a `pg_dumpall` dump sidecar (`postgres:17.7`, bash loop with temp-file rename and age-based retention, same contract as the other dump sidecars), or an external `DATABASE_URL` instead (then neither Postgres service renders). All images pinned by manifest-list digest; the play refuses one without `@sha256:`. Secrets: `DB_PASSWORD` (16+ chars, URL-encoded into `DATABASE_URL`) and optional `SUPERADMIN_SECRET` (32+ chars, Windmill's own), written only to 0600 env files. Traefik: one router with `TRAEFIK_MIDDLEWARES`; with `SSO_MIDDLEWARE` set, `SSO_EXEMPT_PREFIXES` (default `/api/`) get their own router without forward auth (webhooks and token clients) and `/outpost.goauthentik.io/` on the host is routed by label to sksso's Traefik service (`SSO_OUTPOST_SERVICE`, default `sksso[-env]-server@swarm`), so no hand-placed dynamic file is needed. `POSTGRES_PATH`/`DUMP_PATH` on local disk require `DATA_NODE` (fail closed). Tenants are separate stacks on the attachable `skflow-<env>` overlay. New subnets `skflow-prod/staging/dev` = `172.16.246/247/248.0/24`. Tests: `v1/tests/test_skflow_render.py` (real Ansible: defaults, every knob, external database, URL-encoded password, SSO router split and outpost route per env, empty exempt list, data node pinning, every refusal, image literal parity, env playbook parity) and `v1/tests/test_db_dump_sidecars.py` (the dump loop run for real). Not yet release-gated by a skstack06 stage.
+- v2: **skflow** descriptor gets a `deploy:` block (Windmill standalone, digest-pinned, `/api/version` healthcheck) and is now deploy-ready. Its secrets become `database_url` and `superadmin_secret`, which the renderer injects as the `DATABASE_URL` and `SUPERADMIN_SECRET` Windmill reads; the previous `windmill_superadmin_password` / `windmill_cookie_secret` placeholders (and the `n8n_*` names in the generated doc) mapped to no Windmill setting.
+
 ## skstacks-v2.26.13 - 2026-10-17
 
 ### Upgrade notes (instances)
@@ -217,6 +228,8 @@ The skstack06 stages gain checks for this release: every skhealth webhook post v
 - v1: new published package **skstacks-config-template** (Gap 1 of the config-template-and-safe-deploy design): `scripts/generate-config-template.sh` and `scripts/scrub-check.sh` turn a private instance config repo into a redacted, shareable template (`templates/config-repo/`), with a CI job (`config-template-drift.yml`) that fails if the template drifts from a fresh render or still carries vault ciphertext or a fleet-specific literal the estate denylist should have caught. **Instance action**: none; an operator who wants to publish their own config layout as a template runs the script.
 
 ## Unreleased
+
+- v1 skbackup: assemble recursive offsite snapshot sources on a private tmpfs with stable dataset-relative paths, including children whose live mountpoints lie outside their parents. Inspect frozen parents outside the backup tree, skip empty containers and preserve parent-owned files only where child directories already exist. Track all mounts for reverse-order trap cleanup, including partial failure and termination. Preserve restic host, tags and source paths so existing seed snapshots remain eligible parents. Tests cover custom mountpoints, a real seed-parent reuse and restore, file-holding parents, unsafe directories and cleanup. **Instance action**: redeploy the skbackup engine before resuming an affected offsite run.
 
 - v1 skbackup: recursive offsite backups now create one atomic snapshot name across included filesystems, then mount every child read-only at stable paths and unmount in reverse. Unrestricted trees use ZFS recursion; exclusions and zvols use one explicit atomic filesystem list. Track capture ownership and keep only per-set last-success source references, preserving external snapshots and failed-run restore sources. Serialize restore tests with backup capture cleanup. Single-dataset Sanoid behavior and configuration remain unchanged.
 
