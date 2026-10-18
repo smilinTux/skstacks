@@ -84,6 +84,7 @@
         sf_sso_exempt: "{{ skflow.SSO_EXEMPT_PREFIXES | default(['/api/']) }}"
         sf_outpost_service: "{{ skflow.SSO_OUTPOST_SERVICE | default('sksso' + ('' if env == 'prod' else '-' + env) + '-server@swarm', true) }}"
         sf_tls_options: "{{ skflow.TLS_OPTIONS | default('intermediate@file', true) }}"
+        sf_sso_host: "{{ skflow.SSO_HOST | default('sso' + ('' if env == 'prod' else '-' + env) + '.' + sf_base_domain, true) }}"
         sf_router: "skflow{{ '' if env == 'prod' else '-' + env }}"
       tags: [config]
 
@@ -283,3 +284,13 @@
     - name: Show deploy output
       debug: var=deploy_output.stdout_lines
       tags: [deploy]
+
+    - name: Windmill Authentik login and workspace admins (skflow.SSO_CLIENT_SECRET)
+      include_tasks:
+        file: tasks/sso_provision.yml
+        apply:
+          tags:
+            - deploy
+      when: skflow.SSO_CLIENT_SECRET | default('', true) | string | length > 0
+      tags:
+        - deploy
