@@ -308,3 +308,64 @@ blueprint without applying it: `docker exec -i <server container> sh -c 'cat >
 /tmp/x.py; ak shell < /tmp/x.py'` with a script that calls
 `Importer.from_string(yaml).validate()` (it runs in a transaction that is
 rolled back).
+
+## SSO for skhub and skflow
+
+Authentik (this role) is the identity provider for two apps in the estate. Both use native OAuth2/OIDC, so
+neither sits behind forward auth. Operator procedures are in
+[`v1/docs/sso-user-management.md`](../../../docs/sso-user-management.md); the model is in
+[`sso-provisioning.md`](../../../docs/sso-provisioning.md) and
+[`sso-nextcloud-oidc.md`](../../../docs/sso-nextcloud-oidc.md).
+
+| | skhub (Nextcloud) | skflow (Windmill) |
+|---|---|---|
+| Authentik application / provider | `skhub` / `skhub-nextcloud` (confidential, RS256, subject mode `user_id`) | `skflow-windmill` / `skflow-windmill` (this role's blueprint) |
+| Strict redirect URI | `https://<skhub host>/apps/user_oidc/code` | `https://<skflow host>/user/login_callback/authentik` |
+| Who may sign in | group `skhub-users` | group `skflow-operators` |
+| Scopes | `openid email profile nextcloud` | `openid offline_access email profile` |
+| Client side config | Nextcloud app `user_oidc` provider (`occ user_oidc:provider`) | Windmill global setting `oauths` (written by the skflow play) |
+| Shipped as code today | blueprint documented, not yet rendered by this role | yes, `skflow-windmill.yaml.j2` |
+
+### The `nextcloud` scope mapping
+
+One scope mapping (scope name `nextcloud`) feeds Nextcloud two claims:
+
+- `nextcloud_uid`: the user attribute `nextcloud_uid` if set, otherwise the Authentik username, and that value
+  is written back to the attribute (pinned), so renaming the Authentik user later cannot create a second
+  Nextcloud account. For a person whose existing Nextcloud uid differs from the Authentik username, set the
+  attribute before their first login.
+- `nextcloud_groups`: the names of the person's groups that start with `nc-`, prefix removed. Authentik
+  `nc-hh-<family>` becomes Nextcloud `hh-<family>`.
+
+The full expression is in `sso-provisioning.md`. Treat it as code: keep it in a blueprint so a rebuilt
+Authentik gets it back.
+
+### Groups
+
+| Group | Meaning |
+|---|---|
+| `skhub-users` | may sign in to Nextcloud (bound to the `skhub` application) |
+| `skflow-operators` | may sign in to Windmill (bound by the blueprint; Windmill CE limit: 10 SSO users) |
+| `nc-<name>` | provisioning group: members get Nextcloud group `<name>` (only names matching the provider's whitelist regex are synced, for example `^(ops-team|hh-.+)$`) |
+| `skadmin`, `skeditor`, `skreadonly` | portal tiers; independent of SSO |
+
+### Recovery and SMTP
+
+Passwords, MFA and recovery live here only. Self-service "forgot password" needs working SMTP
+(`AUTHENTIK_EMAIL__HOST` and friends in `sksso.env`) and a brand recovery flow, for example the shipped
+example blueprint `flows-recovery-email-verification.yaml`. An instance without SMTP must not enable the
+login-page link (it would error); operators issue one-time recovery links with
+`authentik.recovery.lib.create_recovery_token` instead (runbook: "Issue a recovery link"). Check the SMTP
+status of the instance before promising self-service reset to anyone.
+
+### Forward-auth leftovers and portal tiles
+
+- Forward auth is not used for skhub or skflow. After switching skflow to native SSO (empty
+  `skflow.SSO_MIDDLEWARE`), the old forward-auth Proxy application and provider for Windmill are unused:
+  delete them and detach the provider from the embedded outpost after the next skflow deploy, or the portal
+  shows a second, redundant tile.
+- If you run a tile-sync script over a `tiles.yml`, the `skhub` tile must be declared provider-backed with its
+  groups. A plain link tile with no provider detaches the OAuth provider and removes group bindings on the
+  next run. Applications and groups not listed in `tiles.yml` (the Windmill application, `nc-*` groups) must be
+  left untouched by the script; do not add them there.
+- Rotating a client secret: runbook section "Rotate a client secret".
