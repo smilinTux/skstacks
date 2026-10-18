@@ -179,6 +179,36 @@ The user logging in must be in that Authentik group, or the application is
 not shown to them (the blueprint binds the application to the group). A
 user's Windmill account is created on first SSO login, matched by email.
 
+### Nextcloud integration by default (optional)
+
+When the instance also runs Nextcloud (SKHub), Windmill can take file events from it, post into a Talk room and talk
+back through a Talk bot. Proven on the NAM estate with Windmill CE 1.837.0 and Nextcloud 34 (hammerTime
+`deploy/fwe/windmill/README.md` has the working scripts). Nothing here is on by default; the pieces are:
+
+1. **Nextcloud apps.** `webhook_listeners`, `oauth2`, `spreed` (Talk) and, for the event list in the Windmill UI,
+   `integration_windmill` enabled. `tasks/nextcloud_integration.yml` does this part, delegated to the Nextcloud node.
+2. **Pretty URLs.** `occ config:system:set htaccess.RewriteBase --value=/` then `occ maintenance:update:htaccess`.
+   Without it `/apps/oauth2/api/v1/token` answers 405 and the Windmill connect step fails.
+3. **OAuth client (Nextcloud) and workspace integration (Windmill).** `occ oauth2:add-client "Windmill skflow <ws>"
+   "https://<skflow host>/workspace_settings?tab=native_triggers&service=nextcloud"`, then in the workspace
+   (Workspace settings, Native triggers, Nextcloud, Configure OAuth) or by API
+   `POST /api/w/<ws>/native_triggers/integrations/nextcloud/create` with client id and secret, the Nextcloud base URL and
+   that redirect URI, then connect. The client secret goes to the vault, not to the repo.
+4. **Connect as a service account, not an admin.** Managing webhooks is an administrator setting, but it can be
+   delegated: `occ admin-delegation:add 'OCA\WebhookListeners\Settings\Admin' <service account group>`. The task file
+   does this when `skflow.NEXTCLOUD_WEBHOOK_GROUP` is set. Connect the integration as that account.
+5. **Triggers.** Create native triggers on the events you need (for example `NodeWrittenEvent` with an `eventFilter`
+   regex on `event.node.path`). Windmill CE supports them; they run from Nextcloud's background job, so the delay is the
+   Nextcloud cron period. Windmill registers webhooks with `tokenNeeded: owner, trigger`, which puts two short-lived
+   Nextcloud user tokens into every job's args. Re-save the webhook with `tokenNeeded: {}` (see `harden_trigger.py` in
+   hammerTime) unless the flow needs them.
+6. **Talk bot.** `occ talk:bot:install "<Bot>" <secret 40+ chars> <webhook url> --feature webhook --feature response`,
+   `occ talk:room:create ...`, `occ talk:bot:setup <bot id> <room token>`. The webhook URL targets a Windmill script with
+   `?raw=true&include_header=x-nextcloud-talk-signature,x-nextcloud-talk-random&token=<token>`; use a Windmill token whose
+   only scope is `jobs:run:scripts:<path>`. Keep the bot secret and room token in Windmill secret variables.
+
+Workspace-level error handlers are an enterprise feature; give flows a `failure_module` instead.
+
 ### Health checks
 
 - `server`: `curl http://127.0.0.1:8000/api/version` (unauthenticated);

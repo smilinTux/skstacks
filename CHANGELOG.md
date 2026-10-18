@@ -7,6 +7,7 @@ Each entry says what an instance must do, if anything.
 
 ### Upgrade notes (instances)
 
+- **skflow (Nextcloud integration):** none required. Optional runbook plus `tasks/nextcloud_integration.yml` for instances that run Nextcloud and want file events, Talk notifications and a Talk bot in Windmill; no deploy playbook includes it.
 - **skflow, sksso (Windmill SSO):** none required. An instance whose Windmill login was set up by hand sets the same secret in both vaults to adopt it as code; the blueprint matches the existing provider, application and group by name, so nothing is duplicated.
 - **skfenceha:** the `traefik-worker` CPU limit default rises from 0.40 to 2.00 CPUs (per manager, the service is global). The next skfenceha deploy restarts the workers one at a time (a brief connection reset per node). To keep the old cap set `skfenceha.TRAEFIK_WORKER_CPUS: "0.40"`. An instance that already ran `docker service update --limit-cpu 2` sees no change.
 - **skwrit:** new optional role, opt-in; nothing an instance already deploys renders differently because of it.
