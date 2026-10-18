@@ -1,0 +1,155 @@
+version: '3.8'
+
+# skwrit: the matter engine's worker (README.md). One digest-pinned service
+# that skflow (Windmill) calls over the shared overlay by the service name
+# `<stack>_<WORKER_SERVICE>` on port 8080, plus an optional Nextcloud MCP
+# service. Settings are SKWRIT_* variables; secrets are external Swarm
+# secrets referenced by name; the state volume and the engine overlay
+# already exist. No secret value is read or written by this play.
+{% set sw_stack = skwrit.STACK_NAME | default('skwrit-' + env, true) %}
+{% set sw_service = skwrit.WORKER_SERVICE | default('worker', true) %}
+{% set sw_subnet = skwrit.INTERNAL_SUBNET | default({'prod': '172.16.249.0/24', 'staging': '172.16.253.0/25', 'dev': '172.16.253.128/25'}[env], true) %}
+{% set sw_workflow_network = skwrit.WORKFLOW_NETWORK | default('skflow-' + env, true) %}
+{% set sw_constraints = skwrit.PLACEMENT_CONSTRAINTS | default(['node.role == worker'], true) %}
+{% set sw_extra_hosts = skwrit.EXTRA_HOSTS | default([], true) %}
+{% set sw_mcp_enabled = skwrit.NEXTCLOUD_MCP_ENABLED | default(false, true) | bool %}
+{% set sw_hc_interval = skwrit.HEALTH_CHECK_INTERVAL | default('30s', true) %}
+{% set sw_ref_nc = skwrit.NEXTCLOUD_SWARM_REF | default('skwrit_nextcloud_v1', true) %}
+{% set sw_ref_worker = skwrit.WORKER_SWARM_REF | default('skwrit_worker_v1', true) %}
+{% set sw_ref_vec = skwrit.VECTOR_SWARM_REF | default('skwrit_vector_v1', true) %}
+{% set sw_env = {
+  'SKWRIT_MODEL_URL': skwrit.MODEL_URL | default('', true),
+  'SKWRIT_MODEL': skwrit.MODEL | default('', true),
+  'SKWRIT_REVIEW_MODEL': skwrit.REVIEW_MODEL | default('', true),
+  'SKWRIT_REVIEW_URL': skwrit.REVIEW_URL | default('', true),
+  'SKWRIT_VECTOR_URL': skwrit.VECTOR_URL | default('', true),
+  'SKWRIT_EMBED_URL': skwrit.EMBED_URL | default('', true)
+} %}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "{{ skwrit.LOG_MAX_SIZE | default('10m', true) }}"
+    max-file: "{{ skwrit.LOG_MAX_FILES | default('3', true) }}"
+
+services:
+  {{ sw_service }}:
+    image: "{{ skwrit.SKWRIT_IMAGE }}"
+    environment:
+      NEXTCLOUD_URL: {{ skwrit.NEXTCLOUD_URL | default('') | to_json }}
+{% for k, v in sw_env.items() if v | string | length > 0 %}
+      {{ k }}: {{ v | string | to_json }}
+{% endfor %}
+    secrets:
+    - source: {{ sw_ref_nc }}
+      target: nextcloud_password
+    - source: {{ sw_ref_worker }}
+      target: worker_token
+    - source: {{ sw_ref_vec }}
+      target: vector_api_key
+    networks:
+    - internal
+    - workflow-apps
+    volumes:
+    - state:/state
+    deploy:
+      replicas: 1
+      placement:
+        constraints: {{ sw_constraints | tojson }}
+      resources:
+        limits:
+          memory: {{ skwrit.MEMORY_LIMIT | default('2G', true) }}
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+      update_config:
+        parallelism: 1
+        order: stop-first
+        failure_action: rollback
+{% if sw_extra_hosts | length > 0 %}
+    extra_hosts:
+{% for h in sw_extra_hosts %}
+    - {{ h | to_json }}
+{% endfor %}
+{% endif %}
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/health')
+      interval: {{ sw_hc_interval }}
+      timeout: {{ skwrit.HEALTH_CHECK_TIMEOUT | default('5s', true) }}
+      retries: {{ skwrit.HEALTH_CHECK_RETRIES | default(3, true) | int }}
+    logging: *logging
+{% if sw_mcp_enabled %}
+  nextcloud-mcp:
+    # Digest-pinned upstream image; the account password is read from the
+    # same Swarm secret at start and never appears in the service spec.
+    image: {{ skwrit.NEXTCLOUD_MCP_IMAGE | default('ghcr.io/cbcoutinho/nextcloud-mcp-server:0.199.4@sha256:4db27920ca54f13965f8a509bcaf8491c2d06a476cc1b77062868ae901c2f0f1', true) }}
+    user: '1000:0'
+    entrypoint:
+    - /bin/sh
+    - -ec
+    command:
+    - export NEXTCLOUD_PASSWORD="$$(cat /run/secrets/nextcloud_password)"; exec /opt/venv/bin/nextcloud-mcp-server
+      run --host 0.0.0.0 --transport streamable-http
+    environment:
+      NEXTCLOUD_HOST: {{ skwrit.NEXTCLOUD_URL | to_json }}
+      NEXTCLOUD_USERNAME: {{ skwrit.NEXTCLOUD_MCP_USERNAME | default('svc-skwrit', true) | to_json }}
+      ENABLE_SEMANTIC_SEARCH: 'false'
+    secrets:
+    - source: {{ sw_ref_nc }}
+      target: nextcloud_password
+    networks:
+    - internal
+    volumes:
+    - mcp_data:/app/data
+    deploy:
+      replicas: 1
+      placement:
+        constraints: {{ sw_constraints | tojson }}
+      resources:
+        limits:
+          memory: {{ skwrit.MCP_MEMORY_LIMIT | default('2G', true) }}
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+      update_config:
+        parallelism: 1
+        order: stop-first
+        failure_action: rollback
+    logging: *logging
+{% endif %}
+
+networks:
+  internal:
+    name: {{ sw_stack }}
+    driver: overlay
+    ipam:
+      config:
+      - subnet: {{ sw_subnet }}
+  workflow-apps:
+    # The workflow engine's tenant overlay (supplied by the skflow role).
+    external: true
+    name: {{ sw_workflow_network }}
+
+volumes:
+  state:
+    external: true
+    name: {{ skwrit.STATE_VOLUME | default(sw_stack + '_state', true) }}
+{% if sw_mcp_enabled %}
+  mcp_data:
+    external: true
+    name: {{ skwrit.MCP_DATA_VOLUME | default(sw_stack + '_mcp_data', true) }}
+{% endif %}
+
+secrets:
+  {{ sw_ref_nc }}:
+    external: true
+{% if sw_ref_worker != sw_ref_nc %}
+  {{ sw_ref_worker }}:
+    external: true
+{% endif %}
+  {{ sw_ref_vec }}:
+    external: true
