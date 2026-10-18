@@ -139,6 +139,44 @@ The Authentik side needs a Proxy provider (forward auth, single
 application) for the skflow host, added to the embedded outpost, as for
 every other `authentik@file` service (see `optional/sksso/README.md`).
 
+### SSO and Nextcloud integration (overview)
+
+How the pieces fit when skflow runs next to skhub (Nextcloud) and sksso (Authentik). Each step has its own
+detailed subsection in this README; this is the map. People and password procedures are in
+[`v1/docs/sso-user-management.md`](../../../docs/sso-user-management.md).
+
+1. **People sign in with SSO, not forward auth.** Windmill's own OAuth login talks to Authentik
+   (sksso blueprint plus the `oauths` setting from `tasks/sso_provision.yml`, see "Single sign-on" below).
+   Leave `SSO_MIDDLEWARE` empty. Forward auth in front of Windmill gives a second login, and it gates paths
+   that Windmill's editor websocket and every machine client need. Forward auth is only correct for an app
+   with no login of its own, with an explicit bypass list (`/api/`, webhooks, websockets, health); see
+   `sso-estate-plan.md`.
+2. **Who may sign in.** Members of the Authentik group `skflow-operators`. A Windmill account is created on
+   the first login, matched by email, so an operator's Authentik email must equal the email Windmill knows
+   (workspace admins and workflow owners are matched the same way). Add or remove a person by group
+   membership in Authentik; removing them stops new logins, and a Windmill user or token that already exists
+   must be removed in Windmill as well (workspace settings, Users). CE allows 10 SSO users in total.
+3. **Windmill talks to Nextcloud with a service account.** The OAuth client for the native trigger is created
+   in Nextcloud (`occ oauth2:add-client`) and the integration is connected in the workspace as a dedicated
+   service account. That account is a local Nextcloud user with an app password; it has no Authentik user and
+   no SSO. Webhook management is delegated to a service-account group (`NEXTCLOUD_WEBHOOK_GROUP`) so it needs
+   no Nextcloud admin rights.
+4. **Native trigger.** A Windmill native trigger on a Nextcloud event (for example `NodeWrittenEvent` with a
+   path filter) registers a `webhook_listeners` webhook. Nextcloud queues each delivery as a background job.
+   Run skhub's `webhook-worker` so deliveries leave within seconds instead of waiting for cron
+   (measured: about 4 seconds on a live instance versus up to 5 minutes). Harden the registered webhook with
+   `tokenNeeded: {}` unless the flow needs the user tokens.
+5. **Talk bot and notifications.** Windmill posts into a Talk room through a Talk bot, and Talk can call a
+   Windmill script back (slash commands, replies). The bot secret and the room token are Windmill secret
+   variables; the bot webhook URL carries a Windmill token scoped to that single script. This is the
+   notification channel for human approvals and flow results: a flow sends a message to the room, a person
+   answers in Talk or in Windmill (signed in through SSO).
+6. **Failure handling.** Workspace error handlers are enterprise only; give flows a `failure_module` that
+   posts to the same Talk room.
+7. **Break-glass.** The Windmill superadmin (`SUPERADMIN_SECRET`) works without SSO. Keep it in the vault and
+   test it after SSO changes. If Authentik is down, SSO users cannot sign in but running schedules, triggers
+   and API tokens keep working.
+
 ### Single sign-on (Authentik OAuth2 login)
 
 Forward auth (above) gates the page; this is the other half, signing people
@@ -198,8 +236,9 @@ back through a Talk bot. Proven on the NAM estate with Windmill CE 1.837.0 and N
    delegated: `occ admin-delegation:add 'OCA\WebhookListeners\Settings\Admin' <service account group>`. The task file
    does this when `skflow.NEXTCLOUD_WEBHOOK_GROUP` is set. Connect the integration as that account.
 5. **Triggers.** Create native triggers on the events you need (for example `NodeWrittenEvent` with an `eventFilter`
-   regex on `event.node.path`). Windmill CE supports them; they run from Nextcloud's background job, so the delay is the
-   Nextcloud cron period. Windmill registers webhooks with `tokenNeeded: owner, trigger`, which puts two short-lived
+   regex on `event.node.path`). Windmill CE supports them; they run from Nextcloud's background job. On skhub with the
+   `webhook-worker` service (see the skhub README, "Webhook worker") the delay is a few seconds; without it the delay is
+   the Nextcloud cron period (5 minutes). Windmill registers webhooks with `tokenNeeded: owner, trigger`, which puts two short-lived
    Nextcloud user tokens into every job's args. Re-save the webhook with `tokenNeeded: {}` (see `harden_trigger.py` in
    hammerTime) unless the flow needs them.
 6. **Talk bot.** `occ talk:bot:install "<Bot>" <secret 40+ chars> <webhook url> --feature webhook --feature response`,
