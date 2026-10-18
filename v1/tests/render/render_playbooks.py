@@ -326,6 +326,15 @@ class Rewriter:
         return out
 
 
+class _TaggedLoader(yaml.SafeLoader):
+    """safe_load that also accepts the custom tags of Authentik blueprints
+    (!Env, !Find, !KeyOf ...): they are application syntax, not a defect."""
+
+
+for _tag in ("Env", "File", "Find", "KeyOf", "Format", "Context", "If", "Condition", "Index", "Value"):
+    _TaggedLoader.add_multi_constructor("!" + _tag, lambda loader, suffix, node: None)
+
+
 def rewrite_task_file(path: Path) -> None:
     data = yaml.safe_load(path.read_text())
     if not isinstance(data, list):
@@ -418,7 +427,7 @@ def check_file(path: Path, rel: str) -> list[str]:
     doc = None
     try:
         if ext in (".yml", ".yaml"):
-            docs = list(yaml.safe_load_all(text))
+            docs = list(yaml.load_all(text, Loader=_TaggedLoader))
             doc = docs[0] if len(docs) == 1 else None
         elif ext == ".json":
             doc = json.loads(text)
