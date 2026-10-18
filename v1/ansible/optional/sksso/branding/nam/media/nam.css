@@ -1,0 +1,87 @@
+/* NAM - Native Asset Management: organic theme for Authentik.
+   Restored from the NAMhub look (leaf mark, teal on deep navy). Source palette:
+   namstacks/ansible/deployment/namhub-exapps/src/namhub-theme-notes.md
+   Injected into every Authentik shadow root, so it uses :host and variables. */
+:root, :host {
+  --nam-primary: #00B4A0;
+  --nam-primary-hover: #12C9B4;
+  --nam-bg: #0D1A24;
+  --nam-bg-alt: #12212E;
+  --nam-surface: #1A2E3C;
+  --nam-text: #FFFFFF;
+  --nam-text-2: #C3D1DA;
+  --nam-text-muted: #8097A4;
+  --nam-border: #2C3E50;
+  --pf-global--primary-color--100: var(--nam-primary);
+  --pf-global--primary-color--200: var(--nam-primary-hover);
+  --pf-global--link--Color: var(--nam-primary);
+  --pf-global--link--Color--hover: var(--nam-primary-hover);
+  --pf-global--link--Color--light: var(--nam-primary);
+  --pf-global--BackgroundColor--100: var(--nam-surface);
+  --pf-global--BackgroundColor--200: var(--nam-bg-alt);
+  --pf-global--BackgroundColor--dark-100: var(--nam-bg);
+  --pf-global--Color--100: var(--nam-text);
+  --pf-global--Color--200: var(--nam-text-2);
+  --pf-global--BorderColor--100: var(--nam-border);
+  --pf-global--active-color--100: var(--nam-primary);
+  --ak-accent: var(--nam-primary);
+  --ak-dark-background: var(--nam-bg);
+  --ak-dark-background-darker: var(--nam-bg);
+  --ak-dark-background-light: var(--nam-surface);
+  --ak-dark-background-light-ish: var(--nam-bg-alt);
+  --ak-dark-foreground: var(--nam-text);
+}
+
+/* Login card */
+.pf-c-login__main {
+  background: rgba(26, 46, 60, 0.92);
+  border: 1px solid var(--nam-border);
+  border-radius: 14px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+}
+.pf-c-login__main-header, .pf-c-login__main-body, .pf-c-login__main-footer {
+  color: var(--nam-text);
+}
+.pf-c-title, h1, h2, h3 { color: var(--nam-text); }
+.pf-c-form__label-text, label { color: var(--nam-text-2); }
+
+/* Inputs */
+.pf-c-form-control, input, textarea, select {
+  background-color: var(--nam-bg-alt);
+  color: var(--nam-text);
+  border-color: var(--nam-border);
+  border-radius: 6px;
+}
+.pf-c-form-control::placeholder, input::placeholder { color: var(--nam-text-muted); }
+.pf-c-form-control:focus, input:focus {
+  border-bottom-color: var(--nam-primary);
+  outline-color: var(--nam-primary);
+}
+
+/* Buttons: dark text on teal keeps contrast above 6:1 */
+.pf-c-button.pf-m-primary {
+  background-color: var(--nam-primary);
+  color: var(--nam-bg);
+  font-weight: 600;
+  border-radius: 6px;
+}
+.pf-c-button.pf-m-primary:hover, .pf-c-button.pf-m-primary:focus {
+  background-color: var(--nam-primary-hover);
+  color: var(--nam-bg);
+}
+.pf-c-button.pf-m-secondary, .pf-c-button.pf-m-tertiary {
+  color: var(--nam-primary);
+  border-color: var(--nam-primary);
+}
+
+/* Links and footer */
+a { color: var(--nam-primary); }
+a:hover { color: var(--nam-primary-hover); }
+.pf-c-login__footer, .pf-c-login__footer a, .pf-c-list a { color: var(--nam-text-2); }
+
+/* Logo size on the card */
+.pf-c-brand, .pf-c-login__header img { max-height: 64px; width: auto; }
+
+/* Alerts keep readable colors */
+.pf-c-alert.pf-m-danger { border-top-color: #E74C3C; }
+.pf-c-alert.pf-m-success { border-top-color: #27AE60; }

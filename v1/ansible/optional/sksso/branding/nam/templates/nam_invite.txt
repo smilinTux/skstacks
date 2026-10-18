@@ -1,0 +1,14 @@
+{% autoescape off %}Welcome to NAM, {{ user.name|default:user.username }}
+
+Native Asset Management (NAM) is a private membership association. We have created a NAM account for you. One sign in gives you access to SKHub, our NAM Nextcloud where documents and matters live, and the other NAM apps you have been given.
+
+Your username is {{ user.username }}. Open the link below to choose your password and finish setting up:
+
+{{ url }}
+
+This link works once and expires on {{ expires|date:"l, F j, Y, g:i A" }} UTC. If it has expired, ask us for a fresh one. If you were not expecting this email, you can safely ignore it.
+
+Questions? Reply to this email or write to nativeassetmanagement@gmail.com and a person will help.
+
+Native Asset Management, the NAM team
+{% endautoescape %}
