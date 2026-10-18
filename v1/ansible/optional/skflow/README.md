@@ -94,7 +94,9 @@ anyone who can reach the host can log in, which is one reason to deploy with
 
 One router serves the host with `TRAEFIK_MIDDLEWARES` (default
 `default-no-crowdsec@file`). `SSO_MIDDLEWARE` (for example
-`authentik@file`) adds forward auth in front of Windmill's own login. When it
+`authentik@file`) adds forward auth in front of Windmill's own login. Leave it empty
+when Windmill's native Authentik SSO (global setting `oauths`) is used, otherwise people
+sign in twice. When it
 is set the template also renders:
 
 - `skflow[-env]-api`: the paths in `SSO_EXEMPT_PREFIXES` (default
