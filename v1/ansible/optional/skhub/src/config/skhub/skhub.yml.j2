@@ -103,7 +103,14 @@ services:
       interval: 120s
       timeout: 90s
       retries: 3
-      start_period: 300s
+      # Must cover the same slow-first-boot case as skhub.first_install_wait_seconds
+      # (README "first-install waits"): a start_period shorter than that budget
+      # lets Swarm's own health-triggered restart_policy kill and restart the
+      # container (exit 137, "unhealthy") before the one-time entrypoint copy +
+      # first DB install finishes, which resets its progress every time and can
+      # loop forever on a slow/busy host even though the ansible wait below is
+      # patient enough. Same knob, same default, so both stay in sync.
+      start_period: {{ skhub.first_install_wait_seconds | default(1800) }}s
     volumes:
 {% if _webroot_local %}
       - {{ _webroot_local }}/html:/var/www/html
