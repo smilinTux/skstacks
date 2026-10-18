@@ -1,0 +1,12 @@
+---
+# Install or refresh the SKGit global pre-receive size hook (no Forgejo restart needed).
+#   ansible-playbook -i ../../shared/hosts install_hooks-prod.yml -e skgit_hooks_host=norap1003
+# /var/data is shared NFS, so any swarm node that mounts it works; the timer should run on
+# exactly one host (the one named here).
+- hosts: "{{ skgit_hooks_host | default('norap1003') }}"
+  become: true
+  vars:
+    app: skgit
+    env: prod
+  tasks:
+    - import_tasks: tasks/install_global_hooks.yml
