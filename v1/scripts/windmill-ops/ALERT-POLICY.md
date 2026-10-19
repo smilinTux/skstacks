@@ -6,7 +6,7 @@ Goal: few messages, each one worth reading. If a room gets noisy, people mute it
 
 | Room | Token | Members | Purpose | Phone push |
 |---|---|---|---|---|
-| NAM Urgent | r6vbtg3w | Chef (chefboyrdave2.1), Casey (mrarch) | Critical items only | All messages |
+| NAM Urgent | r6vbtg3w | Chef, Casey | Critical items only | All messages |
 | NAM Admin | tourgejv | Chef, Casey | Operational admin: skmesh pending approvals, new user signups, job failures | All messages |
 | FWE Matters | (existing) | FWE team | Matter events from the FWE flows | unchanged |
 | HammerTime Ingest | (existing) | existing | Ingest notices from hammertime-intake | unchanged |
