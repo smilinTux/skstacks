@@ -17,7 +17,7 @@ SKHUB = pathlib.Path(__file__).resolve().parents[1] / "ansible/optional/skhub/sr
 COMPOSE = SKHUB / "skhub.yml.j2"
 BASE = {"CLUSTERNAME": "cluster1", "DOMAIN": "example.com"}
 DEFAULT = "nextcloud:31.0.14"
-NC_SERVICES = ("nextcloud", "cron", "notify_push")
+NC_SERVICES = ("nextcloud", "cron", "webhook-worker", "notify_push")
 
 
 def render(**over):
@@ -51,7 +51,7 @@ def test_other_services_untouched_by_knob():
 def test_no_hardcoded_nextcloud_image_left():
     lines = [l.strip() for l in COMPOSE.read_text().splitlines() if l.strip().startswith("image:")]
     assert not [l for l in lines if l.startswith("image: nextcloud:")], "hardcoded nextcloud image"
-    assert sum("skhub.NEXTCLOUD_IMAGE" in l for l in lines) == 3
+    assert sum("skhub.NEXTCLOUD_IMAGE" in l for l in lines) == 4
 
 
 def test_only_image_lines_differ_between_default_and_knob():
@@ -59,7 +59,7 @@ def test_only_image_lines_differ_between_default_and_knob():
     b = render(NEXTCLOUD_IMAGE="nextcloud:35.0.1").splitlines()
     assert len(a) == len(b)
     diff = [(x, y) for x, y in zip(a, b) if x != y]
-    assert len(diff) == 3 and all("image:" in x for x, _ in diff)
+    assert len(diff) == 4 and all("image:" in x for x, _ in diff)
 
 
 @pytest.mark.parametrize("env_name", ["dev", "staging", "prod"])
@@ -72,4 +72,4 @@ def test_unset_renders_byte_identical_image_lines(env_name):
     text = env.from_string(COMPOSE.read_text()).render(app="skhub", env=env_name, skhub=dict(BASE),
                                                        fence_service_name="skfenceha")
     lines = [l for l in text.splitlines() if l.strip().startswith("image:") and "nextcloud:" in l]
-    assert lines == ["    image: " + DEFAULT] * 3, lines
+    assert lines == ["    image: " + DEFAULT] * 4, lines

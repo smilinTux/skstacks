@@ -373,6 +373,53 @@ skhub:
   TALK_TURN_RELAY_IPV4: 203.0.113.10
 ```
 
+## Webhook worker
+
+The `webhook-worker` service runs `occ background-job:worker` for
+`OCA\WebhookListeners\BackgroundJobs\WebhookCall` in a loop (same image, mounts, `extra_hosts`, placement
+and user as `cron`; one replica, 128M reserved, 512M limit). Nextcloud's `webhook_listeners` app queues every
+webhook delivery (for example a Windmill native trigger on `NodeWrittenEvent`) as a background job, and
+without this service the delivery waits for the next `cron.php` run (5 minutes). With it the delay measured
+about 4 seconds on a live instance. `cron` keeps running every 5 minutes for everything else; the worker
+only picks up webhook jobs. It needs no new variables: it follows `NEXTCLOUD_IMAGE`, `APP_NODE` and the
+placement constraints of the other app services. Check it with
+`docker service logs skhub-<env>_webhook-worker` and the healthcheck (`background-job:worker` in
+`/proc/1/cmdline`). Related: skflow README "SSO and Nextcloud integration".
+
+## Single sign-on and user management
+
+skhub does not ship an SSO middleware, and must not get one. Nextcloud is a token and app-password API as
+much as a web app (WebDAV, CalDAV, OCS, notify_push, Talk signaling, public shares), so fronting it with
+Authentik forward auth breaks every client. Sign-in goes through Nextcloud's own `user_oidc` app against
+Authentik (sksso) instead. Nothing here is configured by the role yet (the `occ` steps are in
+[`v1/docs/sso-nextcloud-oidc.md`](../../../docs/sso-nextcloud-oidc.md)); the Authentik side is described in the
+sksso README, "SSO for skhub and skflow".
+
+How people and passwords work once it is on (full runbook:
+[`v1/docs/sso-user-management.md`](../../../docs/sso-user-management.md)):
+
+- Passwords, MFA and active/inactive state live in Authentik only. Access to Nextcloud is membership of the
+  Authentik group `skhub-users`.
+- The ID token carries `nextcloud_uid` (attribute of that name, else the Authentik username, pinned on first
+  login) and `nextcloud_groups` (Authentik groups named `nc-<name>` become Nextcloud group `<name>`). Set
+  the attribute first when an existing Nextcloud account has a different uid than the person's Authentik
+  username, so the login adopts the old account instead of creating a second one.
+- Accounts are created or adopted at first login (`user_oidc.auto_provision` and `soft_auto_provision` true).
+  Household groups follow the convention `hh-<household>` / `nc-hh-<household>`. Only groups matching the
+  provider's `group-whitelist-regex` are added or removed by SSO.
+- Desktop, mobile, DAV and OCS clients use Nextcloud app passwords (Settings, Security). Service accounts
+  (automation, the Windmill integration) are local accounts with an app password, not SSO identities.
+  Do not enable `check-bearer`.
+- Removing a person: deactivate them in Authentik, then run the deprovision job
+  (`v1/scripts/sso-nextcloud-deprovision.py`, dry run by default) to disable the Nextcloud account and end
+  existing sessions and app passwords. Until it is scheduled, run it by hand.
+- Password reset and recovery links come from Authentik. Self-service email needs Authentik SMTP (not
+  configured on every instance); otherwise an admin issues a one-time link.
+- Break-glass: `https://<skhub host>/login?direct=1` shows the local login form, and `occ` on the node always
+  works. Keep one local admin with a vault password.
+- With `user_oidc.allow_multiple_user_backends = 0`, `/login` redirects to Authentik; `1` keeps the password
+  form next to the SSO button.
+
 ## Mail (SMTP)
 
 Nextcloud only reads the image's `SMTP_*` variables (rendered into
