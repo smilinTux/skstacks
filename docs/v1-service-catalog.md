@@ -67,6 +67,7 @@ tag yet.
 | [sksync](#sksync) | optional | Syncthing continuous file sync | Syncthing `2.0.13` (hardcoded) | none | `sksync[-env].<cluster>.<domain>`, `:22000` tcp/udp | `sksync-<env>/sync-data` | `SYNCWALLET`, `ENCRYPTION_TOKEN`, `UUID`, `TZ` | none | v2.16.0 |
 | [skvector](#skvector) | optional | Qdrant vector database | Qdrant `v1.17.0` | none | `skvector[-env].<cluster>.<domain>` (HTTP+gRPC) | `skvector-<env>/{storage,snapshots}` | `CLUSTERNAME`, `DOMAIN` | `QDRANT_API_KEY` (unset = no auth) | v2.12.0 |
 | [skwhoami](#skwhoami) | optional | traefik/whoami echo/test service | traefik/whoami `v1.12.0` | none | 3x `skwhoami0{1,2,3}[-env].<cluster>.<domain>` | none (stateless) | `CLUSTERNAME`, `DOMAIN` | none | v2.19.0 |
+| [skwrit](#skwrit) | optional | Matter engine worker (drafting with gates, release, publishing to Nextcloud) | per-site image, digest-pinned; optional nextcloud-mcp `0.199.4` | skflow (calls it), skhub | none (internal overlay, port 8080) | none (external state volume) | `SKWRIT_IMAGE`, `NEXTCLOUD_URL` | `NEXTCLOUD_MCP_ENABLED` (false), `STACK_NAME`, `WORKER_SERVICE` | pending |
 | [skbackup](#skbackup) | optional (host-level) | Snapshots, per-app copies, dump hooks, restic offsite, restore tests, alerts on the storage host | sanoid + rsync + restic (host packages) | a storage host in an inventory group (default `storage_hosts`), ideally ZFS | none (no web UI, no swarm stack) | `/etc/<short_name>`, `/var/lib/<short_name>` on the storage host | `data_target`; `offsite.repository` + `offsite.password` when offsite is on | every tier toggle, `branding` (white-label) | v2.23.0 (restic; the Duplicati app of v2.19.0 to v2.22.0 is retired) |
 
 ## Router middleware overrides
@@ -1036,6 +1037,32 @@ skvector:
 authentication**. Set it unless the overlay network is the only thing
 reaching it. gRPC is on a separate router/port (`:6334`) from the HTTP API
 (`:6333`).
+
+### skwrit
+
+The worker of the skwrit matter engine: one digest-pinned service that
+skflow calls over a shared overlay, plus an optional Nextcloud MCP service.
+The image is built per site. Secrets and the state volume are external and
+referenced by name; the play never handles a secret value.
+
+**Prerequisites**: skflow (the `skflow-<env>` overlay), skhub (Nextcloud), the
+Swarm secrets and the state volume (see the README).
+
+**Minimal vault snippet**:
+
+```yaml
+skwrit:
+  SKWRIT_IMAGE: "registry.example.test/skwrit-worker:1.0.0@sha256:<digest>"
+  NEXTCLOUD_URL: "https://files.example.test"
+```
+
+**Deploy**: `deploy_skwrit-<env>.yml`, standard invocation.
+
+**Health check**: `/health` on the worker (port 8080, overlay only).
+
+**Gotchas**: `STACK_NAME` and `WORKER_SERVICE` set the Swarm DNS name flows
+call; change them only together with the flows. See the
+[README](../v1/ansible/optional/skwrit/README.md).
 
 ### skwhoami
 
