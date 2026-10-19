@@ -42,7 +42,7 @@ BASE = {
     "turn_secret": "t" * 32,
     "signaling_secret": "s" * 32,
 }
-PINNED = {"nextcloud", "cron", "talk-hpb", "talk-recording"}
+PINNED = {"nextcloud", "cron", "webhook-worker", "talk-hpb", "talk-recording"}
 IP = "10.20.30.40"
 
 

@@ -103,7 +103,14 @@ services:
       interval: 120s
       timeout: 90s
       retries: 3
-      start_period: 300s
+      # Must cover the same slow-first-boot case as skhub.first_install_wait_seconds
+      # (README "first-install waits"): a start_period shorter than that budget
+      # lets Swarm's own health-triggered restart_policy kill and restart the
+      # container (exit 137, "unhealthy") before the one-time entrypoint copy +
+      # first DB install finishes, which resets its progress every time and can
+      # loop forever on a slow/busy host even though the ansible wait below is
+      # patient enough. Same knob, same default, so both stay in sync.
+      start_period: {{ skhub.first_install_wait_seconds | default(1800) }}s
     volumes:
 {% if _webroot_local %}
       - {{ _webroot_local }}/html:/var/www/html
@@ -192,6 +199,33 @@ services:
       - /var/data/skhub-{{ env }}/database-dump:/dump
       - /etc/localtime:/etc/localtime:ro
     entrypoint: |
+{% if skhub.backup_time is defined %}
+      bash -c 'bash -s <<EOF
+      trap "break;exit" SIGHUP SIGINT SIGTERM
+      echo "Starting database backup service (fixed daily time)..."
+      while /bin/true; do
+        NOW_EPOCH=\$$(date +%s)
+        TARGET_EPOCH=\$$(TZ="\$$BACKUP_TZ" date -d "today \$$BACKUP_TIME" +%s)
+        if [ "\$$TARGET_EPOCH" -le "\$$NOW_EPOCH" ]; then
+          TARGET_EPOCH=\$$(TZ="\$$BACKUP_TZ" date -d "tomorrow \$$BACKUP_TIME" +%s)
+        fi
+        echo "\$$(date): next backup at \$$BACKUP_TIME \$$BACKUP_TZ"
+        sleep \$$(( TARGET_EPOCH - NOW_EPOCH ))
+        BACKUP_FILE="/dump/dump_\$$(date +%d-%m-%Y_%H_%M_%S).sql.gz"
+        if mariadb-dump -h skhub-{{ env }}_db -u "\$$MYSQL_USER" --single-transaction --quick --routines --events --all-databases 2>/dev/null | gzip -c > "\$$BACKUP_FILE"; then
+          FILESIZE=\$$(stat -c%s "\$$BACKUP_FILE" 2>/dev/null || echo 0)
+          if [ "\$$FILESIZE" -le 100 ]; then
+            echo "\$$(date): WARNING - backup file too small, removing"
+            rm -f "\$$BACKUP_FILE"
+          fi
+        else
+          echo "\$$(date): ERROR - backup failed"
+          rm -f "\$$BACKUP_FILE"
+        fi
+        ls -tr /dump/dump_*.sql.gz 2>/dev/null | head -n -"\$$BACKUP_NUM_KEEP" | xargs -r rm -v
+      done
+      EOF'
+{% else %}
       bash -c 'bash -s <<EOF
       trap "break;exit" SIGHUP SIGINT SIGTERM
       echo "Starting database backup service..."
@@ -212,6 +246,7 @@ services:
         sleep "\$$BACKUP_FREQUENCY"
       done
       EOF'
+{% endif %}
     networks:
       - skhub-{{ env }}
 
@@ -337,6 +372,72 @@ services:
     # entry, or every tick fails with "can't set groups: Operation not
     # permitted" and core/lastcron silently stops advancing.
     entrypoint: /cron.sh
+    depends_on:
+      - db
+      - redis
+
+  # Dedicated worker for Nextcloud webhook_listeners calls. Webhook deliveries are
+  # queued as background jobs, which otherwise wait for the next 5-minute cron.php
+  # tick. This worker picks only OCA\WebhookListeners\BackgroundJobs\WebhookCall jobs
+  # up within about a second (Nextcloud admin manual, Background jobs, "Webhook
+  # workers"). cron.php keeps running every 5 minutes for everything else.
+  webhook-worker:
+    image: {{ skhub.NEXTCLOUD_IMAGE | default('nextcloud:31.0.14') }}
+{% if _internal_ingress_ip %}
+    extra_hosts:
+{% for _h in _internal_hosts %}
+      - "{{ _h }}:{{ _internal_ingress_ip }}"
+{% endfor %}
+{% endif %}
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q background-job:worker /proc/1/cmdline"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      placement:
+        constraints: {{ _app_constraints | tojson }}
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+      mode: replicated
+      resources:
+        reservations:
+          memory: 128M
+        limits:
+          memory: 512M
+    networks:
+      - skhub-{{ env }}
+    volumes:
+{% if _webroot_local %}
+      - {{ _webroot_local }}/html:/var/www/html
+      - {{ _webroot_local }}/custom_apps:/var/www/html/custom_apps
+{% else %}
+      - /var/data/skhub-{{ env }}/html:/var/www/html
+      - /var/data/skhub-{{ env }}/custom_apps:/var/www/html/custom_apps
+{% endif %}
+      - /var/data/skhub-{{ env }}/config:/var/www/html/config
+      - /var/data/skhub-{{ env }}/data:/var/www/html/data
+      - /var/data/skhub-{{ env }}/themes:/var/www/html/themes
+{% for m in _extra_mounts %}
+      - type: bind
+        source: {{ m.source | tojson }}
+        target: {{ m.target | tojson }}
+{% if m.readonly | default(false) %}
+        read_only: true
+{% endif %}
+{% if m.propagation | default('', true) %}
+        bind:
+          propagation: {{ m.propagation }}
+{% endif %}
+{% endfor %}
+    user: www-data
+    entrypoint:
+      - /bin/sh
+      - -c
+      - 'while true; do php /var/www/html/occ background-job:worker -v -t 60 "OCA\\WebhookListeners\\BackgroundJobs\\WebhookCall"; sleep 1; done'
     depends_on:
       - db
       - redis
