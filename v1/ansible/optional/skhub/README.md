@@ -47,6 +47,9 @@ skhub:
 | `TALK_HPB_IMAGE` | `ghcr.io/nextcloud-releases/aio-talk:latest@sha256:831a08f9772d188e65aee2fb59ef3785d3567a1fe2fb65f0e6fd2c17a16ffc87` (v2.26.3; before: `aio-talk:20260122_105751`, whose `start.sh` ignores `TURN_DOMAIN` and writes no TURN server into `janus.jcfg`, so Janus offered only its container address and calls outside the LAN failed ICE) | Image for `talk-hpb` (with `enable_talk_hpb`). Pin a digest (`ghcr.io/nextcloud-releases/aio-talk:<tag>@sha256:...`). Set it to keep a newer aio-talk (newer signaling server) an instance already runs: unset, the next deploy puts talk-hpb back on the default. With `TALK_TURN_RELAY_IPV4` set, the relay command runs `TALK_HPB_CMD` (default `supervisord -c /supervisord.conf`, the default image's CMD); a newer aio-talk that runs dinit needs `TALK_HPB_CMD` set to its own CMD. |
 | `TALK_HPB_CMD` | follows the image: `[dinit, --system, --container, nats-server, eturnal, janus, signaling]` for the default digest (unset, or `TALK_HPB_IMAGE` pinned to it); `[supervisord, -c, /supervisord.conf]` (the pre-v2.26.3 default) for any other pinned image | A list: the command the TURN relay wrapper execs after rewriting `relay_ipv4_addr` (only with `TALK_TURN_RELAY_IPV4`). Set it to the `TALK_HPB_IMAGE`'s own CMD (`docker image inspect -f '{{json .Config.Cmd}}'`), e.g. `[dinit, --system, --container, nats-server, eturnal, janus, signaling]` for aio-talk images that dropped supervisord. If its first word is not in the image the container exits 127 with a message naming this knob. |
 | `MARIADB_IMAGE` | `mariadb:10.11.19@sha256:7db29378d4fdab73f8123bbc2b48905c90d1a4b00cf848b028f1e81e623257f2` | Image for `db` and `db-backup`. Stays on the 10.11 LTS line; a major jump (e.g. to 11.x) is a data migration this framework does not perform, so set this only to a newer 10.11.x build. |
+| `backup_time` | unset | `db-backup` fixed daily run time, 24-hour `HH:MM` (e.g. `03:00`). Unset: today's behavior (2m startup delay, then dump/prune/sleep `backup_frequency` forever), byte-identical render. Set: `db-backup` instead sleeps until the next occurrence of this wall-clock time in `backup_tz`, dumps, repeats (DST-correct, recomputed every loop); `backup_frequency` is then unused. Rejected at render time if not `HH:MM`. |
+| `backup_tz` | `UTC` | IANA time zone (e.g. `America/New_York`) `backup_time` is interpreted in. Only used with `backup_time` set. Rejected at render time if not a zone the control node's `/usr/share/zoneinfo` knows. |
+| `first_install_wait_seconds` | `1800` | Seconds the ansible deploy waits for a slow first Nextcloud install (entrypoint copy + first DB install), and ALSO the Docker healthcheck's `start_period` for `nextcloud` (same budget, same knob): without this tie-in, Swarm's health-triggered `restart_policy` could kill and restart the container before it finishes, resetting progress every time and potentially never converging on a slow/busy host. Raise it for a known-slow environment (NFS, a loaded hypervisor); the ansible wait announces the budget before waiting so a long wait is not mistaken for a hang. |
 | `REDIS_IMAGE` | `redis:8.10.2-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0` | Image for `redis`. Stays on the 8.x line for the same reason as `MARIADB_IMAGE`. |
 | `CLAMAV_IMAGE` | `clamav/clamav:latest@sha256:ebec5bc138401b36ae987caa1a3fa3c3b2a21ed3d51f0bfa5852825e663e67b0` | Image for `clamav`. Stateless (signature database only), so tracking upstream `latest` and re-pinning the digest here is fine. |
 | `COLLABORA_IMAGE` | `collabora/code:26.04.5.1.1@sha256:bb8f3c9c5c9016045f25fccb5f0649be94469ebc7c7cc379f3576e470cccf33d` | Image for `collabora` (with `enable_collabora`). Stateless; tracking upstream `latest` is fine. |
@@ -338,6 +341,8 @@ Optional keys (all unset = the ingress behaviour above, rendered unchanged):
 | `TURN_DOMAIN` | unset (renders `{{ CLUSTERNAME }}.{{ DOMAIN }}`, same as before this knob existed) | The TURN hostname Nextcloud's `turn_servers` config advertises to clients, and `TURN_DOMAIN` in `talk-hpb.env` (the TURN host Janus hands out). To use this cluster's own eturnal from outside the LAN, set it to a DNS name that resolves to the public address the router forwards to the pinned node (not proxied by a CDN: TURN is not HTTP). For an instance whose own ingress cannot serve TURN (inbound 3478 blocked at the ISP, for example) and that instead relays Talk's TURN/STUN through another cluster's TURN server: set `TURN_DOMAIN` to that cluster's TURN hostname and `turn_secret` to its secret; `talk-hpb`'s own eturnal then runs unused. The port (3478) and `turn_secret` are unaffected by this knob. |
 | `TALK_TURN_TLS_443` | `false` | `true` adds a Traefik TCP router (`HostSNI(TURN_DOMAIN)`, entrypoint `websecure`, certresolver `main`) that terminates TLS on 443 and passes plain TCP to eturnal's 3478, and appends a second `turn_servers` entry `turns:<TURN_DOMAIN>:443` (tcp), for clients whose network only allows 443. Needs `enable_talk_hpb` and `TURN_DOMAIN` set to a DNS name that reaches this cluster's Traefik on 443 (so not one proxied by a CDN). Relayed media still uses the udp relay range. |
 | `TALK_STUN_SERVERS` | unset (Talk's `stun_servers` left as they are) | A list of `host:port` strings (at most 10, no scheme) the post-deploy task writes to Talk's `stun_servers`, for example `[turn.example.com:3478]` to use this cluster's own eturnal (it answers STUN on 3478) instead of a public STUN server or another cluster's. Needs `enable_talk_hpb`. |
+| `TALK_FEDERATION_ENABLED` | `false` | `true` turns on Talk (spreed) federation to other Nextcloud instances over OCM (`/ocm-provider`, needs `cloud_federation_api`/`federatedfilesharing` enabled, on by default) by setting `occ config:app:set spreed federation_enabled yes`. Chat, reactions and calls (via each side's own HPB, signaling 2.0+) federate; files do not. Needs `enable_talk_hpb`. Unset/false never touches `federation_enabled` (same as before this knob existed). |
+| `TALK_FEDERATION_ALLOWED_GROUPS` | `[]` (federation open to every local user, upstream's own default) | With `TALK_FEDERATION_ENABLED` true, a list of local group ids allowed to use federated Talk features (`occ config:app:set spreed federation_allowed_groups`), for example `[federation]`. Empty list is never written (upstream default applies). |
 
 The deploy playbooks refuse an inconsistent combination before rendering.
 
@@ -367,6 +372,53 @@ skhub:
   TALK_TURN_RELAY_MAX_PORT: 62099
   TALK_TURN_RELAY_IPV4: 203.0.113.10
 ```
+
+## Webhook worker
+
+The `webhook-worker` service runs `occ background-job:worker` for
+`OCA\WebhookListeners\BackgroundJobs\WebhookCall` in a loop (same image, mounts, `extra_hosts`, placement
+and user as `cron`; one replica, 128M reserved, 512M limit). Nextcloud's `webhook_listeners` app queues every
+webhook delivery (for example a Windmill native trigger on `NodeWrittenEvent`) as a background job, and
+without this service the delivery waits for the next `cron.php` run (5 minutes). With it the delay measured
+about 4 seconds on a live instance. `cron` keeps running every 5 minutes for everything else; the worker
+only picks up webhook jobs. It needs no new variables: it follows `NEXTCLOUD_IMAGE`, `APP_NODE` and the
+placement constraints of the other app services. Check it with
+`docker service logs skhub-<env>_webhook-worker` and the healthcheck (`background-job:worker` in
+`/proc/1/cmdline`). Related: skflow README "SSO and Nextcloud integration".
+
+## Single sign-on and user management
+
+skhub does not ship an SSO middleware, and must not get one. Nextcloud is a token and app-password API as
+much as a web app (WebDAV, CalDAV, OCS, notify_push, Talk signaling, public shares), so fronting it with
+Authentik forward auth breaks every client. Sign-in goes through Nextcloud's own `user_oidc` app against
+Authentik (sksso) instead. Nothing here is configured by the role yet (the `occ` steps are in
+[`v1/docs/sso-nextcloud-oidc.md`](../../../docs/sso-nextcloud-oidc.md)); the Authentik side is described in the
+sksso README, "SSO for skhub and skflow".
+
+How people and passwords work once it is on (full runbook:
+[`v1/docs/sso-user-management.md`](../../../docs/sso-user-management.md)):
+
+- Passwords, MFA and active/inactive state live in Authentik only. Access to Nextcloud is membership of the
+  Authentik group `skhub-users`.
+- The ID token carries `nextcloud_uid` (attribute of that name, else the Authentik username, pinned on first
+  login) and `nextcloud_groups` (Authentik groups named `nc-<name>` become Nextcloud group `<name>`). Set
+  the attribute first when an existing Nextcloud account has a different uid than the person's Authentik
+  username, so the login adopts the old account instead of creating a second one.
+- Accounts are created or adopted at first login (`user_oidc.auto_provision` and `soft_auto_provision` true).
+  Household groups follow the convention `hh-<household>` / `nc-hh-<household>`. Only groups matching the
+  provider's `group-whitelist-regex` are added or removed by SSO.
+- Desktop, mobile, DAV and OCS clients use Nextcloud app passwords (Settings, Security). Service accounts
+  (automation, the Windmill integration) are local accounts with an app password, not SSO identities.
+  Do not enable `check-bearer`.
+- Removing a person: deactivate them in Authentik, then run the deprovision job
+  (`v1/scripts/sso-nextcloud-deprovision.py`, dry run by default) to disable the Nextcloud account and end
+  existing sessions and app passwords. Until it is scheduled, run it by hand.
+- Password reset and recovery links come from Authentik. Self-service email needs Authentik SMTP (not
+  configured on every instance); otherwise an admin issues a one-time link.
+- Break-glass: `https://<skhub host>/login?direct=1` shows the local login form, and `occ` on the node always
+  works. Keep one local admin with a vault password.
+- With `user_oidc.allow_multiple_user_backends = 0`, `/login` redirects to Authentik; `1` keeps the password
+  form next to the SSO button.
 
 ## Mail (SMTP)
 

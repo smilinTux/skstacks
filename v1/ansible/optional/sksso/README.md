@@ -81,7 +81,11 @@ sksso:
   email_password: "..."
   email_use_tls: false
   email_use_ssl: true
-  email_from: "..."
+  email_from: "..."                # may carry a display name: "NAM - Native Asset Management <sender@example.com>"
+                                   # (Gmail only accepts the authenticated account or a verified alias as the address)
+
+  # branding pack under branding/ (optional, default off); see "Branding"
+  branding: nam
 
   # GeoIP - optional, only rendered if both geoip vars below are set
   geoip_account_id: "..."
@@ -92,6 +96,30 @@ sksso:
   # authentik). Not rendered into sksso itself; see "Automation API token".
   api_token: "..."                 # openssl rand -hex 32
 ```
+
+## Branding
+
+`sksso.branding: nam` copies the NAM brand pack (`branding/nam/`) to shared
+storage on every deploy: logo, favicon, flow background and `nam.css` to
+`/var/data/sksso-<env>/media/public/nam/`, and the branded email templates
+(`nam_invite.html` for invitations and enrollment, `nam_recovery.html` for
+password recovery, each with a `.txt` twin) to `custom-templates/`. The role
+also installs two helpers next to `deploy`:
+
+- `apply-branding [stack]` writes the brand into Authentik (idempotent, run
+  once after the stack is up): default brand title, logo, favicon, flow
+  background, custom CSS, dark UI theme, the two email stages' template and
+  subject, and the "Welcome to authentik!" flow titles. It never touches
+  providers, flow logic or policies. Rollback: set the brand fields back to
+  `/static/dist/assets/...` defaults and the stages to `email/password_reset.html`.
+- `nextcloud-theming [stack] [media-dir]` runs `occ theming:config` (name,
+  slogan, color, logo, favicon, background) on the node hosting
+  `skhub-<env>_nextcloud`. No redeploy.
+
+The email sender display name comes from `sksso.email_from`; changing it needs
+a rolling update of `_server` and `_worker` (env change). The look is the
+NAMhub palette (teal `#00B4A0` on deep navy `#0D1A24`, leaf mark) restored from
+`namstacks/ansible/deployment/namhub-exapps/src/namhub-theme-notes.md`.
 
 ## Automation API token
 

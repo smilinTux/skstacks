@@ -39,7 +39,7 @@ ENVS = ("dev", "staging", "prod")
 PLAYBOOKS = {e: SKHUB / f"deploy_skhub-{e}.yml" for e in ENVS}
 BASE = {"CLUSTERNAME": "cluster1", "DOMAIN": "example.com", "enable_talk_hpb": True, "enable_collabora": True}
 LOCAL = {"WEBROOT_LOCAL_PATH": "/var/lib/skhub-prod", "APP_NODE": "node-app"}
-APP_SERVICES = ("nextcloud", "cron", "notify_push")
+APP_SERVICES = ("nextcloud", "cron", "webhook-worker", "notify_push")
 
 
 def _env():
