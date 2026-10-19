@@ -43,6 +43,34 @@
     - name: Load vault file
       include_vars: "{{ vault_file_path }}"
       when: vault_file_path is defined
+
+    - name: Validate skbook.BACKUP_TIME (HH:MM, 24-hour) when set
+      assert:
+        that:
+          - (skbook.BACKUP_TIME | default('', true) | string) is match('^([01][0-9]|2[0-3]):[0-5][0-9]$')
+        fail_msg: >-
+          ERROR: skbook.BACKUP_TIME must be 24-hour 'HH:MM', e.g. '03:00'.
+        quiet: true
+      when: skbook.BACKUP_TIME is defined
+
+    - name: Check skbook.BACKUP_TZ is a known IANA time zone (control node /usr/share/zoneinfo)
+      stat:
+        path: "/usr/share/zoneinfo/{{ skbook.BACKUP_TZ | default('UTC') }}"
+      delegate_to: localhost
+      become: false
+      run_once: true
+      register: _skbook_backup_tz_check
+      when: skbook.BACKUP_TIME is defined
+
+    - name: Validate skbook.BACKUP_TZ is a known IANA time zone
+      assert:
+        that:
+          - _skbook_backup_tz_check.stat.exists
+        fail_msg: >-
+          ERROR: skbook.BACKUP_TZ '{{ skbook.BACKUP_TZ | default('UTC') }}' is not a
+          known IANA time zone (checked /usr/share/zoneinfo on the control node).
+        quiet: true
+      when: skbook.BACKUP_TIME is defined
     - name: Define network variables from vault (idempotent network creation)
       # skbook-staging: 172.16.221.0/24
       # cloud-public-staging: 172.16.201.0/24

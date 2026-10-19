@@ -81,3 +81,35 @@ vault; unset (or empty) renders exactly as before:
 The value replaces the chain, it is not appended: keep
 `skvector[-env]-buffering` in the HTTP chain when you override it (for example
 `skvector-buffering,crowdsec-bouncer@file,default@file` on prod).
+
+## Resource limits
+
+The service limits and reservations come from the instance vault; unset keys
+render the defaults below, so existing instances are unchanged:
+
+| Key | Default |
+|---|---|
+| `skvector.RESOURCES_LIMITS_CPUS` | `2.00` |
+| `skvector.RESOURCES_LIMITS_MEMORY` | `4096M` |
+| `skvector.RESOURCES_RESERVATIONS_CPUS` | `0.50` |
+| `skvector.RESOURCES_RESERVATIONS_MEMORY` | `1024M` |
+
+Set them in the vault, not with `docker service update`: a stack deploy
+re-applies the compose file and reverts any live change. Qdrant memory-maps
+its segments, so a multi-million-point collection that does not fit in the
+memory limit thrashes (high CPU, filtered counts and searches timing out).
+Size the memory limit to the collection, for example 12288M for a 7.7M-point
+collection.
+
+## Payload indexes
+
+Collections and their payload indexes live in Qdrant storage, not in the
+stack, so a deploy neither creates nor removes them. Create the indexes your
+filters need once per collection, and again after a restore or recreate:
+
+    curl -X PUT "$QDRANT_URL/collections/<collection>/index?wait=true" \
+      -H "api-key: $QDRANT_API_KEY" -H "Content-Type: application/json" \
+      -d "{\"field_name\": \"file_path\", \"field_schema\": \"keyword\"}"
+
+Verify with `GET /collections/<collection>` (`payload_schema`). Without an
+index, filtered counts and searches scan every point.
