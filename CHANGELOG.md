@@ -7,6 +7,7 @@ Each entry says what an instance must do, if anything.
 
 ### Upgrade notes (instances)
 
+- **skflow (Nextcloud integration):** none required. Optional runbook plus `tasks/nextcloud_integration.yml` for instances that run Nextcloud and want file events, Talk notifications and a Talk bot in Windmill; no deploy playbook includes it.
 - **skflow, sksso (Windmill SSO):** none required. An instance whose Windmill login was set up by hand sets the same secret in both vaults to adopt it as code; the blueprint matches the existing provider, application and group by name, so nothing is duplicated.
 - **skfenceha:** the `traefik-worker` CPU limit default rises from 0.40 to 2.00 CPUs (per manager, the service is global). The next skfenceha deploy restarts the workers one at a time (a brief connection reset per node). To keep the old cap set `skfenceha.TRAEFIK_WORKER_CPUS: "0.40"`. An instance that already ran `docker service update --limit-cpu 2` sees no change.
 - **skwrit:** new optional role, opt-in; nothing an instance already deploys renders differently because of it.
@@ -14,6 +15,7 @@ Each entry says what an instance must do, if anything.
 
 ### Changes
 
+- docs: skflow README section "SSO and Nextcloud integration (overview)" (how SSO, the native trigger, the skhub webhook worker, the Talk bot and notifications fit together, service-account and break-glass notes) and the trigger-delay note updated for the webhook worker. No behavior change.
 - docs: sksso README section "SSO for skhub and skflow" (application/provider table, the `nextcloud` scope mapping and `nc-*` groups, recovery and SMTP status, forward-auth leftovers, tile sync caveat). No behavior change.
 - v1: **skfenceha** `traefik-worker` resources are variables: `TRAEFIK_WORKER_CPUS` (default `2.00`, was a hard-coded `0.40` that throttled large downloads to about 15 MB/s), `TRAEFIK_WORKER_MEMORY_LIMIT` (`384M`), `TRAEFIK_WORKER_CPUS_RESERVATION` (`0.08`), `TRAEFIK_WORKER_MEMORY_RESERVATION` (`96M`). Other services unchanged. Tests: `v1/tests/test_skfenceha_worker_resources.py` (defaults, every knob, empty values, other services untouched). README "Worker resources".
 - v1: new optional role **skwrit** (`v1/ansible/optional/skwrit`): the worker of the skwrit matter engine as one digest-pinned service (`SKWRIT_IMAGE`, no default, refused without `@sha256:`) that skflow calls over an existing overlay, plus an optional digest-pinned `nextcloud-mcp`. Settings as `SKWRIT_*` variables; Swarm secrets and the state volume are external and referenced by name only (the play never touches a secret value; `deploy` refuses to start when one is missing); `STACK_NAME` and `WORKER_SERVICE` let an instance keep an existing service DNS name. Stack-local overlay subnets `skwrit-prod/staging/dev` = `172.16.249.0/24`, `172.16.253.0/25`, `172.16.253.128/25`. Tests: `v1/tests/test_skwrit_render.py` (real Ansible: defaults, every knob, naming, refusals, env playbook parity).
