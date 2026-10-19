@@ -1,0 +1,55 @@
+# sksso.branding (a pack name under branding/, today only "nam"): put the pack
+# on shared storage so Authentik serves it. Authentik reads logo, favicon and
+# flow background from media/public/<pack>/ and email templates from
+# custom-templates/. This only copies files; applying them to the database is
+# the idempotent helper rendered next to the deploy script
+# (/var/data/<app>-<env>/apply-branding), run once after the stack is up.
+# See README "Branding".
+
+- name: Check the branding pack exists
+  stat:
+    path: "{{ playbook_dir }}/branding/{{ sksso.branding }}"
+  register: sksso_branding_pack
+  delegate_to: localhost
+  become: false
+
+- name: Fail on an unknown branding pack
+  assert:
+    that: sksso_branding_pack.stat.exists
+    fail_msg: "sksso.branding={{ sksso.branding }} but branding/{{ sksso.branding }} does not exist in the role"
+    quiet: true
+
+- name: Create the branding media dir
+  file:
+    path: "/var/data/{{ app }}-{{ env }}/media/public/{{ sksso.branding }}"
+    state: directory
+    owner: "{{ sksso.authentik_uid | default(1000) }}"
+    group: "{{ sksso.authentik_uid | default(1000) }}"
+    mode: '0755'
+
+- name: Copy branding media (logo, favicon, css, background, apply script)
+  copy:
+    src: "{{ playbook_dir }}/branding/{{ sksso.branding }}/media/"
+    dest: "/var/data/{{ app }}-{{ env }}/media/public/{{ sksso.branding }}/"
+    owner: "{{ sksso.authentik_uid | default(1000) }}"
+    group: "{{ sksso.authentik_uid | default(1000) }}"
+    mode: '0644'
+
+- name: Copy branded email templates
+  copy:
+    src: "{{ playbook_dir }}/branding/{{ sksso.branding }}/templates/"
+    dest: "/var/data/{{ app }}-{{ env }}/custom-templates/"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install the branding helpers next to the deploy script
+  copy:
+    src: "{{ playbook_dir }}/branding/{{ sksso.branding }}/{{ item.src }}"
+    dest: "/var/data/{{ app }}-{{ env }}/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - { src: apply-branding.sh, dest: apply-branding }
+    - { src: nextcloud-theming.sh, dest: nextcloud-theming }
