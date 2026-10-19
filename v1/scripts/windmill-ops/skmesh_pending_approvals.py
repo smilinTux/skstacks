@@ -13,8 +13,7 @@ import os
 import time
 import urllib.request
 
-API = 'https://skmesh.nativeassetmanagement.com/api'
-APPROVE_URL = 'https://skmesh.nativeassetmanagement.com/team/users'
+BASE_VAR = 'f/ops/skmesh_base_url'  # plain variable, e.g. https://skmesh.example.org (no trailing slash needed)
 TOKEN_VAR = 'f/ops/skmesh_api_token'
 STATE_VAR = 'f/ops/skmesh_pending_state'
 REMIND_AFTER = 24 * 3600
@@ -30,8 +29,12 @@ def _wm(method, path, body=None):
         return json.loads(r.read() or 'null')
 
 
+def _base():
+    return str(_wm('GET', '/variables/get_value/' + BASE_VAR)).strip().strip('"').rstrip('/')
+
+
 def _list_users(token):
-    req = urllib.request.Request(API + '/users', headers={'Authorization': 'Token ' + token, 'Accept': 'application/json'})
+    req = urllib.request.Request(_base() + '/api/users', headers={'Authorization': 'Token ' + token, 'Accept': 'application/json'})
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.load(r)
 
@@ -40,8 +43,8 @@ def pending_users(users):
     return [u for u in users if u.get('pending_approval') and not u.get('is_service_user') and not u.get('is_blocked')]
 
 
-def message(name, email, reminder=False):
-    text = 'skmesh: %s (%s) is waiting for approval. Approve at %s' % (name or 'unknown', email or 'no email', APPROVE_URL)
+def message(name, email, approve_url, reminder=False):
+    text = 'skmesh: %s (%s) is waiting for approval. Approve at %s' % (name or 'unknown', email or 'no email', approve_url)
     return ('Reminder, still pending after 24h. ' + text) if reminder else text
 
 
@@ -67,7 +70,7 @@ def plan(pending, state, now):
 
 def main(dry_run: bool = False, test: bool = False):
     if test:
-        text = message('Test User', 'test@example.invalid')
+        text = message('Test User', 'test@example.invalid', _base() + '/team/users')
         if dry_run:
             return {'dry_run': True, 'would_post': text}
         _post('skmesh approval alert test, ignore', text)
@@ -81,7 +84,8 @@ def main(dry_run: bool = False, test: bool = False):
     except ValueError:
         state = {}
     msgs, new_state = plan(pending, state, time.time())
-    texts = [message(u.get('name'), u.get('email'), rem) for u, rem in msgs]
+    approve_url = _base() + '/team/users'
+    texts = [message(u.get('name'), u.get('email'), approve_url, rem) for u, rem in msgs]
     if dry_run:
         return {'dry_run': True, 'users': len(users), 'pending': len(pending), 'would_post': texts}
     posted = 0

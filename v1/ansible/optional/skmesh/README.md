@@ -214,6 +214,7 @@ them at `https://<skmesh-host>/team/users`. A Windmill job tells Talk when that 
   (`users`, `personal_access_tokens`) following NetBird's own code: PAT = `nbp_` + 30 char base62 secret + 6 char
   base62 crc32 of the secret, stored as `base64(sha256(plain))`, expiry 365 days (2027-10-18). Management reads
   these from the store, so no restart was needed. To rotate, repeat that with a new token row and update both copies.
+- Base URL: plain Windmill variable `f/ops/skmesh_base_url` (the skmesh public URL, no path); the script holds no hostname.
 - Token storage (names only): Windmill secret variable `f/ops/skmesh_api_token` (workspace `fwe`) and skvault entry
   `NAM_SKMESH_API_TOKEN`. API header is `Authorization: Token <pat>`.
 - Job: `v1/scripts/windmill-ops/skmesh_pending_approvals.py` is Windmill script `f/ops/skmesh_pending_approvals`,
