@@ -1,0 +1,83 @@
+---
+# Global pre-receive size backstop for Forgejo (skgit). Include with tag `hooks`.
+# Needs: app, env (e.g. skgit / prod). Applies live with no Forgejo restart: Forgejo's
+# generated hooks/pre-receive wrapper executes every file in hooks/pre-receive.d/.
+# DISABLE_GIT_HOOKS ([security], default true) only blocks editing hooks through the
+# web UI/API; filesystem hooks still run, so hook control stays with host root.
+- name: Create custom-hooks directory (bind-mounted at /data/gitea/custom-hooks in the container)
+  file:
+    path: "/var/data/{{ app }}-{{ env }}/data/gitea/custom-hooks"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [hooks]
+
+- name: Install hook script and config
+  copy:
+    src: "{{ playbook_dir }}/src/hooks/{{ item.src }}"
+    dest: "/var/data/{{ app }}-{{ env }}/data/gitea/custom-hooks/{{ item.src }}"
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+    force: "{{ item.force | default(true) }}"
+  loop:
+    - { src: size-limit.sh, mode: "0755" }
+    # conf and allow-list are operator-owned after first install: never overwrite.
+    - { src: size-limit.conf, mode: "0644", force: false }
+    - { src: size-limit.allow, mode: "0644", force: false }
+  tags: [hooks]
+
+- name: Install host-side repo linker
+  copy:
+    src: "{{ playbook_dir }}/src/hooks/install-hooks.sh"
+    dest: /usr/local/sbin/skgit-install-hooks
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [hooks]
+
+- name: Install linker systemd service
+  copy:
+    dest: /etc/systemd/system/skgit-install-hooks.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Link SKGit global pre-receive hooks into all Forgejo repos
+      [Service]
+      Type=oneshot
+      Environment=SKGIT_DATA=/var/data/{{ app }}-{{ env }}/data
+      ExecStart=/usr/local/sbin/skgit-install-hooks
+  tags: [hooks]
+
+- name: Install linker systemd timer (new repos are covered within a minute)
+  copy:
+    dest: /etc/systemd/system/skgit-install-hooks.timer
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Run skgit-install-hooks every minute
+      [Timer]
+      OnBootSec=1min
+      OnUnitActiveSec=1min
+      AccuracySec=10s
+      [Install]
+      WantedBy=timers.target
+  tags: [hooks]
+
+- name: Enable the timer and run the linker once now
+  systemd:
+    name: skgit-install-hooks.timer
+    state: started
+    enabled: true
+    daemon_reload: true
+  tags: [hooks]
+
+- name: Link hooks into existing repos now
+  command: systemctl start skgit-install-hooks.service
+  changed_when: false
+  tags: [hooks]

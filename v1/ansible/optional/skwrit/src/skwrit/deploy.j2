@@ -1,0 +1,43 @@
+#!/bin/bash
+set -e
+
+# skwrit Deploy Script
+# Environment: {{ env }}
+STACK_NAME={{ skwrit.STACK_NAME | default('skwrit-' + env, true) }}
+CONFIG_DIR="/var/data/config/skwrit-{{ env }}"
+COMPOSE_FILE="${CONFIG_DIR}/skwrit.yml"
+SERVER="${STACK_NAME}_{{ skwrit.WORKER_SERVICE | default('worker', true) }}"
+
+if [ ! -f "${COMPOSE_FILE}" ]; then
+    echo "Error: Compose file not found: ${COMPOSE_FILE}"
+    exit 1
+fi
+
+# External prerequisites (made by hand or by another stack): refuse early
+# with the name of what is missing instead of a half-applied stack.
+for s in {{ skwrit.NEXTCLOUD_SWARM_REF | default('skwrit_nextcloud_v1', true) }} {{ skwrit.WORKER_SWARM_REF | default('skwrit_worker_v1', true) }} {{ skwrit.VECTOR_SWARM_REF | default('skwrit_vector_v1', true) }}; do
+    docker secret inspect "$s" >/dev/null 2>&1 || { echo "Error: Swarm secret missing: $s"; exit 1; }
+done
+docker network inspect {{ skwrit.WORKFLOW_NETWORK | default('skflow-' + env, true) }} >/dev/null 2>&1 || { echo "Error: overlay network missing: {{ skwrit.WORKFLOW_NETWORK | default('skflow-' + env, true) }}"; exit 1; }
+
+cd "${CONFIG_DIR}"
+docker stack deploy \
+    -c "${COMPOSE_FILE}" \
+    --prune \
+    --with-registry-auth \
+    "${STACK_NAME}"
+
+echo "Waiting for ${SERVER} to converge..."
+WAIT=${HEALTH_WAIT_SECONDS:-300}
+for _ in $(seq 1 $(( (WAIT + 4) / 5 ))); do
+    REPLICAS=$(docker service ls --filter "name=${SERVER}" --format "{% raw %}{{.Replicas}}{% endraw %}")
+    [[ -n "$REPLICAS" && "${REPLICAS%%/*}" == "${REPLICAS##*/}" && "${REPLICAS##*/}" != 0 ]] && break
+    sleep 5
+done
+if [[ -n "$REPLICAS" && "${REPLICAS%%/*}" == "${REPLICAS##*/}" && "${REPLICAS##*/}" != 0 ]]; then
+    echo "${SERVER} is running (${REPLICAS})"
+else
+    echo "${SERVER} not converged: ${REPLICAS}"
+    docker service logs --tail 20 "${SERVER}" || true
+fi
+echo "Deployment complete!"

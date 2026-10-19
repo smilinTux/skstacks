@@ -1,0 +1,14 @@
+{% autoescape off %}Reset your NAM password
+
+Hi {{ user.name|default:user.username }}, we received a request to reset the password for your NAM account ({{ user.username }}).
+
+Open the link below to choose a new password:
+
+{{ url }}
+
+This link expires on {{ expires|date:"l, F j, Y, g:i A" }} UTC. If you did not ask for this, ignore this email and your password stays the same.
+
+Questions? Reply to this email and a person will help.
+
+Native Asset Management, the NAM team
+{% endautoescape %}

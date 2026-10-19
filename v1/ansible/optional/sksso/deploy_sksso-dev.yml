@@ -190,6 +190,18 @@
         - templates
         - deploy
 
+    - name: Branding pack (sksso.branding), files only
+      include_tasks:
+        file: tasks/branding.yml
+        apply:
+          tags:
+            - templates
+            - deploy
+      when: sksso.branding | default('') | length > 0
+      tags:
+        - templates
+        - deploy
+
     - name: Process {{ app }} Docker Compose template
       template:
         src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
