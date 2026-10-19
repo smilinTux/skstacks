@@ -1,0 +1,49 @@
+# sksso.SKFLOW_OIDC_CLIENT_SECRET, before the stack deploy: render the
+# Authentik blueprint that gives skflow (Windmill) its OAuth2 login. The
+# blueprint lives in /var/data/config/sksso-<env>/blueprints (mounted at
+# /blueprints/custom in server and worker); the worker applies it. The client
+# secret reaches Authentik as the SKFLOW_OIDC_CLIENT_SECRET env var (see
+# sksso.env.j2) and is read with !Env, so it is not in the blueprint file.
+# See the README section "skflow (Windmill) login".
+
+- name: Resolve the skflow OIDC settings
+  set_fact:
+    sksso_skflow_base: "{{ sksso.DOMAIN if (sksso.CLOUDFLARED | default(false) | bool) else (sksso.CLUSTERNAME ~ '.' ~ sksso.DOMAIN) }}"
+    sksso_skflow_client_id: "{{ sksso.SKFLOW_OIDC_CLIENT_ID | default('skflow-windmill', true) }}"
+    sksso_skflow_group: "{{ sksso.SKFLOW_OPERATORS_GROUP | default('skflow-operators', true) }}"
+    sksso_skflow_app_name: "{{ sksso.SKFLOW_APP_NAME | default('Windmill (skflow)', true) }}"
+  no_log: true
+
+- name: Resolve the skflow public host
+  set_fact:
+    sksso_skflow_host: "{{ sksso.SKFLOW_HOST | default('skflow' ~ ('' if env == 'prod' else '-' ~ env) ~ '.' ~ sksso_skflow_base, true) }}"
+  no_log: true
+
+- name: Check the skflow OIDC vault keys
+  assert:
+    that:
+      - "(sksso.SKFLOW_OIDC_CLIENT_SECRET | default('') | string | length) >= 32"
+      - "sksso_skflow_host is match('^[A-Za-z0-9][A-Za-z0-9.-]*$')"
+      - "sksso_skflow_client_id is match('^[a-z0-9][a-z0-9-]*$')"
+      - "sksso_skflow_group is match('^[A-Za-z0-9][A-Za-z0-9._-]*$')"
+    fail_msg: >-
+      sksso.SKFLOW_OIDC_CLIENT_SECRET needs 32+ characters (openssl rand -hex 32),
+      SKFLOW_HOST a plain host name, SKFLOW_OIDC_CLIENT_ID a lowercase slug and
+      SKFLOW_OPERATORS_GROUP a plain group name.
+    quiet: true
+
+- name: Create the Authentik blueprints directory
+  file:
+    path: /var/data/config/{{ app }}-{{ env }}/blueprints
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Render the skflow-windmill blueprint (no secret inside)
+  template:
+    src: "{{ playbook_dir }}/src/config/{{ app }}/blueprints/skflow-windmill.yaml.j2"
+    dest: /var/data/config/{{ app }}-{{ env }}/blueprints/skflow-windmill.yaml
+    owner: root
+    group: root
+    mode: '0644'

@@ -40,6 +40,33 @@ is `attachable`) and use `http://skflow-<env>_server:8000`, or go through the
 public host. Keep one Windmill **workspace** per tenant so tokens, variables,
 resources and schedules stay separate.
 
+### Tenant private assets (fonts, images)
+
+A tenant that needs files which must not live in a public repository (licensed
+fonts, a bordered-certificate image) must not depend on someone copying them
+onto a node. This repository has no tenant role for them. The pattern the
+current document-pipeline tenant uses, which any tenant should follow:
+
+- **Build-time assets** (fonts) are copied into the tenant's private image
+  from a private directory named by an environment variable at build time
+  (the tenant's `build-worker-context` script reads `FWE_FONT_DIR`), each file
+  checked against a SHA-256 pinned in the tenant's repository. A missing or
+  changed file fails the build rather than substituting another one. The
+  image goes to the cluster registry and is pinned by digest in the tenant's
+  stack file, so a fresh deploy gets the fonts by pulling the image.
+- **Run-time assets** (the border PNG at `/state/assets/borders/`) live on the
+  tenant's state volume. They are not in the image today, which is the
+  reproducibility gap: on a fresh volume the file is absent and the renders
+  that need it fail or skip. Provide it with a Swarm config (or secret) the
+  tenant stack mounts read-only, or bake it into the same private image, and
+  keep the pinned SHA-256 check. Until the tenant stack does that, restoring
+  its state volume from backup restores the file; a brand-new volume needs it
+  placed once from the private asset store.
+- Never commit the assets, their hashes' source files, or the private paths
+  to this repository. Tests that need them must be run where the private
+  directory exists; without it, rendering tests error or skip, so treat a
+  green run without the assets as incomplete.
+
 ### Services
 
 | Service | Replicas | Purpose |
@@ -111,6 +138,46 @@ is set the template also renders:
 The Authentik side needs a Proxy provider (forward auth, single
 application) for the skflow host, added to the embedded outpost, as for
 every other `authentik@file` service (see `optional/sksso/README.md`).
+
+### Single sign-on (Authentik OAuth2 login)
+
+Forward auth (above) gates the page; this is the other half, signing people
+in to Windmill itself with their Authentik account (Windmill's OAuth login
+button). It is code, not a click path, in two halves that share one secret:
+
+1. **Authentik side, sksso.** Set `sksso.SKFLOW_OIDC_CLIENT_SECRET` and
+   redeploy sksso. It renders an Authentik blueprint (provider, application,
+   group binding) that Authentik's worker applies; see
+   `optional/sksso/README.md` "skflow (Windmill) login".
+2. **Windmill side, this role.** Set `skflow.SSO_CLIENT_SECRET` (the same
+   value) and `skflow.SUPERADMIN_SECRET`. After the stack is up, the play
+   (`tasks/sso_provision.yml`) runs `src/skflow/sso_provision.py` in a
+   throwaway container on the `skflow-<env>` overlay and, as the virtual
+   superadmin that `SUPERADMIN_SECRET` gives:
+   - writes the global setting `oauths` (`POST /api/settings/global/oauths`,
+     only when it differs from what `GET` returns): one provider `authentik`
+     with `id` = the client id, `secret`, `display_name` (default
+     `SKWorld SSO`), `connect_config` (scopes `openid offline_access`) and
+     `login_config` (scopes `openid offline_access email profile`), with
+     `https://<SSO host>/application/o/{authorize,token,userinfo}/`;
+   - for every workspace in `SSO_WORKSPACE_ADMINS`, adds each listed email as
+     an admin (`POST /api/w/<ws>/workspaces/add_user`
+     `{email, is_admin: true, operator: false}`) or promotes a member who is
+     not one yet. A workspace that does not exist is an error, so deploy the
+     tenant that creates it first and run the play again; the `oauths`
+     setting is already applied by then.
+
+Both secrets go to the container on stdin; the task is `no_log`, and the
+provisioner prints status lines only. Re-running changes nothing.
+
+**Limit.** Windmill community edition accepts at most **10 SSO users** in
+total (the 11th login is refused by Windmill). Keep the Authentik group
+`skflow-operators` (`sksso.SKFLOW_OPERATORS_GROUP`) at or under that, or move
+to the enterprise edition.
+
+The user logging in must be in that Authentik group, or the application is
+not shown to them (the blueprint binds the application to the group). A
+user's Windmill account is created on first SSO login, matched by email.
 
 ### Health checks
 
@@ -196,6 +263,12 @@ skflow:
   LOG_MAX_SIZE: 10m                         # json-file log rotation
   LOG_MAX_FILES: 3
   TZ: UTC
+  SSO_CLIENT_SECRET: ""                     # Windmill OAuth login via Authentik; 32+ chars, same as sksso.SKFLOW_OIDC_CLIENT_SECRET. Needs SUPERADMIN_SECRET. Secret.
+  SSO_HOST: ""                              # Authentik host; default sso[-env].<base domain>
+  SSO_CLIENT_ID: skflow-windmill            # must equal sksso.SKFLOW_OIDC_CLIENT_ID
+  SSO_DISPLAY_NAME: SKWorld SSO             # label of the login button
+  SSO_WORKSPACE_ADMINS: {}                  # {workspace: [email, ...]} added as workspace admins; the workspace must exist
+  PROVISIONER_IMAGE: ""                     # python:3-alpine pinned by digest, runs sso_provision.py
   EXTRA_ENV: {}                             # extra Windmill env vars (map), written to skflow.env
   PLACEMENT_CONSTRAINTS: ["node.role == worker"]
   DATA_NODE: ""                             # required when POSTGRES_PATH/DUMP_PATH are outside /var/data
