@@ -249,6 +249,10 @@
       tags:
         - scripts
 
+    - name: Install global pre-receive size hook (see tasks/install_global_hooks.yml)
+      import_tasks: tasks/install_global_hooks.yml
+      tags: [hooks]
+
     - name: Deploy {{ app }} stack
       shell: |
         cd /var/data/{{ app }}-{{ env }}

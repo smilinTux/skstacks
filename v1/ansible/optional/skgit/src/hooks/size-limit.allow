@@ -1,0 +1,6 @@
+# SKGit size-limit allow-list. One entry per line.
+#   owner/repo          exempt the whole repo
+#   owner/repo:glob     exempt matching paths only
+# Legacy hammerTime state file (34 MB, rewritten per run; tracked for removal in docs/repo-hygiene.md).
+smilinTux/hammerTime:json/state/corpus-processing-state.json
+smilinTux/hammerTime:json/intake-manifests/*
