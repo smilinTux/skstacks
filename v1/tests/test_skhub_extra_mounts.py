@@ -90,7 +90,7 @@ def test_incident_mounts_land_in_nextcloud_and_cron(env_name):
 
 def test_only_nextcloud_and_cron_change():
     a, b = services(), services(EXTRA_MOUNTS=INCIDENT)
-    assert {n for n in a if a[n] != b[n]} == {"nextcloud", "cron"}
+    assert {n for n in a if a[n] != b[n]} == {"nextcloud", "cron", "webhook-worker"}
     for name in ("nextcloud", "cron"):
         assert b[name]["volumes"][: len(a[name]["volumes"])] == a[name]["volumes"], "fixed mounts unchanged, extras appended"
 

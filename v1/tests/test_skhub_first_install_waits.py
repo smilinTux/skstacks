@@ -8,6 +8,24 @@ On a memory-pressured host that took ~9 minutes (skstack06 v2.19.1), while
 follow-up "Wait for Nextcloud to finish its first-run install" had the same
 shape (60 x 10s). Both loops now derive their retries from one guarded knob,
 skhub.first_install_wait_seconds (default 1800).
+
+That fixed the ansible-side patience, but left a deeper trap: the
+nextcloud service's own Docker HEALTHCHECK start_period was still a fixed
+300s (interval 120s x retries 3 = 660s total grace). Swarm's
+restart_policy kills and restarts a container whose healthcheck has not
+yet passed once that grace runs out ("task: non-zero exit (137):
+dockerexec: unhealthy container"), and each restart resets the one-time
+entrypoint copy + first DB install back to zero. On a busy host (skstack06
+gate, 2026-10-17/18, host load 28-37 on 20 cores) the container was killed
+and restarted every ~9-11 minutes, every time, and NEVER accumulated
+enough uninterrupted time to finish: the ansible wait loop faithfully
+waited its full ~1800s budget while Docker killed the container two or
+three times underneath it. Same root class as skmail's
+HEALTHCHECK_START_PERIOD (default 1800s, same reasoning, see
+skmail.yml.j2). Fix: the nextcloud healthcheck's start_period now derives
+from the SAME skhub.first_install_wait_seconds knob, so the one place that
+actually gates "does the container survive long enough to finish" has the
+same budget as the ansible wait that was already designed around it.
 """
 import pathlib
 
@@ -17,10 +35,26 @@ import yaml
 
 SKHUB = pathlib.Path(__file__).resolve().parents[1] / "ansible/optional/skhub"
 PLAYBOOKS = sorted(SKHUB.glob("deploy_skhub-*.yml"))
+SKHUB_YML = SKHUB / "src/config/skhub/skhub.yml.j2"
 KNOB = "first_install_wait_seconds"
 DEFAULT_BUDGET = 1800
 
 _ENV = jinja2.Environment()
+
+
+def _render_yml(**skhub_extra):
+    env = jinja2.Environment(undefined=jinja2.ChainableUndefined, trim_blocks=True, keep_trailing_newline=True)
+    env.filters["bool"] = lambda v: v if isinstance(v, bool) else str(v).lower() in ("yes", "true", "1", "on")
+    rendered = env.from_string(SKHUB_YML.read_text()).render(
+        app="skhub", env="prod",
+        skhub={"CLUSTERNAME": "cluster1", "DOMAIN": "example.com", **skhub_extra},
+        fence_service_name="skfenceha",
+    )
+    return yaml.safe_load(rendered)
+
+
+def _nextcloud_healthcheck(**skhub_extra):
+    return _render_yml(**skhub_extra)["services"]["nextcloud"]["healthcheck"]
 
 
 def _tasks(playbook):
@@ -94,3 +128,40 @@ def test_budget_announced_before_waiting(playbook):
     assert "debug" in prev and KNOB in str(prev["debug"]), (
         "announce the wait budget so a long wait is not mistaken for a hang"
     )
+
+
+# --- the Docker healthcheck must not kill the container before the ansible
+#     wait's own budget runs out (the actual bug: start_period was a fixed
+#     300s while the ansible side already waited up to 1800s) -------------
+
+def test_default_healthcheck_start_period_matches_the_knobs_default():
+    hc = _nextcloud_healthcheck()
+    assert hc["start_period"] == f"{DEFAULT_BUDGET}s"
+
+
+def test_healthcheck_start_period_driven_by_the_knob():
+    for seconds in (600, 3600):
+        hc = _nextcloud_healthcheck(**{KNOB: seconds})
+        assert hc["start_period"] == f"{seconds}s"
+
+
+def test_healthcheck_start_period_covers_the_ansible_wait_budget():
+    """The two must never drift apart again: whatever the ansible wait is
+    willing to wait for, the container must still be alive to finish in."""
+    for seconds in (300, 600, 1800, 3600):
+        hc = _nextcloud_healthcheck(**{KNOB: seconds})
+        start_period = int(hc["start_period"].rstrip("s"))
+        for playbook in PLAYBOOKS:
+            task = _waits(playbook)["node"]
+            ansible_budget = _budget(task, {KNOB: seconds})
+            assert start_period >= min(seconds, ansible_budget), (playbook.name, seconds)
+
+
+def test_healthcheck_interval_and_retries_unchanged():
+    """Only start_period changes; the steady-state detection cadence (once
+    healthy) is a separate concern and was never the problem."""
+    hc = _nextcloud_healthcheck()
+    assert hc["interval"] == "120s"
+    assert hc["timeout"] == "90s"
+    assert hc["retries"] == 3
+    assert hc["test"] == ["CMD-SHELL", "curl -sf --max-time 60 http://localhost/status.php || exit 1"]

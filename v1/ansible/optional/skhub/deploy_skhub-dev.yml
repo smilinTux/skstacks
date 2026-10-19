@@ -58,6 +58,34 @@
       include_vars: "{{ vault_file_path }}"
       when: vault_file_path is defined
 
+    - name: Validate skhub.backup_time (HH:MM, 24-hour) when set
+      assert:
+        that:
+          - (skhub.backup_time | default('', true) | string) is match('^([01][0-9]|2[0-3]):[0-5][0-9]$')
+        fail_msg: >-
+          ERROR: skhub.backup_time must be 24-hour 'HH:MM', e.g. '03:00'.
+        quiet: true
+      when: skhub.backup_time is defined
+
+    - name: Check skhub.backup_tz is a known IANA time zone (control node /usr/share/zoneinfo)
+      stat:
+        path: "/usr/share/zoneinfo/{{ skhub.backup_tz | default('UTC') }}"
+      delegate_to: localhost
+      become: false
+      run_once: true
+      register: _skhub_backup_tz_check
+      when: skhub.backup_time is defined
+
+    - name: Validate skhub.backup_tz is a known IANA time zone
+      assert:
+        that:
+          - _skhub_backup_tz_check.stat.exists
+        fail_msg: >-
+          ERROR: skhub.backup_tz '{{ skhub.backup_tz | default('UTC') }}' is not a
+          known IANA time zone (checked /usr/share/zoneinfo on the control node).
+        quiet: true
+      when: skhub.backup_time is defined
+
     - name: Warn that TALK_RECORDING_MAX_CONCURRENT is ignored
       # README "Talk recording": talk-recording is one replica since v2.26.3.
       debug:
@@ -919,6 +947,27 @@
       delegate_to: "{{ nextcloud_node.stdout | trim }}"
       when: >-
         (skhub.enable_talk_hpb | default(false))
+        and nextcloud_container is defined and nextcloud_container.stdout is defined
+        and (nextcloud_container.stdout | trim | length > 0)
+      # Best-effort: optional app/tuning step; a failure here must not block
+      # the deploy. Container lookup, Redis and notify_push are fatal above.
+      ignore_errors: yes
+      no_log: true
+      tags:
+        - post-deploy
+        - talk
+
+    - name: Configure Talk federation
+      shell: |
+        CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+        docker exec "$CONTAINER_ID" php occ config:app:set spreed federation_enabled --value=yes 2>&1 || true
+        {% if (skhub.TALK_FEDERATION_ALLOWED_GROUPS | default([], true) | length) > 0 %}
+        docker exec "$CONTAINER_ID" php occ config:app:set spreed federation_allowed_groups --value='{{ skhub.TALK_FEDERATION_ALLOWED_GROUPS | map('string') | list | to_json }}' 2>&1 || true
+        {% endif %}
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
+      when: >-
+        (skhub.enable_talk_hpb | default(false))
+        and (skhub.TALK_FEDERATION_ENABLED | default(false) | string | lower) in ['true', 'yes', 'on', '1']
         and nextcloud_container is defined and nextcloud_container.stdout is defined
         and (nextcloud_container.stdout | trim | length > 0)
       # Best-effort: optional app/tuning step; a failure here must not block
