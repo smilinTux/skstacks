@@ -90,6 +90,7 @@
     - name: Resolve the public host
       set_fact:
         sf_host: "{{ skflow.HOSTNAME | default('skflow' + ('' if env == 'prod' else '-' + env) + '.' + sf_base_domain, true) }}"
+        sf_sso_host: "{{ skflow.SSO_HOST | default('sso' + ('' if env == 'prod' else '-' + env) + '.' + sf_base_domain, true) }}"
       tags: [config]
 
     - name: Refuse a database without a password, or a weak one
@@ -283,3 +284,13 @@
     - name: Show deploy output
       debug: var=deploy_output.stdout_lines
       tags: [deploy]
+
+    - name: Windmill Authentik login and workspace admins (skflow.SSO_CLIENT_SECRET)
+      include_tasks:
+        file: tasks/sso_provision.yml
+        apply:
+          tags:
+            - deploy
+      when: skflow.SSO_CLIENT_SECRET | default('', true) | string | length > 0
+      tags:
+        - deploy

@@ -190,6 +190,9 @@ services:
       - /var/data/config/{{ app }}-{{ env }}/custom/user_settings.py:/data/user_settings.py:ro
 {% endif %}
       - /var/data/{{ app }}-{{ env }}/custom-templates:/templates
+{% if sksso.SKFLOW_OIDC_CLIENT_SECRET | default('', true) | string | length > 0 %}
+      - /var/data/config/{{ app }}-{{ env }}/blueprints:/blueprints/custom:ro
+{% endif %}
       - /etc/localtime:/etc/localtime:ro
     networks:
       - cloud-public-{{ env }}
@@ -233,6 +236,9 @@ services:
       - /var/data/config/{{ app }}-{{ env }}/custom/user_settings.py:/data/user_settings.py:ro
 {% endif %}
       - /var/data/{{ app }}-{{ env }}/custom-templates:/templates
+{% if sksso.SKFLOW_OIDC_CLIENT_SECRET | default('', true) | string | length > 0 %}
+      - /var/data/config/{{ app }}-{{ env }}/blueprints:/blueprints/custom:ro
+{% endif %}
       - /etc/localtime:/etc/localtime:ro
     # A worker is a process with a `worker` argument and `manage` (`python -m
     # manage worker`: 2024.x runs celery in it, 2025.10+ dramatiq) or a celery

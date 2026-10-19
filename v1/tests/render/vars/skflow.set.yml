@@ -48,3 +48,5 @@ skflow:
   BACKUP_KEEP_DAYS: 14
   EXTRA_ENV:
     ZOMBIE_JOB_TIMEOUT: "60"
+  SSO_CLIENT_SECRET: example-skflow-oidc-secret-not-a-secret-0123456789
+  SSO_WORKSPACE_ADMINS: {example: [admin@example.test]}

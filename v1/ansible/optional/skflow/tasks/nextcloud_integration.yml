@@ -1,0 +1,38 @@
+# Optional: Nextcloud side of the Windmill integration (see README.md "Nextcloud integration by default").
+# Not included by any deploy playbook. Use it from an instance play that targets the Nextcloud node:
+#
+#   - include_tasks: "{{ playbook_dir }}/../optional/skflow/tasks/nextcloud_integration.yml"
+#     vars: { nc_stack_service: skhub-prod_nextcloud, nc_webhook_group: fwe-automation }
+#
+# Idempotent: app:enable, htaccess regeneration and admin-delegation:add can all be repeated. The OAuth client, the Talk
+# bot and the Windmill connection involve secrets and are documented steps, not tasks.
+
+- name: Find the Nextcloud container on this node
+  command:
+    argv: [docker, ps, -q, --filter, "name={{ nc_stack_service }}"]
+  register: nc_container
+  changed_when: false
+  failed_when: nc_container.stdout_lines | length < 1
+
+- name: Enable the apps the Windmill integration needs
+  command:
+    argv: [docker, exec, -u, www-data, "{{ nc_container.stdout_lines[0] }}", php, occ, app:enable, "{{ item }}"]
+  loop: [webhook_listeners, oauth2, spreed, integration_windmill]
+  register: nc_app_enable
+  changed_when: "'already enabled' not in nc_app_enable.stdout"
+
+- name: Pretty URLs (OAuth endpoints answer 405 without them)
+  command:
+    argv: [docker, exec, -u, www-data, "{{ nc_container.stdout_lines[0] }}", php, occ, config:system:set, htaccess.RewriteBase, --value=/]
+  changed_when: false
+
+- name: Regenerate .htaccess
+  command:
+    argv: [docker, exec, -u, www-data, "{{ nc_container.stdout_lines[0] }}", php, occ, maintenance:update:htaccess]
+  changed_when: false
+
+- name: Let the service account group manage webhooks without being an admin
+  command:
+    argv: [docker, exec, -u, www-data, "{{ nc_container.stdout_lines[0] }}", php, occ, admin-delegation:add, 'OCA\WebhookListeners\Settings\Admin', "{{ nc_webhook_group }}"]
+  when: nc_webhook_group | default('', true) | length > 0
+  changed_when: false

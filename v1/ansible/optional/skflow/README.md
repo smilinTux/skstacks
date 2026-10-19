@@ -40,6 +40,33 @@ is `attachable`) and use `http://skflow-<env>_server:8000`, or go through the
 public host. Keep one Windmill **workspace** per tenant so tokens, variables,
 resources and schedules stay separate.
 
+### Tenant private assets (fonts, images)
+
+A tenant that needs files which must not live in a public repository (licensed
+fonts, a bordered-certificate image) must not depend on someone copying them
+onto a node. This repository has no tenant role for them. The pattern the
+current document-pipeline tenant uses, which any tenant should follow:
+
+- **Build-time assets** (fonts) are copied into the tenant's private image
+  from a private directory named by an environment variable at build time
+  (the tenant's `build-worker-context` script reads `FWE_FONT_DIR`), each file
+  checked against a SHA-256 pinned in the tenant's repository. A missing or
+  changed file fails the build rather than substituting another one. The
+  image goes to the cluster registry and is pinned by digest in the tenant's
+  stack file, so a fresh deploy gets the fonts by pulling the image.
+- **Run-time assets** (the border PNG at `/state/assets/borders/`) live on the
+  tenant's state volume. They are not in the image today, which is the
+  reproducibility gap: on a fresh volume the file is absent and the renders
+  that need it fail or skip. Provide it with a Swarm config (or secret) the
+  tenant stack mounts read-only, or bake it into the same private image, and
+  keep the pinned SHA-256 check. Until the tenant stack does that, restoring
+  its state volume from backup restores the file; a brand-new volume needs it
+  placed once from the private asset store.
+- Never commit the assets, their hashes' source files, or the private paths
+  to this repository. Tests that need them must be run where the private
+  directory exists; without it, rendering tests error or skip, so treat a
+  green run without the assets as incomplete.
+
 ### Services
 
 | Service | Replicas | Purpose |
@@ -113,6 +140,115 @@ is set the template also renders:
 The Authentik side needs a Proxy provider (forward auth, single
 application) for the skflow host, added to the embedded outpost, as for
 every other `authentik@file` service (see `optional/sksso/README.md`).
+
+### SSO and Nextcloud integration (overview)
+
+How the pieces fit when skflow runs next to skhub (Nextcloud) and sksso (Authentik). Each step has its own
+detailed subsection in this README; this is the map. People and password procedures are in
+[`v1/docs/sso-user-management.md`](../../../docs/sso-user-management.md).
+
+1. **People sign in with SSO, not forward auth.** Windmill's own OAuth login talks to Authentik
+   (sksso blueprint plus the `oauths` setting from `tasks/sso_provision.yml`, see "Single sign-on" below).
+   Leave `SSO_MIDDLEWARE` empty. Forward auth in front of Windmill gives a second login, and it gates paths
+   that Windmill's editor websocket and every machine client need. Forward auth is only correct for an app
+   with no login of its own, with an explicit bypass list (`/api/`, webhooks, websockets, health); see
+   `sso-estate-plan.md`.
+2. **Who may sign in.** Members of the Authentik group `skflow-operators`. A Windmill account is created on
+   the first login, matched by email, so an operator's Authentik email must equal the email Windmill knows
+   (workspace admins and workflow owners are matched the same way). Add or remove a person by group
+   membership in Authentik; removing them stops new logins, and a Windmill user or token that already exists
+   must be removed in Windmill as well (workspace settings, Users). CE allows 10 SSO users in total.
+3. **Windmill talks to Nextcloud with a service account.** The OAuth client for the native trigger is created
+   in Nextcloud (`occ oauth2:add-client`) and the integration is connected in the workspace as a dedicated
+   service account. That account is a local Nextcloud user with an app password; it has no Authentik user and
+   no SSO. Webhook management is delegated to a service-account group (`NEXTCLOUD_WEBHOOK_GROUP`) so it needs
+   no Nextcloud admin rights.
+4. **Native trigger.** A Windmill native trigger on a Nextcloud event (for example `NodeWrittenEvent` with a
+   path filter) registers a `webhook_listeners` webhook. Nextcloud queues each delivery as a background job.
+   Run skhub's `webhook-worker` so deliveries leave within seconds instead of waiting for cron
+   (measured: about 4 seconds on a live instance versus up to 5 minutes). Harden the registered webhook with
+   `tokenNeeded: {}` unless the flow needs the user tokens.
+5. **Talk bot and notifications.** Windmill posts into a Talk room through a Talk bot, and Talk can call a
+   Windmill script back (slash commands, replies). The bot secret and the room token are Windmill secret
+   variables; the bot webhook URL carries a Windmill token scoped to that single script. This is the
+   notification channel for human approvals and flow results: a flow sends a message to the room, a person
+   answers in Talk or in Windmill (signed in through SSO).
+6. **Failure handling.** Workspace error handlers are enterprise only; give flows a `failure_module` that
+   posts to the same Talk room.
+7. **Break-glass.** The Windmill superadmin (`SUPERADMIN_SECRET`) works without SSO. Keep it in the vault and
+   test it after SSO changes. If Authentik is down, SSO users cannot sign in but running schedules, triggers
+   and API tokens keep working.
+
+### Single sign-on (Authentik OAuth2 login)
+
+Forward auth (above) gates the page; this is the other half, signing people
+in to Windmill itself with their Authentik account (Windmill's OAuth login
+button). It is code, not a click path, in two halves that share one secret:
+
+1. **Authentik side, sksso.** Set `sksso.SKFLOW_OIDC_CLIENT_SECRET` and
+   redeploy sksso. It renders an Authentik blueprint (provider, application,
+   group binding) that Authentik's worker applies; see
+   `optional/sksso/README.md` "skflow (Windmill) login".
+2. **Windmill side, this role.** Set `skflow.SSO_CLIENT_SECRET` (the same
+   value) and `skflow.SUPERADMIN_SECRET`. After the stack is up, the play
+   (`tasks/sso_provision.yml`) runs `src/skflow/sso_provision.py` in a
+   throwaway container on the `skflow-<env>` overlay and, as the virtual
+   superadmin that `SUPERADMIN_SECRET` gives:
+   - writes the global setting `oauths` (`POST /api/settings/global/oauths`,
+     only when it differs from what `GET` returns): one provider `authentik`
+     with `id` = the client id, `secret`, `display_name` (default
+     `SKWorld SSO`), `connect_config` (scopes `openid offline_access`) and
+     `login_config` (scopes `openid offline_access email profile`), with
+     `https://<SSO host>/application/o/{authorize,token,userinfo}/`;
+   - for every workspace in `SSO_WORKSPACE_ADMINS`, adds each listed email as
+     an admin (`POST /api/w/<ws>/workspaces/add_user`
+     `{email, is_admin: true, operator: false}`) or promotes a member who is
+     not one yet. A workspace that does not exist is an error, so deploy the
+     tenant that creates it first and run the play again; the `oauths`
+     setting is already applied by then.
+
+Both secrets go to the container on stdin; the task is `no_log`, and the
+provisioner prints status lines only. Re-running changes nothing.
+
+**Limit.** Windmill community edition accepts at most **10 SSO users** in
+total (the 11th login is refused by Windmill). Keep the Authentik group
+`skflow-operators` (`sksso.SKFLOW_OPERATORS_GROUP`) at or under that, or move
+to the enterprise edition.
+
+The user logging in must be in that Authentik group, or the application is
+not shown to them (the blueprint binds the application to the group). A
+user's Windmill account is created on first SSO login, matched by email.
+
+### Nextcloud integration by default (optional)
+
+When the instance also runs Nextcloud (SKHub), Windmill can take file events from it, post into a Talk room and talk
+back through a Talk bot. Proven on the NAM estate with Windmill CE 1.837.0 and Nextcloud 34 (hammerTime
+`deploy/fwe/windmill/README.md` has the working scripts). Nothing here is on by default; the pieces are:
+
+1. **Nextcloud apps.** `webhook_listeners`, `oauth2`, `spreed` (Talk) and, for the event list in the Windmill UI,
+   `integration_windmill` enabled. `tasks/nextcloud_integration.yml` does this part, delegated to the Nextcloud node.
+2. **Pretty URLs.** `occ config:system:set htaccess.RewriteBase --value=/` then `occ maintenance:update:htaccess`.
+   Without it `/apps/oauth2/api/v1/token` answers 405 and the Windmill connect step fails.
+3. **OAuth client (Nextcloud) and workspace integration (Windmill).** `occ oauth2:add-client "Windmill skflow <ws>"
+   "https://<skflow host>/workspace_settings?tab=native_triggers&service=nextcloud"`, then in the workspace
+   (Workspace settings, Native triggers, Nextcloud, Configure OAuth) or by API
+   `POST /api/w/<ws>/native_triggers/integrations/nextcloud/create` with client id and secret, the Nextcloud base URL and
+   that redirect URI, then connect. The client secret goes to the vault, not to the repo.
+4. **Connect as a service account, not an admin.** Managing webhooks is an administrator setting, but it can be
+   delegated: `occ admin-delegation:add 'OCA\WebhookListeners\Settings\Admin' <service account group>`. The task file
+   does this when `skflow.NEXTCLOUD_WEBHOOK_GROUP` is set. Connect the integration as that account.
+5. **Triggers.** Create native triggers on the events you need (for example `NodeWrittenEvent` with an `eventFilter`
+   regex on `event.node.path`). Windmill CE supports them; they run from Nextcloud's background job. On skhub with the
+   `webhook-worker` service (see the skhub README, "Webhook worker") the delay is a few seconds; without it the delay is
+   the Nextcloud cron period (5 minutes). Windmill registers webhooks with `tokenNeeded: owner, trigger`, which puts two short-lived
+   Nextcloud user tokens into every job's args. Re-save the webhook with `tokenNeeded: {}` (see `harden_trigger.py` in
+   hammerTime) unless the flow needs them.
+6. **Talk bot.** `occ talk:bot:install "<Bot>" <secret 40+ chars> <webhook url> --feature webhook --feature response`,
+   `occ talk:room:create ...`, `occ talk:bot:setup <bot id> <room token>`. The webhook URL targets a Windmill script with
+   `?raw=true&include_header=x-nextcloud-talk-signature,x-nextcloud-talk-random&token=<token>`; use a Windmill token whose
+   only scope is `jobs:run:scripts:<path>`. Keep the bot secret and room token in Windmill secret variables.
+
+Workspace-level error handlers are an enterprise feature; give flows a `failure_module` instead.
 
 ### Health checks
 
@@ -198,6 +334,12 @@ skflow:
   LOG_MAX_SIZE: 10m                         # json-file log rotation
   LOG_MAX_FILES: 3
   TZ: UTC
+  SSO_CLIENT_SECRET: ""                     # Windmill OAuth login via Authentik; 32+ chars, same as sksso.SKFLOW_OIDC_CLIENT_SECRET. Needs SUPERADMIN_SECRET. Secret.
+  SSO_HOST: ""                              # Authentik host; default sso[-env].<base domain>
+  SSO_CLIENT_ID: skflow-windmill            # must equal sksso.SKFLOW_OIDC_CLIENT_ID
+  SSO_DISPLAY_NAME: SKWorld SSO             # label of the login button
+  SSO_WORKSPACE_ADMINS: {}                  # {workspace: [email, ...]} added as workspace admins; the workspace must exist
+  PROVISIONER_IMAGE: ""                     # python:3-alpine pinned by digest, runs sso_provision.py
   EXTRA_ENV: {}                             # extra Windmill env vars (map), written to skflow.env
   PLACEMENT_CONSTRAINTS: ["node.role == worker"]
   DATA_NODE: ""                             # required when POSTGRES_PATH/DUMP_PATH are outside /var/data
