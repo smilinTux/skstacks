@@ -8,7 +8,7 @@ Open the link below to choose a new password:
 
 This link expires on {{ expires|date:"l, F j, Y, g:i A" }} UTC. If you did not ask for this, ignore this email and your password stays the same.
 
-Questions? Reply to this email or write to nativeassetmanagement@gmail.com and a person will help.
+Questions? Reply to this email and a person will help.
 
 Native Asset Management, the NAM team
 {% endautoescape %}
