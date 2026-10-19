@@ -219,7 +219,7 @@ them at `https://<skmesh-host>/team/users`. A Windmill job tells Talk when that 
   `NAM_SKMESH_API_TOKEN`. API header is `Authorization: Token <pat>`.
 - Job: `v1/scripts/windmill-ops/skmesh_pending_approvals.py` is Windmill script `f/ops/skmesh_pending_approvals`,
   schedule every 5 minutes (UTC cron `0 */5 * * * *`). It posts once per newly pending user through `f/ops/notify`
-  (the "HammerTime Ingest" Talk room, which `notify` always targets), one reminder after 24 hours, and drops the user
+  (with `room="NAM Admin"`, see `v1/scripts/windmill-ops/ALERT-POLICY.md`), one reminder after 24 hours, and drops the user
   from state (`f/ops/skmesh_pending_state`) once approved, blocked or deleted. Args: `dry_run`, `test` (posts a fake
   user message, no state).
 - Failures: schedule `on_failure` runs `f/ops/skmesh_on_failure` (`v1/scripts/windmill-ops/skmesh_on_failure.py`),
