@@ -95,13 +95,16 @@ services:
     # drops to nextjs via gosu, which this entrypoint override skips): avoids
     # a chicken-and-egg wait on the app container's own `chown -R nextjs
     # /data` before the FIRST backup can read/write the bind mount.
+    #
+    # DATABASE_URL and AUTH_SECRET come from the SAME env_file as `app`
+    # (mode 0600), never inline here: this compose file is mode 0644
+    # (v1/tests/test_secret_files_not_world_readable.py). AUTH_SECRET is
+    # needed even though protection defaults to "none": if an admin later
+    # turns on password/recovery-key protection in Settings -> Data, the
+    # scheduled backup must keep working without a stack redeploy.
+    env_file:
+      - /var/data/config/skhome-{{ env }}/skhome.env
     environment:
-      DATABASE_URL: "file:/data/homecenter.db"
-      # AUTH_SECRET is needed even though protection defaults to "none": if
-      # an admin later turns on password/recovery-key protection in
-      # Settings -> Data, the scheduled backup must keep working without a
-      # stack redeploy.
-      AUTH_SECRET: "{{ skhome.AUTH_SECRET }}"
 {% if skhome.backup_time | default('', true) %}
       BACKUP_TIME: "{{ skhome.backup_time }}"
       BACKUP_TZ: "{{ skhome.backup_tz | default('UTC', true) }}"

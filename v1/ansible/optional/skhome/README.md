@@ -272,7 +272,7 @@ skhome:
   TLS_OPTIONS: ""                           # default intermediate@file; "none" = no tls.options label
   ADMIN_NAME: Admin                         # first boot only, ignored after
   ADMIN_EMAIL: admin@localhost              # first boot only, ignored after
-  ADMIN_PASSWORD: changeme                  # first boot only, ignored after; change it in-app afterwards
+  # ADMIN_PASSWORD: ""                      # first boot only; unset = HomeCenter's own "changeme" + forced reset
   MAX_UPLOAD_BYTES: 26214400
   NOTIFY_INTERVAL_MINUTES: 360              # 0 disables the reminder/digest timer
   DIGEST_HOUR: 8                            # 0-23

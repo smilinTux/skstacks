@@ -111,8 +111,11 @@ def test_default_services_image_and_single_app_replica(base_out):
             app["healthcheck"]["start_period"]) == ("30s", "10s", 3, "120s")
     assert backup["healthcheck"] == {"disable": True}
     assert backup["entrypoint"] == ["/bin/bash", "/usr/local/bin/skhome-backup"]
-    assert backup["environment"]["DATABASE_URL"] == "file:/data/homecenter.db"
-    assert backup["environment"]["AUTH_SECRET"] == BASE["AUTH_SECRET"]
+    # AUTH_SECRET/DATABASE_URL come from the SAME 0600 env_file as `app`,
+    # never inline in this 0644 compose file.
+    assert backup["env_file"] == ["/var/data/config/skhome-prod/skhome.env"]
+    assert "AUTH_SECRET" not in backup["environment"]
+    assert "DATABASE_URL" not in backup["environment"]
     assert backup["environment"]["BACKUP_FREQUENCY"] == "86400"
     assert backup["environment"]["BACKUP_START_DELAY"] == "60"
     assert "BACKUP_TIME" not in backup["environment"]
@@ -150,7 +153,9 @@ def test_admin_env_and_notify_defaults(base_out):
     env = env_file(base_out)
     assert env["ADMIN_NAME"] == "Admin"
     assert env["ADMIN_EMAIL"] == "admin@localhost"
-    assert env["ADMIN_PASSWORD"] == "changeme"
+    # No literal password default rendered (test_no_default_secrets.py):
+    # HomeCenter's own seed falls back to "changeme" and forces a reset.
+    assert "ADMIN_PASSWORD" not in env
     assert env["NOTIFY_INTERVAL_MINUTES"] == "360"
     assert env["DIGEST_HOUR"] == "8"
     assert env["DOCUMENT_REINDEX_HOURS"] == "6"
