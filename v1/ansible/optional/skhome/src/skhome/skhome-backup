@@ -1,0 +1,98 @@
+#!/bin/bash
+# skhome-backup: run HomeCenter's OWN backup engine (the same code behind
+# Settings -> Data -> "Back up now") on a schedule into /backup, a volume
+# separate from /data (upstream README: a backup on the same disk as the
+# data doesn't survive that disk failing). Installed by the skhome deploy
+# (copied verbatim) and run by the stack's `backup` service via a custom
+# entrypoint, so it never runs the image's normal restore/migrate/seed
+# start-up. Debian bash (the runner image is node:*-bookworm-slim, not
+# Alpine): no busybox-only syntax needed here, unlike skgym's api image.
+#
+# This NEVER copies the live SQLite file. `npx tsx scripts/backup.ts`
+# writes through HomeCenter's own engine (an online-safe snapshot that
+# works with the app running), and every run is checked with
+# `npx tsx scripts/backup-verify.ts <file>` before being trusted. A failed
+# backup or a failed verify is logged and the previous archives are left
+# alone: the engine's own temp-file-then-rename write means a failed run
+# never leaves a partial file where a good one was expected.
+#
+# Two schedules (deploy.j2 and the playbook resolve which): a fixed daily
+# time (BACKUP_TIME "HH:MM" + BACKUP_TZ, same backup_time/backup_tz pattern
+# as skhub/skbook), or a simple interval (BACKUP_FREQUENCY seconds after an
+# initial BACKUP_START_DELAY). Retention (how many backups to keep) is the
+# app's own, read from its Settings -> Data (default 14 on a fresh
+# instance): the CLI has no --keep flag, so this script does not prune.
+#
+#   skhome-backup          same as `loop` (the backup service's command)
+#   skhome-backup loop     wait for the schedule, then one backup every cycle
+#   skhome-backup once     one backup now, exit with its result (manual use,
+#                           skbackup hooks, and this script's own tests)
+set -u
+cd "${SKHOME_APP_DIR:-/app}" || exit 1
+
+log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) skhome-backup: $*"; }
+
+backup_once() {
+    local out rc file verify_log
+    out=$(npx tsx scripts/backup.ts -- --folder "${SKHOME_BACKUP_OUT:-/backup}" 2>&1)
+    rc=$?
+    echo "$out"
+    if [ "$rc" -ne 0 ]; then
+        log "ERROR: backup failed (exit $rc), previous backups untouched"
+        return 1
+    fi
+    file=$(printf '%s\n' "$out" | sed -n 's/^Backup written: //p' | tail -n1)
+    if [ -z "$file" ]; then
+        log "ERROR: backup reported success but printed no 'Backup written:' line"
+        return 1
+    fi
+    verify_log=$(mktemp)
+    if ! npx tsx scripts/backup-verify.ts "$file" >"$verify_log" 2>&1; then
+        log "ERROR: $file failed verification: $(cat "$verify_log")"
+        rm -f "$verify_log"
+        return 1
+    fi
+    rm -f "$verify_log"
+    log "wrote and verified $file"
+    return 0
+}
+
+trap 'exit 0' TERM INT
+
+case "${1:-loop}" in
+once)
+    backup_once
+    exit $?
+    ;;
+loop) ;;
+*)
+    echo "usage: skhome-backup [loop|once]" >&2
+    exit 2
+    ;;
+esac
+
+if [ -n "${BACKUP_TIME:-}" ]; then
+    log "fixed daily schedule: ${BACKUP_TIME} ${BACKUP_TZ:-UTC}"
+    while :; do
+        now_epoch=$(date +%s)
+        target_epoch=$(TZ="${BACKUP_TZ:-UTC}" date -d "today ${BACKUP_TIME}" +%s)
+        if [ "$target_epoch" -le "$now_epoch" ]; then
+            target_epoch=$(TZ="${BACKUP_TZ:-UTC}" date -d "tomorrow ${BACKUP_TIME}" +%s)
+        fi
+        log "next backup at ${BACKUP_TIME} ${BACKUP_TZ:-UTC}"
+        sleep $(( target_epoch - now_epoch )) &
+        wait $!
+        backup_once || true
+    done
+else
+    start_delay=${BACKUP_START_DELAY:-60}
+    frequency=${BACKUP_FREQUENCY:-86400}
+    log "first backup in ${start_delay}s, then every ${frequency}s"
+    sleep "$start_delay" &
+    wait $!
+    while :; do
+        backup_once || true
+        sleep "$frequency" &
+        wait $!
+    done
+fi

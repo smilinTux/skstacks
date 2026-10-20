@@ -1,0 +1,338 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# skhome: HomeCenter (self-hosted home/property/vehicle/health manager,
+# upstream github.com/yatzin/home-center, MIT) behind skfenceha. One
+# upstream image, digest-pinned: `app` (Next.js + Prisma/SQLite, exactly
+# ONE replica, everything under one /data volume). A `backup` sidecar (same
+# digest, no extra pull, a different entrypoint) runs HomeCenter's own
+# backup engine on a schedule into a separate BACKUP_PATH volume for
+# skbackup. Health records are sensitive data: AUTH_MODE defaults to sso
+# (Authentik forward auth) and the standard admin group convention applies.
+# See README.md.
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+# Step 1: Select manager node with failover
+# Run on all hosts to ensure it executes even with -l limit
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+# Step 2: Deploy to selected manager
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skhome
+    env: prod
+    service_name: skhome
+    service_type: optional
+    # HomeCenter 2.3.1 (upstream release image, multi-arch amd64/arm64,
+    # pinned by the manifest-LIST digest so either architecture resolves
+    # correctly). The compose template writes the same literal so
+    # v1/scripts/list_images.py sees the pin; test_skhome_render.py keeps
+    # the two equal.
+    skh_default_image: "ghcr.io/yatzin/homecenter:2.3.1@sha256:45bc4d6a0fed858ac8c89bd0631c69ab732093d5dd626e14a96678058e588bc4"
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Fail loudly when the skhome vault block or its AUTH_SECRET is missing
+      # AUTH_SECRET signs every session cookie and encrypts the stored mail
+      # password and AI provider key. The deploy writes it to the app's env
+      # file (not a file HomeCenter generates itself), so the vault is the
+      # source of truth; changing it later signs everyone out and makes any
+      # already-stored mail/AI secret unreadable (HomeCenter detects this
+      # and asks for it again rather than failing silently).
+      assert:
+        that:
+          - skhome is defined and skhome is mapping
+          - skhome.AUTH_SECRET | default('', true) | string | length >= 32
+        fail_msg: >-
+          ERROR: skhome.AUTH_SECRET is required (a random string of at least
+          32 characters, e.g. `openssl rand -base64 32`) in the skhome vault
+          block. See README.md "Configuration (vault)".
+        quiet: true
+      tags: [config]
+
+    - name: Validate skhome.backup_time (HH:MM, 24-hour) when set
+      assert:
+        that:
+          - (skhome.backup_time | default('', true) | string) is match('^([01][0-9]|2[0-3]):[0-5][0-9]$')
+        fail_msg: >-
+          ERROR: skhome.backup_time must be 24-hour 'HH:MM', e.g. '03:00'.
+        quiet: true
+      when: skhome.backup_time is defined
+
+    - name: Check skhome.backup_tz is a known IANA time zone (control node /usr/share/zoneinfo)
+      stat:
+        path: "/usr/share/zoneinfo/{{ skhome.backup_tz | default('UTC') }}"
+      delegate_to: localhost
+      become: false
+      run_once: true
+      register: _skhome_backup_tz_check
+      when: skhome.backup_time is defined
+
+    - name: Validate skhome.backup_tz is a known IANA time zone
+      assert:
+        that:
+          - _skhome_backup_tz_check.stat.exists
+        fail_msg: >-
+          ERROR: skhome.backup_tz '{{ skhome.backup_tz | default('UTC') }}' is
+          not a known IANA time zone (checked /usr/share/zoneinfo on the
+          control node).
+        quiet: true
+      when: skhome.backup_time is defined
+
+    - name: Resolve the skhome settings
+      set_fact:
+        skh_base_domain: "{{ skhome.DOMAIN | default(domain) if skhome.CLOUDFLARED | default(false) | bool else (skhome.CLUSTERNAME | default(cluster_name)) ~ '.' ~ (skhome.DOMAIN | default(domain)) }}"
+        skh_image: "{{ skhome.HOMECENTER_IMAGE | default(skh_default_image, true) }}"
+        skh_data_path: "{{ skhome.DATA_PATH | default('/var/data/' + app + '-' + env + '/data', true) }}"
+        skh_data_node: "{{ skhome.DATA_NODE | default('', true) | string }}"
+        skh_backup_path: "{{ skhome.BACKUP_PATH | default('/var/data/' + app + '-' + env + '/backup', true) }}"
+        # default-no-error-pages@file: skfenceha's error-pages middleware
+        # would replace HomeCenter's own JSON error bodies (login, receipt
+        # parsing, the assistant) with an HTML page.
+        skh_middlewares: "{{ skhome.TRAEFIK_MIDDLEWARES | default('default-no-error-pages@file', true) }}"
+        # AUTH_MODE sso (default): Authentik forward auth (SSO_MIDDLEWARE,
+        # default authentik@file) in front of the whole app. local:
+        # HomeCenter's own login only, no SSO_MIDDLEWARE allowed. HomeCenter
+        # has no OIDC/OAuth support of its own either way (upstream README
+        # "Private by design": local login only).
+        skh_auth_mode: "{{ skhome.AUTH_MODE | default('sso', true) | string | lower }}"
+        skh_sso_middleware: "{{ (skhome.SSO_MIDDLEWARE | default('', true) | string) if (skhome.AUTH_MODE | default('sso', true) | string | lower) != 'sso' else (skhome.SSO_MIDDLEWARE | default('authentik@file', true) | string) }}"
+        skh_tls_options: "{{ skhome.TLS_OPTIONS | default('intermediate@file', true) }}"
+        skh_router: "skhome{{ '' if env == 'prod' else '-' + env }}"
+      tags: [config]
+
+    - name: Resolve the public host
+      set_fact:
+        skh_host: "{{ skhome.HOSTNAME | default('skhome' + ('' if env == 'prod' else '-' + env) + '.' + skh_base_domain, true) }}"
+      tags: [config]
+
+    - name: Validate the image pin and the public host
+      assert:
+        that:
+          - "'@sha256:' in skh_image"
+          - skh_host is match('^[A-Za-z0-9][A-Za-z0-9.-]*$')
+        fail_msg: >-
+          ERROR: skhome.HOMECENTER_IMAGE must be pinned by digest (@sha256:)
+          and HOSTNAME (or CLUSTERNAME/DOMAIN) must be a plain host name.
+          HOMECENTER_IMAGE is {{ skh_image }}, host is {{ skh_host }}.
+        quiet: true
+      tags: [config]
+
+    - name: Fail loudly on an unknown AUTH_MODE
+      assert:
+        that:
+          - skh_auth_mode in ['sso', 'local']
+        fail_msg: >-
+          ERROR: skhome.AUTH_MODE must be 'sso' or 'local' (it is
+          '{{ skh_auth_mode }}'). See README.md "Sign-in, SSO and the first
+          admin account".
+        quiet: true
+      tags: [config]
+
+    - name: Collect contradictory sign-in settings
+      # Only key NAMES and middleware names are collected, never a value
+      # from the secret side of the vault.
+      set_fact:
+        skh_auth_conflicts: >-
+          {{ (["AUTH_MODE is 'local' (no SSO) but SSO_MIDDLEWARE is set"] if (skh_auth_mode == 'local' and skh_sso_middleware | length > 0) else [])
+             + (['TRAEFIK_MIDDLEWARES carries forward auth (' ~ skh_middlewares ~ '): with AUTH_MODE local it is SSO under another name; use AUTH_MODE sso (SSO_MIDDLEWARE) instead']
+                if ('authentik' in skh_middlewares | lower) or (skh_sso_middleware | length > 0 and skh_sso_middleware in skh_middlewares.split(',')) else []) }}
+      tags: [config]
+
+    - name: Refuse contradictory sign-in settings
+      assert:
+        that:
+          - skh_auth_conflicts | length == 0
+        fail_msg: >-
+          ERROR: the skhome vault block contradicts itself: {{ skh_auth_conflicts | join('; ') }}.
+          See README.md "Sign-in, SSO and the first admin account".
+        quiet: true
+      tags: [config]
+
+    - name: Fail closed on a local data path without a pinned data node
+      # A path outside /var/data is local disk on one node: without
+      # DATA_NODE swarm may reschedule app/backup elsewhere onto an empty
+      # directory (every property, vehicle and health record gone). Same
+      # rule as sksso/skhub/skpayment/skgym.
+      assert:
+        that:
+          - (skh_data_node | length > 0) or (skh_data_path.startswith('/var/data/') and skh_backup_path.startswith('/var/data/'))
+        fail_msg: >-
+          skhome.DATA_PATH / BACKUP_PATH point at local disk ({{ skh_data_path }},
+          {{ skh_backup_path }}) but skhome.DATA_NODE is empty. Set DATA_NODE
+          to the node holding the data.
+        quiet: true
+      tags: [config]
+
+    - name: Define network variables from vault (idempotent network creation)
+      # Subnets: skhome-prod 172.16.175.0/24, -staging .176, -dev .177
+      # (reserved for skhome). Override with the flat per-env
+      # skhome_<env>_networks (catalog naming convention).
+      set_fact:
+        app_networks: "{{ skhome_prod_networks | default([
+          { 'name': 'skhome-prod', 'subnet': '172.16.175.0/24', 'driver': 'overlay', 'attachable': true },
+          { 'name': 'cloud-public-prod', 'subnet': '172.16.200.0/24', 'driver': 'overlay', 'attachable': true }
+        ]) }}"
+      tags: [networks, config]
+
+  tasks:
+    - name: Deploying {{ app }}
+      debug:
+        msg: Running SKStacks deploy {{ app }} scripts...
+
+    - name: Create the {{ app }} directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - /var/data/{{ app }}-{{ env }}
+        - /var/data/{{ app }}-{{ env }}/bin
+        - /var/data/config/{{ app }}-{{ env }}
+
+    - name: Create the {{ app }} data and backup directories on shared storage (not recursive, root only)
+      # HomeCenter's own entrypoint chowns /data to uid 1001 on its first
+      # start (bind mount ownership comes from the host); creating it root
+      # here first is fine. 0700 keeps other accounts on the NFS client out.
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+      loop:
+        - "{{ skh_data_path }}"
+        - "{{ skh_backup_path }}"
+      when: item.startswith('/var/data/')
+
+    - name: Create the {{ app }} local data and backup directories on the data node (not recursive, root only)
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+      loop:
+        - "{{ skh_data_path }}"
+        - "{{ skh_backup_path }}"
+      when: not item.startswith('/var/data/')
+      # Ansible templates delegate_to before it evaluates when, so it must
+      # render with DATA_NODE unset too (the guard above requires DATA_NODE
+      # whenever this task actually runs).
+      delegate_to: "{{ skhome.DATA_NODE | default(inventory_hostname, true) }}"
+
+    - name: Install the backup script
+      # Copied verbatim (bash, run by the backup sidecar): no Jinja in it.
+      copy:
+        src: "{{ playbook_dir }}/src/{{ app }}/skhome-backup"
+        dest: "/var/data/{{ app }}-{{ env }}/bin/skhome-backup"
+        owner: root
+        group: root
+        mode: '0755'
+      register: skhome_backup_script
+      tags: [templates]
+
+    - name: Process {{ app }} app env (root only)
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.env.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env"
+        owner: root
+        group: root
+        mode: '0600'
+      register: skhome_env
+      tags: [templates]
+
+    - name: Process {{ app }} shell env
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.sh.env.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env"
+        owner: root
+        group: root
+        mode: '0640'
+      tags: [templates]
+
+    - name: Process {{ app }} Docker Compose template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags: [compose]
+
+    - name: Create docker-compose.yml symlink
+      file:
+        src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags: [compose]
+
+    - name: Process deploy script template
+      template:
+        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/deploy"
+        owner: root
+        group: root
+        mode: '0755'
+      tags: [deploy-script]
+
+    - name: Create {{ app }} control script symlink
+      file:
+        src: "/var/data/{{ app }}-{{ env }}/deploy"
+        dest: "/var/data/deploy_{{ app }}-{{ env }}"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags: [deploy-script]
+
+    - name: Ensure overlay networks exist from app_networks variable
+      include_tasks: ../../shared/tasks/create_networks.yml
+      tags: [networks]
+
+    - name: Deploy {{ app }} stack
+      # The env file, AUTH_SECRET and the backup script are an env_file /
+      # bind mounts: a changed file alone does not change the service spec,
+      # so the deploy script restarts the services that read them when the
+      # play changed one.
+      shell: |
+        cd /var/data/{{ app }}-{{ env }}
+        RESTART_APP={{ '1' if (skhome_env is changed) else '0' }} RESTART_BACKUP={{ '1' if skhome_backup_script is changed else '0' }} ./deploy
+      register: deploy_output
+      tags: [deploy]
+
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags: [deploy]
