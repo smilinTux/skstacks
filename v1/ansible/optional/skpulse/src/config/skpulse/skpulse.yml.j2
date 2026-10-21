@@ -1,5 +1,46 @@
 version: '3.8'
 
+# skpulse: Uptime Kuma, upstream image pinned by tag (see README/catalog).
+# One service holds everything (SQLite database, uploaded status-page
+# assets) under one data directory.
+#
+# Sign-in: AUTH_MODE sso (default) puts Authentik forward auth
+# (SSO_MIDDLEWARE, default authentik@file) in front of the dashboard, the
+# login page and the realtime socket.io connection; AUTH_MODE local is
+# Kuma's own username/password only, no forward auth, no Authentik objects.
+# Fail closed: AUTH_MODE defaults to sso so a vault that never sets it does
+# not accidentally expose a no-auth Kuma.
+#
+# Three Traefik routers on the SAME host and backend service:
+#   <router>-public  priority 100, NEVER carries SSO_MIDDLEWARE. Push
+#     monitors (/api/push/), public status pages (/status, /status-page,
+#     /api/status-page/) and the badge images (/api/badge/) are called by
+#     callers with no browser session (external servers heart-beating in,
+#     anonymous visitors, <img>/<iframe> embeds on other sites); a
+#     forward-auth redirect in front of them would just break every one of
+#     those integrations. The status page is Kuma's own SPA shell, so its
+#     static bundle (/assets, favicon/manifest/icons) is bypassed too, or
+#     the page loads an empty shell that then gets redirected into Authentik
+#     fetching its own JS.
+#   <router>-metrics  priority 100, opt-in (METRICS_BYPASS_SSO, default
+#     false). /metrics already carries Kuma's own HTTP Basic Auth
+#     (apiAuth, against the first admin account) independent of Traefik;
+#     off by default because most instances never scrape it from outside
+#     the cluster.
+#   <router>  priority 5 (above skfenceha's priority-1 catch-all, same
+#     convention as skrac/skgym), everything else: the dashboard, the login
+#     page and /socket.io/ (not a separate path: it hangs off the same
+#     Host rule, so AUTH_MODE sso gates it exactly like every other page).
+#     Carries SSO_MIDDLEWARE only in AUTH_MODE sso.
+{% set skp_auth_mode = (skpulse.AUTH_MODE | default('sso', true) | string | lower) %}
+{% set skp_sso_middleware = ((skpulse.SSO_MIDDLEWARE | default('authentik@file', true) | string) if skp_auth_mode == 'sso' else '') %}
+{% set skp_middlewares = (skpulse.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file', true)) %}
+{% set skp_bypass_middlewares = (skpulse.BYPASS_TRAEFIK_MIDDLEWARES | default(skp_middlewares, true)) %}
+{% set skp_metrics_bypass = (skpulse.METRICS_BYPASS_SSO | default(false, true) | bool) %}
+{% set skp_metrics_middlewares = (skpulse.METRICS_TRAEFIK_MIDDLEWARES | default(skp_bypass_middlewares, true)) %}
+{% set skp_router = 'skpulse' + ('' if env == 'prod' else '-' + env) %}
+{% set skp_host_expr = (skpulse.HOSTNAME | default('skpulse' + ('' if env == 'prod' else '-' + env) + '.' + (skpulse.CLUSTERNAME | default(cluster_name, true)) + '.' + (skpulse.DOMAIN | default(domain, true)), true)) %}
+
 services:
   skpulse:
     image: {{ skpulse_image | default('louislam/uptime-kuma:2.5.5') }}
@@ -29,20 +70,46 @@ services:
         # === TRAEFIK: HTTP ===
         - "traefik.enable=true"
         - "traefik.swarm.network=cloud-public-{{ env }}"
-        # === TRAEFIK: ROUTERS ===
-        - "traefik.http.routers.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skpulse.CLUSTERNAME | default(cluster_name) }}.{{ skpulse.DOMAIN | default(domain) }}`)"
-        - "traefik.http.routers.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
-        - "traefik.http.routers.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
-        - "traefik.http.routers.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
-        - "traefik.http.routers.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
-        - "traefik.http.routers.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares={{ skpulse.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file', true) }}"
-        - "traefik.http.routers.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.service=skpulse{% if env != 'prod' %}-{{ env }}{% endif %}"
+        # === TRAEFIK: ROUTERS: public bypass (push, status pages, badges, SPA assets) ===
+        # never carries SSO_MIDDLEWARE, in either AUTH_MODE
+        - "traefik.http.routers.{{ skp_router }}-public.rule=Host(`{{ skp_host_expr }}`) && (PathPrefix(`/api/push/`) || PathPrefix(`/api/status-page/`) || PathPrefix(`/api/badge/`) || PathPrefix(`/status`) || PathPrefix(`/upload`) || PathPrefix(`/assets`) || Path(`/favicon.ico`) || Path(`/icon.svg`) || Path(`/icon.png`) || Path(`/icon-192x192.png`) || Path(`/icon-512x512.png`) || Path(`/apple-touch-icon.png`) || Path(`/manifest.json`) || Path(`/robots.txt`) || Path(`/serviceWorker.js`))"
+        - "traefik.http.routers.{{ skp_router }}-public.entrypoints=websecure"
+        - "traefik.http.routers.{{ skp_router }}-public.tls=true"
+        - "traefik.http.routers.{{ skp_router }}-public.tls.certresolver=main"
+        - "traefik.http.routers.{{ skp_router }}-public.tls.options=intermediate@file"
+        - "traefik.http.routers.{{ skp_router }}-public.priority=100"
+        - "traefik.http.routers.{{ skp_router }}-public.middlewares={{ skp_bypass_middlewares }}"
+        - "traefik.http.routers.{{ skp_router }}-public.service={{ skp_router }}"
+{% if skp_metrics_bypass %}
+        # === TRAEFIK: ROUTERS: /metrics (opt-in, METRICS_BYPASS_SSO) ===
+        # Kuma's own HTTP Basic Auth (apiAuth) still gates /metrics regardless;
+        # this only decides whether Authentik forward-auth ALSO sits in front.
+        - "traefik.http.routers.{{ skp_router }}-metrics.rule=Host(`{{ skp_host_expr }}`) && Path(`/metrics`)"
+        - "traefik.http.routers.{{ skp_router }}-metrics.entrypoints=websecure"
+        - "traefik.http.routers.{{ skp_router }}-metrics.tls=true"
+        - "traefik.http.routers.{{ skp_router }}-metrics.tls.certresolver=main"
+        - "traefik.http.routers.{{ skp_router }}-metrics.tls.options=intermediate@file"
+        - "traefik.http.routers.{{ skp_router }}-metrics.priority=100"
+        - "traefik.http.routers.{{ skp_router }}-metrics.middlewares={{ skp_metrics_middlewares }}"
+        - "traefik.http.routers.{{ skp_router }}-metrics.service={{ skp_router }}"
+{% endif %}
+        # === TRAEFIK: ROUTERS: everything else (dashboard, login, /socket.io/) ===
+        # priority 5: above skfenceha's priority-1 catch-all (a tie loses to
+        # it), below the bypass/metrics routers above.
+        - "traefik.http.routers.{{ skp_router }}.rule=Host(`{{ skp_host_expr }}`)"
+        - "traefik.http.routers.{{ skp_router }}.entrypoints=websecure"
+        - "traefik.http.routers.{{ skp_router }}.tls=true"
+        - "traefik.http.routers.{{ skp_router }}.tls.certresolver=main"
+        - "traefik.http.routers.{{ skp_router }}.tls.options=intermediate@file"
+        - "traefik.http.routers.{{ skp_router }}.priority=5"
+        - "traefik.http.routers.{{ skp_router }}.middlewares={{ skp_middlewares }}{{ ',' + skp_sso_middleware if skp_sso_middleware else '' }}"
+        - "traefik.http.routers.{{ skp_router }}.service={{ skp_router }}"
         # === TRAEFIK: SERVICES ===
-        - "traefik.http.services.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=3001"
+        - "traefik.http.services.{{ skp_router }}.loadbalancer.server.port=3001"
         # === STICKY SESSIONS: Required for stateful web app ===
-        - "traefik.http.services.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.loadBalancer.sticky=true"
-        - "traefik.http.services.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.loadBalancer.sticky.cookie=true"
-        - "traefik.http.services.skpulse{% if env != 'prod' %}-{{ env }}{% endif %}.loadBalancer.sticky.cookie.name=skpulse_session"
+        - "traefik.http.services.{{ skp_router }}.loadBalancer.sticky=true"
+        - "traefik.http.services.{{ skp_router }}.loadBalancer.sticky.cookie=true"
+        - "traefik.http.services.{{ skp_router }}.loadBalancer.sticky.cookie.name=skpulse_session"
       resources:
         limits:
           cpus: '0.5'
@@ -56,4 +123,3 @@ networks:
     external: true
   skpulse-{{ env }}:
     external: true
-

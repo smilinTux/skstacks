@@ -60,7 +60,7 @@ tag yet.
 | [skpdf](#skpdf) | optional | Stirling-PDF toolkit | Stirling-PDF `2.14.3` | none | `skpdf[-env].<cluster>.<domain>` | `skpdf-<env>/{trainingData,customFiles}` | `CLUSTERNAME`, `DOMAIN`; `SECURITY_INITIAL_PASSWORD` if login on | `SECURITY_ENABLELOGIN` (false) | v2.13.0 |
 | [skpeek](#skpeek) | optional | SearXNG metasearch engine | SearXNG (digest-pinned) + Valkey `8-alpine` | none | `skpeek[-env].<cluster>.<domain>` | `skpeek-<env>/etc` | `SECRET_KEY` | none notable | v2.16.0 |
 | [skport](#skport) | optional | Portainer CE (Swarm web UI) | Portainer CE `2.45.1` | skfence or skfenceha (socket-proxy) | `skport[-env].<cluster>.<domain>` | `skport-<env>/data` | `CLUSTERNAME`, `DOMAIN` | none (no baked admin password) | v2.19.0 |
-| [skpulse](#skpulse) | optional | Uptime Kuma status monitoring | Uptime Kuma `2.5.5` | none | `skpulse[-env].<cluster>.<domain>` | `skpulse-<env>/uptime-kuma` | `CLUSTERNAME`, `DOMAIN` | manual `discover-traefik-frontends.sh` helper | v2.16.0 |
+| [skpulse](#skpulse) | optional | Uptime Kuma status monitoring | Uptime Kuma `2.5.5` | sksso (Authentik forward auth, `AUTH_MODE: sso`, the default) | `skpulse[-env].<cluster>.<domain>` | `skpulse-<env>/uptime-kuma` | `CLUSTERNAME`, `DOMAIN` | `AUTH_MODE` (sso/local), `SSO_MIDDLEWARE`, `METRICS_BYPASS_SSO`, manual `discover-traefik-frontends.sh` helper | v2.16.0 (AUTH_MODE: v2.26.11) |
 | [skreg](#skreg) | optional | Docker Registry v2 | `registry:2` (floating) | none | `:5000` (no Traefik/TLS) | `skreg-<env>/data` | `vault_skreg_registry_http_secret` | none | v2.14.0 |
 | [skseek](#skseek) | optional | Perplexica AI search UI | Perplexica (digest-pinned) | **skpeek** (must be deployed first, same env) | `skseek[-env].<cluster>.<domain>` | `skseek-<env>/data` | none framework-required (model keys all opt-in) | model provider keys (all off) | v2.19.0 |
 | [sksso](#sksso) | optional | Authentik OIDC identity provider | Authentik `2024.4.2` | none | `sso[-env].<cluster or bare>.<domain>` | `sksso-<env>/media`, `runtime/sksso-<env>/postgres` | `postgres_user/_password`, `authentik_secret_key`, `CLUSTERNAME`, `DOMAIN` | `csrf_extra_origins` ([]) | pending |
@@ -898,7 +898,8 @@ playbook; it must always be passed explicitly.
 
 Uptime Kuma status monitoring.
 
-**Prerequisites**: none.
+**Prerequisites**: none (an Authentik app for `AUTH_MODE: sso`, the
+default; see the role README "Authentik setup").
 
 **Minimal vault snippet**:
 
@@ -907,6 +908,15 @@ skpulse:
   CLUSTERNAME: "<cluster>"
   DOMAIN: "example.com"
 ```
+
+**Sign-in (v2.26.11+)**: `AUTH_MODE: sso` (default) puts Authentik forward
+auth on the dashboard/login/`/socket.io/` router only; push monitors
+(`/api/push/`), public status pages (`/status`, `/api/status-page/`) and
+badges (`/api/badge/`) always render on a separate router that never
+carries SSO. `AUTH_MODE: local` is Kuma's own login only. See the role
+README "Sign-in, SSO and the first admin" for the full knob list
+(`SSO_MIDDLEWARE`, `BYPASS_TRAEFIK_MIDDLEWARES`, `METRICS_BYPASS_SSO`,
+`METRICS_TRAEFIK_MIDDLEWARES`).
 
 **Deploy**: `deploy_skpulse-<env>.yml`, standard invocation.
 
