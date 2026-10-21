@@ -38,8 +38,8 @@ def run_remote(host: str, remote_cmd: str, *, jump: str | None = None, user: str
     """Run `remote_cmd` on `host`, optionally hopping through `jump` first.
 
     When `jump` is set, the whole single-hop ssh argv is quoted as one
-    string and handed to the jump host's shell, so a double-hop (laptop ->
-    nammgr1001) is a single `ssh laptop "ssh ... nammgr1001 '<cmd>'"`.
+    string and handed to the jump host's shell, so a double-hop (jumphost ->
+    the real target) is a single `ssh jumphost "ssh ... target '<cmd>'"`.
     """
     if jump:
         inner = _ssh_argv(host, remote_cmd, user=user, identity=identity)

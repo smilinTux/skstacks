@@ -2,7 +2,13 @@
 """Daily fleet image-update and runtime-security monitor. See README.md.
 
 Usage:
-    check_fleet_images.py --config config.yaml [--dry-run] [--floors floors.yaml]
+    check_fleet_images.py --config /path/to/your/config.yaml [--dry-run] [--floors floors.yaml]
+
+There is no built-in default --config: config.example.yaml in this directory
+is a template with placeholder hostnames, never real cluster topology (which
+does not belong in this, or any, public repo). Copy it somewhere private
+(e.g. ~/.skcapstone/image-monitor/config.yaml), fill in real hosts, and pass
+that path explicitly.
 
 Exit code is always 0 on a completed run (even with findings - this is a
 report, not a gate); non-zero only on a usage/config error.
@@ -162,7 +168,7 @@ def send_findings(config: dict, digest_findings: list[dict], urgent_findings: li
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default=str(SCRIPT_DIR / "config.yaml"))
+    parser.add_argument("--config", required=True, help="path to your private config.yaml (see config.example.yaml)")
     parser.add_argument("--floors", default=None, help="override floors file path from config")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("-v", "--verbose", action="store_true")

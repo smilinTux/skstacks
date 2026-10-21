@@ -31,12 +31,17 @@ one becomes a same-day patch, not a surprise.
   actionable finding into the unified GTD
   (`skos.gtd_ingest.upsert`, source `image-monitor`).
 - `check_fleet_images.py` - The CLI entry point that wires the above together.
-  Run by the systemd user timer on noroc2027.
+  Meant to run from a systemd user timer on whichever control node has ssh
+  access to both clusters' Swarm managers.
 
 ## Config
 
-- `config.yaml` - clusters, hosts, ssh jump settings, the Talk room names,
-  state/cache file paths. No secrets live here.
+- `config.example.yaml` - a template: clusters, hosts, ssh jump settings, the
+  Talk room names, state/cache file paths. No secrets go here, but real
+  hostnames don't either: copy it somewhere private (e.g.
+  `~/.skcapstone/image-monitor/config.yaml`), fill in your own hosts, and
+  pass that path to `--config`. Cluster topology is operational data, not
+  framework code, and this is a public repo.
 - `floors.yaml` - the runtime security floor table. Seeded with PHP from the
   PHP2Shell advisory (8.5.12 / 8.4.27 / 8.3.36 / 8.2.35). See "Adding a floor"
   below.
@@ -70,7 +75,7 @@ No code change needed; `php_floor.py` is runtime-name-agnostic.
 ## Running by hand
 
 ```
-~/.skenv/bin/python3 v1/scripts/image_monitor/check_fleet_images.py --config v1/scripts/image_monitor/config.yaml
+~/.skenv/bin/python3 v1/scripts/image_monitor/check_fleet_images.py --config ~/.skcapstone/image-monitor/config.yaml
 ```
 
 `--dry-run` prints the digest without posting to Talk or writing GTD/state.

@@ -32,9 +32,9 @@ def test_happy_path_lists_every_service_with_its_pinned_image():
             return FakeCompleted(0, stdout="nextcloud:34.0.4@sha256:" + "b" * 64 + "\n")
         raise AssertionError(cmd)
 
-    result = collect_cluster_inventory("nor", ["norap1001"], runner=fake_runner)
+    result = collect_cluster_inventory("nor", ["mgr1"], runner=fake_runner)
     assert not result.unreachable
-    assert result.manager_used == "norap1001"
+    assert result.manager_used == "mgr1"
     images = {s.service: s.image for s in result.services}
     assert images["svc-a"].startswith("redis:7-alpine@sha256:a")
     assert images["svc-b"].startswith("nextcloud:34.0.4@sha256:b")
@@ -53,7 +53,7 @@ def test_one_service_inspect_failure_does_not_drop_the_rest():
             return FakeCompleted(0, stdout="redis:7-alpine@sha256:" + "a" * 64 + "\n")
         raise AssertionError(cmd)
 
-    result = collect_cluster_inventory("nor", ["norap1001"], runner=fake_runner)
+    result = collect_cluster_inventory("nor", ["mgr1"], runner=fake_runner)
     assert not result.unreachable
     assert [s.service for s in result.services] == ["svc-a"]
 
@@ -62,14 +62,14 @@ def test_every_manager_unreachable_reports_cluster_unreachable_not_a_crash():
     def fake_runner(argv, capture_output, text, timeout):
         raise subprocess.TimeoutExpired(cmd=argv, timeout=timeout)
 
-    result = collect_cluster_inventory("nor", ["norap1001", "norap1002"], runner=fake_runner)
+    result = collect_cluster_inventory("nor", ["mgr1", "mgr2"], runner=fake_runner)
     assert result.unreachable
     assert result.services == []
 
 
 def test_second_manager_used_when_first_is_unreachable():
     def fake_runner(argv, capture_output, text, timeout):
-        if "norap1001" in argv:
+        if "mgr1" in argv:
             raise subprocess.TimeoutExpired(cmd=argv, timeout=timeout)
         cmd = argv[-1]
         if cmd == "true":
@@ -78,6 +78,6 @@ def test_second_manager_used_when_first_is_unreachable():
             return FakeCompleted(0, stdout="svc-a\n")
         return FakeCompleted(0, stdout="redis:7-alpine@sha256:" + "a" * 64 + "\n")
 
-    result = collect_cluster_inventory("nor", ["norap1001", "norap1002"], runner=fake_runner)
+    result = collect_cluster_inventory("nor", ["mgr1", "mgr2"], runner=fake_runner)
     assert not result.unreachable
-    assert result.manager_used == "norap1002"
+    assert result.manager_used == "mgr2"

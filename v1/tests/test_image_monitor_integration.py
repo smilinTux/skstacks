@@ -30,7 +30,7 @@ FLOORS = {
 
 def _config(tmp_path):
     return {
-        "clusters": {"nor": {"manager_hosts": ["norap1001"]}},
+        "clusters": {"nor": {"manager_hosts": ["mgr1"]}},
         "cache_file": str(tmp_path / "cache.json"),
         "state_file": str(tmp_path / "state.json"),
         "cache_ttl_hours": 20,
@@ -42,7 +42,7 @@ def _config(tmp_path):
 
 def test_namespace_qualified_runtime_pattern_matches_bookstack(tmp_path, monkeypatch):
     image = "lscr.io/linuxserver/bookstack:v26.09-ls285@sha256:" + "a" * 64
-    inv = InventoryResult(cluster="nor", manager_used="norap1001", unreachable=False,
+    inv = InventoryResult(cluster="nor", manager_used="mgr1", unreachable=False,
                           services=[ServiceImage(cluster="nor", service="skbook-prod_bookstack", image=image)])
     monkeypatch.setattr(cfi, "collect_cluster_inventory", lambda *a, **k: inv)
     monkeypatch.setattr(cfi.registry, "check_upstream", lambda *a, **k: SimpleNamespace(digest_changed=False))
@@ -58,7 +58,7 @@ def test_namespace_qualified_runtime_pattern_matches_bookstack(tmp_path, monkeyp
 
 def test_image_with_no_matching_runtime_is_not_probed(tmp_path, monkeypatch):
     image = "redis:7-alpine@sha256:" + "b" * 64
-    inv = InventoryResult(cluster="nor", manager_used="norap1001", unreachable=False,
+    inv = InventoryResult(cluster="nor", manager_used="mgr1", unreachable=False,
                           services=[ServiceImage(cluster="nor", service="skgallery-prod_redis", image=image)])
     monkeypatch.setattr(cfi, "collect_cluster_inventory", lambda *a, **k: inv)
     monkeypatch.setattr(cfi.registry, "check_upstream", lambda *a, **k: SimpleNamespace(digest_changed=False))
