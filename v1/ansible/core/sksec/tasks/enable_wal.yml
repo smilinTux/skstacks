@@ -1,0 +1,63 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# Set db_config.use_wal: true in CrowdSec's config.yaml once the LAPI db is
+# on local disk (sksec.DATA_NODE set). Included by deploy_sksec-<env>.yml,
+# already gated on DATA_NODE there; this file re-checks so it is also safe
+# to include directly.
+#
+# WAL is NOT safe on NFS (SQLite's own docs: shared-memory-file locking is
+# unreliable on network filesystems), which is why this never runs for the
+# legacy /var/data path. config.yaml lives in the crowdsec CONFIG dir, which
+# stays on shared storage even with DATA_NODE set (small, read-mostly, not
+# the hot path) -- it is reachable from any manager, so this task does not
+# need delegate_to.
+#
+# config.yaml does not exist until CrowdSec's own entrypoint creates it on
+# the service's first start; this is a no-op (not a failure) until then, so
+# it is safe on a first install too -- a later redeploy with the service
+# already running will pick it up.
+
+- name: Check whether crowdsec's config.yaml exists yet
+  stat:
+    path: "/var/data/runtime/{{ app }}-{{ env }}/crowdsec-config/config.yaml"
+  register: sksec_crowdsec_config_file
+
+- name: Set db_config.use_wal true in config.yaml (idempotent, local disk only)
+  when: sksec_crowdsec_config_file.stat.exists
+  vars:
+    sksec_config_path: "/var/data/runtime/{{ app }}-{{ env }}/crowdsec-config/config.yaml"
+  ansible.builtin.shell:
+    cmd: |
+      set -e
+      python3 - "{{ sksec_config_path }}" <<'PYEOF'
+      import sys
+      import yaml
+
+      path = sys.argv[1]
+      with open(path) as f:
+          data = yaml.safe_load(f) or {}
+
+      db_config = data.setdefault("db_config", {})
+      if db_config.get("use_wal") is True:
+          print("NOCHANGE")
+      else:
+          db_config["use_wal"] = True
+          with open(path, "w") as f:
+              yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
+          print("CHANGED")
+      PYEOF
+  register: sksec_wal_patch
+  changed_when: "'CHANGED' in sksec_wal_patch.stdout"

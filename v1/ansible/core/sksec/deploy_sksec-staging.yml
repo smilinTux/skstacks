@@ -36,6 +36,7 @@
     env: staging
     service_name: sksec
     service_type: core
+    sksec_crowdsec_db_path: "{{ sksec.CROWDSEC_DB_PATH | default('/var/data/runtime/sksec-staging/crowdsec-db', true) }}"
   pre_tasks:
     - name: Select vault file based on domain and cluster
       import_tasks: ../../shared/tasks/select_vault_file.yml
@@ -43,6 +44,22 @@
     - name: Load vault file
       include_vars: "{{ vault_file_path }}"
       when: vault_file_path is defined
+
+    - name: Fail closed on a local CrowdSec LAPI db path without a pinned data node
+      # A path outside /var/data is local disk on one node. Without
+      # DATA_NODE, swarm may reschedule crowdsec elsewhere and start it
+      # against an empty db: a fresh db still gets a working bouncer key
+      # (CrowdSec re-registers BOUNCER_KEY_traefik from sksec.env at every
+      # container start), but every local ban and CAPI/console sync state
+      # is silently lost. Same guard shape as sksso's DATA_NODE for postgres/redis.
+      assert:
+        that:
+          - >-
+            (sksec.DATA_NODE | default('') | string | length > 0) or
+            ((sksec_crowdsec_db_path | string).startswith('/var/data/'))
+        fail_msg: >-
+          sksec.CROWDSEC_DB_PATH points at local disk ({{ sksec_crowdsec_db_path }})
+          but sksec.DATA_NODE is empty. Set DATA_NODE to the node holding the data.
 
     - name: Validate the bouncer knobs (BOUNCER_REPLICAS, BOUNCER_TRUSTED_PROXIES)
       vars:
@@ -139,10 +156,34 @@
         - /var/data/runtime/{{ app }}-{{ env }}
         - /var/data/{{ app }}-{{ env }}/crowdsec/config
         - /var/data/{{ app }}-{{ env }}/crowdsec/crowdsec-config
-        - /var/data/runtime/{{ app }}-{{ env }}/crowdsec-db
         - /var/data/runtime/{{ app }}-{{ env }}/crowdsec-config
         # Traefik access log dir (read-only in the crowdsec container)
         - /var/data/logs/{{ traefik_service_name | default('skfence') }}-{{ env }}/traefik
+
+    - name: Create the {{ app }} LAPI db directory on shared storage
+      # Only when it is still the legacy NFS path; a local path is created
+      # on DATA_NODE below, and an old NFS dir is left alone once it moved
+      # (see README.md "Moving the LAPI db off NFS").
+      file:
+        path: "{{ sksec_crowdsec_db_path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: 0755
+      when: (sksec_crowdsec_db_path | string).startswith('/var/data/')
+
+    - name: Create the {{ app }} local LAPI db directory on the data node (not recursive)
+      file:
+        path: "{{ sksec_crowdsec_db_path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: 0750
+      when: not (sksec_crowdsec_db_path | string).startswith('/var/data/')
+      # Ansible templates delegate_to for every task before it evaluates
+      # when, so this must render with DATA_NODE unset too (the assert
+      # above already requires DATA_NODE whenever this task actually runs).
+      delegate_to: "{{ sksec.DATA_NODE | default(inventory_hostname, true) }}"
 
     - name: Ensure secret directory exists
       file:
@@ -376,6 +417,21 @@
       include_tasks: ../../shared/tasks/create_networks.yml
       tags:
         - networks
+
+    # WAL is only safe once the db is on local disk (sksec.DATA_NODE set):
+    # on NFS, WAL's shared-memory file semantics are not reliably safe
+    # across clients and are exactly the failure mode this move avoids.
+    - name: Enable SQLite WAL mode for the local-disk CrowdSec LAPI db
+      include_tasks:
+        file: tasks/enable_wal.yml
+        apply:
+          tags:
+            - wal
+            - deploy
+      when: (sksec.DATA_NODE | default('')) | string | length > 0
+      tags:
+        - wal
+        - deploy
 
     - name: Deploy {{ app }} stack
       shell: |

@@ -247,6 +247,8 @@ sksec:
   BOUNCER_HEALTH_CHECK_RETRIES: 3
   BOUNCER_HEALTH_CHECK_START_PERIOD: "20s"
   BOUNCER_TRUSTED_PROXIES: []    # proxies whose X-Forwarded-For the bouncer believes (see "Client IP")
+  DATA_NODE: ""                  # node hostname; pins crowdsec + the local LAPI db there (see "Moving the LAPI db off NFS")
+  CROWDSEC_DB_PATH: ""           # default /var/data/runtime/sksec-<env>/crowdsec-db (NFS); a local path requires DATA_NODE
 
 # optional - override this cluster's sksec overlay network (defaults shown
 # are this framework's reserved range; must stay unique per
@@ -257,6 +259,89 @@ sksec_prod_networks:
   - name: "cloud-public-prod"
     subnet: "172.16.200.0/24"
 ```
+
+## Moving the LAPI db off NFS
+
+The CrowdSec LAPI's SQLite db is the hot path: `fbonalair/traefik-crowdsec-bouncer`
+queries it for every protected request and writes `last_pull` on every
+query. On the legacy default path (`/var/data/runtime/sksec-<env>/crowdsec-db`,
+NFS) that write serializes under load; once a lookup exceeds
+`CROWDSEC_TIMEOUT` (default 10s) the bouncer fails CLOSED (403), which
+takes down every CrowdSec-protected route, not just slow ones.
+
+`sksec.DATA_NODE` + `sksec.CROWDSEC_DB_PATH` move the db to local disk on
+one pinned node, the same pattern `sksso.DATA_NODE` uses for postgres/redis:
+
+```yaml
+sksec:
+  DATA_NODE: <node hostname>          # also an inventory host
+  CROWDSEC_DB_PATH: /var/lib/sksec/crowdsec-db
+```
+
+- `DATA_NODE` adds `node.hostname == <DATA_NODE>` to the crowdsec service
+  (combined with the HA-mode `traefik.acme.master` constraint if
+  `TRAEFIK_HA_MODE` is also set; the bouncer stays floating either way).
+- A path outside `/var/data` is local: the deploy creates it on `DATA_NODE`
+  (owner root, mode 0750, never recursive) and no longer creates the old
+  `/var/data/runtime/.../crowdsec-db` path. The play fails if the path is
+  local but `DATA_NODE` is empty: local data on a floating service is an
+  empty db after the next reschedule.
+- The CrowdSec **config** dir (`/var/data/runtime/sksec-<env>/crowdsec-config`:
+  machine credentials, hub data, collections, `acquis.yaml`) is NOT moved by
+  this knob. It is small and read-mostly, not the hot path that fails
+  closed; move it separately and deliberately if ever needed.
+- With `DATA_NODE` set, the deploy also sets `db_config.use_wal: true` in
+  `config.yaml` (`tasks/enable_wal.yml`). WAL is only safe once the db is
+  local: SQLite's own documentation says its shared-memory-file locking is
+  unreliable on network filesystems, so this is never applied on the NFS
+  path.
+- **If the db is ever fresh** (a brand-new empty file at the configured
+  path, e.g. a first install, or a migration skipped): the bouncer does NOT
+  stay broken. CrowdSec's own entrypoint re-registers `BOUNCER_KEY_traefik`
+  from `sksec.env` at every container start and never re-keys an existing
+  one (see "Bouncer key" above), so a fresh db still gets a working bouncer
+  key automatically, using the same persisted key Traefik's bouncer already
+  has. What a fresh db loses is accumulated local bans and CAPI/console
+  sync state, not bouncer auth, which is why migrating the real db file
+  (below) is still the right default, not a required one.
+
+### Migrating a running instance
+
+Moving a live db off NFS needs no outage if you pre-stage the copy with a
+live SQLite backup, then let the deploy's own brief service restart (the
+same restart every `sksec` redeploy already does) pick up the new path.
+`<old>` is `/var/data/runtime/sksec-<env>/crowdsec-db/crowdsec.db`, `<new>`
+the local path you set; run the backup and checks on `DATA_NODE`, which
+mounts both.
+
+1. Create the local directory first (owner root, mode 0750):
+   `mkdir -p $(dirname <new>) && chmod 0750 $(dirname <new>)`.
+2. Hot backup while crowdsec keeps running (SQLite's backup API is a
+   consistent live snapshot, not a raw file copy):
+   `docker exec <crowdsec container> sqlite3 /var/lib/crowdsec/data/crowdsec.db ".backup '/tmp/crowdsec.db.bak'"`,
+   then copy `/tmp/crowdsec.db.bak` out to `<new>` (it is the container-internal
+   path; find the host side via the bind mount, or `docker cp`).
+3. Verify by table row counts on both copies before cutover, not just file
+   size: `sqlite3 <db> "select count(*) from bouncers; select count(*) from decisions; select count(*) from machines;"`.
+   A lower count on the new copy after the backup step means something
+   wrote to the old db after the backup was taken; redo the backup.
+4. Set `DATA_NODE` and `CROWDSEC_DB_PATH` in the vault and deploy. The
+   stack deploy's own forced `docker service update --force` on `crowdsec`
+   restarts it against the new bind mount; this is the same brief restart
+   window every redeploy already has, not a new outage. Check: the
+   crowdsec task runs on `DATA_NODE` with the new bind source (`docker
+   service inspect`), and `cscli bouncers list` still shows the existing
+   bouncer with a `last_pull` shortly after start (no re-registration
+   needed; same db, same bouncers table row).
+5. Verify the bouncer itself: a known-good IP gets 200, a `cscli decisions
+   add --ip <test IP>` gets 403, then `cscli decisions delete --ip <test
+   IP>` gets 200 again.
+6. Rename the old db dir, never delete it:
+   `mv <old-dir> <old-dir>.STALE-moved-to-<node>-local-<date>`, then put a
+   guard file at the old path (`touch <old-dir>`) so a deploy from an old
+   template (DATA_NODE accidentally unset) fails loudly instead of
+   starting against an empty NFS dir. The STALE copy stays until a
+   separate, deliberate cleanup.
 
 ## Deployment
 
