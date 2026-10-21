@@ -203,3 +203,24 @@ ansible-playbook -i envs/prod/inventory.ini \
   -e target_manager_group=swarm_managers \
   --vault-password-file ~/.vault_pass_env/.<instance>_prod_vault_pass
 ```
+
+## Pending-approval alerts (NAM)
+
+NAM keeps `extra_user_approval_required` true, so a new SSO user lands as `pending_approval` until someone approves
+them at `https://<skmesh-host>/team/users`. A Windmill job tells Talk when that happens.
+
+- Service user: `svc-pending-approvals`, role `auditor` (read-only, enough for `GET /api/users`), created 2026-10-18.
+  There was no owner session, so the user and its personal access token were inserted into the NetBird Postgres
+  (`users`, `personal_access_tokens`) following NetBird's own code: PAT = `nbp_` + 30 char base62 secret + 6 char
+  base62 crc32 of the secret, stored as `base64(sha256(plain))`, expiry 365 days (2027-10-18). Management reads
+  these from the store, so no restart was needed. To rotate, repeat that with a new token row and update both copies.
+- Base URL: plain Windmill variable `f/ops/skmesh_base_url` (the skmesh public URL, no path); the script holds no hostname.
+- Token storage (names only): Windmill secret variable `f/ops/skmesh_api_token` (workspace `fwe`) and skvault entry
+  `NAM_SKMESH_API_TOKEN`. API header is `Authorization: Token <pat>`.
+- Job: `v1/scripts/windmill-ops/skmesh_pending_approvals.py` is Windmill script `f/ops/skmesh_pending_approvals`,
+  schedule every 5 minutes (UTC cron `0 */5 * * * *`). It posts once per newly pending user through `f/ops/notify`
+  (with `room="NAM Admin"`, see `v1/scripts/windmill-ops/ALERT-POLICY.md`), one reminder after 24 hours, and drops the user
+  from state (`f/ops/skmesh_pending_state`) once approved, blocked or deleted. Args: `dry_run`, `test` (posts a fake
+  user message, no state).
+- Failures: schedule `on_failure` runs `f/ops/skmesh_on_failure` (`v1/scripts/windmill-ops/skmesh_on_failure.py`),
+  at most one post per hour (`f/ops/skmesh_failure_last`).

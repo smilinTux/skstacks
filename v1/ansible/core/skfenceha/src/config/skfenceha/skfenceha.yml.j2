@@ -134,11 +134,11 @@ services:
         condition: any
       resources:
         limits:
-          cpus: '0.40'
-          memory: 384M
+          cpus: '{{ skfenceha.TRAEFIK_WORKER_CPUS | default("2.00", true) }}'
+          memory: {{ skfenceha.TRAEFIK_WORKER_MEMORY_LIMIT | default("384M", true) }}
         reservations:
-          cpus: '0.08'
-          memory: 96M
+          cpus: '{{ skfenceha.TRAEFIK_WORKER_CPUS_RESERVATION | default("0.08", true) }}'
+          memory: {{ skfenceha.TRAEFIK_WORKER_MEMORY_RESERVATION | default("96M", true) }}
       labels:
         - "traefik.enable=true"
         - "traefik.swarm.network=cloud-public-{{ env }}"

@@ -1,0 +1,107 @@
+# skflow.SSO_CLIENT_SECRET, after the stack deploy: set Windmill's Authentik
+# login (global setting `oauths`) and the workspace admins. Idempotent: the
+# setting is only written when it differs, users only added when missing.
+#
+# Runs src/skflow/sso_provision.py in a throwaway container on this stack's
+# overlay, against the server directly, as the virtual superadmin that
+# skflow.SUPERADMIN_SECRET gives. Both secrets go in on stdin; nothing secret
+# is on a command line or in a log. The Authentik side (provider, application,
+# group binding) is the sksso blueprint (sksso.SKFLOW_OIDC_CLIENT_SECRET),
+# which must carry the same client secret.
+
+- name: Check the skflow SSO vault keys
+  assert:
+    that:
+      - "(skflow.SSO_CLIENT_SECRET | default('') | string | length) >= 32"
+      - "(skflow.SUPERADMIN_SECRET | default('') | string | length) >= 32"
+      - "(skflow.SSO_CLIENT_ID | default('skflow-windmill', true)) is match('^[a-z0-9][a-z0-9-]*$')"
+      - "sf_sso_host is match('^[A-Za-z0-9][A-Za-z0-9.-]*$')"
+      - "skflow.SSO_WORKSPACE_ADMINS | default({}, true) is mapping"
+    fail_msg: >-
+      skflow.SSO_CLIENT_SECRET (32+ chars, the same value as
+      sksso.SKFLOW_OIDC_CLIENT_SECRET) and skflow.SUPERADMIN_SECRET (32+
+      chars) are required for SSO provisioning, SSO_HOST (or CLUSTERNAME and
+      DOMAIN) must be a plain host name and SSO_WORKSPACE_ADMINS a map of
+      workspace to email list. See README.md "Single sign-on".
+    quiet: true
+
+- name: Build the SSO provisioner input
+  set_fact:
+    sf_sso_input:
+      url: "http://skflow-{{ env }}_server:8000"
+      superadmin_secret: "{{ skflow.SUPERADMIN_SECRET }}"
+      oauths:
+        authentik:
+          id: "{{ skflow.SSO_CLIENT_ID | default('skflow-windmill', true) }}"
+          secret: "{{ skflow.SSO_CLIENT_SECRET }}"
+          display_name: "{{ skflow.SSO_DISPLAY_NAME | default('SKWorld SSO', true) }}"
+          connect_config:
+            auth_url: "https://{{ sf_sso_host }}/application/o/authorize/"
+            token_url: "https://{{ sf_sso_host }}/application/o/token/"
+            scopes: [openid, offline_access]
+          login_config:
+            auth_url: "https://{{ sf_sso_host }}/application/o/authorize/"
+            token_url: "https://{{ sf_sso_host }}/application/o/token/"
+            userinfo_url: "https://{{ sf_sso_host }}/application/o/userinfo/"
+            scopes: [openid, offline_access, email, profile]
+      workspace_admins: "{{ skflow.SSO_WORKSPACE_ADMINS | default({}, true) }}"
+  no_log: true
+
+- name: Stage the SSO provisioner
+  copy:
+    src: "{{ playbook_dir }}/src/{{ app }}/sso_provision.py"
+    dest: "/var/data/config/{{ app }}-{{ env }}/sso_provision.py"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Wait for the Windmill API to answer on the stack network
+  command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --network
+      - "{{ app }}-{{ env }}"
+      - "{{ skflow.PROVISIONER_IMAGE | default('python:3.13.15-alpine@sha256:79e7a9b9ff1cbceff819f856fb374477792a5967759d94df266de7b7b4120e6f', true) }}"
+      - python
+      - -c
+      - "import urllib.request; urllib.request.urlopen('http://skflow-{{ env }}_server:8000/api/version', timeout=10).read()"
+  register: sf_sso_ready
+  until: sf_sso_ready.rc == 0
+  retries: 60
+  delay: 10
+  changed_when: false
+
+- name: Set the Windmill Authentik login and the workspace admins
+  command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - -i
+      - --network
+      - "{{ app }}-{{ env }}"
+      - -v
+      - "/var/data/config/{{ app }}-{{ env }}/sso_provision.py:/sso_provision.py:ro"
+      - "{{ skflow.PROVISIONER_IMAGE | default('python:3.13.15-alpine@sha256:79e7a9b9ff1cbceff819f856fb374477792a5967759d94df266de7b7b4120e6f', true) }}"
+      - python
+      - /sso_provision.py
+    stdin: "{{ sf_sso_input | to_json }}"
+  register: sf_sso_provision
+  changed_when: "sf_sso_provision.stdout_lines | reject('search', 'unchanged') | list | length > 0"
+  failed_when: false
+  no_log: true
+
+# The provisioner prints status lines only (never a secret), so its output is
+# safe to show; the task above is no_log because its stdin is secret.
+- name: Show the SSO provisioner result
+  debug:
+    msg: "{{ (sf_sso_provision.stdout_lines | default([])) + (sf_sso_provision.stderr_lines | default([])) }}"
+
+- name: Fail if SSO provisioning failed
+  fail:
+    msg: >-
+      skflow SSO provisioning failed (rc={{ sf_sso_provision.rc | default('?') }}), see the lines above.
+      A missing workspace is an error: create it (a tenant deploy does) and run the play again.
+  when: (sf_sso_provision.rc | default(1)) != 0

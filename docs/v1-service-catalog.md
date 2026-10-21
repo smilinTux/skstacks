@@ -44,6 +44,7 @@ tag yet.
 | [skbook](#skbook) | optional | BookStack wiki + MariaDB | BookStack `v26.09-ls285`, MariaDB `10.11` | none | `skbook[-env].<cluster>.<domain>` | `skbook-<env>/bookstack/config`, `runtime/skbook-<env>/db` | `MYSQL_ROOT_PASSWORD`, `DB_USERNAME`/`DB_PASSWORD`, `APP_KEY` | `ENABLE_SSO` (false) | v2.19.0 |
 | [skdash](#skdash) | optional | Dashy service dashboard, Traefik-API discovery | Dashy `4.7.10` | none | `skdash[-env].<cluster>.<domain>` | `skdash-<env>/config` | `CLUSTERNAME`, `DOMAIN`; `discovery.traefik_api_url`/`_token` if discovery on | `discovery.enabled` (true) | pending |
 | [skdesk](#skdesk) | optional | RustDesk relay (hbbs/hbbr) | rustdesk-server (digest-pinned) | none | host ports 21115-21119 (host networking) | `skdesk-<env>/data` | `PLACEMENT_HOSTNAME` | `ENCRYPTED_ONLY` (true) | v2.19.0 |
+| [skflow](#skflow) | optional | Windmill workflow engine shared by tenant stacks (flows, schedules, webhooks, approvals) | Windmill `1.837.0` + Postgres `17.7` (digest-pinned) | skfence or skfenceha; sksso for `SSO_MIDDLEWARE` | `skflow[-env].<cluster>.<domain>` | `runtime/skflow-<env>/{postgres,logs,worker-cache}`, `skflow-<env>/database-dump` | `DB_PASSWORD` (or `DATABASE_URL`) | `SSO_MIDDLEWARE` (none), `NATIVE_WORKER_REPLICAS` (0), `DATA_NODE` (floating) | pending |
 | [skform](#skform) | optional | OpenTofu CLI container (idle, `docker exec`-driven) | OpenTofu `1.10.7` | skstor (only if remote state) | none (no Traefik) | `skform-<env>/{state,workspaces,plugins}` | `STATE_BACKEND_TYPE`/`PATH`, `CLUSTERNAME`, `DOMAIN` | per-provider `PROVIDER_*_ENABLED` | v2.15.0 |
 | [skgallery](#skgallery) | optional | Immich photo/video management | Immich `v2.7.5` + pgvector/vectorchord Postgres | none | `skgallery[-env].<cluster>.<domain>` | `skgallery-<env>/{upload,thumbs,profile,model-cache}` | `DB_PASSWORD`, `CLUSTERNAME`, `DOMAIN` | `OAUTH_ENABLED`/`SMTP_ENABLED` (false) | pending |
 | [skgit](#skgit) | optional | Forgejo git + CI runners | Forgejo `15.0.9`, runner `11.1.2` | none | `skgit[-env].<cluster>.<domain>`, ssh `:222` | `skgit-<env>/{data,config}`, `runtime/skgit-<env>/{dind-data,runner-data}` | `POSTGRES_PASSWORD`, `SHARED_SECRET`, `SECRET_KEY`, `ADMIN_EMAIL`/`PASSWORD` | Actions runner only if `SKGIT_DIND_NODE` set | pending |
@@ -67,6 +68,7 @@ tag yet.
 | [sksync](#sksync) | optional | Syncthing continuous file sync | Syncthing `2.0.13` (hardcoded) | none | `sksync[-env].<cluster>.<domain>`, `:22000` tcp/udp | `sksync-<env>/sync-data` | `SYNCWALLET`, `ENCRYPTION_TOKEN`, `UUID`, `TZ` | none | v2.16.0 |
 | [skvector](#skvector) | optional | Qdrant vector database | Qdrant `v1.17.0` | none | `skvector[-env].<cluster>.<domain>` (HTTP+gRPC) | `skvector-<env>/{storage,snapshots}` | `CLUSTERNAME`, `DOMAIN` | `QDRANT_API_KEY` (unset = no auth) | v2.12.0 |
 | [skwhoami](#skwhoami) | optional | traefik/whoami echo/test service | traefik/whoami `v1.12.0` | none | 3x `skwhoami0{1,2,3}[-env].<cluster>.<domain>` | none (stateless) | `CLUSTERNAME`, `DOMAIN` | none | v2.19.0 |
+| [skwrit](#skwrit) | optional | Matter engine worker (drafting with gates, release, publishing to Nextcloud) | per-site image, digest-pinned; optional nextcloud-mcp `0.199.4` | skflow (calls it), skhub | none (internal overlay, port 8080) | none (external state volume) | `SKWRIT_IMAGE`, `NEXTCLOUD_URL` | `NEXTCLOUD_MCP_ENABLED` (false), `STACK_NAME`, `WORKER_SERVICE` | pending |
 | [skbackup](#skbackup) | optional (host-level) | Snapshots, per-app copies, dump hooks, restic offsite, restore tests, alerts on the storage host | sanoid + rsync + restic (host packages) | a storage host in an inventory group (default `storage_hosts`), ideally ZFS | none (no web UI, no swarm stack) | `/etc/<short_name>`, `/var/lib/<short_name>` on the storage host | `data_target`; `offsite.repository` + `offsite.password` when offsite is on | every tier toggle, `branding` (white-label) | v2.23.0 (restic; the Duplicati app of v2.19.0 to v2.22.0 is retired) |
 
 ## Router middleware overrides
@@ -83,6 +85,7 @@ kept. `[-env]` is empty on prod and `-dev`/`-staging` otherwise.
 | Vault key | Router | Default chain |
 |---|---|---|
 | `skboard.TRAEFIK_MIDDLEWARES` | `skboard[-env]` | `default-no-crowdsec@file` |
+| `skflow.TRAEFIK_MIDDLEWARES` | `skflow[-env]` (and `-api`, `-outpost` with SSO) | `default-no-crowdsec@file` |
 | `skgit.TRAEFIK_MIDDLEWARES` | `skgit[-env]` | `default-no-crowdsec@file` |
 | `skorch.TRAEFIK_MIDDLEWARES` | `skorch[-env]` | `default-no-crowdsec@file` |
 | `skpdf.TRAEFIK_MIDDLEWARES` | `skpdf[-env]` | `default-no-crowdsec@file,skpdf[-env]-upload` |
@@ -375,6 +378,40 @@ skdesk:
 has no overlay network at all). Its compose image line now reads the
 namespaced `skdesk.IMAGE_TAG`, fixed in v2.19.0 (a bare, unnamespaced var
 was silently ignoring per-instance overrides before that).
+
+### skflow
+
+[Windmill](https://github.com/windmill-labs/windmill) (AGPLv3): the
+cluster's shared workflow engine. `server` (UI and API), `worker`
+(`WORKER_REPLICAS`), optional `worker-native`, and its own Postgres with a
+`pg_dumpall` sidecar, or an external `DATABASE_URL` instead. Tenants (a
+document pipeline, an agent) run as their own stacks and use the API over
+the `skflow-<env>` overlay or the public host; nothing tenant-specific goes
+in this stack.
+
+**Prerequisites**: skfence or skfenceha (Traefik). sksso with a forward-auth
+proxy provider for the host if `SSO_MIDDLEWARE` is set.
+
+**Minimal vault snippet**:
+
+```yaml
+skflow:
+  DB_PASSWORD: "<openssl rand -hex 24>"
+  CLUSTERNAME: "<cluster>"
+  DOMAIN: "example.com"
+```
+
+**Deploy**: `deploy_skflow-<env>.yml`, standard invocation. Then log in as
+`admin@windmill.dev` / `changeme`, create your own superadmin and remove the
+default account.
+
+**Health check**: `curl -s https://skflow.<cluster>.<domain>/api/version`.
+
+**Gotchas**: with `SSO_MIDDLEWARE` set, `SSO_EXEMPT_PREFIXES` (default
+`/api/`) stays outside forward auth so webhooks and token clients keep
+working. `DISABLE_NSJAIL` defaults to true: workspace script authors can
+read what the worker can, so treat them as trusted. See the
+[README](../v1/ansible/optional/skflow/README.md).
 
 ### skform
 
@@ -1038,6 +1075,32 @@ skvector:
 authentication**. Set it unless the overlay network is the only thing
 reaching it. gRPC is on a separate router/port (`:6334`) from the HTTP API
 (`:6333`).
+
+### skwrit
+
+The worker of the skwrit matter engine: one digest-pinned service that
+skflow calls over a shared overlay, plus an optional Nextcloud MCP service.
+The image is built per site. Secrets and the state volume are external and
+referenced by name; the play never handles a secret value.
+
+**Prerequisites**: skflow (the `skflow-<env>` overlay), skhub (Nextcloud), the
+Swarm secrets and the state volume (see the README).
+
+**Minimal vault snippet**:
+
+```yaml
+skwrit:
+  SKWRIT_IMAGE: "registry.example.test/skwrit-worker:1.0.0@sha256:<digest>"
+  NEXTCLOUD_URL: "https://files.example.test"
+```
+
+**Deploy**: `deploy_skwrit-<env>.yml`, standard invocation.
+
+**Health check**: `/health` on the worker (port 8080, overlay only).
+
+**Gotchas**: `STACK_NAME` and `WORKER_SERVICE` set the Swarm DNS name flows
+call; change them only together with the flows. See the
+[README](../v1/ansible/optional/skwrit/README.md).
 
 ### skwhoami
 

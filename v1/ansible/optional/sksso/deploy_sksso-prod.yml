@@ -190,6 +190,30 @@
         - templates
         - deploy
 
+    - name: skflow (Windmill) OAuth2 blueprint (sksso.SKFLOW_OIDC_CLIENT_SECRET)
+      include_tasks:
+        file: tasks/skflow_blueprint.yml
+        apply:
+          tags:
+            - templates
+            - deploy
+      when: sksso.SKFLOW_OIDC_CLIENT_SECRET | default('', true) | string | length > 0
+      tags:
+        - templates
+        - deploy
+
+    - name: Branding pack (sksso.branding), files only
+      include_tasks:
+        file: tasks/branding.yml
+        apply:
+          tags:
+            - templates
+            - deploy
+      when: sksso.branding | default('') | length > 0
+      tags:
+        - templates
+        - deploy
+
     - name: Process {{ app }} Docker Compose template
       template:
         src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"

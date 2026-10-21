@@ -1,0 +1,52 @@
+# The "set" pass: every optional knob set, fake values only. External
+# DATABASE_URL (no Postgres in the stack), forward auth with the API exempt.
+skflow:
+  CLOUDFLARED: true
+  HOSTNAME: skflow.example.test
+  WINDMILL_IMAGE: "registry.example.test/windmill:1.837.0@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  POSTGRES_IMAGE: "registry.example.test/postgres:17.7-alpine@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  POSTGRES_BACKUP_IMAGE: "registry.example.test/postgres:17.7@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  DATABASE_URL: "postgres://windmill@db.example.test:5432/windmill?sslmode=require"
+  SUPERADMIN_SECRET: "example-superadmin-secret-0123456789abcdef"
+  COOKIE_DOMAIN: "example.test"
+  DATA_NODE: render-node-1
+  POSTGRES_PATH: /var/lib/skflow-render/postgres
+  DUMP_PATH: /var/lib/skflow-render/dump
+  PLACEMENT_CONSTRAINTS: ["node.role == worker", "node.labels.skflow == true"]
+  TRAEFIK_MIDDLEWARES: "crowdsec-bouncer@file,default@file"
+  SSO_MIDDLEWARE: "authentik@file"
+  SSO_EXEMPT_PREFIXES: ["/api/", "/ws/"]
+  SSO_OUTPOST_SERVICE: "sksso-alt-server@swarm"
+  TLS_OPTIONS: "none"
+  SERVER_REPLICAS: 2
+  SERVER_CPUS: "2.00"
+  SERVER_MEMORY_LIMIT: "3072M"
+  SERVER_MEMORY_RESERVATION: "512M"
+  WORKER_REPLICAS: 3
+  WORKER_GROUP: "docs"
+  WORKER_CPUS: "4.00"
+  WORKER_MEMORY_LIMIT: "4096M"
+  WORKER_MEMORY_RESERVATION: "512M"
+  NATIVE_WORKER_REPLICAS: 1
+  NATIVE_WORKER_CPUS: "0.50"
+  NATIVE_WORKER_MEMORY_LIMIT: "512M"
+  POSTGRES_CPUS: "2.00"
+  POSTGRES_MEMORY_LIMIT: "4096M"
+  POSTGRES_MEMORY_RESERVATION: "512M"
+  DISABLE_NSJAIL: false
+  CREATE_WORKSPACE_REQUIRE_SUPERADMIN: false
+  JSON_LOGS: true
+  LOG_LEVEL: "debug"
+  LOG_MAX_SIZE: "20m"
+  LOG_MAX_FILES: "5"
+  TZ: "Etc/UTC"
+  HEALTH_CHECK_INTERVAL: "15s"
+  HEALTH_CHECK_TIMEOUT: "5s"
+  HEALTH_CHECK_RETRIES: 5
+  HEALTH_CHECK_START_PERIOD: "120s"
+  BACKUP_FREQUENCY: 3600
+  BACKUP_KEEP_DAYS: 14
+  EXTRA_ENV:
+    ZOMBIE_JOB_TIMEOUT: "60"
+  SSO_CLIENT_SECRET: example-skflow-oidc-secret-not-a-secret-0123456789
+  SSO_WORKSPACE_ADMINS: {example: [admin@example.test]}

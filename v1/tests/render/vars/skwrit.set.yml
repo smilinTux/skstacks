@@ -1,0 +1,22 @@
+# The "set" pass: every optional knob set, fake values only.
+skwrit:
+  STACK_NAME: skwrit-render
+  WORKER_SERVICE: engine-worker
+  MODEL: example-composer
+  MODEL_URL: http://models.example.test:18790/v1/chat/completions
+  REVIEW_MODEL: example-reviewer
+  REVIEW_URL: http://models.example.test:18791/v1/chat/completions
+  VECTOR_URL: https://vectors.example.test
+  EMBED_URL: http://models.example.test:18797/api/embed
+  EXTRA_HOSTS: ["models.example.test:192.0.2.10"]
+  NEXTCLOUD_SWARM_REF: render_nextcloud_v1
+  WORKER_SWARM_REF: render_worker_v1
+  VECTOR_SWARM_REF: render_vector_v1
+  STATE_VOLUME: render_state
+  NEXTCLOUD_MCP_ENABLED: true
+  NEXTCLOUD_MCP_USERNAME: svc-render
+  MCP_DATA_VOLUME: render_mcp_data
+  WORKFLOW_NETWORK: render-flow
+  INTERNAL_SUBNET: "192.0.2.0/24"
+  PLACEMENT_CONSTRAINTS: ["node.hostname == render-node-1"]
+  MEMORY_LIMIT: 1G

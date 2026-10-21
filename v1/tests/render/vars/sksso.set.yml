@@ -19,6 +19,7 @@ sksso:
   CAPAUTH_ADMIN_TOKEN: example-capauth-admin-token-not-a-secret-0
   CAPAUTH_USERS:
     - {username: example-user, fingerprint: 0123456789ABCDEF0123456789ABCDEF01234567}
+  SKFLOW_OIDC_CLIENT_SECRET: example-skflow-oidc-secret-not-a-secret-0123456789
   DATA_NODE: localhost
   POSTGRES_DATA_PATH: /var/lib/sksso/postgres
   REDIS_DATA_PATH: /var/lib/sksso/redis
