@@ -47,6 +47,31 @@ skhub:
 | `TALK_HPB_IMAGE` | `ghcr.io/nextcloud-releases/aio-talk:latest@sha256:831a08f9772d188e65aee2fb59ef3785d3567a1fe2fb65f0e6fd2c17a16ffc87` (v2.26.3; before: `aio-talk:20260122_105751`, whose `start.sh` ignores `TURN_DOMAIN` and writes no TURN server into `janus.jcfg`, so Janus offered only its container address and calls outside the LAN failed ICE) | Image for `talk-hpb` (with `enable_talk_hpb`). Pin a digest (`ghcr.io/nextcloud-releases/aio-talk:<tag>@sha256:...`). Set it to keep a newer aio-talk (newer signaling server) an instance already runs: unset, the next deploy puts talk-hpb back on the default. With `TALK_TURN_RELAY_IPV4` set, the relay command runs `TALK_HPB_CMD` (default `supervisord -c /supervisord.conf`, the default image's CMD); a newer aio-talk that runs dinit needs `TALK_HPB_CMD` set to its own CMD. |
 | `TALK_HPB_CMD` | follows the image: `[dinit, --system, --container, nats-server, eturnal, janus, signaling]` for the default digest (unset, or `TALK_HPB_IMAGE` pinned to it); `[supervisord, -c, /supervisord.conf]` (the pre-v2.26.3 default) for any other pinned image | A list: the command the TURN relay wrapper execs after rewriting `relay_ipv4_addr` (only with `TALK_TURN_RELAY_IPV4`). Set it to the `TALK_HPB_IMAGE`'s own CMD (`docker image inspect -f '{{json .Config.Cmd}}'`), e.g. `[dinit, --system, --container, nats-server, eturnal, janus, signaling]` for aio-talk images that dropped supervisord. If its first word is not in the image the container exits 127 with a message naming this knob. |
 | `MARIADB_IMAGE` | `mariadb:10.11.19@sha256:7db29378d4fdab73f8123bbc2b48905c90d1a4b00cf848b028f1e81e623257f2` | Image for `db` and `db-backup`. Stays on the 10.11 LTS line; a major jump (e.g. to 11.x) is a data migration this framework does not perform, so set this only to a newer 10.11.x build. |
+
+**PHP2Shell (CVE-2026-109618, CVE-2026-109619), checked 2026-10-21:** PHP
+shipped fixes the same day in 8.5.12, 8.4.27, 8.3.36 and 8.2.35. Verified
+live (`docker run --rm --entrypoint php <image> -v`, not the tag name): the
+framework default `nextcloud:31.0.14` bundles PHP 8.3.30 (unpatched), and
+no newer `nextcloud:31.x` build exists yet (`31.0.15` has no manifest; the
+rolling `nextcloud:31` tag still resolves to the same unpatched digest).
+`nextcloud:34.0.5@sha256:5cd0788a5c7e0374256939dd86fefa34160ae03730cb28246d16939eacfd4c08`
+does ship the patched PHP 8.5.12 (an emergency same-day rebuild on the
+current major), but **the framework default is not bumped to it**: that
+is a 3-major jump (31 to 34) for any existing instance that never pinned
+`NEXTCLOUD_IMAGE` and relies on the default, and Nextcloud's updater
+refuses a non-sequential major upgrade the same way the entrypoint already
+refuses a downgrade (crash-loop either way). `renovate.json` deliberately
+never groups major bumps for this exact reason (each needs its own
+reviewed, upgrade-proven PR), and this framework's skstack06 lab only ever
+does a fresh skhub install, never a version-to-version upgrade, so there
+is no lab proof available to justify the jump. A new instance doing a
+genuinely fresh install has no upgrade risk at all and can safely pin
+`NEXTCLOUD_IMAGE` straight to the patched 34.0.5 digest above; an instance
+already running an older Nextcloud should patch in place via its own
+`NEXTCLOUD_IMAGE` vault override once its own major has a patched build,
+not by riding the framework default. Revisit this default (or add a lab
+upgrade stage) once `nextcloud/docker` publishes a patched 31.x (or
+whichever major is actually in use) build.
 | `backup_time` | unset | `db-backup` fixed daily run time, 24-hour `HH:MM` (e.g. `03:00`). Unset: today's behavior (2m startup delay, then dump/prune/sleep `backup_frequency` forever), byte-identical render. Set: `db-backup` instead sleeps until the next occurrence of this wall-clock time in `backup_tz`, dumps, repeats (DST-correct, recomputed every loop); `backup_frequency` is then unused. Rejected at render time if not `HH:MM`. |
 | `backup_tz` | `UTC` | IANA time zone (e.g. `America/New_York`) `backup_time` is interpreted in. Only used with `backup_time` set. Rejected at render time if not a zone the control node's `/usr/share/zoneinfo` knows. |
 | `first_install_wait_seconds` | `1800` | Seconds the ansible deploy waits for a slow first Nextcloud install (entrypoint copy + first DB install), and ALSO the Docker healthcheck's `start_period` for `nextcloud` (same budget, same knob): without this tie-in, Swarm's health-triggered `restart_policy` could kill and restart the container before it finishes, resetting progress every time and potentially never converging on a slow/busy host. Raise it for a known-slow environment (NFS, a loaded hypervisor); the ansible wait announces the budget before waiting so a long wait is not mistaken for a hang. |
