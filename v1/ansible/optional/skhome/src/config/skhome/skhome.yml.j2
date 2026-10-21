@@ -1,0 +1,151 @@
+version: '3.8'
+
+# skhome: HomeCenter (upstream image pinned by digest, README.md). One
+# service, `app` (Next.js + SQLite/Prisma, everything under /data: database,
+# uploads, downloaded models, search index), exactly one replica: it is the
+# only writer of the SQLite file. A `backup` sidecar (same image, no extra
+# pull, a different entrypoint) runs HomeCenter's OWN backup engine
+# (`npx tsx scripts/backup.ts`, the same code Settings -> Data uses) on a
+# schedule into BACKUP_PATH, a volume separate from DATA_PATH.
+{% set hc_interval = skhome.HEALTH_CHECK_INTERVAL | default('30s', true) %}
+{% set hc_timeout = skhome.HEALTH_CHECK_TIMEOUT | default('10s', true) %}
+{% set hc_retries = skhome.HEALTH_CHECK_RETRIES | default(3, true) | int %}
+{% set hc_start = (skhome.first_install_wait_seconds | default(120, true) | int) %}
+{% set data_constraints = (skhome.PLACEMENT_CONSTRAINTS | default(['node.role == worker'], true)) + (['node.hostname == ' + skh_data_node] if skh_data_node else []) %}
+
+networks:
+  cloud-public-{{ env }}:
+    external: true
+  skhome-{{ env }}:
+    external: true
+
+services:
+  app:
+    # Default = skh_default_image in the playbook (a test keeps them equal).
+    image: {{ skhome.HOMECENTER_IMAGE | default('ghcr.io/yatzin/homecenter:2.3.1@sha256:45bc4d6a0fed858ac8c89bd0631c69ab732093d5dd626e14a96678058e588bc4', true) }}
+    env_file:
+      - /var/data/config/skhome-{{ env }}/skhome.env
+    volumes:
+      - {{ skh_data_path }}:/data
+    # The image's own HEALTHCHECK already probes /api/health; re-declare it
+    # on the framework's schedule. start_period is tied to
+    # skhome.first_install_wait_seconds (the SAME knob the deploy script's
+    # convergence wait uses below): a slow first boot (migrate + seed +
+    # loading the bundled embedding model) must not be killed by Swarm's
+    # health-triggered restart before it finishes.
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: {{ hc_interval }}
+      timeout: {{ hc_timeout }}
+      retries: {{ hc_retries }}
+      start_period: {{ hc_start }}s
+    networks:
+      - skhome-{{ env }}
+      - cloud-public-{{ env }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: {{ data_constraints | tojson }}
+      resources:
+        limits:
+          cpus: '{{ skhome.HOMECENTER_CPUS | default("1.00", true) }}'
+          memory: {{ skhome.HOMECENTER_MEMORY_LIMIT | default("768M", true) }}
+        reservations:
+          memory: {{ skhome.HOMECENTER_MEMORY_RESERVATION | default("128M", true) }}
+      # stop-first (the default): two app tasks on one SQLite file would
+      # both try to run `prisma migrate deploy` / write the database.
+      update_config:
+        order: stop-first
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skhome"
+        - "com.skt.env={{ env }}"
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.routers.{{ skh_router }}.rule=Host(`{{ skh_host }}`)"
+        - "traefik.http.routers.{{ skh_router }}.entrypoints=websecure"
+        - "traefik.http.routers.{{ skh_router }}.tls=true"
+        - "traefik.http.routers.{{ skh_router }}.tls.certresolver=main"
+{% if skh_tls_options != 'none' %}
+        - "traefik.http.routers.{{ skh_router }}.tls.options={{ skh_tls_options }}"
+{% endif %}
+        - "traefik.http.routers.{{ skh_router }}.middlewares={{ skh_middlewares }}{{ ',' + skh_sso_middleware if skh_sso_middleware else '' }}"
+        - "traefik.http.routers.{{ skh_router }}.service={{ skh_router }}"
+        - "traefik.http.services.{{ skh_router }}.loadbalancer.server.port=3000"
+        - "traefik.http.services.{{ skh_router }}.loadbalancer.healthcheck.path=/api/health"
+        - "traefik.http.services.{{ skh_router }}.loadbalancer.healthcheck.interval=30s"
+        - "traefik.http.services.{{ skh_router }}.loadbalancer.healthcheck.timeout=10s"
+
+{% if skhome.BACKUP_ENABLED | default(true) | bool %}
+  backup:
+    # Same digest as app, no extra pull. A different entrypoint: it must
+    # NEVER run the image's normal start-up (restore-apply / migrate deploy
+    # / seed) concurrently with the app service against the same database.
+    image: {{ skhome.HOMECENTER_IMAGE | default('ghcr.io/yatzin/homecenter:2.3.1@sha256:45bc4d6a0fed858ac8c89bd0631c69ab732093d5dd626e14a96678058e588bc4', true) }}
+    entrypoint: ["/bin/bash", "/usr/local/bin/skhome-backup"]
+    # Runs as root (the image's own default user; only its normal entrypoint
+    # drops to nextjs via gosu, which this entrypoint override skips): avoids
+    # a chicken-and-egg wait on the app container's own `chown -R nextjs
+    # /data` before the FIRST backup can read/write the bind mount.
+    #
+    # DATABASE_URL and AUTH_SECRET come from the SAME env_file as `app`
+    # (mode 0600), never inline here: this compose file is mode 0644
+    # (v1/tests/test_secret_files_not_world_readable.py). AUTH_SECRET is
+    # needed even though protection defaults to "none": if an admin later
+    # turns on password/recovery-key protection in Settings -> Data, the
+    # scheduled backup must keep working without a stack redeploy.
+    env_file:
+      - /var/data/config/skhome-{{ env }}/skhome.env
+    environment:
+{% if skhome.backup_time | default('', true) %}
+      BACKUP_TIME: "{{ skhome.backup_time }}"
+      BACKUP_TZ: "{{ skhome.backup_tz | default('UTC', true) }}"
+{% else %}
+      BACKUP_FREQUENCY: "{{ skhome.BACKUP_FREQUENCY | default(86400, true) | int }}"
+      BACKUP_START_DELAY: "{{ skhome.BACKUP_START_DELAY | default(60, true) | int }}"
+{% endif %}
+    volumes:
+      # Read-write: HomeCenter's backup engine stages a scratch copy in
+      # <DATA_PATH>/backup-work (same disk as the live data, on purpose,
+      # per its own lib/backup/paths.ts) while it reads the database and
+      # upload files; a read-only mount would make every run fail.
+      - {{ skh_data_path }}:/data
+      - {{ skh_backup_path }}:/backup
+      - /var/data/skhome-{{ env }}/bin/skhome-backup:/usr/local/bin/skhome-backup:ro
+    # The image's own HEALTHCHECK probes the app on :3000, which this
+    # container does not run.
+    healthcheck:
+      disable: true
+    networks:
+      - skhome-{{ env }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 4m
+        max-file: "2"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: {{ data_constraints | tojson }}
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+        reservations:
+          memory: 32M
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skhome"
+        - "com.skt.env={{ env }}"
+{% endif %}

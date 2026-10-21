@@ -1,0 +1,44 @@
+#!/bin/bash
+# Fake `npx` for test_skhome_backup.py: stands in for HomeCenter's own
+# `npx tsx scripts/backup.ts` / `npx tsx scripts/backup-verify.ts`, driven
+# by env vars so the real test can exercise skhome-backup's success and
+# failure paths without a real HomeCenter install.
+#
+#   FAKE_BACKUP_RC=1        backup.ts exits non-zero (no file written)
+#   FAKE_NO_WRITTEN_LINE=1  backup.ts exits 0 but prints no "Backup written:" line
+#   FAKE_VERIFY_RC=1        backup-verify.ts exits non-zero
+set -u
+
+if [ "${1:-}" = "tsx" ] && [ "${2:-}" = "scripts/backup.ts" ]; then
+    shift 2
+    folder=""
+    prev=""
+    for a in "$@"; do
+        if [ "$prev" = "--folder" ]; then folder="$a"; fi
+        prev="$a"
+    done
+    rc="${FAKE_BACKUP_RC:-0}"
+    if [ "$rc" != "0" ]; then
+        echo "Backup failed: fake failure" >&2
+        exit "$rc"
+    fi
+    stamp=$(date -u +%Y%m%dT%H%M%S.%NZ)
+    file="${folder}/homecenter-${stamp}.hcbackup"
+    mkdir -p "$folder"
+    echo "fake backup contents" > "$file"
+    if [ "${FAKE_NO_WRITTEN_LINE:-0}" = "1" ]; then
+        echo "Backup done (no standard line, on purpose for the test)"
+    else
+        echo "Backup written: ${file}"
+    fi
+    exit 0
+elif [ "${1:-}" = "tsx" ] && [ "${2:-}" = "scripts/backup-verify.ts" ]; then
+    rc="${FAKE_VERIFY_RC:-0}"
+    if [ "$rc" != "0" ]; then
+        echo "Verify failed: fake corruption" >&2
+    fi
+    exit "$rc"
+else
+    echo "unexpected fake npx invocation: $*" >&2
+    exit 99
+fi

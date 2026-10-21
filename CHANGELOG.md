@@ -3,6 +3,16 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased
+
+### Upgrade notes (instances)
+
+- **skhome:** new optional role, opt-in; nothing an instance already deploys renders differently because of it.
+
+### Changes
+
+- v1: new optional role **skhome** (`v1/ansible/optional/skhome`): [HomeCenter](https://github.com/yatzin/home-center) (MIT), a self-hosted home manager (properties, vehicles, equipment, warranties, receipts with OCR, costs, maintenance reminders, optional family health records, an optional AI assistant, all in one SQLite-backed container). One digest-pinned upstream image (`HOMECENTER_IMAGE`, no default without `@sha256:`), service `app` (exactly one replica, `stop-first`) and an optional `backup` sidecar (same digest, no extra pull, a different entrypoint so it never races the app's own migrate/seed start-up) that runs HomeCenter's own backup engine (`npx tsx scripts/backup.ts`, the same code behind Settings -> Data, never a raw copy of the live SQLite file) and verifies every run (`scripts/backup-verify.ts`) before trusting it, into `BACKUP_PATH`, a volume separate from `DATA_PATH`. Schedule: the same `backup_time`/`backup_tz` fixed-daily-time pattern as skhub/skbook, or `BACKUP_FREQUENCY`/`BACKUP_START_DELAY` when unset. `AUTH_MODE: sso` (default, Authentik forward auth on the whole router; health records are sensitive) or `local` (HomeCenter's own accounts only; it has no OIDC of its own either way), with the usual contradictory-config guards. `first_install_wait_seconds` (default `120`) is one knob for both the app healthcheck's `start_period` and the deploy script's own convergence-wait budget (the skhub #213 pattern). `DATA_PATH`/`BACKUP_PATH` on local disk require `DATA_NODE` (fail closed). The AI assistant has no environment variable of its own (upstream: 100% admin-configured in-app, key stored encrypted in the database): pointing it at the cluster's skgateway, if ever wanted, is a post-deploy admin step documented in the README, not a vault knob. New subnets `skhome-prod/staging/dev` = `172.16.175/176/177.0/24`. Tests: `v1/tests/test_skhome_render.py` (real Ansible: defaults, every knob, AUTH_MODE/backup_time/backup_tz guards, missing-secret and unpinned-image refusals, dev/staging parity) and `v1/tests/test_skhome_backup.py` (the backup script's own scheduling/verification logic against a faked `npx tsx`). skstack06 stage `skhome` planned (sso and local modes).
+
 ## skstacks-v2.26.13 - 2026-10-17
 
 ### Upgrade notes (instances)

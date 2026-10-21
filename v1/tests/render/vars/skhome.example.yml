@@ -1,0 +1,6 @@
+# Public, obviously fake example vault for the real-Ansible render gate
+# (v1/tests/render/render_playbooks.py). example.test only; no real secrets.
+skhome:
+  CLUSTERNAME: render
+  DOMAIN: example.test
+  AUTH_SECRET: "example-auth-secret-not-a-secret-0123456789AB"

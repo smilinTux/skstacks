@@ -1,0 +1,44 @@
+# The "set" pass: every optional knob set, fake values only.
+skhome:
+  CLOUDFLARED: true
+  HOSTNAME: home.example.test
+  HOMECENTER_IMAGE: "registry.example.test/homecenter:2.3.1@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  DATA_NODE: render-node-1
+  DATA_PATH: /var/lib/skhome-render/data
+  BACKUP_PATH: /var/lib/skhome-render/backup
+  PLACEMENT_CONSTRAINTS: ["node.role == worker", "node.labels.skhome == true"]
+  TRAEFIK_MIDDLEWARES: "crowdsec-bouncer@file,default-no-error-pages@file"
+  AUTH_MODE: sso
+  SSO_MIDDLEWARE: "authentik@file"
+  TLS_OPTIONS: "none"
+  ADMIN_NAME: "Example Admin"
+  ADMIN_EMAIL: "admin@example.test"
+  ADMIN_PASSWORD: "example-password-not-real"
+  MAX_UPLOAD_BYTES: 52428800
+  NOTIFY_INTERVAL_MINUTES: 60
+  DIGEST_HOUR: 6
+  DOCUMENT_REINDEX_HOURS: 3
+  EMBEDDING_IDLE_MINUTES: 5
+  SEARCH_INDEX_PATH: "/data/custom-search-index.db"
+  SMTP_HOST: "smtp.example.test"
+  SMTP_PORT: 465
+  SMTP_USER: "example-user"
+  SMTP_PASS: "example-smtp-password"
+  SMTP_SECURE: true
+  MAIL_FROM: "Example HomeCenter <no-reply@example.test>"
+  MAIL_DRY_RUN: true
+  TZ: "Europe/Zurich"
+  HEALTH_CHECK_INTERVAL: "15s"
+  HEALTH_CHECK_TIMEOUT: "5s"
+  HEALTH_CHECK_RETRIES: 5
+  first_install_wait_seconds: 60
+  HOMECENTER_CPUS: "2.00"
+  HOMECENTER_MEMORY_LIMIT: "1536M"
+  HOMECENTER_MEMORY_RESERVATION: "256M"
+  BACKUP_ENABLED: true
+  backup_time: "03:30"
+  backup_tz: "America/New_York"
+  BACKUP_FREQUENCY: 3600
+  BACKUP_START_DELAY: 10
+  extra_env:
+    SOME_UPSTREAM_VAR: "example-value"
