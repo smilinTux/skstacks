@@ -1,0 +1,56 @@
+# Fleet image monitor configuration. Cluster/host/room shape, no secrets.
+#
+# Each cluster lists its Swarm manager(s) to run `docker service ls` /
+# `docker service ps` against, and an optional "jump" host to ssh through
+# first (the manager itself is only reachable from that jump host). All ssh
+# calls use the invoking user's own key/agent (no password, no vault read);
+# `sudo docker` is run on the remote end because that's how these fleets are
+# set up.
+
+clusters:
+  nor:
+    manager_hosts: ["norap1001", "norap1002", "norap1003"]
+    jump: null              # norap1001 is reachable directly from noroc2027
+    docker_cmd: "sudo docker"
+  nam:
+    manager_hosts: ["nammgr1001", "nammgr1002", "nammgr1003"]
+    jump: "laptop"           # NAM is only reachable from the laptop
+    ssh_user: "namuser01"
+    ssh_identity: "~/.ssh/ansible"
+    docker_cmd: "sudo docker"
+
+# Runtime security floor table (see floors.yaml for the table itself and how
+# to extend it).
+floors_file: "floors.yaml"
+
+# Where state (last-seen digests) and the upstream-lookup cache live. Kept out
+# of the repo; absolute so a systemd unit with no shell env still finds them.
+state_file: "~/.skcapstone/image-monitor/state.json"
+cache_file: "~/.skcapstone/image-monitor/registry_cache.json"
+cache_ttl_hours: 20
+
+# Registry lookup behaviour.
+registry:
+  max_retries: 4
+  backoff_base_seconds: 5
+  request_timeout_seconds: 15
+
+# Talk notification routing. Reuses the rooms and the f/ops/notify script
+# wired up in skstacks PR #215 ("NAM Urgent and NAM Admin Talk rooms, notify
+# room arg, alert policy"). No new room or alert path is introduced here.
+notify:
+  digest_room: "NAM Admin"
+  urgent_room: "NAM Urgent"
+  # Windmill workspace that owns f/ops/notify (see
+  # v1/scripts/windmill-ops/notify.py).
+  workspace: "fwe"
+  # Credentials (base URL + API token) are read from this file, which is not
+  # part of the repo and does not exist until an operator provisions it. See
+  # v1/scripts/image_monitor/README.md "Config".
+  credentials_file: "~/.skcapstone/secrets/image-monitor-notify.env"
+
+# Unified GTD capture (skos.gtd_ingest.upsert). source is fixed at
+# "image-monitor"; source_ref is built per-finding as
+# "<cluster>/<service>/<image>".
+gtd:
+  context: "@fleet"
