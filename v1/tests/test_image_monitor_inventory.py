@@ -1,8 +1,8 @@
 """inventory.collect_cluster_inventory must list every running service's
 pinned image, tolerate one service's inspect failing without losing the
 rest, and report "unreachable" (not crash) when every manager host times
-out - exactly the norpv1200/nfsd-callback-deadlock shape of failure this
-tool has to survive unattended."""
+out - the same "a node hangs, not just a command fails" shape of failure
+this tool has to survive unattended, running daily with nobody watching."""
 import pathlib
 import subprocess
 import sys
