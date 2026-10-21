@@ -190,7 +190,7 @@ e.g.:
 
 ```bash
 docker run --rm -v <DATA_PATH>:/data -v <BACKUP_PATH>:/backup \
-  --entrypoint npx <image>@<digest> tsx scripts/restore.ts -- /backup/<file> --yes
+  --entrypoint npx <image>@<digest> tsx scripts/restore.ts /backup/<file> --yes
 ```
 
 then scale `app` back to 1 (the container's normal start-up finishes the
