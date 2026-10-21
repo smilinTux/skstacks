@@ -10,6 +10,7 @@ report, not a gate); non-zero only on a usage/config error.
 from __future__ import annotations
 
 import argparse
+import datetime
 import logging
 import sys
 from pathlib import Path
@@ -143,15 +144,20 @@ def send_findings(config: dict, digest_findings: list[dict], urgent_findings: li
         log.warning("Talk notify skipped: %s", exc)
         return
 
+    # ref_id is dated, not a fixed string: it exists so a *retry of today's
+    # post* doesn't duplicate (per ALERT-POLICY.md's "keyed by a stable
+    # ref_id"), not so every future day's genuinely new digest gets
+    # suppressed as a repeat of day one.
+    today = datetime.date.today().isoformat()
     if urgent_findings:
         summary = "\n".join(f"- {f['text']}" for f in urgent_findings)
         notify.post_talk(creds, title="Fleet image monitor: below security floor", summary=summary,
                          severity="error", room=notify_cfg.get("urgent_room", "NAM Urgent"),
-                         ref_id="image-monitor-urgent")
+                         ref_id=f"image-monitor-urgent-{today}")
     if digest_findings:
         summary = "\n".join(f"- {f['text']}" for f in digest_findings)
         notify.post_talk(creds, title="Fleet image monitor: daily digest", summary=summary, severity="info",
-                         room=notify_cfg.get("digest_room", "NAM Admin"), ref_id="image-monitor-digest")
+                         room=notify_cfg.get("digest_room", "NAM Admin"), ref_id=f"image-monitor-digest-{today}")
 
 
 def main(argv: list[str] | None = None) -> int:
