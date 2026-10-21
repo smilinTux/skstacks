@@ -19,6 +19,11 @@
 #   - TRAEFIK_HA_MODE (optional, defaults to false/auto-detect)
 #   - CROWDSEC_BOUNCER_API_KEY
 #   - Other CrowdSec configuration variables
+#
+# LAPI db location (see README.md "Moving the LAPI db off NFS"):
+#   - sksec.DATA_NODE (optional): pins the crowdsec service to this node
+#   - sksec.CROWDSEC_DB_PATH (optional): default is the legacy NFS path;
+#     a path outside /var/data is local disk and REQUIRES DATA_NODE
 
 version: '3.8'
 
@@ -44,8 +49,15 @@ services:
       # === NFS DATA - DIRECT BIND (NO NAMED VOLUME) ===
       # CrowdSec needs to write hub data, collections, parsers during initialization
       # acquis.yaml is copied into this directory during deployment
+      # The config dir (machine creds, hub data, acquis.yaml) stays on shared
+      # storage regardless of sksec.DATA_NODE: it is read-mostly and small.
       - /var/data/runtime/sksec{{ env_suffix }}/crowdsec-config:/etc/crowdsec/
-      - /var/data/runtime/sksec{{ env_suffix }}/crowdsec-db:/var/lib/crowdsec/data/
+      # The LAPI SQLite db is the hot path: every bouncer request reads it
+      # and writes last_pull. On NFS this serializes under load and the
+      # bouncer fails CLOSED (403) once a lookup passes CROWDSEC_TIMEOUT.
+      # sksec.CROWDSEC_DB_PATH (+ sksec.DATA_NODE) moves it to local disk on
+      # one pinned node, same pattern as sksso's DATA_NODE for postgres/redis.
+      - {{ sksec_crowdsec_db_path }}:/var/lib/crowdsec/data/
       # Traefik logs (Node-aware: Mount parent directories to enable wildcard patterns)
       # CrowdSec acquis.yaml uses wildcard patterns to read from all node-specific directories
       # Uses detected traefik_service_name (skfence or skfenceha) - auto-detected during deployment
@@ -76,10 +88,19 @@ services:
       replicas: 1
       placement:
         # In HA mode: Pin to ACME master node (exclusive database write access)
-        # In single-node: Runs on any node
-{% if sksec.TRAEFIK_HA_MODE | default(false) | bool %}
+        # With sksec.DATA_NODE set: also pin to the node holding the local
+        # LAPI db (a path outside /var/data is local disk; moving crowdsec
+        # without its db is an empty db, same risk sksso's DATA_NODE guards
+        # against for postgres/redis).
+        # In single-node, no DATA_NODE: runs on any node.
+{% if sksec.TRAEFIK_HA_MODE | default(false) | bool and (sksec.DATA_NODE | default("")) %}
+        constraints: {{ (["node.labels.traefik.acme.master == true", "node.hostname == " + sksec.DATA_NODE]) | tojson }}
+{% elif sksec.TRAEFIK_HA_MODE | default(false) | bool %}
         constraints:
           - node.labels.traefik.acme.master == true
+{% elif sksec.DATA_NODE | default("") %}
+        constraints:
+          - node.hostname == {{ sksec.DATA_NODE }}
 {% endif %}
         preferences:
           - spread: node.labels.zone
