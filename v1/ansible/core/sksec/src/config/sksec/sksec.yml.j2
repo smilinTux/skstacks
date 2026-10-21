@@ -57,7 +57,7 @@ services:
       # bouncer fails CLOSED (403) once a lookup passes CROWDSEC_TIMEOUT.
       # sksec.CROWDSEC_DB_PATH (+ sksec.DATA_NODE) moves it to local disk on
       # one pinned node, same pattern as sksso's DATA_NODE for postgres/redis.
-      - {{ sksec_crowdsec_db_path }}:/var/lib/crowdsec/data/
+      - {{ sksec.CROWDSEC_DB_PATH | default('/var/data/runtime/sksec' + env_suffix + '/crowdsec-db', true) }}:/var/lib/crowdsec/data/
       # Traefik logs (Node-aware: Mount parent directories to enable wildcard patterns)
       # CrowdSec acquis.yaml uses wildcard patterns to read from all node-specific directories
       # Uses detected traefik_service_name (skfence or skfenceha) - auto-detected during deployment

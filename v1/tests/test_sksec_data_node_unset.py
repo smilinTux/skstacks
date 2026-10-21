@@ -72,7 +72,10 @@ needs_ansible = pytest.mark.skipif(shutil.which("ansible-playbook") is None, rea
 def test_default_vars_skip_the_local_dir_task_without_failing(tmp_path, env):
     r, res = run(tmp_path, env, {})
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
-    assert res and all(i.get("skipped") for i in res["results"]), res
+    # Unlike sksso's loop-based task (two paths: postgres + redis, so a
+    # skip registers {"results": [...]}), this task has a single path and
+    # no loop, so a skip registers {"skipped": true} directly.
+    assert res and res.get("skipped"), res
 
 
 @needs_ansible
