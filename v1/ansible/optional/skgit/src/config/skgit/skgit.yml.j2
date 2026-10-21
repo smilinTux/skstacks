@@ -83,7 +83,7 @@ services:
         # seconds. When the CrowdSec bouncer's LAPI lookup times out (~5 s) the bouncer
         # fails closed with 403, so runners lose FetchTask/UpdateLog/UpdateTask calls.
         # Forgejo still authenticates every runner RPC with the runner token.
-        # Incident 2026-10-21: docs/incidents/2026-10-21-skgit-runner-crowdsec-403.md
+        # Override with skgit.RUNNER_RPC_MIDDLEWARES to put the bouncer back.
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-runner-rpc.rule=Host(`{{ skgit.SUBDOMAIN_PREFIX | default('skgit') }}{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && PathPrefix(`/api/actions/runner.v1.RunnerService/`)"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-runner-rpc.entrypoints=websecure"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-runner-rpc.tls=true"
