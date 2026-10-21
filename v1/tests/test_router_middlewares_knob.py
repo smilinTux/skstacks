@@ -120,9 +120,11 @@ def test_override_replaces_only_that_routers_chain(svc, sfx, env):
     for other, (_, default) in SERVICES[svc].items():
         if other != sfx:
             assert router_middlewares(text, svc, env, other) == [default(env)]
-    # nothing else in the stack moves: only that one label line differs
+    # nothing else in the stack moves: only that one label line differs.
+    # Exception: putting crowdsec-bouncer on skgit's main router also renders the
+    # skgit runner RPC router (test_skgit_runner_rpc_router_follows_the_crowdsec_knob).
     old = render(svc, env).splitlines()
-    new = text.splitlines()
+    new = [l for l in text.splitlines() if not (svc == "skgit" and "-runner-rpc." in l)]
     assert len(old) == len(new)
     diff = [(a, b) for a, b in zip(old, new) if a != b]
     assert len(diff) == 1 and diff[0][1].rstrip().endswith(f'.middlewares={OVERRIDE}"'), diff
@@ -149,3 +151,37 @@ def test_readme_vault_section_documents_the_knob_where_one_exists(svc):
     text = readme.read_text()
     for knob, _ in SERVICES[svc].values():
         assert knob in text, f"{svc}/README.md does not mention {knob}"
+
+
+RUNNER_RPC_LIVE = [
+    "traefik.http.routers.skgit-runner-rpc.rule=Host(`skgit.render.example.test`) && PathPrefix(`/api/actions/runner.v1.RunnerService/`)",
+    "traefik.http.routers.skgit-runner-rpc.entrypoints=websecure",
+    "traefik.http.routers.skgit-runner-rpc.tls=true",
+    "traefik.http.routers.skgit-runner-rpc.tls.certresolver=main",
+    "traefik.http.routers.skgit-runner-rpc.tls.options=intermediate@file",
+    "traefik.http.routers.skgit-runner-rpc.priority=200",
+    "traefik.http.routers.skgit-runner-rpc.middlewares=default-no-crowdsec@file",
+    "traefik.http.routers.skgit-runner-rpc.service=skgit",
+]
+
+
+def _skgit_runner_labels(text):
+    labels = []
+    for s in (yaml.safe_load(text).get("services") or {}).values():
+        labels += [l for l in ((s.get("deploy") or {}).get("labels") or []) if "-runner-rpc." in l]
+    return labels
+
+
+def test_skgit_runner_rpc_router_follows_the_crowdsec_knob():
+    """Runner RPC bypasses the CrowdSec forward-auth only when the main router uses it.
+
+    A slow CrowdSec LAPI makes the bouncer fail closed with 403, which starves
+    Forgejo runners; runner RPC is still authenticated by the runner token.
+    """
+    assert _skgit_runner_labels(render("skgit", "prod")) == []
+    with_bouncer = render("skgit", "prod", TRAEFIK_MIDDLEWARES=OVERRIDE)
+    host = re.search(r"skgit\.rule=Host\(`([^`]+)`\)", with_bouncer).group(1)
+    expected = [l.replace("skgit.render.example.test", host) for l in RUNNER_RPC_LIVE]
+    assert _skgit_runner_labels(with_bouncer) == expected
+    kept = render("skgit", "prod", TRAEFIK_MIDDLEWARES=OVERRIDE, RUNNER_RPC_MIDDLEWARES=OVERRIDE)
+    assert f"traefik.http.routers.skgit-runner-rpc.middlewares={OVERRIDE}" in _skgit_runner_labels(kept)

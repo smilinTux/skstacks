@@ -78,6 +78,25 @@ services:
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-registry.tls.options=intermediate@file"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-registry.priority=100"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-registry.service=skgit{% if env != 'prod' %}-{{ env }}{% endif %}"
+{# Runner RPC router: skips the CrowdSec forward-auth.
+    === RUNNER RPC ROUTER (skip the CrowdSec forward-auth) ===
+    Rendered only when the main router runs crowdsec-bouncer (the only case it is
+    needed), so an instance without that knob renders byte-identical to v2.26.4.
+    Forgejo Actions runners poll /api/actions/runner.v1.RunnerService/ every few
+    seconds. When the CrowdSec bouncer's LAPI lookup times out (~5 s) the bouncer
+    fails closed with 403, so runners lose FetchTask/UpdateLog/UpdateTask calls.
+    Forgejo still authenticates every runner RPC with the runner token.
+    Override with skgit.RUNNER_RPC_MIDDLEWARES to put the bouncer back. #}
+{% if 'crowdsec-bouncer' in (skgit.TRAEFIK_MIDDLEWARES | default('', true)) %}
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-runner-rpc.rule=Host(`{{ skgit.SUBDOMAIN_PREFIX | default('skgit') }}{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && PathPrefix(`/api/actions/runner.v1.RunnerService/`)"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-runner-rpc.entrypoints=websecure"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-runner-rpc.tls=true"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-runner-rpc.tls.certresolver=main"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-runner-rpc.tls.options=intermediate@file"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-runner-rpc.priority=200"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-runner-rpc.middlewares={{ skgit.RUNNER_RPC_MIDDLEWARES | default('default-no-crowdsec@file', true) }}"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-runner-rpc.service=skgit{% if env != 'prod' %}-{{ env }}{% endif %}"
+{% endif %}
         # Service configuration
         - "traefik.http.services.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=3000"
         # === STICKY SESSIONS: Required to prevent ERR_NETWORK_CHANGED errors ===
