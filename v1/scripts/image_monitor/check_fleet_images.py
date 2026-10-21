@@ -77,18 +77,18 @@ def gather_findings(config: dict, floors: dict, *, dry_run: bool) -> tuple[list[
             if upstream.digest_changed:
                 digest_findings.append({
                     "cluster": cluster_name, "service": svc.service, "image": svc.image,
-                    "text": f"{svc.service} ({ref.full_repo}:{ref.tag}) has a new digest upstream: a rebuild "
-                            "(base-image or security refresh) is available for the same tag.",
+                    "text": f"[{cluster_name}] {svc.service} ({ref.full_repo}:{ref.tag}) has a new digest upstream: a "
+                            "rebuild (base-image or security refresh) is available for the same tag.",
                     "severity": "info",
                 })
             if changed:
                 digest_findings.append({
                     "cluster": cluster_name, "service": svc.service, "image": svc.image,
-                    "text": f"{svc.service} is now running a different image than last check: {svc.image}",
+                    "text": f"[{cluster_name}] {svc.service} is now running a different image than last check: {svc.image}",
                     "severity": "info",
                 })
 
-            for runtime_name in php_floor.runtimes_for_image(floors, ref.repo):
+            for runtime_name in php_floor.runtimes_for_image(floors, ref.path):
                 probe_cfg = floors[runtime_name]
                 manager = inv.manager_used
                 probe = php_probe.probe_runtime(
@@ -99,9 +99,9 @@ def gather_findings(config: dict, floors: dict, *, dry_run: bool) -> tuple[list[
                 if check.below_floor:
                     urgent_findings.append({
                         "cluster": cluster_name, "service": svc.service, "image": svc.image,
-                        "text": f"{svc.service} is running {runtime_name} {check.version}, below the configured "
-                                f"floor of {check.floor} for the {check.version.rsplit('.', 1)[0]} line. "
-                                "Patch it.",
+                        "text": f"[{cluster_name}] {svc.service} is running {runtime_name} {check.version}, below the "
+                                f"configured floor of {check.floor} for the {check.version.rsplit('.', 1)[0]} "
+                                "line. Patch it.",
                         "severity": "error",
                     })
 
