@@ -50,6 +50,7 @@ tag yet.
 | [skgit](#skgit) | optional | Forgejo git + CI runners | Forgejo `15.0.9`, runner `11.1.2` | none | `skgit[-env].<cluster>.<domain>`, ssh `:222` | `skgit-<env>/{data,config}`, `runtime/skgit-<env>/{dind-data,runner-data}` | `POSTGRES_PASSWORD`, `SHARED_SECRET`, `SECRET_KEY`, `ADMIN_EMAIL`/`PASSWORD` | Actions runner only if `SKGIT_DIND_NODE` set | pending |
 | [skgraph](#skgraph) | optional | FalkorDB graph database (Redis protocol) | FalkorDB `v4.18.8` | none | `:16379` via ingress mesh (Redis protocol, no UI) | `skgraph-<env>/data` | `FALKORDB_PASSWORD`, `CLUSTERNAME`, `DOMAIN` | none notable | **v2.11.0** |
 | [skgym](#skgym) | optional | openGym gym and body-weight tracker (passkeys, PWA) | openGym `1.4.1` api + web (upstream, digest-pinned) | skfence or skfenceha | `skgym[-env].<cluster>.<domain>` | `skgym-<env>/{data,backup}` | `SESSION_SECRET` | `INVITE_ONLY` (false), `SSO_MIDDLEWARE` (none), `DATA_NODE` (floating), `BACKUP_ENABLED` (true) | pending |
+| [skhome](#skhome) | optional | HomeCenter home/property/vehicle/health manager | HomeCenter `2.3.1` app (upstream, digest-pinned) | skfence or skfenceha; sksso for default `AUTH_MODE: sso` | `skhome[-env].<cluster>.<domain>` | `skhome-<env>/{data,backup}` | `AUTH_SECRET` | `AUTH_MODE` (sso), `DATA_NODE` (floating), `BACKUP_ENABLED` (true), `first_install_wait_seconds` (120) | pending |
 | [skhub](#skhub) | optional | Nextcloud file sync/collaboration | Nextcloud `31.0.14`, MariaDB `10.11.7` | skstor (only if `storage_backend: skstor`) | `skhub[-env].<cluster>.<domain>` | `skhub-<env>/{data,html,config}` | `nextcloud_admin_user/_password`, `mysql_*`, `CLUSTERNAME`, `DOMAIN` | `storage_backend` (local), `enable_collabora`/`enable_talk_hpb` (false) | pending |
 | [skmail](#skmail) | optional | Full SMTP/IMAP mail server | docker-mailserver `16.0.1` | skfence/skfenceha (for ACME cert) | host ports 25/587/465/143/993 | `skmail-<env>/docker-data/dms/{maildata,mailstate}` | `CLUSTERNAME`, `DOMAIN` | `DMS_VERSION` (16.0.1), Rspamd/ClamAV/Fail2ban (all on) | v2.19.0 |
 | [skmem-pg](#skmem-pg) | optional | Postgres 17 + pgvector + pg_search + AGE | Postgres 17 custom image `pg17-bm25-age` | none | internal only, no Traefik | `runtime/skmem-pg-<env>/postgres` | `skmem_pg_password` | `skmem_pg_default_agent`/`skmem_pg_graph` | v2.14.0 |
@@ -563,6 +564,43 @@ host locks existing passkeys out (enable `PASSWORD_LOGIN` first). Never put
 `/api/` behind forward auth. The `web` image carries exercise media licensed
 to openGym only: reference the upstream image, never rebuild or republish
 it. See the [README](../v1/ansible/optional/skgym/README.md).
+
+### skhome
+
+[HomeCenter](https://github.com/yatzin/home-center) (MIT): a self-hosted
+home manager for properties, vehicles and equipment, warranties, receipts
+with OCR, costs, maintenance reminders and optional family health records,
+with an optional AI assistant. One upstream image by digest, service `app`
+(one replica, SQLite under `/data`) and an optional `backup` sidecar that
+runs HomeCenter's own backup engine (never a raw SQLite copy) and verifies
+every run.
+
+**Prerequisites**: skfence or skfenceha (Traefik). sksso (Authentik) with
+a forward-auth proxy provider covering the host for the default
+`AUTH_MODE: sso`; `AUTH_MODE: local` needs no sksso. HomeCenter has no
+OIDC of its own.
+
+**Minimal vault snippet**:
+
+```yaml
+skhome:
+  AUTH_SECRET: "<openssl rand -base64 32>"
+  CLUSTERNAME: "<cluster>"
+  DOMAIN: "example.com"
+```
+
+**Deploy**: `deploy_skhome-<env>.yml`, standard invocation. `ADMIN_NAME`/
+`ADMIN_EMAIL`/`ADMIN_PASSWORD` seed the first account on an empty database
+only; HomeCenter ignores them after that.
+
+**Health check**: `curl -s https://skhome.<cluster>.<domain>/api/health`.
+
+**Gotchas**: health records are sensitive data, which is why `AUTH_MODE`
+defaults to `sso` here; restrict the Authentik application to the
+instance's admin group rather than every Authentik user when health data
+is in scope. The AI assistant has no vault knob (upstream: 100%
+admin-configured in-app); pointing it at skgateway, if wanted, is a
+post-deploy admin step. See the [README](../v1/ansible/optional/skhome/README.md).
 
 ### skhub
 
