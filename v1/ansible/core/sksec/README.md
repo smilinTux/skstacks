@@ -317,12 +317,22 @@ mounts both.
 1. Create the local directory first (owner root, mode 0750):
    `mkdir -p $(dirname <new>) && chmod 0750 $(dirname <new>)`.
 2. Hot backup while crowdsec keeps running (SQLite's backup API is a
-   consistent live snapshot, not a raw file copy):
-   `docker exec <crowdsec container> sqlite3 /var/lib/crowdsec/data/crowdsec.db ".backup '/tmp/crowdsec.db.bak'"`,
-   then copy `/tmp/crowdsec.db.bak` out to `<new>` (it is the container-internal
-   path; find the host side via the bind mount, or `docker cp`).
+   consistent live snapshot, not a raw file copy). The crowdsec image
+   ships no `sqlite3` CLI and `cscli` has no backup subcommand (verified
+   live: `docker exec <crowdsec container> sqlite3 ...` fails with
+   "executable file not found"), so run it from a disposable sidecar
+   against the **host** bind-mounted directories instead, with both the
+   old (read-only) and new paths mounted in:
+   `docker run --rm --user root -v <old-dir>:/src:ro -v <new-dir>:/dst keinos/sqlite3@sha256:9064091a943982e2a90f095219d0d6adec03472f9042529563e3e66c9632af66 sqlite3 /src/crowdsec.db ".backup '/dst/crowdsec.db'"`.
+   `--user root`: the db file is `0640 root:<deploy GID>`, which the
+   image's default non-root user cannot read. Run this on `DATA_NODE`
+   (same host as `<old>` and `<new>`): a backup across two different
+   nodes' bind mounts of the same NFS path still works, but there is no
+   reason to add that hop.
 3. Verify by table row counts on both copies before cutover, not just file
-   size: `sqlite3 <db> "select count(*) from bouncers; select count(*) from decisions; select count(*) from machines;"`.
+   size, using the same sidecar image (read-only, one mount, same
+   pinned digest as the rest of this sequence):
+   `docker run --rm --user root -v <dir>:/data:ro keinos/sqlite3@sha256:9064091a943982e2a90f095219d0d6adec03472f9042529563e3e66c9632af66 sqlite3 /data/crowdsec.db "select count(*) from bouncers; select count(*) from decisions; select count(*) from machines;"`.
    A lower count on the new copy after the backup step means something
    wrote to the old db after the backup was taken; redo the backup.
 4. Set `DATA_NODE` and `CROWDSEC_DB_PATH` in the vault and deploy. The
