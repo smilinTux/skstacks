@@ -54,20 +54,27 @@ def test_unset_or_empty_renders_byte_identical(value):
     o = {} if value is None else {"DROP_FORWARDED_HEADERS": value}
     assert _worker_text(**o) == _worker_text()
     assert _mw_text(**o) == _mw_text()
-    assert "http" not in _eps(**o)["websecure"]
+    # http.encodedCharacters is now always present (Traefik v3.7 explicit
+    # defaults, unrelated to this knob); only the drop-forwarded-headers
+    # middleware itself must still be absent.
+    assert "middlewares" not in _eps(**o)["websecure"].get("http", {})
     assert "drop-forwarded-headers" not in _mws(**o)
 
 
 def test_websecure_gets_the_entrypoint_middleware():
     eps = _eps(DROP_FORWARDED_HEADERS=["X-Forwarded-Host"], TRUSTED_PROXIES=["172.18.0.1/32"])
-    assert eps["websecure"]["http"] == {"middlewares": ["drop-forwarded-headers@file"]}
+    assert eps["websecure"]["http"]["middlewares"] == ["drop-forwarded-headers@file"]
+    assert eps["websecure"]["http"]["encodedCharacters"]["allowEncodedSlash"] is True
     assert eps["websecure"]["forwardedHeaders"] == {"trustedIPs": ["172.18.0.1/32"]}
     assert eps["websecure"]["address"] == ":443"
 
 
 def test_web_entrypoint_keeps_only_its_redirect():
     eps = _eps(DROP_FORWARDED_HEADERS=["X-Forwarded-Host"])
-    assert eps["web"]["http"] == {"redirections": {"entryPoint": {"to": "websecure", "scheme": "https", "permanent": True}}}
+    # web never carries the drop-forwarded-headers middleware (websecure
+    # only); encodedCharacters is always present alongside its own redirect.
+    assert "middlewares" not in eps["web"]["http"]
+    assert eps["web"]["http"]["redirections"] == {"entryPoint": {"to": "websecure", "scheme": "https", "permanent": True}}
 
 
 def test_middleware_removes_each_listed_header():
@@ -83,7 +90,9 @@ def test_coexists_with_responding_timeouts():
 
 def test_acme_traefik_has_no_entrypoint_middleware():
     out = _env().from_string(ACME.read_text()).render(env="prod", app="skfenceha", skfenceha={"ACME_ENABLED": False, "DROP_FORWARDED_HEADERS": ["X-Forwarded-Host"]})
-    assert "http" not in yaml.safe_load(out)["entryPoints"]["websecure"]
+    # The ACME traefik never carries the drop-forwarded-headers middleware
+    # (that is a worker-only concern); encodedCharacters is always present.
+    assert "middlewares" not in yaml.safe_load(out)["entryPoints"]["websecure"].get("http", {})
 
 
 @pytest.mark.parametrize("pb", PLAYBOOKS, ids=lambda p: p.name)
