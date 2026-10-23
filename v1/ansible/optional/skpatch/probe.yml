@@ -1,0 +1,18 @@
+# skstacks-deploy probe declaration. Format documented at the framework root, tools dir, deploy-tool docs.
+services: [dashboard]
+
+mode: swarm
+
+# linux-update-dashboard keeps its SQLite schema migrations internal to the
+# image; an older image may not read a newer schema back.
+schema_changing: true
+
+# Checked against "<base_url><path>" (base_url comes from the instance's
+# skstacks-deploy.yml: services.skpatch.base_url). Behind AUTH_MODE sso this
+# probe will see Authentik's own response, not the app directly; that is
+# expected and still proves the router and TLS are live.
+http_checks:
+  - name: app-shell
+    path: /
+    method: GET
+    expect_status: 200

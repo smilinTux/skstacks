@@ -1,0 +1,34 @@
+# Managed by SKStacks optional/skpatch (provision_skpatch_nodes.yml).
+# Do not edit by hand; rerun the playbook instead. Exact commands, absolute
+# paths, no NOPASSWD: ALL, no unbounded wildcards: the upstream
+# linux-update-dashboard project's own sudoers-setup guidance.
+#
+# Read-only commands (always present): list what is upgradable and whether
+# a reboot is pending. Neither of these actually needs root on a normal
+# Debian/Ubuntu host (dpkg's status file and /var/run/reboot-required are
+# both world-readable), but they are allowlisted anyway so a future
+# distro's equivalent (which may need root) can be swapped in here without
+# widening anything else.
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt list --upgradable
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get -s dist-upgrade
+{{ skpatch_user }} ALL=(root) NOPASSWD: /bin/cat /var/run/reboot-required
+
+{% if skp_node_allow_actions | bool %}
+# Actions (upgrade/reboot): only present when this host's
+# skpatch_allow_actions (or the instance-wide skpatch.ALLOW_ACTIONS when
+# the host sets nothing) is true. Hypervisors, the NAS and anything else
+# that must stay report-only set skpatch_allow_actions: false in their own
+# group_vars, which keeps this whole block off regardless of the
+# instance-wide knob.
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get -y upgrade
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get -y dist-upgrade
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get -y autoremove
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/sbin/reboot
+{% endif %}
+
+# Debian/Ubuntu (apt) is every host in both estates today. A non-Debian
+# target needs its own read (and, if ALLOW_ACTIONS, action) lines added
+# here by hand before provisioning it; this template does not guess at a
+# package manager it has not been asked to support. See README
+# "Provisioning and least privilege" for the dnf/pacman/apk command set
+# the upstream project documents.

@@ -1,0 +1,25 @@
+# The "set" pass: every optional knob set, fake values only.
+skpatch:
+  CLOUDFLARED: true
+  HOSTNAME: patch.example.test
+  IMAGE: "registry.example.test/linux-update-dashboard:2026.10.9@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  DATA_NODE: render-node-1
+  DATA_PATH: /var/lib/skpatch-render/data
+  PLACEMENT_CONSTRAINTS: ["node.role == worker", "node.labels.skpatch == true"]
+  TRAEFIK_MIDDLEWARES: "crowdsec-bouncer@file,default-no-error-pages@file"
+  AUTH_MODE: sso
+  SSO_MIDDLEWARE: "authentik@file"
+  TLS_OPTIONS: "none"
+  TZ: "Europe/Zurich"
+  LUDASH_LOG_LEVEL: "debug"
+  HEALTH_CHECK_INTERVAL: "15s"
+  HEALTH_CHECK_TIMEOUT: "5s"
+  HEALTH_CHECK_RETRIES: 5
+  DASHBOARD_CPUS: "1.00"
+  DASHBOARD_MEMORY_LIMIT: "768M"
+  DASHBOARD_MEMORY_RESERVATION: "128M"
+  ALLOW_ACTIONS: true
+  PROVISION_USER: "skpatch-example"
+  SSH_PUBLIC_KEY: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexampleexampleexampleexampleexampleexamplekey example@render"
+  extra_env:
+    SOME_UPSTREAM_VAR: "example-value"

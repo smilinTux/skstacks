@@ -1,0 +1,83 @@
+version: '3.8'
+
+# skpatch: linux-update-dashboard, upstream image pinned by digest (README.md).
+#   dashboard   Node app. Holds everything under /data: dashboard.db
+#               (SQLite, AES-256-GCM-encrypted SSH credentials and
+#               notification secrets) and nothing else. Exactly one
+#               replica: it is the only writer of the database file.
+{% set hc_interval = skpatch.HEALTH_CHECK_INTERVAL | default('30s', true) %}
+{% set hc_timeout = skpatch.HEALTH_CHECK_TIMEOUT | default('10s', true) %}
+{% set hc_retries = skpatch.HEALTH_CHECK_RETRIES | default(3, true) | int %}
+{% set hc_start = skpatch.HEALTH_CHECK_START_PERIOD | default('30s', true) %}
+{% set data_constraints = (skpatch.PLACEMENT_CONSTRAINTS | default(['node.role == worker'], true)) + (['node.hostname == ' + skp_data_node] if skp_data_node else []) %}
+
+networks:
+  cloud-public-{{ env }}:
+    external: true
+  skpatch-{{ env }}:
+    external: true
+
+services:
+  dashboard:
+    # Default = skp_default_image in the playbook (a test keeps them equal).
+    image: {{ skpatch.IMAGE | default('ghcr.io/theduffman85/linux-update-dashboard:2026.10.9@sha256:1fb855a4d4b5eacc0ef3a9816064184492e9d068fb4da353c62871faeeeb1543', true) }}
+    env_file:
+      - /var/data/config/skpatch-{{ env }}/skpatch.env
+    volumes:
+      - {{ skp_data_path }}:/data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3001/"]
+      interval: {{ hc_interval }}
+      timeout: {{ hc_timeout }}
+      retries: {{ hc_retries }}
+      start_period: {{ hc_start }}
+    networks:
+      - skpatch-{{ env }}
+      - cloud-public-{{ env }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: {{ data_constraints | tojson }}
+      resources:
+        limits:
+          cpus: '{{ skpatch.DASHBOARD_CPUS | default("0.50", true) }}'
+          memory: {{ skpatch.DASHBOARD_MEMORY_LIMIT | default("384M", true) }}
+        reservations:
+          memory: {{ skpatch.DASHBOARD_MEMORY_RESERVATION | default("64M", true) }}
+      # stop-first (the default): two dashboard tasks on one data dir would
+      # each keep their own copy of the SQLite database open.
+      update_config:
+        order: stop-first
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skpatch"
+        - "com.skt.env={{ env }}"
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.routers.{{ skp_router }}.rule=Host(`{{ skp_host }}`)"
+        - "traefik.http.routers.{{ skp_router }}.entrypoints=websecure"
+        - "traefik.http.routers.{{ skp_router }}.tls=true"
+        - "traefik.http.routers.{{ skp_router }}.tls.certresolver=main"
+{% if skp_tls_options != 'none' %}
+        - "traefik.http.routers.{{ skp_router }}.tls.options={{ skp_tls_options }}"
+{% endif %}
+{% if skp_auth_mode == 'sso' %}
+        # AUTH_MODE sso: forward auth guards the WHOLE router, no path is
+        # carved out. Bind the Authentik application to the admin group.
+        - "traefik.http.routers.{{ skp_router }}.middlewares={{ skp_middlewares }},{{ skp_sso_middleware }}"
+{% else %}
+        - "traefik.http.routers.{{ skp_router }}.middlewares={{ skp_middlewares }}"
+{% endif %}
+        - "traefik.http.routers.{{ skp_router }}.service={{ skp_router }}"
+        - "traefik.http.services.{{ skp_router }}.loadbalancer.server.port=3001"
+        - "traefik.http.services.{{ skp_router }}.loadbalancer.healthcheck.path=/"
+        - "traefik.http.services.{{ skp_router }}.loadbalancer.healthcheck.interval=30s"
+        - "traefik.http.services.{{ skp_router }}.loadbalancer.healthcheck.timeout=10s"

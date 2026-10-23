@@ -1,0 +1,6 @@
+# Public, obviously fake example vault for the real-Ansible render gate
+# (v1/tests/render/render_playbooks.py). example.test only; no real secrets.
+skpatch:
+  CLUSTERNAME: render
+  DOMAIN: example.test
+  LUDASH_ENCRYPTION_KEY: "example-ludash-key-not-a-secret-0123456789AB"

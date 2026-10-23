@@ -1,0 +1,149 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# provision_skpatch_nodes: the low-privilege account skpatch's SSH key is
+# authorized to use on a target node. This is NOT a swarm deploy: it runs
+# against whatever inventory group holds the nodes an instance's skpatch
+# dashboard should be able to reach (the manager/worker swarm, the
+# hypervisors, the control node, anything else), one estate at a time.
+#
+# Idempotent and reversible: rerun with the same vars to converge, or with
+# skpatch_provision_state=absent to remove the account, its key and its sudoers rule
+# from every targeted host. Never touches an existing admin account or key
+# (holouser*, skuser*, ansible, root, ...): this always creates its own.
+#
+# Per-host privilege ceiling: a host whose group_vars sets
+# `skpatch_allow_actions: false` NEVER gets the upgrade/reboot sudoers
+# lines, even when the vault's global skpatch.ALLOW_ACTIONS is true. Put
+# that on every hypervisor, NAS and anything else that must stay
+# report-only regardless of the instance-wide knob (see README
+# "Provisioning and least privilege").
+#
+# Usage:
+#   ansible-playbook -i envs/prod/inventory.ini \
+#     framework/v1/ansible/optional/skpatch/provision_skpatch_nodes.yml \
+#     -l <estate-inventory-group> \
+#     --vault-password-file ~/.vault_pass_env/.<instance>_prod_vault_pass
+#   # remove everywhere this played against:
+#   ansible-playbook ... -e skpatch_provision_state=absent
+- hosts: "{{ skpatch_provision_hosts | default('all') }}"
+  become: true
+  vars:
+    app: skpatch
+    env: "{{ skpatch_provision_env | default('prod') }}"
+    service_name: skpatch
+    service_type: optional
+    # skpatch_provision_state (not skpatch_state) is the external override:
+    # a play var cannot default from itself (Ansible template recursion),
+    # so the knob an operator sets on the command line is a different name
+    # from the derived fact every task below reads.
+    skpatch_state: "{{ skpatch_provision_state | default('present') }}"
+    skpatch_user: "{{ skpatch.PROVISION_USER | default('skpatch-ro', true) }}"
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Fail loudly when the SSH public key is missing (state=present)
+      # One keypair per estate, generated fresh for this purpose, private
+      # half kept only in that estate's vault/secret store. Never the
+      # ansible/holouser*/skuser*/root key this instance already uses.
+      assert:
+        that:
+          - skpatch is defined and skpatch is mapping
+          - skpatch.SSH_PUBLIC_KEY | default('', true) | string | length > 0
+          - skpatch.SSH_PUBLIC_KEY is match('^(ssh-ed25519|ssh-rsa|ecdsa-sha2-[a-z0-9-]+|sk-ssh-ed25519@openssh\\.com) ')
+        fail_msg: >-
+          ERROR: skpatch.SSH_PUBLIC_KEY is required (the PUBLIC half of a
+          keypair generated just for this estate's skpatch instance, e.g.
+          `ssh-keygen -t ed25519 -f skpatch_<estate>_ed25519 -C skpatch@<estate>`)
+          and must look like an OpenSSH public key line. See README.md
+          "Provisioning and least privilege".
+        quiet: true
+      when: skpatch_state == 'present'
+      tags: [config]
+
+    - name: Resolve the per-host actions ceiling
+      # A host's own group_vars (skpatch_allow_actions: false) always wins
+      # over the instance-wide knob: hypervisors, the NAS, anything else
+      # that must never run upgrade/reboot stay report-only no matter what
+      # skpatch.ALLOW_ACTIONS says.
+      set_fact:
+        skp_node_allow_actions: "{{ (skpatch_allow_actions if skpatch_allow_actions is defined else (skpatch.ALLOW_ACTIONS | default(false))) | bool }}"
+      tags: [config]
+
+  tasks:
+    - name: Report the posture for this host
+      debug:
+        msg: >-
+          {{ inventory_hostname }}: skpatch account {{ skpatch_state }},
+          actions {{ 'ALLOWED (upgrade/reboot sudoers lines will be written)' if (skpatch_state == 'present' and skp_node_allow_actions | bool) else 'report-only' }}.
+
+    - name: Create the skpatch group
+      group:
+        name: "{{ skpatch_user }}"
+        state: "{{ 'present' if skpatch_state == 'present' else 'absent' }}"
+
+    - name: Create the skpatch account (present)
+      user:
+        name: "{{ skpatch_user }}"
+        group: "{{ skpatch_user }}"
+        shell: /bin/bash
+        comment: "skpatch low-privilege update-reporting account (framework-managed, see optional/skpatch)"
+        create_home: true
+        system: true
+        state: present
+      when: skpatch_state == 'present'
+
+    - name: Install the authorized key (present)
+      authorized_key:
+        user: "{{ skpatch_user }}"
+        key: "{{ skpatch.SSH_PUBLIC_KEY }}"
+        exclusive: true
+        state: present
+      when: skpatch_state == 'present'
+
+    - name: Write the sudoers rule (present)
+      template:
+        src: "{{ playbook_dir }}/src/skpatch/skpatch.sudoers.j2"
+        dest: "/etc/sudoers.d/skpatch"
+        owner: root
+        group: root
+        mode: '0440'
+        validate: 'visudo -cf %s'
+      when: skpatch_state == 'present'
+
+    - name: Remove the sudoers rule (absent)
+      file:
+        path: /etc/sudoers.d/skpatch
+        state: absent
+      when: skpatch_state == 'absent'
+
+    - name: Remove the account and its home, key included (absent)
+      user:
+        name: "{{ skpatch_user }}"
+        state: absent
+        remove: true
+      when: skpatch_state == 'absent'
+
+    - name: Remove the group (absent)
+      group:
+        name: "{{ skpatch_user }}"
+        state: absent
+      when: skpatch_state == 'absent'
