@@ -36,8 +36,8 @@ tag yet.
 
 | Service | Tier | What it is | Upstream (pinned) | Depends on | Exposes | Storage under `/var/data` | Required vault vars | Notable opt-in flags | First released |
 |---|---|---|---|---|---|---|---|---|---|
-| [skfence](#skfence) | core | Single-node Traefik edge (reverse proxy/TLS) | Traefik `v3.6.2` | none | `:80`/`:443`, `:8082` ping, dashboard | `runtime/skfence-<env>/{acme,certs}`, `config/skfence-<env>` | `CLOUDFLARE_EMAIL`+token (if ACME on) | `ACME_ENABLED` (false) | pending |
-| [skfenceha](#skfenceha) | core | HA multi-manager Traefik edge | Traefik `v3.6.2` | none (alt. to skfence) | `:80`/`:443`/`:222`(ssh)/`:8082`, ACME host `:8080` | `runtime/skfenceha-<env>/{acme,certs}` | `CLOUDFLARE_EMAIL`+token (if ACME on) | `CROWDSEC_ENABLED` (false), `RATE_LIMIT_ENABLED` (true) | v2.19.0 |
+| [skfence](#skfence) | core | Single-node Traefik edge (reverse proxy/TLS) | Traefik `v3.7.16` | none | `:80`/`:443`, `:8082` ping, dashboard | `runtime/skfence-<env>/{acme,certs}`, `config/skfence-<env>` | `CLOUDFLARE_EMAIL`+token (if ACME on) | `ACME_ENABLED` (false) | pending |
+| [skfenceha](#skfenceha) | core | HA multi-manager Traefik edge | Traefik `v3.7.16` | none (alt. to skfence) | `:80`/`:443`/`:222`(ssh)/`:8082`, ACME host `:8080` | `runtime/skfenceha-<env>/{acme,certs}` | `CLOUDFLARE_EMAIL`+token (if ACME on) | `CROWDSEC_ENABLED` (false), `RATE_LIMIT_ENABLED` (true) | v2.19.0 |
 | [skha](#skha) | core | Keepalived VRRP floating VIP | keepalived (apt, unpinned) | none | VIP only, no container ports | none (host config) | `vip`, `auth_pass` | `health_checks` list | pending |
 | [sksec](#sksec) | core | CrowdSec agent + Traefik bouncer | crowdsec `v1.6.11` + bouncer `0.5.0` | skfence or skfenceha | forwardAuth middleware only, no public router | `config/sksec-<env>/` | `CROWDSEC_AGENT_HOST`, `COLLECTIONS` | `TRAEFIK_HA_MODE` (false) | v2.19.0 |
 | [skboard](#skboard) | optional | Vikunja task board (sqlite) | Vikunja `0.24.6` | none | `skboard[-env].<cluster>.<domain>` | `skboard-<env>/data` | `JWT_SECRET`, `CLUSTERNAME`, `DOMAIN` | mailer (off) | v2.19.0 |
