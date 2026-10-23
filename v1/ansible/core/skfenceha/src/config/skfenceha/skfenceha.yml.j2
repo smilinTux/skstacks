@@ -19,7 +19,7 @@ services:
   # ACME master: certificate renewal only. Exactly one replica, pinned to
   # the labeled node, so only one instance ever performs the ACME challenge.
   traefik-acme:
-    image: traefik:v3.6.2
+    image: {{ skfenceha.TRAEFIK_IMAGE | default('traefik:v3.7.16@sha256:abb2b9c1b132b5b0be40d09c85bf8d3dab2a59fa0eb3aa955ab8be5efbb73de6', true) }}
     entrypoint: /entrypoint.sh
     environment:
       - NODE_HOSTNAME={{ '{{.Node.Hostname}}' }}
@@ -84,7 +84,7 @@ services:
   # Worker: handles all routing. Global mode so every manager node runs one;
   # host-mode ports preserve the real client source IP.
   traefik-worker:
-    image: traefik:v3.6.2
+    image: {{ skfenceha.TRAEFIK_IMAGE | default('traefik:v3.7.16@sha256:abb2b9c1b132b5b0be40d09c85bf8d3dab2a59fa0eb3aa955ab8be5efbb73de6', true) }}
     entrypoint: /entrypoint.sh
     environment:
       - TRAEFIK_WORKER_MODE=true

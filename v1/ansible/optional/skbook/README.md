@@ -90,6 +90,15 @@ skbook:
   sticky_samesite: ""                # e.g. "strict"
 ```
 
+**PHP2Shell (CVE-2026-109618, CVE-2026-109619), checked 2026-10-21:** PHP
+shipped fixes the same day in 8.5.12, 8.4.27, 8.3.36 and 8.2.35. Verified
+live (`docker run --rm --entrypoint sh <image> -c "php -v"`, not the tag
+name): the framework default `lscr.io/linuxserver/bookstack:v26.09-ls285`
+bundles PHP 8.5.10 (unpatched), and even `lscr.io/linuxserver/bookstack:latest`
+only has PHP 8.5.11 as of this check -- no PHP 8.5.12+ build exists yet
+anywhere for this image, so the default is left unchanged. Revisit once
+linuxserver.io rebuilds with a patched PHP.
+
 ## Deployment
 
 ```bash

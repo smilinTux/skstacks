@@ -20,7 +20,7 @@ version: '3.9'
 services:
 
   traefik:
-    image: traefik:v3.6.2
+    image: {{ skfence.TRAEFIK_IMAGE | default('traefik:v3.7.16@sha256:abb2b9c1b132b5b0be40d09c85bf8d3dab2a59fa0eb3aa955ab8be5efbb73de6', true) }}
     user: "0:986"  # root user with the docker group (gid varies per host)
     env_file:
       - /var/data/config/skfence-{{ env }}/skfence.env

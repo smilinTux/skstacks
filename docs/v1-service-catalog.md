@@ -36,8 +36,8 @@ tag yet.
 
 | Service | Tier | What it is | Upstream (pinned) | Depends on | Exposes | Storage under `/var/data` | Required vault vars | Notable opt-in flags | First released |
 |---|---|---|---|---|---|---|---|---|---|
-| [skfence](#skfence) | core | Single-node Traefik edge (reverse proxy/TLS) | Traefik `v3.6.2` | none | `:80`/`:443`, `:8082` ping, dashboard | `runtime/skfence-<env>/{acme,certs}`, `config/skfence-<env>` | `CLOUDFLARE_EMAIL`+token (if ACME on) | `ACME_ENABLED` (false) | pending |
-| [skfenceha](#skfenceha) | core | HA multi-manager Traefik edge | Traefik `v3.6.2` | none (alt. to skfence) | `:80`/`:443`/`:222`(ssh)/`:8082`, ACME host `:8080` | `runtime/skfenceha-<env>/{acme,certs}` | `CLOUDFLARE_EMAIL`+token (if ACME on) | `CROWDSEC_ENABLED` (false), `RATE_LIMIT_ENABLED` (true) | v2.19.0 |
+| [skfence](#skfence) | core | Single-node Traefik edge (reverse proxy/TLS) | Traefik `v3.7.16` | none | `:80`/`:443`, `:8082` ping, dashboard | `runtime/skfence-<env>/{acme,certs}`, `config/skfence-<env>` | `CLOUDFLARE_EMAIL`+token (if ACME on) | `ACME_ENABLED` (false) | pending |
+| [skfenceha](#skfenceha) | core | HA multi-manager Traefik edge | Traefik `v3.7.16` | none (alt. to skfence) | `:80`/`:443`/`:222`(ssh)/`:8082`, ACME host `:8080` | `runtime/skfenceha-<env>/{acme,certs}` | `CLOUDFLARE_EMAIL`+token (if ACME on) | `CROWDSEC_ENABLED` (false), `RATE_LIMIT_ENABLED` (true) | v2.19.0 |
 | [skha](#skha) | core | Keepalived VRRP floating VIP | keepalived (apt, unpinned) | none | VIP only, no container ports | none (host config) | `vip`, `auth_pass` | `health_checks` list | pending |
 | [sksec](#sksec) | core | CrowdSec agent + Traefik bouncer | crowdsec `v1.6.11` + bouncer `0.5.0` | skfence or skfenceha | forwardAuth middleware only, no public router | `config/sksec-<env>/` | `CROWDSEC_AGENT_HOST`, `COLLECTIONS` | `TRAEFIK_HA_MODE` (false) | v2.19.0 |
 | [skboard](#skboard) | optional | Vikunja task board (sqlite) | Vikunja `0.24.6` | none | `skboard[-env].<cluster>.<domain>` | `skboard-<env>/data` | `JWT_SECRET`, `CLUSTERNAME`, `DOMAIN` | mailer (off) | v2.19.0 |
@@ -61,7 +61,7 @@ tag yet.
 | [skpdf](#skpdf) | optional | Stirling-PDF toolkit | Stirling-PDF `2.14.3` | none | `skpdf[-env].<cluster>.<domain>` | `skpdf-<env>/{trainingData,customFiles}` | `CLUSTERNAME`, `DOMAIN`; `SECURITY_INITIAL_PASSWORD` if login on | `SECURITY_ENABLELOGIN` (false) | v2.13.0 |
 | [skpeek](#skpeek) | optional | SearXNG metasearch engine | SearXNG (digest-pinned) + Valkey `8-alpine` | none | `skpeek[-env].<cluster>.<domain>` | `skpeek-<env>/etc` | `SECRET_KEY` | none notable | v2.16.0 |
 | [skport](#skport) | optional | Portainer CE (Swarm web UI) | Portainer CE `2.45.1` | skfence or skfenceha (socket-proxy) | `skport[-env].<cluster>.<domain>` | `skport-<env>/data` | `CLUSTERNAME`, `DOMAIN` | none (no baked admin password) | v2.19.0 |
-| [skpulse](#skpulse) | optional | Uptime Kuma status monitoring | Uptime Kuma `2.5.5` | none | `skpulse[-env].<cluster>.<domain>` | `skpulse-<env>/uptime-kuma` | `CLUSTERNAME`, `DOMAIN` | manual `discover-traefik-frontends.sh` helper | v2.16.0 |
+| [skpulse](#skpulse) | optional | Uptime Kuma status monitoring | Uptime Kuma `2.5.5` | sksso (Authentik forward auth, `AUTH_MODE: sso`, the default) | `skpulse[-env].<cluster>.<domain>` | `skpulse-<env>/uptime-kuma` | `CLUSTERNAME`, `DOMAIN` | `AUTH_MODE` (sso/local), `SSO_MIDDLEWARE`, `METRICS_BYPASS_SSO`, manual `discover-traefik-frontends.sh` helper | v2.16.0 (AUTH_MODE: v2.26.11) |
 | [skreg](#skreg) | optional | Docker Registry v2 | `registry:2` (floating) | none | `:5000` (no Traefik/TLS) | `skreg-<env>/data` | `vault_skreg_registry_http_secret` | none | v2.14.0 |
 | [skseek](#skseek) | optional | Perplexica AI search UI | Perplexica (digest-pinned) | **skpeek** (must be deployed first, same env) | `skseek[-env].<cluster>.<domain>` | `skseek-<env>/data` | none framework-required (model keys all opt-in) | model provider keys (all off) | v2.19.0 |
 | [sksso](#sksso) | optional | Authentik OIDC identity provider | Authentik `2024.4.2` | none | `sso[-env].<cluster or bare>.<domain>` | `sksso-<env>/media`, `runtime/sksso-<env>/postgres` | `postgres_user/_password`, `authentik_secret_key`, `CLUSTERNAME`, `DOMAIN` | `csrf_extra_origins` ([]) | pending |
@@ -940,7 +940,8 @@ playbook; it must always be passed explicitly.
 
 Uptime Kuma status monitoring.
 
-**Prerequisites**: none.
+**Prerequisites**: none (an Authentik app for `AUTH_MODE: sso`, the
+default; see the role README "Authentik setup").
 
 **Minimal vault snippet**:
 
@@ -949,6 +950,15 @@ skpulse:
   CLUSTERNAME: "<cluster>"
   DOMAIN: "example.com"
 ```
+
+**Sign-in (v2.26.11+)**: `AUTH_MODE: sso` (default) puts Authentik forward
+auth on the dashboard/login/`/socket.io/` router only; push monitors
+(`/api/push/`), public status pages (`/status`, `/api/status-page/`) and
+badges (`/api/badge/`) always render on a separate router that never
+carries SSO. `AUTH_MODE: local` is Kuma's own login only. See the role
+README "Sign-in, SSO and the first admin" for the full knob list
+(`SSO_MIDDLEWARE`, `BYPASS_TRAEFIK_MIDDLEWARES`, `METRICS_BYPASS_SSO`,
+`METRICS_TRAEFIK_MIDDLEWARES`).
 
 **Deploy**: `deploy_skpulse-<env>.yml`, standard invocation.
 

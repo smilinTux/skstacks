@@ -36,6 +36,15 @@ service is global). A deploy that changes it restarts each worker in turn
 (host-mode ports, so expect a brief connection reset per node); a live
 `docker service update --limit-cpu` does the same.
 
+**Traefik image (`TRAEFIK_IMAGE`)**: `skfenceha.TRAEFIK_IMAGE` pins the
+image for both `traefik-acme` and `traefik-worker` (they move together;
+default `traefik:v3.7.16@sha256:...`). A separate `skfence.TRAEFIK_IMAGE`
+pins skfence's own single `traefik` service -- the two are different vault
+keys under different top-level dicts, not one shared knob, since an
+instance can run only one of skfence or skfenceha at a time but the
+framework default for each is tracked independently. Pin a digest to stage
+a tactical version ahead of or instead of a full framework release.
+
 **Instance-owned dynamic files (`EXTRA_DYNAMIC_FILES`)**: the playbooks render
 a fixed set of Traefik dynamic files (`routers.yml`, `services.yml`,
 `middlewares.yml`, `tls.yml`). An instance that needs routes of its own (for
