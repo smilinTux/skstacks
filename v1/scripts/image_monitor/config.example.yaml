@@ -1,0 +1,69 @@
+# Fleet image monitor configuration TEMPLATE. Copy this somewhere outside
+# the repo (e.g. ~/.skcapstone/image-monitor/config.yaml on your control
+# node) and fill in your own hosts; never commit the filled-in version. This
+# file intentionally has no real hostnames in it: cluster topology is
+# operational data, not framework code.
+#
+# Each cluster lists its Swarm manager(s) to run `docker service ls` /
+# `docker service ps` against, and an optional "jump" host to ssh through
+# first (the manager itself may only be reachable from that jump host). All
+# ssh calls use the invoking user's own key/agent (no password, no vault
+# read); `sudo docker` is run on the remote end because that's how these
+# fleets are set up.
+
+clusters:
+  cluster-a:
+    manager_hosts: ["mgr-a1.example", "mgr-a2.example", "mgr-a3.example"]
+    jump: null              # set this if mgr-a1 is only reachable through another host
+    docker_cmd: "sudo docker"
+  cluster-b:
+    manager_hosts: ["mgr-b1.example", "mgr-b2.example", "mgr-b3.example"]
+    jump: "jumphost.example"   # e.g. cluster-b is only reachable through this host
+    ssh_user: "deploy"
+    ssh_identity: "~/.ssh/deploy_key"
+    docker_cmd: "sudo docker"
+
+# Runtime security floor table (see floors.yaml for the table itself and how
+# to extend it).
+floors_file: "floors.yaml"
+
+# Vulnerability register (see vulns.yml and check_fleet_vulns.py). The
+# rendered outputs go outside the repo, same reasoning as state_file/
+# cache_file below: they necessarily carry real cluster/service/version data.
+vulns_file: "vulns.yml"
+register_html: "~/.skcapstone/image-monitor/vuln-register.html"
+register_json: "~/.skcapstone/image-monitor/vuln-register.json"
+
+# Where state (last-seen digests) and the upstream-lookup cache live. Kept out
+# of the repo; absolute so a systemd unit with no shell env still finds them.
+state_file: "~/.skcapstone/image-monitor/state.json"
+cache_file: "~/.skcapstone/image-monitor/registry_cache.json"
+cache_ttl_hours: 20
+
+# Registry lookup behaviour.
+registry:
+  max_retries: 4
+  backoff_base_seconds: 5
+  request_timeout_seconds: 15
+
+# Talk notification routing. Reuses the rooms and the f/ops/notify script
+# wired up in skstacks PR #215 ("NAM Urgent and NAM Admin Talk rooms, notify
+# room arg, alert policy"). No new room or alert path is introduced here;
+# set these to whatever two rooms your own ALERT-POLICY.md already defines
+# for "needs action now" vs. "operational, no action needed".
+notify:
+  digest_room: "Ops Admin"
+  urgent_room: "Ops Urgent"
+  # Windmill workspace that owns f/ops/notify (see
+  # v1/scripts/windmill-ops/notify.py).
+  workspace: "fwe"
+  # Credentials (base URL + API token) are read from this file, which is not
+  # part of the repo and does not exist until an operator provisions it. See
+  # v1/scripts/image_monitor/README.md "Config".
+  credentials_file: "~/.skcapstone/secrets/image-monitor-notify.env"
+
+# Unified GTD capture (skos.gtd_ingest.upsert). source is fixed at
+# "image-monitor"; source_ref is built per-finding as
+# "<cluster>/<service>/<image>".
+gtd:
+  context: "@fleet"

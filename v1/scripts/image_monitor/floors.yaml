@@ -1,0 +1,30 @@
+# Runtime security floor table for the fleet image monitor.
+#
+# Each top-level key is a runtime name. "images" lists substrings matched
+# against the image repository (case-insensitive, "in" check, not a glob) to
+# decide which running services get probed for this runtime. "probe" is the
+# argv run inside the container (via `docker exec`); "parse" is a regex with
+# one capture group pulled from its combined stdout+stderr. "min_versions" maps
+# a "major.minor" line to the minimum acceptable patch level: a probed version
+# below its line's patch floor is flagged, a major.minor with no line at all is
+# reported as "no floor configured" (informational, not a failure) so a new
+# release line doesn't silently pass.
+#
+# Seeded 2026-10-21 after the PHP2Shell RCE (CVE-2026-109618/109619): PHP fixed
+# in 8.5.12 / 8.4.27 / 8.3.36 / 8.2.35.
+#
+# To add a runtime (say OpenSSL on nextcloud), add a block with the same
+# shape; no code change is needed, php_floor.py reads this generically.
+
+php:
+  images:
+    - "nextcloud"
+    - "linuxserver/bookstack"
+    - "windmill-labs/windmill"
+  probe: ["php", "-r", "echo PHP_VERSION;"]
+  parse: '(\d+\.\d+\.\d+)'
+  min_versions:
+    "8.5": 12
+    "8.4": 27
+    "8.3": 36
+    "8.2": 35
