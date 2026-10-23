@@ -15,6 +15,7 @@ skfence:
   ACME_ENABLED: false            # true for real Let's Encrypt certs
   # CLOUDFLARE_EMAIL: "changeme@example.com"   # required only if ACME_ENABLED: true
   # CLUSTERNAME / DOMAIN fall back to the inventory's own cluster_name/domain
+  # TRAEFIK_IMAGE: ""             # default traefik:v3.7.16@sha256:... (pin a digest here to override)
 ```
 
 **Deploy**:
