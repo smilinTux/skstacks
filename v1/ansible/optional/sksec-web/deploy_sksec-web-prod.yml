@@ -1,0 +1,309 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# sksec-web: crowdsec-web-ui (upstream github.com/TheDuffman85/crowdsec-web-ui,
+# AGPL-3.0) behind skfenceha, a browser dashboard for this cluster's existing
+# core/sksec CrowdSec LAPI. One upstream image, digest-pinned: `app` (one
+# replica, SQLite under /app/data for its own session/auth state and a
+# local alert cache; CrowdSec's LAPI remains the source of truth). Deploy
+# core/sksec first: this role attaches to its sksec-<env> network and
+# registers its own CrowdSec machine credential against that LAPI. It is
+# admin-grade (the credential can read, and potentially delete, every
+# decision): AUTH_MODE defaults to sso (Authentik forward auth) and
+# decisions default to read-only. See README.md.
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+# Step 1: Select manager node with failover
+# Run on all hosts to ensure it executes even with -l limit
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+# Step 2: Deploy to selected manager
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: sksec-web
+    env: prod
+    service_name: sksec-web
+    service_type: optional
+    # crowdsec-web-ui 2026.10.10 (upstream release image, pinned by the
+    # manifest-list digest). The compose template writes the same literal
+    # so v1/scripts/list_images.py sees the pin; test_sksec_web_render.py
+    # keeps the two equal.
+    sksw_default_image: "ghcr.io/theduffman85/crowdsec-web-ui:2026.10.10@sha256:f57568d27b2c7798155a638b9cb76302777a9dcf43d8026f344c17767589d694"
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Fail loudly when the sksec_web vault block or its LAPI_PASSWORD is missing
+      # LAPI_PASSWORD is the CrowdSec machine credential this role registers
+      # (README "Machine registration"): it can read every alert and
+      # decision in the cluster's CrowdSec. The vault is the source of
+      # truth (this role never auto-generates it), so a missing or short
+      # value fails loudly rather than deploying with no real credential.
+      assert:
+        that:
+          - sksec_web is defined and sksec_web is mapping
+          - sksec_web.LAPI_PASSWORD | default('', true) | string | length >= 24
+        fail_msg: >-
+          ERROR: sksec_web.LAPI_PASSWORD is required (a random string of at
+          least 24 characters, e.g. `openssl rand -base64 32`) in the
+          sksec_web vault block. See README.md "Configuration (vault)".
+        quiet: true
+      tags: [config]
+
+    - name: Resolve the sksec-web settings
+      set_fact:
+        sksw_image: "{{ sksec_web.CROWDSEC_WEB_UI_IMAGE | default(sksw_default_image, true) }}"
+        sksw_data_path: "{{ sksec_web.DATA_PATH | default('/var/data/' + app + '-' + env + '/data', true) }}"
+        sksw_data_node: "{{ sksec_web.DATA_NODE | default('', true) | string }}"
+        sksw_crowdsec_service: "{{ sksec_web.CROWDSEC_SERVICE | default('sksec-' + env + '_crowdsec', true) }}"
+        sksw_lapi_url: "{{ sksec_web.LAPI_URL | default('http://sksec-' + env + '_crowdsec:8080', true) }}"
+        # default-no-error-pages@file: skfenceha's error-pages middleware
+        # would replace the dashboard's own JSON API error bodies with an
+        # HTML page.
+        sksw_middlewares: "{{ sksec_web.TRAEFIK_MIDDLEWARES | default('default-no-error-pages@file', true) }}"
+        # AUTH_MODE sso (default): Authentik forward auth (SSO_MIDDLEWARE,
+        # default authentik@file) in front of the whole app, application
+        # bound to the admin group only (README "Why this is admin-grade").
+        # local: the dashboard's own accounts only, refused unless
+        # ALLOW_LOCAL_PUBLIC_RISK is also set.
+        sksw_auth_mode: "{{ sksec_web.AUTH_MODE | default('sso', true) | string | lower }}"
+        sksw_sso_middleware: "{{ (sksec_web.SSO_MIDDLEWARE | default('', true) | string) if (sksec_web.AUTH_MODE | default('sso', true) | string | lower) != 'sso' else (sksec_web.SSO_MIDDLEWARE | default('authentik@file', true) | string) }}"
+        sksw_tls_options: "{{ sksec_web.TLS_OPTIONS | default('intermediate@file', true) }}"
+        sksw_router: "sksec-web{{ '' if env == 'prod' else '-' + env }}"
+      tags: [config]
+
+    - name: Resolve the base domain and the public host
+      set_fact:
+        sksw_base_domain: "{{ sksec_web.DOMAIN | default(domain) if sksec_web.CLOUDFLARED | default(false) | bool else (sksec_web.CLUSTERNAME | default(cluster_name)) ~ '.' ~ (sksec_web.DOMAIN | default(domain)) }}"
+      tags: [config]
+
+    - name: Resolve the public host
+      set_fact:
+        sksw_host: "{{ sksec_web.HOSTNAME | default('sksec-web' + ('' if env == 'prod' else '-' + env) + '.' + sksw_base_domain, true) }}"
+      tags: [config]
+
+    - name: Validate the image pin and the public host
+      assert:
+        that:
+          - "'@sha256:' in sksw_image"
+          - sksw_host is match('^[A-Za-z0-9][A-Za-z0-9.-]*$')
+        fail_msg: >-
+          ERROR: sksec_web.CROWDSEC_WEB_UI_IMAGE must be pinned by digest
+          (@sha256:) and HOSTNAME must be a plain host name.
+          CROWDSEC_WEB_UI_IMAGE is {{ sksw_image }}, host is {{ sksw_host }}.
+        quiet: true
+      tags: [config]
+
+    - name: Fail loudly on an unknown AUTH_MODE
+      assert:
+        that:
+          - sksw_auth_mode in ['sso', 'local']
+        fail_msg: >-
+          ERROR: sksec_web.AUTH_MODE must be 'sso' or 'local' (it is
+          '{{ sksw_auth_mode }}'). See README.md "Sign-in and SSO".
+        quiet: true
+      tags: [config]
+
+    - name: Refuse AUTH_MODE local without the explicit public-risk flag
+      # This is an admin-grade CrowdSec console with a machine credential
+      # that can read, and potentially delete, every decision. Running it
+      # with no forward auth in front must never be an accident.
+      assert:
+        that:
+          - sksw_auth_mode != 'local' or (sksec_web.ALLOW_LOCAL_PUBLIC_RISK | default(false) | bool)
+        fail_msg: >-
+          ERROR: sksec_web.AUTH_MODE: local removes Authentik forward auth
+          from an admin-grade CrowdSec console. Set
+          sksec_web.ALLOW_LOCAL_PUBLIC_RISK: true to confirm this is
+          intended, or use AUTH_MODE: sso (default). See README.md
+          "Sign-in and SSO".
+        quiet: true
+      tags: [config]
+
+    - name: Collect contradictory sign-in settings
+      # Only key NAMES and middleware names are collected, never a value
+      # from the secret side of the vault.
+      set_fact:
+        sksw_auth_conflicts: >-
+          {{ (["AUTH_MODE is 'local' (no SSO) but SSO_MIDDLEWARE is set"] if (sksw_auth_mode == 'local' and sksw_sso_middleware | length > 0) else [])
+             + (['TRAEFIK_MIDDLEWARES carries forward auth (' ~ sksw_middlewares ~ '): with AUTH_MODE local it is SSO under another name; use AUTH_MODE sso (SSO_MIDDLEWARE) instead']
+                if ('authentik' in sksw_middlewares | lower) or (sksw_sso_middleware | length > 0 and sksw_sso_middleware in sksw_middlewares.split(',')) else []) }}
+      tags: [config]
+
+    - name: Refuse contradictory sign-in settings
+      assert:
+        that:
+          - sksw_auth_conflicts | length == 0
+        fail_msg: >-
+          ERROR: the sksec_web vault block contradicts itself: {{ sksw_auth_conflicts | join('; ') }}.
+          See README.md "Sign-in and SSO".
+        quiet: true
+      tags: [config]
+
+    - name: Fail closed on a local data path without a pinned data node
+      # A path outside /var/data is local disk on one node: without
+      # DATA_NODE swarm may reschedule app elsewhere onto an empty
+      # directory. Same rule as sksso/skhub/skpayment/skgym/skhome.
+      assert:
+        that:
+          - (sksw_data_node | length > 0) or (sksw_data_path.startswith('/var/data/'))
+        fail_msg: >-
+          sksec_web.DATA_PATH points at local disk ({{ sksw_data_path }}) but
+          sksec_web.DATA_NODE is empty. Set DATA_NODE to the node holding
+          the data.
+        quiet: true
+      tags: [config]
+
+    - name: Define network variables from vault (idempotent network creation)
+      # sksec-prod/cloud-public-prod already exist (created by core/sksec):
+      # this role attaches to them and allocates no new subnet of its own.
+      set_fact:
+        app_networks: "{{ sksec_web_prod_networks | default([
+          { 'name': 'sksec-prod', 'subnet': '172.16.242.0/24', 'driver': 'overlay', 'attachable': true },
+          { 'name': 'cloud-public-prod', 'subnet': '172.16.200.0/24', 'driver': 'overlay', 'attachable': true }
+        ]) }}"
+      tags: [networks, config]
+
+  tasks:
+    - name: Deploying {{ app }}
+      debug:
+        msg: Running SKStacks deploy {{ app }} scripts...
+
+    - name: Create the {{ app }} directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - /var/data/{{ app }}-{{ env }}
+        - /var/data/{{ app }}-{{ env }}/bin
+        - /var/data/config/{{ app }}-{{ env }}
+
+    - name: Create the {{ app }} data directory on shared storage (not recursive, root only)
+      file:
+        path: "{{ sksw_data_path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+      when: sksw_data_path.startswith('/var/data/')
+
+    - name: Create the {{ app }} local data directory on the data node (not recursive, root only)
+      file:
+        path: "{{ sksw_data_path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+      when: not sksw_data_path.startswith('/var/data/')
+      delegate_to: "{{ sksec_web.DATA_NODE | default(inventory_hostname, true) }}"
+
+    - name: Process {{ app }} app env (root only)
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.env.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env"
+        owner: root
+        group: root
+        mode: '0600'
+      register: sksw_env
+      tags: [templates]
+
+    - name: Process {{ app }} shell env
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.sh.env.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env"
+        owner: root
+        group: root
+        mode: '0640'
+      tags: [templates]
+
+    - name: Process {{ app }} Docker Compose template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags: [compose]
+
+    - name: Create docker-compose.yml symlink
+      file:
+        src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags: [compose]
+
+    - name: Process deploy script template
+      template:
+        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/deploy"
+        owner: root
+        group: root
+        mode: '0755'
+      tags: [deploy-script]
+
+    - name: Create {{ app }} control script symlink
+      file:
+        src: "/var/data/{{ app }}-{{ env }}/deploy"
+        dest: "/var/data/deploy_{{ app }}-{{ env }}"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags: [deploy-script]
+
+    - name: Ensure overlay networks exist from app_networks variable
+      include_tasks: ../../shared/tasks/create_networks.yml
+      tags: [networks]
+
+    - name: Deploy {{ app }} stack
+      shell: |
+        cd /var/data/{{ app }}-{{ env }}
+        RESTART_APP={{ '1' if (sksw_env is changed) else '0' }} ./deploy
+      register: deploy_output
+      tags: [deploy]
+
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags: [deploy]
+
+    # Register this role's own CrowdSec machine credential against the
+    # cluster's core/sksec LAPI (idempotent; never re-keys an existing one).
+    - name: Register the sksec-web machine with CrowdSec
+      include_tasks:
+        file: tasks/register_lapi_machine.yml
+        apply:
+          tags:
+            - lapi
+            - deploy

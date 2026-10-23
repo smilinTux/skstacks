@@ -1,0 +1,28 @@
+# The "set" pass: every optional knob set, fake values only.
+sksec_web:
+  CLOUDFLARED: true
+  HOSTNAME: sksec-web.example.test
+  CROWDSEC_WEB_UI_IMAGE: "registry.example.test/crowdsec-web-ui:2026.10.10@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  LAPI_USERNAME: "sksec-web-render"
+  LAPI_URL: "http://sksec-render-crowdsec.example.test:8080"
+  CROWDSEC_SERVICE: "sksec-render-prod_crowdsec"
+  READ_ONLY: false
+  SESSION_SECRET: "example-session-secret-not-a-real-secret-0123456789AB"
+  SYNC_LOOKBACK: "72h"
+  DATA_NODE: render-node-1
+  DATA_PATH: /var/lib/sksec-web-render/data
+  PLACEMENT_CONSTRAINTS: ["node.role == worker", "node.labels.sksec_web == true"]
+  TRAEFIK_MIDDLEWARES: "default-no-error-pages@file"
+  AUTH_MODE: sso
+  SSO_MIDDLEWARE: "authentik@file"
+  TLS_OPTIONS: "none"
+  CPUS: "1.00"
+  MEMORY_LIMIT: "768M"
+  MEMORY_RESERVATION: "128M"
+  HEALTH_CHECK_INTERVAL: "15s"
+  HEALTH_CHECK_TIMEOUT: "5s"
+  HEALTH_CHECK_RETRIES: 5
+  HEALTH_CHECK_START_PERIOD: "30s"
+  TZ: "Europe/Zurich"
+  extra_env:
+    SOME_UPSTREAM_VAR: "example-value"

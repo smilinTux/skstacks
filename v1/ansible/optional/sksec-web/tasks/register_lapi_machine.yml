@@ -1,0 +1,113 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# Idempotently register the sksec-web machine (cscli machines add) against
+# the cluster's existing core/sksec CrowdSec LAPI. Included by
+# deploy_sksec-web-<env>.yml after the sksec-web app service is up.
+#
+# The crowdsec task may run on a different node than this play (TRAEFIK_HA_MODE
+# pins it to the traefik.acme.master node, core/sksec README), so the node is
+# resolved with `docker service ps` here on the manager, same approach as
+# core/sksec's own tasks/lapi_allowlist.yml.
+#
+# The password is never logged (every task touching it is no_log: true) and
+# is passed to cscli through a container-local environment variable rather
+# than a literal `cscli` argument, to keep it off that container's process
+# list and out of any ansible -v/-vvv output.
+
+- name: Compute the LAPI machine registration target
+  set_fact:
+    sksw_lapi_username: "{{ sksec_web.LAPI_USERNAME | default('sksec-web', true) }}"
+    sksw_lapi_wait_retries: "{{ [((sksec_web.LAPI_WAIT_SECONDS | default(300) | int) + 4) // 5, 1] | max }}"
+
+- name: Wait for the swarm node running the CrowdSec task
+  shell: |
+    STATES=$(docker service ps "{{ sksw_crowdsec_service }}" --filter "desired-state=running" --format "{{ '{{.Node}} {{.CurrentState}}' }}")
+    NODE=$(printf '%s\n' "$STATES" | awk '$2 == "Running" {print $1; exit}')
+    if [ -z "$NODE" ]; then
+      echo "{{ sksw_crowdsec_service }} has no Running task yet; current: $(printf '%s' "${STATES:-no task scheduled}" | tr '\n' ';')" >&2
+      exit 1
+    fi
+    echo "$NODE"
+  register: sksw_crowdsec_node
+  until: sksw_crowdsec_node.rc == 0 and (sksw_crowdsec_node.stdout | trim | length > 0)
+  retries: "{{ sksw_lapi_wait_retries }}"
+  delay: 5
+  changed_when: false
+
+- name: Wait for the CrowdSec LAPI to answer (cscli lapi status)
+  shell: |
+    CID=$(docker ps -q --filter "status=running" --filter "label=com.docker.swarm.service.name={{ sksw_crowdsec_service }}" | head -1)
+    if [ -z "$CID" ]; then
+      echo "no running {{ sksw_crowdsec_service }} container on this node yet" >&2
+      exit 1
+    fi
+    if ! docker exec "$CID" cscli lapi status >/dev/null 2>&1; then
+      echo "CrowdSec LAPI in $CID does not answer yet" >&2
+      exit 1
+    fi
+    echo "$CID"
+  delegate_to: "{{ sksw_crowdsec_node.stdout | trim }}"
+  register: sksw_crowdsec_container
+  until: sksw_crowdsec_container.rc == 0 and (sksw_crowdsec_container.stdout | trim | length > 0)
+  retries: "{{ sksw_lapi_wait_retries }}"
+  delay: 5
+  changed_when: false
+
+- name: List registered CrowdSec machines
+  command:
+    argv: [docker, exec, "{{ sksw_crowdsec_container.stdout | trim }}", cscli, machines, list, -o, json]
+  delegate_to: "{{ sksw_crowdsec_node.stdout | trim }}"
+  register: sksw_lapi_machines
+  changed_when: false
+
+- name: Check whether sksec-web's machine is already registered
+  set_fact:
+    sksw_machine_exists: "{{ (sksw_lapi_machines.stdout | from_json | default([], true) | selectattr('machineId', 'equalto', sksw_lapi_username) | list | length > 0) if sksw_lapi_machines.stdout | trim | length > 0 else false }}"
+
+- name: Register the sksec-web machine with CrowdSec (first deploy only)
+  # -f /dev/null: never overwrite the crowdsec agent's own local LAPI
+  # credentials file. The password travels via an env var local to this
+  # one container, not a literal argv entry.
+  shell: |
+    set -e
+    docker exec -e SKSW_LAPI_PW="$SKSW_LAPI_PW" "{{ sksw_crowdsec_container.stdout | trim }}" \
+      sh -c 'cscli machines add "$1" --password "$SKSW_LAPI_PW" -f /dev/null' sh "{{ sksw_lapi_username }}"
+  delegate_to: "{{ sksw_crowdsec_node.stdout | trim }}"
+  environment:
+    SKSW_LAPI_PW: "{{ sksec_web.LAPI_PASSWORD }}"
+  when: not (sksw_machine_exists | bool)
+  no_log: true
+  register: sksw_machine_add
+  failed_when: sksw_machine_add.rc != 0
+
+- name: Verify the sksec-web machine is registered
+  command:
+    argv: [docker, exec, "{{ sksw_crowdsec_container.stdout | trim }}", cscli, machines, list, -o, json]
+  delegate_to: "{{ sksw_crowdsec_node.stdout | trim }}"
+  register: sksw_lapi_machines_after
+  changed_when: false
+  failed_when: >-
+    sksw_lapi_machines_after.rc != 0 or
+    (sksw_lapi_machines_after.stdout | from_json | default([], true)
+     | selectattr('machineId', 'equalto', sksw_lapi_username) | list | length) == 0
+
+- name: Report machine registration (never the password)
+  debug:
+    msg: >-
+      CrowdSec machine '{{ sksw_lapi_username }}' is registered
+      ({{ 'created this run' if not (sksw_machine_exists | bool) else 'already existed' }}).
+      To rotate the password: cscli machines delete {{ sksw_lapi_username }} inside the
+      core/sksec crowdsec container, update sksec_web.LAPI_PASSWORD in vault, redeploy.
