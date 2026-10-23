@@ -66,6 +66,8 @@ sksso:
   DATA_NODE: ""                    # node hostname; pins postgres + redis there
   POSTGRES_DATA_PATH: /var/data/runtime/sksso-<env>/postgres   # default
   REDIS_DATA_PATH: /var/data/runtime/sksso-<env>/redis         # default
+  colocate_with_data_node: false   # also pin server + worker to DATA_NODE
+                                    # (see "Local database on a pinned node")
 
   # replicas (all default to 1)
   server_replicas: 1
@@ -222,6 +224,37 @@ sksso:
   database after the next reschedule.
 - Local data is not on shared storage: back it up with the node, and keep
   the nightly dump (`database-dump/`) on shared storage as it is.
+
+### Colocating server + worker with the data node
+
+`server` and `worker` keep floating across worker nodes by default, which
+means every OIDC token-endpoint request (`/application/o/token/`) makes its
+Postgres and Redis calls across the overlay network to wherever `DATA_NODE`
+landed. Measured on two real multi-node Swarm estates: a token exchange with
+server/worker/postgres/redis all on one node (loopback) ran at roughly 0.5s;
+the same exchange with server/worker on a different node than postgres/redis
+ran at p50 1.26s, p95 1.57s, max 2.27s under a light recurring load, purely
+from the added round trips. That matters when a downstream OIDC client has a
+short HTTP timeout: skrac (MeshCentral) pins `openid-client@5.7.1`, whose
+default request timeout is 3.5s and which MeshCentral exposes no config.json
+knob to raise (see skrac README "OIDC login timeout margin").
+
+Set `colocate_with_data_node: true` with `DATA_NODE` set to also add
+`node.hostname == <DATA_NODE>` to `server` and `worker`:
+
+```yaml
+sksso:
+  DATA_NODE: <node hostname>
+  colocate_with_data_node: true
+```
+
+- Default is `false` (today's floating behavior; no instance's render
+  changes without opting in).
+- Ignored when `DATA_NODE` is empty (nothing to colocate with).
+- Trade-off: `DATA_NODE` going down now also takes `server` and `worker`
+  with it, same as it already does for `postgres`/`redis`. If that single
+  node is not acceptable as a shared failure domain, leave this off and
+  raise the downstream client's timeout instead.
 
 ### Migrating a running instance
 
