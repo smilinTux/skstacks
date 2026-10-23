@@ -127,6 +127,10 @@ FAKE_STDOUT = {
     "sksec_crowdsec_node": "render-node-1",
     "sksec_crowdsec_container": "render-container",
     "sksec_lapi_allowlists": "[]",
+    "sksw_crowdsec_node": "render-node-1",
+    "sksw_crowdsec_container": "render-container",
+    "sksw_lapi_machines": "[]",
+    "sksw_lapi_machines_after": "[]",
 }
 
 
