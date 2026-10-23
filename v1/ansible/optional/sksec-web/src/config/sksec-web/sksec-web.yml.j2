@@ -1,0 +1,79 @@
+version: '3.8'
+
+# sksec-web: crowdsec-web-ui (upstream image pinned by digest, README.md).
+# One service, `app`: the dashboard for the cluster's existing sksec-<env>
+# CrowdSec LAPI. It holds no security-relevant data of its own (CrowdSec's
+# LAPI is the source of truth); its SQLite file under /app/data is the
+# UI's own session/auth state plus a local alert cache.
+{% set hc_interval = sksec_web.HEALTH_CHECK_INTERVAL | default('30s', true) %}
+{% set hc_timeout = sksec_web.HEALTH_CHECK_TIMEOUT | default('5s', true) %}
+{% set hc_retries = sksec_web.HEALTH_CHECK_RETRIES | default(3, true) | int %}
+{% set hc_start = sksec_web.HEALTH_CHECK_START_PERIOD | default('15s', true) %}
+{% set data_constraints = (sksec_web.PLACEMENT_CONSTRAINTS | default(['node.role == worker'], true)) + (['node.hostname == ' + sksw_data_node] if sksw_data_node else []) %}
+
+networks:
+  cloud-public-{{ env }}:
+    external: true
+  sksec-{{ env }}:
+    external: true
+
+services:
+  app:
+    # Default = sksw_default_image in the playbook (a test keeps them equal).
+    image: {{ sksec_web.CROWDSEC_WEB_UI_IMAGE | default('ghcr.io/theduffman85/crowdsec-web-ui:2026.10.10@sha256:f57568d27b2c7798155a638b9cb76302777a9dcf43d8026f344c17767589d694', true) }}
+    env_file:
+      - /var/data/config/sksec-web-{{ env }}/sksec-web.env
+    volumes:
+      - {{ sksw_data_path }}:/app/data
+    # The image's own HEALTHCHECK already probes /api/health (public,
+    # unauthenticated); re-declare it on the framework's schedule.
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: {{ hc_interval }}
+      timeout: {{ hc_timeout }}
+      retries: {{ hc_retries }}
+      start_period: {{ hc_start }}
+    networks:
+      - sksec-{{ env }}
+      - cloud-public-{{ env }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: {{ data_constraints | tojson }}
+      resources:
+        limits:
+          cpus: '{{ sksec_web.CPUS | default("0.50", true) }}'
+          memory: {{ sksec_web.MEMORY_LIMIT | default("384M", true) }}
+        reservations:
+          memory: {{ sksec_web.MEMORY_RESERVATION | default("64M", true) }}
+      # stop-first (the default): two app tasks on one SQLite file would
+      # both try to write the UI's own session/cache database.
+      update_config:
+        order: stop-first
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=sksec-web"
+        - "com.skt.env={{ env }}"
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.routers.{{ sksw_router }}.rule=Host(`{{ sksw_host }}`)"
+        - "traefik.http.routers.{{ sksw_router }}.entrypoints=websecure"
+        - "traefik.http.routers.{{ sksw_router }}.tls=true"
+        - "traefik.http.routers.{{ sksw_router }}.tls.certresolver=main"
+{% if sksw_tls_options != 'none' %}
+        - "traefik.http.routers.{{ sksw_router }}.tls.options={{ sksw_tls_options }}"
+{% endif %}
+        - "traefik.http.routers.{{ sksw_router }}.middlewares={{ sksw_middlewares }}{{ ',' + sksw_sso_middleware if sksw_sso_middleware else '' }}"
+        - "traefik.http.routers.{{ sksw_router }}.service={{ sksw_router }}"
+        - "traefik.http.services.{{ sksw_router }}.loadbalancer.server.port=3000"
+        - "traefik.http.services.{{ sksw_router }}.loadbalancer.healthcheck.path=/api/health"
+        - "traefik.http.services.{{ sksw_router }}.loadbalancer.healthcheck.interval=30s"
+        - "traefik.http.services.{{ sksw_router }}.loadbalancer.healthcheck.timeout=10s"

@@ -1,0 +1,69 @@
+#!/bin/bash
+set -e
+
+# Never force-restart the app on its FIRST install; a redeploy restarts it
+# when the play changed its env file (env_file is not visible to Swarm's
+# own service-spec diff).
+PREEXISTING_SERVICES=" "
+record_preexisting() {
+    local svc
+    for svc in "$@"; do
+        if docker service inspect "$svc" >/dev/null 2>&1; then
+            PREEXISTING_SERVICES+="$svc "
+        fi
+    done
+}
+preexisted() {
+    case "$PREEXISTING_SERVICES" in *" $1 "*) return 0 ;; esac
+    echo "First install of $1: skipping forced restart"
+    return 1
+}
+
+# sksec-web (crowdsec-web-ui) Deploy Script
+# Environment: {{ env }}
+APPNAME=sksec-web
+STACK_NAME=sksec-web-{{ env }}
+CONFIG_DIR="/var/data/config/${STACK_NAME}"
+COMPOSE_FILE="${CONFIG_DIR}/sksec-web.yml"
+APP="${STACK_NAME}_app"
+
+if [ -f "${CONFIG_DIR}/${APPNAME}.sh.env" ]; then
+    source "${CONFIG_DIR}/${APPNAME}.sh.env"
+fi
+
+if [ ! -f "${COMPOSE_FILE}" ]; then
+    echo "Error: Compose file not found: ${COMPOSE_FILE}"
+    exit 1
+fi
+
+cd "${CONFIG_DIR}"
+
+record_preexisting "${APP}"
+docker stack deploy \
+    -c "${COMPOSE_FILE}" \
+    --prune \
+    --with-registry-auth \
+    "${STACK_NAME}"
+
+if [ "${RESTART_APP:-0}" = 1 ]; then
+    echo "The play changed the env file of ${APP}"
+    preexisted "${APP}" && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=true "${APP}" || true
+fi
+
+WAIT_SECONDS=60
+ATTEMPTS=$(( (WAIT_SECONDS + 4) / 5 ))
+echo "Waiting up to ${WAIT_SECONDS}s for ${APP} to converge..."
+for _ in $(seq 1 "${ATTEMPTS}"); do
+    REPLICAS=$(docker service ls --filter "name=${APP}" --format "{% raw %}{{.Replicas}}{% endraw %}")
+    [[ "$REPLICAS" == "1/1" ]] && break
+    sleep 5
+done
+if [[ "$REPLICAS" == "1/1" ]]; then
+    echo "${APP} is running"
+else
+    echo "${APP} not converged after ${WAIT_SECONDS}s: ${REPLICAS}"
+    docker service logs --tail 20 "${APP}" || true
+fi
+echo "CrowdSec LAPI: ${CROWDSEC_SERVICE:-unknown}"
+echo "Web UI: https://${SKSEC_WEB_HOST:-unknown}/"
+echo "Deployment complete!"
