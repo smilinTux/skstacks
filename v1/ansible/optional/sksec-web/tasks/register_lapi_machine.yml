@@ -26,6 +26,25 @@
 # is passed to cscli through a container-local environment variable rather
 # than a literal `cscli` argument, to keep it off that container's process
 # list and out of any ansible -v/-vvv output.
+#
+# check_mode / dry render: the three read-only lookups below
+# (check_mode: false, same convention as shared/tasks/select_manager_node.yml
+# and select_vault_file.yml) run for real even under `ansible-playbook
+# --check`, so a pre-deploy `--check --diff` reports real registration
+# status. The mutating "Register" task and the "Verify" task that depends
+# on it are left check-mode-skippable (Ansible's own default for
+# shell/command): neither runs, and neither is asked to prove anything,
+# when nothing was actually changed.
+# A tool that renders this file WITHOUT running ansible-playbook for real
+# (skstack06's tools/dry_render.py, which drops every shell/command task
+# outright rather than honoring check_mode) leaves sksw_lapi_machines
+# completely undefined, not just missing .stdout -- found live by that
+# tool (coord: dry_render.sh sksec-web, 2026-10-23): "'sksw_lapi_machines'
+# is undefined" out of the plain `sksw_lapi_machines.stdout` reference
+# below. Fixed by resolving the whole register through `| default({})`
+# before ever touching `.stdout`, in its own set_fact, so a Jinja
+# expression never dereferences a name that might not exist at all. See
+# v1/tests/test_sksec_web_register_lapi_machine_guard.py.
 
 - name: Compute the LAPI machine registration target
   set_fact:
@@ -46,6 +65,7 @@
   retries: "{{ sksw_lapi_wait_retries }}"
   delay: 5
   changed_when: false
+  check_mode: false
 
 - name: Wait for the CrowdSec LAPI to answer (cscli lapi status)
   shell: |
@@ -65,6 +85,7 @@
   retries: "{{ sksw_lapi_wait_retries }}"
   delay: 5
   changed_when: false
+  check_mode: false
 
 - name: List registered CrowdSec machines
   command:
@@ -72,10 +93,22 @@
   delegate_to: "{{ sksw_crowdsec_node.stdout | trim }}"
   register: sksw_lapi_machines
   changed_when: false
+  check_mode: false
+
+# sksw_lapi_machines may not exist as a fact at all (not just have an
+# empty .stdout): check_mode skips the shell/command tasks above, and a
+# tool that renders this file without running ansible for real, such as
+# skstack06's tools/dry_render.py, drops them outright -- see this file's
+# own header. Resolve the register through `| default({})` BEFORE ever
+# touching `.stdout`, in its own set_fact, so the Jinja expression below
+# never dereferences a name that might not exist.
+- name: Resolve the registered-machines listing
+  set_fact:
+    sksw_lapi_machines_stdout: "{{ (sksw_lapi_machines | default({})).stdout | default('', true) }}"
 
 - name: Check whether sksec-web's machine is already registered
   set_fact:
-    sksw_machine_exists: "{{ (sksw_lapi_machines.stdout | from_json | default([], true) | selectattr('machineId', 'equalto', sksw_lapi_username) | list | length > 0) if sksw_lapi_machines.stdout | trim | length > 0 else false }}"
+    sksw_machine_exists: "{{ (sksw_lapi_machines_stdout | from_json | default([], true) | selectattr('machineId', 'equalto', sksw_lapi_username) | list | length > 0) if sksw_lapi_machines_stdout | trim | length > 0 else false }}"
 
 - name: Register the sksec-web machine with CrowdSec (first deploy only)
   # -f /dev/null: never overwrite the crowdsec agent's own local LAPI
