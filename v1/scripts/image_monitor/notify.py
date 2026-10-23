@@ -77,21 +77,27 @@ def post_talk(creds: NotifyCredentials, *, title: str, summary: str, severity: s
 
 
 def gtd_upsert_finding(*, cluster: str, service: str, image: str, text: str, status: str = "next",
-                       context: str = "@fleet", meta: dict | None = None,
-                       upsert_fn: Callable | None = None) -> tuple[str, str]:
+                       context: str = "@fleet", meta: dict | None = None, source: str = "image-monitor",
+                       source_ref: str | None = None, upsert_fn: Callable | None = None) -> tuple[str, str]:
     """Upsert one finding into the unified GTD.
+
+    `source`/`source_ref` default to this tool's own convention
+    ("image-monitor", "<cluster>/<service>/<image>"); the vuln register
+    (check_fleet_vulns.py) passes its own ("vuln-register",
+    "<vuln-id-or-cve-id>/<cluster>/<service>") so the two tools' findings
+    never collide on the same GTD key.
 
     `upsert_fn` is injectable for tests; in production it is
     `skos.gtd_ingest.upsert` with a `GtdCapture`, imported lazily so this
     module (and its tests) don't need `skos` installed to exercise the
     non-GTD parts of the tool.
     """
-    source_ref = f"{cluster}/{service}/{image}"
+    source_ref = source_ref or f"{cluster}/{service}/{image}"
     if upsert_fn is None:
         from skos.gtd_ingest import GtdCapture, upsert as _upsert
 
         def upsert_fn(**kwargs):
             return _upsert(GtdCapture(**kwargs))
 
-    return upsert_fn(text=text, source="image-monitor", source_ref=source_ref, context=context,
+    return upsert_fn(text=text, source=source, source_ref=source_ref, context=context,
                      status=status, meta=meta or {})

@@ -27,6 +27,13 @@ clusters:
 # to extend it).
 floors_file: "floors.yaml"
 
+# Vulnerability register (see vulns.yml and check_fleet_vulns.py). The
+# rendered outputs go outside the repo, same reasoning as state_file/
+# cache_file below: they necessarily carry real cluster/service/version data.
+vulns_file: "vulns.yml"
+register_html: "~/.skcapstone/image-monitor/vuln-register.html"
+register_json: "~/.skcapstone/image-monitor/vuln-register.json"
+
 # Where state (last-seen digests) and the upstream-lookup cache live. Kept out
 # of the repo; absolute so a systemd unit with no shell env still finds them.
 state_file: "~/.skcapstone/image-monitor/state.json"

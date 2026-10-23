@@ -1,0 +1,499 @@
+# Fleet vulnerability register. Each entry is a tracked CVE/advisory (or a
+# grouped batch of CVEs from the same disclosure) mapped onto the fleet's
+# running services. This is public, generic vulnerability data (same spirit
+# as floors.yaml) - no cluster topology, hostnames or real inventory data
+# live here. The matched, operator-specific results (which services are
+# actually affected) are written OUTSIDE this repo, same convention as
+# config.yaml/state.json/registry_cache.json (see README.md "Config").
+#
+# Paired with floors.yaml, which check_fleet_images.py already enforces for
+# PHP: the php2shell entry below does not carry its own copy of the fix
+# numbers, it reads floors.yaml's "php" block through check.floors_ref, so
+# the two can never drift apart. Bump floors.yaml, the register follows.
+#
+# check.type:
+#   runtime_floor      - delegates to floors.yaml's named block (today: php)
+#   line_floor         - the same "major.minor -> minimum patch" shape as
+#                         floors.yaml, carried inline for a runtime that
+#                         doesn't have its own floors.yaml block. source:
+#                         "tag" (default, version extracted from the image
+#                         tag) or "probe" (an exec probe inside the
+#                         container, like floors.yaml's php block; needs
+#                         its own `probe`/`parse`)
+#   min_fixed_version  - a single dotted-version floor compared against
+#                         the whole version, for software where only the
+#                         newest line or two ever got a fix and an older
+#                         line is simply unpatched/EOL (e.g. Traefik 3.6.x)
+#   manual             - no automated check. May carry manual_findings: a
+#                         dated, by-hand verification per (cluster,
+#                         service - "(fleet-wide)"/"(host engine)"/
+#                         "(host kernel)"/"(host glibc)" for host-level
+#                         entries with no `images`); otherwise reports
+#                         "needs-manual-verification" every run.
+#
+# `images` is the same case-insensitive substring match against the image
+# repository that floors.yaml uses; an empty/absent `images` means this
+# entry is fleet-wide (host engine/kernel/libc, or a cross-cutting issue
+# like the eMudhra CA compromise), evaluated once per cluster rather than
+# per service.
+#
+# Severity/cvss are the vendor/NVD-reported figures, not a local opinion.
+# Seeded 2026-10-23 after the PHP2Shell RCE (CVE-2026-109618/109619).
+
+vulnerabilities:
+  - id: php2shell-2026-10
+    cve_ids: ["CVE-2026-109618", "CVE-2026-109619"]
+    aka: PHP2Shell
+    title: "PHP core RCE: OOM memory corruption + use-after-free of request state"
+    severity: critical
+    cvss: 9.2
+    published: "2026-10-21"
+    images: ["nextcloud", "linuxserver/bookstack", "windmill-labs/windmill"]
+    check:
+      type: runtime_floor
+      floors_ref: php
+    summary: >
+      Two PHP-core bugs disclosed together. CVE-2026-109618: an
+      out-of-memory bailout (e.g. mid multipart/file-upload parse) can
+      interrupt execution while internal request state is only partially
+      initialized; later cleanup treats the corrupted state as valid,
+      enabling RCE. CVE-2026-109619: a request that dies abnormally can
+      leave freed state behind in a worker process; a later request on the
+      same worker can read it (the PHP_SESSION_UPLOAD_PROGRESS field is one
+      trigger path). Unauthenticated, network-exploitable against any PHP
+      deployment serving web requests (PHP-FPM, mod_php, php-cgi,
+      FrankenPHP, LiteSpeed). Actively exploited in the wild within hours
+      of disclosure.
+    sources:
+      - https://www.php.net/ChangeLog-8.php
+      - https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w
+      - https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp
+      - https://research.jfrog.com/post/php2shell-all-you-need-to-know-about-cve-2026-109618-and-cve-2026-109619/
+      - https://www.rapid7.com/blog/post/etr-cve-2026-109618-and-cve-2026-109619-critical-unauthenticated-remote-code-execution-in-php/
+
+  - id: windmill-php-floor-2026-10
+    cve_ids: ["CVE-2026-109618", "CVE-2026-109619"]
+    aka: "PHP2Shell (Windmill-bundled PHP)"
+    title: "Windmill's bundled PHP runtime below the PHP2Shell fix floor"
+    severity: critical
+    cvss: 9.2
+    published: "2026-10-21"
+    images: ["windmill-labs/windmill"]
+    check:
+      type: min_fixed_version
+      tag_pattern: '(\d+\.\d+\.\d+)'
+      fixed_version: "1.844.0"
+    summary: >
+      Same PHP2Shell bug as php2shell-2026-10, tracked as its own row
+      because the fix ships inside a specific Windmill release rather than
+      a PHP point release. Windmill bumped its bundled PHP from 8.3.33 to
+      8.3.36-cli-trixie in windmill-labs/windmill#11923 (merged
+      2026-10-21), shipped starting image tag 1.844.0 (confirmed present
+      through 1.847.0, the latest tag as of 2026-10-23; the embedded PHP
+      version of 1.847.0 itself was not pulled/verified live - read-only
+      rule). The php2shell-2026-10 row above is the authoritative
+      affected/not-affected signal (it probes PHP live inside the
+      container); this row tracks "is a patched image available" as its
+      own actionable item.
+    sources:
+      - https://github.com/windmill-labs/windmill/pull/11923
+      - https://github.com/windmill-labs/windmill/releases
+
+  - id: nextcloud-richdocumentscode-2026-10
+    cve_ids: ["CVE-2026-110447"]
+    aka: ""
+    title: "Nextcloud richdocumentscode unauthenticated OS command injection"
+    severity: critical
+    cvss: 9.2
+    published: "2026-10-14"
+    images: ["nextcloud"]
+    check:
+      type: manual
+    manual_findings:
+      # service: "*" - this is an app-code finding (which Nextcloud apps are
+      # installed), true for every container running the same nextcloud
+      # image on this cluster (the main service, cron, webhook-worker,
+      # notify_push, ...), not only the main skhub-prod_nextcloud service.
+      - cluster: nor
+        service: "*"
+        affected: "no"
+        note: >
+          The vulnerable app is "richdocumentscode" (Nextcloud's bundled/
+          embedded CODE-server connector), triggered when that embedded
+          server isn't running. This Nextcloud only has "richdocuments"
+          enabled (the connector to the EXTERNAL Collabora service,
+          skhub-prod_collabora); richdocumentscode is not installed at all
+          (confirmed via `occ app:list --output=json` against
+          skhub-prod_nextcloud; every other nor service sharing this image
+          is a sidecar of the same install, not a separate app set).
+        verified_at: "2026-10-23"
+      - cluster: nam
+        service: "*"
+        affected: "no"
+        note: >
+          Same as nor: only "richdocuments" (external Collabora connector)
+          is enabled; richdocumentscode is not installed (confirmed via
+          `occ app:list --output=json` against skhub-prod_nextcloud; every
+          other nam service sharing this image is a sidecar of the same
+          install).
+        verified_at: "2026-10-23"
+    summary: >
+      Unauthenticated OS command injection in apps/richdocumentscode/
+      proxy.php when the app's embedded CODE server isn't running.
+      Actively exploited to backdoor Nextcloud servers since mid-September
+      2026.
+    sources:
+      - https://www.bleepingcomputer.com/news/security/hackers-exploit-collabora-rce-flaw-to-backdoor-nextcloud-servers/
+
+  - id: emudhra-ca-compromise-2026-10
+    cve_ids: ["CVE-2026-111943", "CVE-2026-113470", "CVE-2026-113812"]
+    aka: "mudhra (Chef's spelling) = eMudhra"
+    title: "eMudhra intermediate CA private-key compromise (8 intermediates, ~17mo exposure)"
+    severity: high
+    cvss: null
+    published: "2026-10-17"
+    images: []
+    check:
+      type: manual
+    manual_findings:
+      - cluster: nor
+        service: "(fleet-wide)"
+        affected: unknown
+        note: >
+          Not checked: the Go stdlib version baked into the running
+          traefik/crowdsec/netbird images, and whether the host OS CA
+          bundle has picked up the eMudhra denylist. This is a trust-store
+          question, not an application bug in anything we run; a one-off
+          manual check is the right next step, not a fleet-wide alarm.
+        verified_at: "2026-10-23"
+      - cluster: nam
+        service: "(fleet-wide)"
+        affected: unknown
+        note: "Same as nor; not checked."
+        verified_at: "2026-10-23"
+    summary: >
+      Not a bug in any single piece of software we run: the private keys
+      of 8 eMudhra (emSign) intermediate CA certificates (6 TLS, 2
+      code-signing) were disclosed as compromised/weakly-generated on
+      2026-10-17, usable to mint trust-chain-valid fraudulent certificates
+      for any domain. Browsers (Chrome, Firefox, Safari, Edge) blocklisted
+      the intermediates within days. Downstream, a few language/runtime
+      trust stores needed their own patch: Go's crypto/x509 denylist
+      (CVE-2026-111943, fixed Go 1.26.10 / 1.27.3), Firefox's OneCRL
+      (CVE-2026-113470), and Perl's Mozilla::CA (CVE-2026-113812).
+      Relevant to this fleet only indirectly: Traefik, CrowdSec and
+      NetBird are Go binaries, so their build's Go stdlib version
+      determines whether they carry the eMudhra denylist; the OS/distro CA
+      bundle is the real mitigation path for everything else. No malicious
+      exploitation of the compromised keys confirmed as of 2026-10-21.
+    sources:
+      - https://thehackernews.com/2026/10/eight-emudhra-ca-keys-compromised.html
+      - https://blog.mozilla.org/security/2026/10/20/protecting-firefox-users-following-the-compromise-of-emudhra-intermediate-certificates/
+      - https://blog.cloudflare.com/emudhra-certificate-compromise
+      - https://www.bleepingcomputer.com/news/security/mozilla-google-apple-block-compromised-emudhra-ca-certificates/
+
+  - id: plex2shell-2026-10
+    cve_ids: ["CVE-2026-96652", "CVE-2026-96654", "CVE-2026-96655", "CVE-2026-96656"]
+    aka: "Plex2Shell"
+    title: "Plex Media Server unauthenticated RCE chain"
+    severity: critical
+    cvss: 9.8
+    published: "2026-10-16"
+    images: ["pms-docker"]
+    check:
+      type: manual
+    manual_findings:
+      - cluster: nor
+        service: skstream-prod_plex
+        affected: "no"
+        fixed_version: "1.43.3.10861"
+        note: >
+          Running 1.43.4.10903 (fixed floor is 1.43.3.10861, so this is
+          already above it). Live-checked the container for compromise
+          indicators given the active-exploitation reports: no unexpected
+          processes, CPU 0.16%, nothing unexpected in `docker diff`.
+          Latest available upstream is 1.43.5.11029 (a routine update, not
+          itself tied to this CVE chain).
+        verified_at: "2026-10-23"
+    summary: >
+      A four-bug chain (unauthenticated SSRF via /player/timeline, a
+      loopback-pivot auth-guard bypass, an owner-authed transcoder SSRF +
+      arbitrary-path write, and code execution via an unsigned codec
+      dlopen) that lets an attacker with NO account run code as the Plex
+      process. Combined CVSS 3.1 9.8. Public PoC released 2026-10-16;
+      active exploitation (XMRig cryptominer payloads, home-IP proxy
+      tools) began within 24 hours. Affects <= 1.43.3.10828; fixed in
+      1.43.3.10861. Image is digest-pinned with no tag in this fleet
+      (`plexinc/pms-docker@sha256:...`), so the running app version can't
+      be read from the image reference alone - tracked here as a manual
+      finding (live-verified via the Plex API/container, not a tag
+      compare) rather than an automated check type.
+    sources:
+      - https://github.com/code-zm/plex2shell
+      - https://www.bleepingcomputer.com/news/security/cisa-hackers-chain-plex-flaws-in-plex2shell-attacks-to-breach-servers/
+      - https://securityonline.info/plex2shell-plex-media-server-exploited/
+      - https://censys.com/advisory/cve-2026-96652-cve-2026-96654-cve-2026-96655-cve-2026-96656/
+      - https://betanews.com/article/plex-cve-exploit-active/
+
+  - id: immich-2026-10
+    cve_ids: []
+    aka: ""
+    title: "Immich outdated: eMudhra CA fix + Node.js October 2026 patches not yet applied"
+    severity: high
+    cvss: null
+    published: "2026-10-21"
+    images: ["immich-server"]
+    check:
+      type: min_fixed_version
+      tag_pattern: 'v?(\d+\.\d+\.\d+)'
+      fixed_version: "3.3.5"
+    summary: >
+      Running v3.3.1; v3.3.5 (released 2026-10-21) carries the eMudhra CA
+      -compromise mitigation (see emudhra-ca-compromise-2026-10) plus the
+      Node.js October 2026 security releases, per the release's own notes.
+      Also checked GHSA-g82p-27g4-864h / CVE-2026-104867 (medium, CVSS 4.3):
+      broken access control on GET /api/admin/users/{id}/calendar-heatmap,
+      letting any authenticated non-admin user read another user's asset
+      activity heatmap (including archived/locked assets). That one does
+      NOT apply here: its vulnerable range is v3.0.0-3.0.3 only (fixed via
+      immich-app/immich#30310, merged 2026-07-28, well before v3.3.x), so
+      v3.3.1 already carries that fix. The GitHub advisory's own
+      "patched_versions" field is blank (which is what prompted the
+      question) but its vulnerable_version_range ceiling of 3.0.3 is the
+      authoritative signal here, confirmed by reading the advisory
+      directly - v3.3.1 is three major-ish releases past it. Exposure:
+      internet-facing via Immich's own login, no CrowdSec, no SSO/forward
+      -auth gate at Traefik.
+    sources:
+      - https://github.com/immich-app/immich/releases/tag/v3.3.5
+      - https://nodejs.org/en/blog/vulnerability/october-2026-security-releases
+      - https://github.com/immich-app/immich/security/advisories/GHSA-g82p-27g4-864h
+      - https://github.com/immich-app/immich/pull/30310
+
+  - id: mariadb-2026-10-batch
+    cve_ids:
+      - CVE-2026-92262
+      - CVE-2026-85746
+      - CVE-2026-85748
+      - CVE-2026-97380
+      - CVE-2026-107815
+      - CVE-2026-107814
+      - CVE-2026-107818
+      - CVE-2026-107821
+      - CVE-2026-86047
+    aka: ""
+    title: "MariaDB October 2026 security batch (file-access, memory corruption, RCE)"
+    severity: critical
+    cvss: 9.9
+    published: "2026-10-16"
+    images: ["mariadb"]
+    check:
+      type: line_floor
+      source: tag
+      tag_pattern: '(\d+\.\d+\.\d+)'
+      min_versions:
+        "10.6": 28
+        "10.11": 19
+        "11.4": 13
+        "11.8": 9
+        "12.3": 3
+        "13.0": 2
+    summary: >
+      Nine CVEs disclosed together, CVSS 7.7-9.9. The worst
+      (CVE-2026-92262, CVE-2026-85746, CVE-2026-85748) allow file access or
+      memory-corruption RCE. Fixed per supported line: 10.6.28, 10.11.19,
+      11.4.13, 11.8.9, 12.3.3, 13.0.2 (CVE-2026-85748 only reaches the
+      12.3.x line).
+    sources:
+      - https://dev.to/guidance_white/cve-2026-92262-nine-characters-mysql50-is-all-it-takes-to-break-mariadb-cvss-99-5c55
+      - https://securityonline.info/mariadb-critical-vulnerabilities-rce/
+      - https://mariadb.com/docs/server/security/cve/community-server
+      - https://cybersecuritynews.com/critical-mariadb-flaws/
+      - https://dev.to/stark_zhuang_df5076f35c68/mariadbs-file-privilege-is-a-filesystem-primitive-cve-2026-107814-and-cve-2026-107818-5b45
+
+  - id: redis-restore-2026-10
+    cve_ids: ["CVE-2026-25243"]
+    aka: ""
+    title: "Redis RESTORE command memory corruption -> RCE"
+    severity: high
+    cvss: 7.7
+    published: "2026-10-16"
+    images: ["redis"]
+    check:
+      type: line_floor
+      source: tag
+      tag_pattern: '(\d+\.\d+\.\d+)'
+      min_versions:
+        "8.6": 3
+    summary: >
+      A client able to run the RESTORE command can trigger memory
+      corruption leading to RCE. Fixed in 8.6.3. Honeypot-observed
+      exploitation attempts began 2026-10-16/17. Every Redis instance in
+      this fleet is internal-only (no public Traefik router), which caps
+      the exposure regardless of patch level. Valkey (a Redis fork run by
+      skpeek-prod on nor) is a different codebase and is NOT claimed to be
+      covered by this entry; this check's "redis" image match intentionally
+      does not match a "valkey" image.
+    sources:
+      - https://securityonline.info/redis-restore-cve-2026-25243-exploited/
+
+  - id: traefik-2026-10-22-batch
+    cve_ids:
+      - CVE-2026-114635
+      - CVE-2026-114637
+      - CVE-2026-114640
+      - CVE-2026-114641
+      - CVE-2026-114642
+      - CVE-2026-114656
+    aka: ""
+    title: "Traefik auth-bypass / mTLS-spoofing batch"
+    severity: high
+    cvss: 8.7
+    published: "2026-10-22"
+    images: ["traefik"]
+    check:
+      type: min_fixed_version
+      tag_pattern: 'v?(\d+\.\d+\.\d+)'
+      fixed_version: "3.7.14"
+    summary: >
+      Six issues disclosed together on 2026-10-22, CVSS 3.7-8.7: forwarded
+      Ssl-Client-* header spoofing on the Kubernetes Ingress-NGINX
+      provider, an mTLS/NTLM connection-pool reuse bug, an SNI check bypass
+      over HTTP/2, and TLS client-config reuse across services - several
+      let an unauthenticated client skip a client-certificate requirement
+      that Traefik is supposed to enforce. Fixed in 2.11.58 / 3.7.14. Our
+      fleet runs the 3.6.x line, older than either fixed line and not
+      itself covered by a dedicated patch per the sources found, so it is
+      treated as affected regardless of per-router auth config: these bugs
+      are in Traefik's own TLS/routing layer, ahead of any app-level or
+      forward-auth middleware. Secondary-source confirmed (strix.ai,
+      thehackerwire, vuldb); Traefik's own GitHub security-advisories page
+      was not reachable to cross-check primary-source wording before this
+      register was written - worth a follow-up read before patching.
+    sources:
+      - https://www.strix.ai/cve/CVE-2026-114640
+      - https://www.thehackerwire.com/vulnerability/CVE-2026-114637/
+      - https://www.strix.ai/cve/CVE-2026-114635
+      - https://www.strix.ai/cve/CVE-2026-114642
+      - https://vuldb.com/vuln/425115
+
+  - id: docker-engine-2026-10-01
+    cve_ids: ["CVE-2026-92543", "CVE-2026-92542"]
+    aka: ""
+    title: "Docker Engine insecure-registry TLS fallback / overlay-net frame injection"
+    severity: high
+    cvss: 7.6
+    published: "2026-10-01"
+    images: []
+    check:
+      type: manual
+    manual_findings:
+      - cluster: nor
+        service: "(host engine)"
+        affected: unknown
+        fixed_version: "29.8.2"
+        note: >
+          `docker version` not independently re-checked in this pass;
+          `docker node ls` reports Engine 27.3.1 across every nor Swarm node,
+          below the 29.8.2 fix - treat as likely affected pending a direct
+          `docker version` confirmation.
+        verified_at: "2026-10-23"
+      - cluster: nam
+        service: "(host engine)"
+        affected: unknown
+        fixed_version: "29.8.2"
+        note: >
+          `docker node ls` reports Engine 28.1.1 across every nam Swarm node,
+          below the 29.8.2 fix - treat as likely affected pending a direct
+          `docker version` confirmation.
+        verified_at: "2026-10-23"
+    summary: >
+      CVE-2026-92543 (7.6): a malicious DNS response can force a registry
+      connection to skip certificate validation or fall back to plaintext
+      HTTP, exposing credentials or allowing image substitution.
+      CVE-2026-92542 (6.9, listed for completeness, below our severity
+      bar): blind VXLAN frame injection into an encrypted Swarm overlay
+      network from a cluster peer. Both fixed in Docker Engine >= 29.8.2.
+      This is the Swarm engine itself (dockerd), not a container image.
+    sources:
+      - https://github.com/moby/moby/security/advisories/GHSA-7cfq-22r6-qp73
+      - https://vuldb.com/vuln/415084
+
+  - id: linux-kernel-2026-10-batch
+    cve_ids: ["CVE-2026-99999", "CVE-2026-98323", "CVE-2026-98365"]
+    aka: "PwnEscape (CVE-2026-99999)"
+    title: "Linux kernel: virtio-net/packet-socket host-escape (PwnEscape) + RDMA siw/rxe memory corruption"
+    severity: critical
+    cvss: 9.8
+    published: "2026-10-06"
+    images: []
+    check:
+      type: manual
+    manual_findings:
+      - cluster: nor
+        service: "(host kernel)"
+        affected: unknown
+        note: >
+          Every nor Swarm node checked reports 5.15.0-194-generic (Ubuntu's own
+          build number, not an upstream 5.15.x patch level - cannot be
+          compared directly against the fixed 5.15.223). Needs an Ubuntu
+          Security Notice lookup against the installed linux-image-generic
+          package version, not a version-string compare.
+        verified_at: "2026-10-23"
+      - cluster: nam
+        service: "(host kernel)"
+        affected: unknown
+        note: >
+          Every nam Swarm node checked reports 5.15.0-198-generic. Same caveat
+          as nor.
+        verified_at: "2026-10-23"
+    summary: >
+      CVE-2026-99999 "PwnEscape" (9.3): an 18-year-old checksum-validation
+      bug in virtio-net/packet-socket checksum offload lets a malicious
+      guest VM read host memory, crash the host, and in lab conditions
+      escape to host root; fix merged 2026-10-14. CVE-2026-98323 and
+      CVE-2026-98365 (9.8 each, published 2026-10-06): RDMA/siw and
+      RDMA/rxe memory-corruption bugs (relevant only if RDMA/soft-RoCE is
+      in use). Fixed upstream in 5.10.272 / 5.15.223 / 6.1.190 / 6.6.159 /
+      6.12.113 / 6.18.57 / 7.2.11. Host-level, not per-container.
+    sources:
+      - https://www.theregister.com/virtualization/2026/10/19/linux-kvm-guest-host-escape-rated-critical-may-represent-a-new-way-to-attack-penguin-powered-networking/5303744
+      - https://thehackernews.com/2026/10/critical-pwnescape-linux-kernel.html
+      - https://dev.to/raghu_bharadwaj_404e60eb0c/linux-kernel-cves-what-to-patch-by-device-4-10-oct-2026-24jp
+
+  - id: glibc-2026-10-batch
+    cve_ids: ["CVE-2026-86805", "CVE-2026-89092"]
+    aka: ""
+    title: "glibc ld.so TOCTOU local privesc + nscd stack overflow"
+    severity: medium
+    cvss: 7.3
+    published: "2026-10-14"
+    images: []
+    check:
+      type: manual
+    manual_findings:
+      - cluster: nor
+        service: "(host glibc)"
+        affected: unknown
+        note: >
+          The nor Swarm nodes checked report Ubuntu GLIBC 2.35-0ubuntu3.15.
+          Whether that distro patch level already carries SUSE's
+          2026-10-14 backport needs an Ubuntu changelog/USN check, not a
+          version-string compare.
+        verified_at: "2026-10-23"
+      - cluster: nam
+        service: "(host glibc)"
+        affected: unknown
+        note: "The nam Swarm nodes checked report the same version (2.35-0ubuntu3.15); same caveat as nor."
+        verified_at: "2026-10-23"
+    summary: >
+      CVE-2026-86805 (6.3-7.3, sources vary): a TOCTOU race in ld.so's
+      $ORIGIN/DT_RPATH handling lets a local attacker load an
+      attacker-controlled shared object into a setuid/setgid binary for
+      local privilege escalation. CVE-2026-89092: an nscd stack overflow
+      that can crash/degrade DNS resolution. Patched via distro backports
+      (SUSE advisory 2026-10-14); below our critical/high bar on CVSS but
+      tracked since it's a fleet-wide library. Host-level, not
+      per-container.
+    sources:
+      - https://linuxsecurity.com/advisories/suse/suse-2026-4654-1-glibc
