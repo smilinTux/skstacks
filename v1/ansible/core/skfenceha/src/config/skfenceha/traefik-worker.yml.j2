@@ -75,6 +75,24 @@ entryPoints:
           to: websecure
           scheme: https
           permanent: true
+      # Traefik v3.7 added per-entrypoint control over encoded characters
+      # in the request path (RFC 3986); explicit here (matching the
+      # documented default, so this is not a behavior change) rather than
+      # left implicit, since it silences the startup warning and is a
+      # production-breaking footgun if a later Traefik release ever
+      # changes the implicit default: Forgejo API/web branch paths and
+      # compare URLs use %2F for slashes in branch names, and Nextcloud
+      # WebDAV file names can contain %2F, %25, %3F or %23. Proven live in
+      # the v2.26.16 Traefik lab proof (Forgejo branch-with-slash API GET,
+      # Nextcloud WebDAV PUT+GET of a %2F/%25/%3F/%23 file name).
+      encodedCharacters:
+        allowEncodedSlash: true
+        allowEncodedBackSlash: true
+        allowEncodedNullCharacter: true
+        allowEncodedSemicolon: true
+        allowEncodedPercent: true
+        allowEncodedQuestionMark: true
+        allowEncodedHash: true
   websecure:
     address: ":443"
 {% if skfenceha.TRUSTED_PROXIES | default([]) | length > 0 %}
@@ -84,12 +102,20 @@ entryPoints:
         - "{{ ip }}"
 {% endfor %}
 {% endif %}
-{% if skfenceha.DROP_FORWARDED_HEADERS | default([]) | length > 0 %}
-    # skfenceha.DROP_FORWARDED_HEADERS instance var: removed before any
-    # router sees the request (middleware in dynamic/middlewares.yml). With
-    # TRUSTED_PROXIES behind a tunnel/CDN, a client-sent X-Forwarded-Host
-    # would otherwise reach the apps as trusted.
     http:
+      encodedCharacters:
+        allowEncodedSlash: true
+        allowEncodedBackSlash: true
+        allowEncodedNullCharacter: true
+        allowEncodedSemicolon: true
+        allowEncodedPercent: true
+        allowEncodedQuestionMark: true
+        allowEncodedHash: true
+{% if skfenceha.DROP_FORWARDED_HEADERS | default([]) | length > 0 %}
+      # skfenceha.DROP_FORWARDED_HEADERS instance var: removed before any
+      # router sees the request (middleware in dynamic/middlewares.yml). With
+      # TRUSTED_PROXIES behind a tunnel/CDN, a client-sent X-Forwarded-Host
+      # would otherwise reach the apps as trusted.
       middlewares:
         - drop-forwarded-headers@file
 {% endif %}

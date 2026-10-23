@@ -90,6 +90,16 @@ entryPoints:
         entryPoint:
           to: websecure
           scheme: https
+      # Same encodedCharacters defaults as skfenceha (explicit, matching
+      # the documented Traefik v3.7 default, not a behavior change).
+      encodedCharacters:
+        allowEncodedSlash: true
+        allowEncodedBackSlash: true
+        allowEncodedNullCharacter: true
+        allowEncodedSemicolon: true
+        allowEncodedPercent: true
+        allowEncodedQuestionMark: true
+        allowEncodedHash: true
   websecure:
     address: ":443"
 {% if skfence.TRUSTED_PROXIES | default([]) | length > 0 %}
@@ -99,6 +109,15 @@ entryPoints:
         - "{{ ip }}"
 {% endfor %}
 {% endif %}
+    http:
+      encodedCharacters:
+        allowEncodedSlash: true
+        allowEncodedBackSlash: true
+        allowEncodedNullCharacter: true
+        allowEncodedSemicolon: true
+        allowEncodedPercent: true
+        allowEncodedQuestionMark: true
+        allowEncodedHash: true
   metrics:
     address: ":8082"
 
