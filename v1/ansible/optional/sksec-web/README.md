@@ -106,7 +106,7 @@ refused by the LAPI itself. **This role never edits `core/sksec`'s
 `trusted_ips`** (that file belongs to the `core/sksec` role, and changing it
 from here would be a cross-role, security-sensitive mutation outside this
 role's scope). Default `sksec_web.READ_ONLY: true` additionally sets the
-upstream image's own `CONFIG_UI_READ_ONLY=true` (an instance-wide read-only
+upstream image's own `PERMISSION_READ_ONLY=true` (an instance-wide read-only
 mode in the dashboard itself: alerts and decisions are visible, nothing
 can be changed or deleted from the UI), so a fresh install is safe-by-default
 at **two** independent layers before any operator opts in to write access.
@@ -175,7 +175,7 @@ UI's own settings/session state backed up anyway can point `skbackup` at
 | Key | What it is |
 |---|---|
 | `LAPI_PASSWORD` | **Required.** The CrowdSec machine password this role registers (see "Machine registration"). At least 24 characters; the deploy refuses a shorter or missing value. Never printed. |
-| `SESSION_SECRET` | Optional. The dashboard's own session-signing secret (`CONFIG_AUTH_SESSION_SECRET`). Upstream auto-generates one if unset, which means every container restart signs everyone out of the dashboard's own login (not the Authentik layer in front of it). Set a random 32+ character value to keep sessions stable across restarts/redeploys. |
+| `SESSION_SECRET` | Optional. The dashboard's own session-signing secret (`AUTH_SECRET`). Upstream auto-generates one if unset, which means every container restart signs everyone out of the dashboard's own login (not the Authentik layer in front of it). Set a random 32+ character value to keep sessions stable across restarts/redeploys. |
 
 ### Traefik
 

@@ -136,12 +136,12 @@ def test_auth_mode_local_with_risk_flag_is_no_sso_middleware(tmp_path):
 
 def test_default_env_is_read_only_and_LAPI_url(base_out):
     env = env_file(base_out)
-    assert env["CONFIG_UI_READ_ONLY"] == "true"
-    assert env["CONFIG_INSTANCE_LAPI_URL"] == "http://sksec-prod_crowdsec:8080"
-    assert env["CONFIG_INSTANCE_LAPI_AUTH_USERNAME"] == "sksec-web"
-    assert env["CONFIG_INSTANCE_LAPI_AUTH_PASSWORD"] == BASE["LAPI_PASSWORD"]
-    assert env["CONFIG_CROWDSEC_SYNC_LOOKBACK"] == "168h"
-    assert "CONFIG_AUTH_SESSION_SECRET" not in env
+    assert env["PERMISSION_READ_ONLY"] == "true"
+    assert env["CROWDSEC_URL"] == "http://sksec-prod_crowdsec:8080"
+    assert env["CROWDSEC_USER"] == "sksec-web"
+    assert env["CROWDSEC_PASSWORD"] == BASE["LAPI_PASSWORD"]
+    assert env["CROWDSEC_LOOKBACK_PERIOD"] == "168h"
+    assert "AUTH_SECRET" not in env
 
 
 # --- the "set" pass: every knob ------------------------------------------
@@ -162,11 +162,11 @@ def test_every_knob_set_renders(set_out):
     assert "traefik.http.routers.sksec-web.tls.options" not in lab
     assert lab["traefik.http.routers.sksec-web.rule"] == "Host(`sksec-web.example.test`)"
     env = env_file(set_out)
-    assert env["CONFIG_UI_READ_ONLY"] == "false"
-    assert env["CONFIG_INSTANCE_LAPI_AUTH_USERNAME"] == "sksec-web-render"
-    assert env["CONFIG_INSTANCE_LAPI_URL"] == "http://sksec-render-crowdsec.example.test:8080"
-    assert env["CONFIG_CROWDSEC_SYNC_LOOKBACK"] == "72h"
-    assert env["CONFIG_AUTH_SESSION_SECRET"] == SET["SESSION_SECRET"]
+    assert env["PERMISSION_READ_ONLY"] == "false"
+    assert env["CROWDSEC_USER"] == "sksec-web-render"
+    assert env["CROWDSEC_URL"] == "http://sksec-render-crowdsec.example.test:8080"
+    assert env["CROWDSEC_LOOKBACK_PERIOD"] == "72h"
+    assert env["AUTH_SECRET"] == SET["SESSION_SECRET"]
     assert env["SOME_UPSTREAM_VAR"] == "example-value"
 
 
