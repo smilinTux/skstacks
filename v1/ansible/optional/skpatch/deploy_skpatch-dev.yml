@@ -301,3 +301,25 @@
     - name: Show deploy output
       debug: var=deploy_output.stdout_lines
       tags: [deploy]
+
+    - name: Create or update the skpatch portal tile in Authentik
+      # Opt-in and off by default (AUTHENTIK_TILE: true). skpatch (linux
+      # update dashboard) sits behind the cluster's domain-wide Traefik
+      # ForwardAuth catch-all already; this just gives it a bookmark tile
+      # on the Authentik portal. Defaults to the admin group: this app
+      # holds the keys to every node it reaches (see "Resolve the
+      # skpatch settings" above).
+      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
+      vars:
+        portal_tile:
+          enabled: "{{ skpatch.AUTHENTIK_TILE | default(false) | bool }}"
+          slug: "{{ skpatch.AUTHENTIK_TILE_SLUG | default(skp_router, true) }}"
+          name: "{{ skpatch.AUTHENTIK_TILE_NAME | default('SKPatch (Linux updates)', true) }}"
+          launch_url: "https://{{ skp_host }}"
+          group: "{{ skpatch.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          icon: "{{ skpatch.AUTHENTIK_TILE_ICON | default('fa://fa-wrench', true) }}"
+          open_in_new_tab: "{{ skpatch.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
+          description: "{{ skpatch.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
+      tags:
+        - config
+        - authentik

@@ -3,6 +3,40 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased (v2.26.17)
+
+### Upgrade notes (instances)
+
+- **skpulse, sksec-web, skpatch:** new optional `AUTHENTIK_TILE` (default `false`, opt-in; nothing
+  renders differently until an instance sets it). When `true`, the next deploy creates or updates
+  a provider-less Authentik `core.Application` bound to a group (`AUTHENTIK_TILE_GROUP`, default
+  `authentik Admins`), with a launch URL, icon and open-in-new-tab setting, so the service shows a
+  dashboard tile on the Authentik portal. It never touches auth itself: these three roles already
+  sit behind the cluster's domain-wide Traefik ForwardAuth catch-all, so this only fixes visibility,
+  not access. Needs `sksso.api_token` in sksso's own vault (same automation token `optional/skrac`
+  and `optional/skmesh` already use); see each role's README "Portal tile (Authentik)".
+
+### Changes
+
+- v1: new shared task `shared/tasks/authentik_portal_tile.yml` + `shared/src/authentik_portal_tile.py`:
+  idempotently creates/updates a provider-less Authentik `core.Application` and its group policy
+  binding (`order: 0`, no policy object), for a service whose auth is already handled by the
+  cluster's domain-wide ForwardAuth catch-all and that only needs a portal bookmark. Root cause:
+  every such tile on nor today (skmon, skfenceha, skport's visibility tile, alertmanager, prometheus,
+  etc.) was hand-created through the Authentik UI/API with no declaration in code, so a newly
+  deployed service (skpulse) renders and forward-auths correctly but never appears on a user's
+  portal, and nothing catches that at review time. This mirrors the existing provider-creating
+  pattern (`optional/skrac/src/skrac/authentik_provision.py`) minus the provider: nothing here
+  creates a group (a typo in `AUTHENTIK_TILE_GROUP` fails loudly rather than shipping an invisible
+  tile), and nothing here creates an Authentik `core.Application`'s provider field, which stays
+  `null`. Wired into `optional/skpulse`, `optional/sksec-web` and `optional/skpatch`
+  (dev/staging/prod), each with `AUTHENTIK_TILE*` vault knobs and a role-appropriate default icon
+  and name; all three default off. Tests: `v1/tests/test_authentik_portal_tile.py` (happy path:
+  create on first run, then a true no-op on an identical second run; edge case: an update touches
+  only the fields that actually changed, and an existing group binding is never duplicated; failure
+  case: a group name Authentik does not have raises instead of silently producing an invisible
+  tile, and an HTTP error from the API surfaces with its status code).
+
 ## Unreleased (v2.26.16)
 
 ### Upgrade notes (instances)

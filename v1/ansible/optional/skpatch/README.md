@@ -293,3 +293,16 @@ On every provisioned node: `/etc/sudoers.d/skpatch` (`0440`), the
   it would replace, not add to, the forward-auth layer. If an instance
   ever wants that instead of the two-login pattern above, that is a
   deliberate, separate decision, not a vault default.
+
+## Portal tile (Authentik)
+
+Opt-in (`skpatch.AUTHENTIK_TILE: true`, default `false`): the next deploy creates or
+updates a provider-less Authentik `core.Application` named `AUTHENTIK_TILE_NAME`
+(default `SKPatch (Linux updates)`), launch URL `https://<the public host above>`,
+icon `AUTHENTIK_TILE_ICON` (default `fa://fa-wrench`), bound to the group
+`AUTHENTIK_TILE_GROUP` (default `authentik Admins`, which must already exist: this
+app holds the keys to every node it reaches, so the default is deliberately the
+admin group, not a broader one). This only adds a dashboard bookmark; it creates no
+provider and changes nothing about `AUTH_MODE`/forward auth above. Needs
+`sksso.api_token` in sksso's own vault (see `optional/sksso/README.md`). See
+`shared/tasks/authentik_portal_tile.yml`.

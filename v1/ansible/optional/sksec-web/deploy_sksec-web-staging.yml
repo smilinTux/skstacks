@@ -307,3 +307,23 @@
           tags:
             - lapi
             - deploy
+
+    - name: Create or update the sksec-web portal tile in Authentik
+      # Opt-in and off by default (AUTHENTIK_TILE: true). sksec-web (the
+      # CrowdSec Web UI) sits behind the cluster's domain-wide Traefik
+      # ForwardAuth catch-all already; this just gives it a bookmark tile
+      # on the Authentik portal, bound to a group, with no provider.
+      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
+      vars:
+        portal_tile:
+          enabled: "{{ sksec_web.AUTHENTIK_TILE | default(false) | bool }}"
+          slug: "{{ sksec_web.AUTHENTIK_TILE_SLUG | default(sksw_router, true) }}"
+          name: "{{ sksec_web.AUTHENTIK_TILE_NAME | default('SKSec Web (CrowdSec)', true) }}"
+          launch_url: "https://{{ sksw_host }}"
+          group: "{{ sksec_web.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          icon: "{{ sksec_web.AUTHENTIK_TILE_ICON | default('fa://fa-shield-halved', true) }}"
+          open_in_new_tab: "{{ sksec_web.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
+          description: "{{ sksec_web.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
+      tags:
+        - config
+        - authentik

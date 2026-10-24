@@ -99,3 +99,14 @@ the next deploy flip the setting). A separate `discover-traefik-frontends.sh`
 helper (not run by the playbook) can auto-register every Traefik-fronted
 service as a monitor via the Uptime Kuma API, given an
 `UPTIME_KUMA_API_TOKEN`.
+
+## Portal tile (Authentik)
+
+Opt-in (`skpulse.AUTHENTIK_TILE: true`, default `false`): the next deploy creates or
+updates a provider-less Authentik `core.Application` named `AUTHENTIK_TILE_NAME`
+(default `SKPulse (Uptime Kuma)`), launch URL `https://<the public host above>`,
+icon `AUTHENTIK_TILE_ICON` (default `fa://fa-heart-pulse`), bound to the group
+`AUTHENTIK_TILE_GROUP` (default `authentik Admins`, which must already exist).
+This only adds a dashboard bookmark; it creates no provider and changes nothing
+about `AUTH_MODE`/forward auth above. Needs `sksso.api_token` in sksso's own vault
+(see `optional/sksso/README.md`). See `shared/tasks/authentik_portal_tile.yml`.
