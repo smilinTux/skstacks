@@ -95,7 +95,17 @@ shows `1/1`.
 first-run web UI (interactive, not vault-driven); complete it before
 relying on `AUTH_MODE: sso` to auto-login (Kuma auto-logs in the single
 admin account once `disableAuth` is true, so create that account, THEN let
-the next deploy flip the setting). A separate `discover-traefik-frontends.sh`
+the next deploy flip the setting). That "next deploy" does not have to be
+a full deploy: `--tags authmode` runs only the vault load, the AUTH_MODE
+resolve/assert/conflict checks and the `disableAuth` toggle itself (found
+2026-10-24, nor: an instance that had its admin account created after its
+last deploy was stuck showing Kuma's own login behind Authentik until the
+next full redeploy; `--tags authmode` is the standalone fix for exactly
+that window, no redeploy, no other service touched). If the admin
+credential used for an out-of-band fix ever gets stored for reuse, record
+the real username (`SELECT username FROM user;`), not a guess: a typo'd
+username in a credential store looks identical to a wrong password until
+you check Kuma's own `user` table. A separate `discover-traefik-frontends.sh`
 helper (not run by the playbook) can auto-register every Traefik-fronted
 service as a monitor via the Uptime Kuma API, given an
 `UPTIME_KUMA_API_TOKEN`.
