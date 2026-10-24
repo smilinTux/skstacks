@@ -8,6 +8,22 @@ Each entry says what an instance must do, if anything.
 ### Upgrade notes (instances)
 
 - **(all apps, test-only):** new render-time test guards against the class of bug #232/#234 covered: Traefik v3's swarm provider skips any service whose labels carry both the deprecated `traefik.docker.*` family and the current `traefik.swarm.*` family at once ("both Docker and Swarm labels are defined" -> "Skip container"), dropping its routers to the error-pages fallback with no other symptom. `test_no_service_emits_both_traefik_docker_and_swarm_labels` (`test_compose_templates_render.py`) renders every app template with an empty context and fails if any service's labels contain both prefixes; a template needing real fixture vars to render is skipped there and relies on its own app-specific test instead. No template in this release carries `traefik.docker.*` (confirmed by a fleet-wide search: zero occurrences), so this is a test-only addition - nothing renders differently. **Instance action:** none.
+- **Secret-file-mode test harness (`v1/tests/test_secret_files_not_world_readable.py` +
+  `test_secret_file_modes_survive_deploy.py`), no instance action**: this walker's own minimal
+  Jinja2 environment (not Ansible's) had no `bool` filter and never seeded `cluster_name`/`domain`
+  (real inventory host vars, same gap `env` was already worked around for), so the first `vars:`
+  block anywhere in any deploy playbook to use `| bool` or reference `cluster_name`/`domain`
+  directly aborted the whole walk with `UndefinedError`/`TemplateAssertionError`, hiding every
+  playbook after it. The portal-tile roles' `vars:` blocks were the first to do either. Fixed:
+  added a `bool` filter, seeded `cluster_name`/`domain` placeholders in both files' base context,
+  and made the custom `Undefined` class silent on stringification and on Python-level `+`
+  concatenation (`ChainableUndefined` only covers attribute/item access, not output or arithmetic)
+  so a reference to a fact this harness never runs (no real `set_fact`) degrades to an empty
+  string instead of aborting the walk. Confirmed the gap itself predates this PR, not something
+  this PR invented: the 4 tests pass clean on an unmodified `origin/main` worktree (no `| bool` or
+  bare `cluster_name`/`domain` reference inside any existing task's `vars:` block to trip it) and
+  only started failing once this PR's portal-tile `vars:` blocks were the first to do either.
+
 - **Render-test harness (`v1/tests/render/render_playbooks.py`), no instance action**: fixes a
   real crash the icon-shipping change below exposed, in test infrastructure only. A `copy: src:
   dest:` task whose source is binary (an icon PNG) was captured through
