@@ -57,7 +57,7 @@ def test_skmesh_dashboard_image_is_overridable_per_instance():
     assert doc["services"]["dashboard"]["image"] == "ghcr.io/smilintux/skmesh:latest"
 
 
-# NAM 2026-10-24: skmesh.nativeassetmanagement.com returned intermittent
+# 2026-10-24: a production skmesh instance returned intermittent
 # curl 000s. Root cause: dashboard is attached to two overlay networks
 # (skmesh-{env} + cloud-public-{env}) with no traefik.docker.network label,
 # so Traefik's docker provider could non-deterministically resolve the
