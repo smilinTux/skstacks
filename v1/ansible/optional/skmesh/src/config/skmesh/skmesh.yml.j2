@@ -152,19 +152,7 @@ services:
         - "traefik.http.routers.skmesh-mgmt-oauth2.tls.certresolver=main"
         - "traefik.http.routers.skmesh-mgmt-oauth2.service=skmesh-mgmt-api-svc"
 {% endif %}
-        # traefik.docker.network pins which attached network Traefik's
-        # docker provider uses for this service's backend address.
-        # Without it, a multi-network service's resolution is
-        # non-deterministic: Traefik can pick skmesh-{{ env }} instead
-        # of cloud-public-{{ env }}, and since Traefik itself has no
-        # interface on skmesh-{{ env }}, that request hangs until the
-        # client times out. (traefik.swarm.network, used here until
-        # 2026-10-24, is not a label this Traefik reads - verified live
-        # on NAM: management/signal/relay, which someone had already
-        # hand-patched to traefik.docker.network, resolved correctly on
-        # 100% of sampled requests; dashboard, which had NEITHER label,
-        # was the one intermittently timing out - skmesh-dash outage.)
-        - "traefik.docker.network=cloud-public-{{ env }}"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
     logging: *logging
     ports:
       - "33073:33073/tcp"
@@ -192,19 +180,7 @@ services:
         - "traefik.http.routers.skmesh-signal.service=skmesh-signal-svc"
         - "traefik.http.services.skmesh-signal-svc.loadbalancer.server.port=10000"
         - "traefik.http.services.skmesh-signal-svc.loadbalancer.server.scheme=h2c"
-        # traefik.docker.network pins which attached network Traefik's
-        # docker provider uses for this service's backend address.
-        # Without it, a multi-network service's resolution is
-        # non-deterministic: Traefik can pick skmesh-{{ env }} instead
-        # of cloud-public-{{ env }}, and since Traefik itself has no
-        # interface on skmesh-{{ env }}, that request hangs until the
-        # client times out. (traefik.swarm.network, used here until
-        # 2026-10-24, is not a label this Traefik reads - verified live
-        # on NAM: management/signal/relay, which someone had already
-        # hand-patched to traefik.docker.network, resolved correctly on
-        # 100% of sampled requests; dashboard, which had NEITHER label,
-        # was the one intermittently timing out - skmesh-dash outage.)
-        - "traefik.docker.network=cloud-public-{{ env }}"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
     logging: *logging
     ports:
       - "10000:10000/tcp"
@@ -234,19 +210,7 @@ services:
         - "traefik.http.routers.skmesh-relay.service=skmesh-relay-svc"
         - "traefik.http.services.skmesh-relay-svc.loadbalancer.server.port=33080"
         - "traefik.http.services.skmesh-relay-svc.loadbalancer.server.scheme=http"
-        # traefik.docker.network pins which attached network Traefik's
-        # docker provider uses for this service's backend address.
-        # Without it, a multi-network service's resolution is
-        # non-deterministic: Traefik can pick skmesh-{{ env }} instead
-        # of cloud-public-{{ env }}, and since Traefik itself has no
-        # interface on skmesh-{{ env }}, that request hangs until the
-        # client times out. (traefik.swarm.network, used here until
-        # 2026-10-24, is not a label this Traefik reads - verified live
-        # on NAM: management/signal/relay, which someone had already
-        # hand-patched to traefik.docker.network, resolved correctly on
-        # 100% of sampled requests; dashboard, which had NEITHER label,
-        # was the one intermittently timing out - skmesh-dash outage.)
-        - "traefik.docker.network=cloud-public-{{ env }}"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
     logging: *logging
     depends_on:
       - management
@@ -274,19 +238,7 @@ services:
         - "traefik.http.routers.skmesh-dash.entrypoints=websecure"
         - "traefik.http.routers.skmesh-dash.tls.certresolver=main"
         - "traefik.http.services.skmesh-dash.loadbalancer.server.port=80"
-        # traefik.docker.network pins which attached network Traefik's
-        # docker provider uses for this service's backend address.
-        # Without it, a multi-network service's resolution is
-        # non-deterministic: Traefik can pick skmesh-{{ env }} instead
-        # of cloud-public-{{ env }}, and since Traefik itself has no
-        # interface on skmesh-{{ env }}, that request hangs until the
-        # client times out. (traefik.swarm.network, used here until
-        # 2026-10-24, is not a label this Traefik reads - verified live
-        # on NAM: management/signal/relay, which someone had already
-        # hand-patched to traefik.docker.network, resolved correctly on
-        # 100% of sampled requests; dashboard, which had NEITHER label,
-        # was the one intermittently timing out - skmesh-dash outage.)
-        - "traefik.docker.network=cloud-public-{{ env }}"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
     logging: *logging
     depends_on:
       - management
