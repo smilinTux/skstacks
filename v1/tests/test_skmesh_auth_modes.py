@@ -18,11 +18,8 @@ nobody created (the deploy could never come up on its own), with an empty
 AuthAudience, no IdP manager and no PKCE/device flow for the CLI; the
 dashboard asked for an ``api`` scope Authentik does not have; the hostnames
 ignored env (a dev deploy pointed at the prod names); and the routers named
-their network with ``traefik.swarm.network``, a label no Traefik version
-reads (confirmed live on NAM 2026-10-24: this is what let the dashboard
-service - which did not even have that useless label - hang on an
-unreachable network until its clients timed out; ``traefik.docker.network``
-is the label Traefik's docker provider actually reads, swarm mode or not).
+their network with ``traefik.docker.network``, a label the swarm provider
+never reads.
 """
 import http.server
 import json
@@ -220,27 +217,12 @@ def test_sso_hostname_matches_sksso_router():
 
 
 @pytest.mark.parametrize("mode", [BASE, AUTHENTIK])
-def test_routed_services_name_their_network_for_the_docker_provider(mode):
-    """traefik.docker.network, not traefik.swarm.network.
-
-    This used to assert the opposite - that routed services carried
-    traefik.swarm.network and NOT traefik.docker.network - on the belief
-    that swarm mode moves the label to a different namespace. It does not:
-    Traefik's docker provider (swarmMode: true or not) reads
-    traefik.docker.network either way; traefik.swarm.network is not a label
-    any Traefik version reads. Verified live on NAM 2026-10-24:
-    management/signal/relay, hand-patched to traefik.docker.network ahead of
-    this fix, resolved correctly on 100% of sampled requests; dashboard,
-    which had neither label (so traefik.swarm.network was never doing
-    anything for it either), intermittently resolved to the wrong attached
-    network and hung until the client timed out - the skmesh-dash outage
-    this fix closes.
-    """
+def test_routed_services_name_their_network_for_the_swarm_provider(mode):
     for name, svc in _compose(mode)["services"].items():
         labels = _labels(svc)
         if "traefik.enable=true" in labels:
-            assert "traefik.docker.network=cloud-public-prod" in labels, name
-            assert not any(lbl.startswith("traefik.swarm.network") for lbl in labels), name
+            assert "traefik.swarm.network=cloud-public-prod" in labels, name
+            assert not any(lbl.startswith("traefik.docker.network") for lbl in labels), name
 
 
 # --- playbooks --------------------------------------------------------------------
