@@ -61,6 +61,7 @@
         skp_auth_mode: "{{ skpulse.AUTH_MODE | default('sso', true) | string | lower }}"
         skp_sso_middleware: "{{ (skpulse.SSO_MIDDLEWARE | default('', true) | string) if (skpulse.AUTH_MODE | default('sso', true) | string | lower) != 'sso' else (skpulse.SSO_MIDDLEWARE | default('authentik@file', true) | string) }}"
         skp_router: "skpulse{{ '' if env == 'prod' else '-' + env }}"
+        skp_public_host: "{{ skpulse.HOSTNAME | default('skpulse' + ('' if env == 'prod' else '-' + env) + '.' + (skpulse.CLUSTERNAME | default(cluster_name, true)) + '.' + (skpulse.DOMAIN | default(domain, true)), true) }}"
       tags: [config, authmode]
 
     - name: Fail loudly on an unknown AUTH_MODE
@@ -279,3 +280,28 @@
       tags:
         - deploy
         - authmode
+
+    - name: Create or update the skpulse portal tile in Authentik
+      # On by default (AUTHENTIK_TILE: true); opt out per instance with
+      # AUTHENTIK_TILE: false. The fleet's convention until now was a
+      # hand-made Authentik bookmark tile
+      # (see docs/runbooks/sksso.md "Portal tile icons" on the nor
+      # instance). This gives skpulse the same tile as code: a
+      # provider-less core.Application bound to a group, so it shows
+      # on the portal for admins without touching forward auth.
+      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
+      vars:
+        portal_tile:
+          enabled: "{{ skpulse.AUTHENTIK_TILE | default(true) | bool }}"
+          slug: "{{ skpulse.AUTHENTIK_TILE_SLUG | default(skp_router, true) }}"
+          name: "{{ skpulse.AUTHENTIK_TILE_NAME | default('SKPulse (Uptime Kuma)', true) }}"
+          launch_url: "https://{{ skp_public_host }}"
+          group: "{{ skpulse.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          icon: "{{ skpulse.AUTHENTIK_TILE_ICON | default('fa://fa-heart-pulse', true) }}"
+          icon_file: "{{ skpulse.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
+          icon_name: "{{ skpulse.AUTHENTIK_TILE_ICON_NAME | default('uptime-kuma', true) }}"
+          open_in_new_tab: "{{ skpulse.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
+          description: "{{ skpulse.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
+      tags:
+        - config
+        - authentik

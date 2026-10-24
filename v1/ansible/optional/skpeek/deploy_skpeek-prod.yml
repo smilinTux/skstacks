@@ -231,3 +231,25 @@
       tags:
         - deploy
 
+    - name: Create or update the skpeek portal tile in Authentik
+      # On by default (AUTHENTIK_TILE: true); opt out per instance with
+      # AUTHENTIK_TILE: false. skpeek sits behind the cluster's domain-wide
+      # Traefik ForwardAuth catch-all already; this just gives it a
+      # bookmark tile on the Authentik portal, bound to a group, with no
+      # provider. See shared/tasks/authentik_portal_tile.yml.
+      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
+      vars:
+        portal_tile:
+          enabled: "{{ skpeek.AUTHENTIK_TILE | default(true) | bool }}"
+          slug: "{{ skpeek.AUTHENTIK_TILE_SLUG | default(app, true) }}"
+          name: "{{ skpeek.AUTHENTIK_TILE_NAME | default('SKPeek (SearXNG)', true) }}"
+          launch_url: "https://skpeek{{ '' if env == 'prod' else '-' + env }}.{{ skpeek.CLUSTERNAME | default(cluster_name) }}.{{ skpeek.DOMAIN | default(domain) }}"
+          group: "{{ skpeek.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          icon: "{{ skpeek.AUTHENTIK_TILE_ICON | default('fa://fa-magnifying-glass', true) }}"
+          icon_file: "{{ skpeek.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
+          icon_name: "{{ skpeek.AUTHENTIK_TILE_ICON_NAME | default('searxng', true) }}"
+          open_in_new_tab: "{{ skpeek.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
+          description: "{{ skpeek.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
+      tags:
+        - config
+        - authentik

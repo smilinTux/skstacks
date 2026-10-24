@@ -39,6 +39,28 @@
       Authentik once with sksso's src/sksso/ensure-api-token.sh (see the sksso README).
     quiet: true
 
+- name: "Icon: ensure sksso's uploaded-icons directory exists"
+  # Authentik 2025.12+ has no API endpoint to set an icon from a URL or
+  # upload (the old set_icon admin action now answers 405); a file placed
+  # directly in its media volume, referenced by meta_icon, is the only way.
+  file:
+    path: "/var/data/sksso-{{ env }}/media/public/application-icons/sk"
+    state: directory
+    owner: '1000'
+    group: '1000'
+    mode: '0755'
+  when: (skrac.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) | length > 0)
+
+- name: "Icon: copy skrac's icon into sksso's media"
+  copy:
+    src: "{{ playbook_dir }}/src/config/{{ app }}/{{ skrac.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
+    dest: "/var/data/sksso-{{ env }}/media/public/application-icons/sk/{{ skrac.AUTHENTIK_TILE_ICON_NAME | default('meshcentral', true) }}.png"
+    owner: '1000'
+    group: '1000'
+    mode: '0644'
+  register: skrac_icon_copy
+  failed_when: false
+
 - name: Build the Authentik provisioner input
   set_fact:
     skrac_authentik_input:
@@ -51,6 +73,9 @@
       app_name: "{{ skrac.AUTHENTIK_APP_NAME | default('SKRac') }}"
       app_slug: "{{ skrac.AUTHENTIK_APP_SLUG | default('skrac') }}"
       launch_url: "https://{{ skr_host }}/"
+      icon: >-
+        {{ 'application-icons/sk/' ~ (skrac.AUTHENTIK_TILE_ICON_NAME | default('meshcentral', true)) ~ '.png'
+           if (skrac_icon_copy is succeeded) else (skrac.AUTHENTIK_TILE_ICON | default('', true)) }}
       redirect_uris:
         - "https://{{ skr_host }}/auth-oidc-callback"
       authorization_flow: "{{ skrac.AUTHENTIK_AUTHORIZATION_FLOW | default('default-provider-authorization-implicit-consent') }}"

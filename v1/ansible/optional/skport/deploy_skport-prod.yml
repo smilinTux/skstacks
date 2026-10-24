@@ -199,3 +199,26 @@
         msg: "Portainer service {{ app }}-{{ env }}_portainer status: {{ portainer_service.service.Spec.Name | default('not found') }}"
       tags:
         - deploy
+
+    - name: Create or update the skport portal tile in Authentik
+      # On by default (AUTHENTIK_TILE: true); opt out per instance with
+      # AUTHENTIK_TILE: false. skport sits behind the cluster's domain-wide
+      # Traefik ForwardAuth catch-all already; this just gives it a
+      # bookmark tile on the Authentik portal, bound to a group, with no
+      # provider. See shared/tasks/authentik_portal_tile.yml.
+      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
+      vars:
+        portal_tile:
+          enabled: "{{ skport.AUTHENTIK_TILE | default(true) | bool }}"
+          slug: "{{ skport.AUTHENTIK_TILE_SLUG | default(app, true) }}"
+          name: "{{ skport.AUTHENTIK_TILE_NAME | default('SKPort (Portainer)', true) }}"
+          launch_url: "https://skport{{ '' if env == 'prod' else '-' + env }}.{{ skport.CLUSTERNAME | default(cluster_name) }}.{{ skport.DOMAIN | default(domain) }}"
+          group: "{{ skport.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          icon: "{{ skport.AUTHENTIK_TILE_ICON | default('application-icons/portainer.png', true) }}"
+          icon_file: "{{ skport.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
+          icon_name: "{{ skport.AUTHENTIK_TILE_ICON_NAME | default('portainer', true) }}"
+          open_in_new_tab: "{{ skport.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
+          description: "{{ skport.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
+      tags:
+        - config
+        - authentik

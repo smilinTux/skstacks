@@ -87,10 +87,56 @@ def _product(a, b):
     return [[x, y] for x in a for y in b]
 
 
+def _bool(value):
+    # Ansible's `bool` filter (ansible.module_utils.parsing.convert_bool),
+    # not a stock Jinja2 one: a `vars:` block anywhere this walker renders
+    # (e.g. shared/tasks/authentik_portal_tile.yml's `portal_tile.enabled`)
+    # can use it, same as any other Ansible-only filter here.
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("y", "yes", "t", "true", "on", "1")
+    return bool(value)
+
+
+class _LenientUndefined(jinja2.ChainableUndefined):
+    """Chainable (x.y.z never raises on access) AND silent on output: this
+    walker's ctx only ever seeds `playbook_dir`/`env` plus whatever a play's
+    own top-level `vars:` sets (see rendered_files below) - it never runs a
+    real `set_fact`, so a `vars:` block that references a fact a task sets
+    further up the SAME playbook (e.g. a role's own `skp_host`, or a
+    task-local `vars:` built straight from the host, like
+    shared/tasks/authentik_portal_tile.yml's `portal_tile.launch_url`) is
+    genuinely undefined here and would otherwise raise UndefinedError the
+    moment it is stringified, aborting the walk before it reaches a REAL
+    template task elsewhere in the same file. Rendering it as "" instead is
+    safe for this harness's purpose (resolving template/copy dest+mode
+    paths and secret names), not a license to assume the rendered string
+    anywhere else is meaningful."""
+
+    def __str__(self):
+        return ""
+
+    __html__ = __str__
+
+    # Python-level `+` string concat (as opposed to Jinja's own `~`) calls
+    # __add__/__radd__ directly and never reaches __str__ at all: skfence
+    # and skfenceha's dashboard-host expression does exactly this inside a
+    # default() filter's own argument (`'...' + (x | default(cluster_name))
+    # + '...'`), evaluated eagerly before default() ever runs. Both
+    # cluster_name/domain are seeded below so this is defense in depth for
+    # whatever the next role's host expression does differently.
+    def __add__(self, other):
+        return other if isinstance(other, str) else NotImplemented
+
+    def __radd__(self, other):
+        return other if isinstance(other, str) else NotImplemented
+
+
 def _env(native=False):
     cls = jinja2.nativetypes.NativeEnvironment if native else jinja2.Environment
-    env = cls(undefined=jinja2.ChainableUndefined)
-    env.filters.update(basename=_basename, regex_replace=_regex_replace, product=_product)
+    env = cls(undefined=_LenientUndefined)
+    env.filters.update(basename=_basename, regex_replace=_regex_replace, product=_product, bool=_bool)
     return env
 
 
@@ -187,7 +233,14 @@ def rendered_files(playbook):
     for play in yaml.safe_load(playbook.read_text()):
         if "hosts" not in play:
             continue
-        ctx = _vars(play.get("vars"), {"playbook_dir": str(base), "env": "dev"})
+        ctx = _vars(play.get("vars"), {
+            "playbook_dir": str(base), "env": "dev",
+            # inventory host vars in a real run; nothing here provides them,
+            # so seed a placeholder (same reasoning as `env` above) rather
+            # than leave every `| default(cluster_name)` / `| default(domain)`
+            # to the lenient-undefined fallback.
+            "cluster_name": "cluster1", "domain": "example.com",
+        })
         for section in ("pre_tasks", "tasks", "post_tasks"):
             yield from _walk(play.get(section), ctx, base, playbook.relative_to(ANSIBLE))
 

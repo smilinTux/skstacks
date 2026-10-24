@@ -467,3 +467,26 @@
       tags:
         - post-deploy
         - admin
+
+    - name: Create or update the skgit portal tile in Authentik
+      # On by default (AUTHENTIK_TILE: true); opt out per instance with
+      # AUTHENTIK_TILE: false. skgit sits behind the cluster's domain-wide
+      # Traefik ForwardAuth catch-all already; this just gives it a
+      # bookmark tile on the Authentik portal, bound to a group, with no
+      # provider. See shared/tasks/authentik_portal_tile.yml.
+      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
+      vars:
+        portal_tile:
+          enabled: "{{ skgit.AUTHENTIK_TILE | default(true) | bool }}"
+          slug: "{{ skgit.AUTHENTIK_TILE_SLUG | default(app, true) }}"
+          name: "{{ skgit.AUTHENTIK_TILE_NAME | default('SKGit (Forgejo)', true) }}"
+          launch_url: "https://{{ skgit.SUBDOMAIN_PREFIX | default('skgit') }}{{ '' if env == 'prod' else '-' + env }}.{{ skgit.CLUSTERNAME }}.{{ skgit.DOMAIN }}"
+          group: "{{ skgit.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          icon: "{{ skgit.AUTHENTIK_TILE_ICON | default('fa://fa-code-branch', true) }}"
+          icon_file: "{{ skgit.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
+          icon_name: "{{ skgit.AUTHENTIK_TILE_ICON_NAME | default('forgejo', true) }}"
+          open_in_new_tab: "{{ skgit.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
+          description: "{{ skgit.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
+      tags:
+        - config
+        - authentik

@@ -8,6 +8,122 @@ Each entry says what an instance must do, if anything.
 ### Upgrade notes (instances)
 
 - **(all apps, test-only):** new render-time test guards against the class of bug #232/#234 covered: Traefik v3's swarm provider skips any service whose labels carry both the deprecated `traefik.docker.*` family and the current `traefik.swarm.*` family at once ("both Docker and Swarm labels are defined" -> "Skip container"), dropping its routers to the error-pages fallback with no other symptom. `test_no_service_emits_both_traefik_docker_and_swarm_labels` (`test_compose_templates_render.py`) renders every app template with an empty context and fails if any service's labels contain both prefixes; a template needing real fixture vars to render is skipped there and relies on its own app-specific test instead. No template in this release carries `traefik.docker.*` (confirmed by a fleet-wide search: zero occurrences), so this is a test-only addition - nothing renders differently. **Instance action:** none.
+- **Secret-file-mode test harness (`v1/tests/test_secret_files_not_world_readable.py` +
+  `test_secret_file_modes_survive_deploy.py`), no instance action**: this walker's own minimal
+  Jinja2 environment (not Ansible's) had no `bool` filter and never seeded `cluster_name`/`domain`
+  (real inventory host vars, same gap `env` was already worked around for), so the first `vars:`
+  block anywhere in any deploy playbook to use `| bool` or reference `cluster_name`/`domain`
+  directly aborted the whole walk with `UndefinedError`/`TemplateAssertionError`, hiding every
+  playbook after it. The portal-tile roles' `vars:` blocks were the first to do either. Fixed:
+  added a `bool` filter, seeded `cluster_name`/`domain` placeholders in both files' base context,
+  and made the custom `Undefined` class silent on stringification and on Python-level `+`
+  concatenation (`ChainableUndefined` only covers attribute/item access, not output or arithmetic)
+  so a reference to a fact this harness never runs (no real `set_fact`) degrades to an empty
+  string instead of aborting the walk. Confirmed the gap itself predates this PR, not something
+  this PR invented: the 4 tests pass clean on an unmodified `origin/main` worktree (no `| bool` or
+  bare `cluster_name`/`domain` reference inside any existing task's `vars:` block to trip it) and
+  only started failing once this PR's portal-tile `vars:` blocks were the first to do either.
+
+- **Render-test harness (`v1/tests/render/render_playbooks.py`), no instance action**: fixes a
+  real crash the icon-shipping change below exposed, in test infrastructure only. A `copy: src:
+  dest:` task whose source is binary (an icon PNG) was captured through
+  `lookup('ansible.builtin.file', ...)`, which Ansible already decodes as UTF-8 with lossy
+  escaping for anything that is not (a deprecated behavior removed outright in ansible-core
+  2.23); writing that escaped text back out at `unpack()` time then raised `UnicodeEncodeError`
+  on the lone surrogate codepoints, failing every render test for any role with a binary `copy:`
+  source (`test_skpulse_render.py`, `test_skflow_render.py`, 16 failed + 15 errored). Fixed by
+  base64-encoding every `copy:src` file capture (`BINARY_MARK`) and decoding it back to bytes in
+  `unpack()`; a text file round-trips exactly as before, a binary one no longer crashes the
+  harness. Does not touch a real deploy: `ansible-playbook` itself has always copied binary files
+  correctly, this only affected the render harness's own capture-and-replay step.
+
+- **Every role with a web UI** (listed in the Changes entry below): new `AUTHENTIK_TILE`, default
+  `true` (on by default: an instance that never sets it gets a tile on its next deploy). Set it to
+  `false` per role to opt out. When on, the deploy creates or updates a provider-less Authentik
+  `core.Application` bound to a group (`AUTHENTIK_TILE_GROUP`, default `authentik Admins`), with a
+  launch URL, icon and open-in-new-tab setting, so the service shows a dashboard tile on the
+  Authentik portal. It never touches auth itself: all of these roles already sit behind the
+  cluster's domain-wide Traefik ForwardAuth catch-all (or, for skrac/skmesh, provision their own
+  OIDC login already), so this only fixes visibility, not access. Needs `sksso.api_token` in
+  sksso's own vault (same automation token `optional/skrac` and `optional/skmesh` already use); an
+  instance missing it gets a loud, named failure on its next deploy of any of these roles, not a
+  silent skip, so upgrading means setting that token first if it is not already set. The only
+  explicit opt-out today is `sksso` itself (it is the portal, a tile pointing at itself is
+  meaningless). See each role's README "Portal tile (Authentik)" where one exists, or
+  `docs/ROLE_AUTHORING_CHECKLIST.md` for the general mechanism.
+
+### Changes
+
+- v1: new shared task `shared/tasks/authentik_portal_tile.yml` + `shared/src/authentik_portal_tile.py`:
+  idempotently creates/updates a provider-less Authentik `core.Application` and its group policy
+  binding (`order: 0`, no policy object), for a service whose auth is already handled by the
+  cluster's domain-wide ForwardAuth catch-all and that only needs a portal bookmark. Root cause:
+  every such tile on nor today (skmon, skfenceha, skport's visibility tile, alertmanager, prometheus,
+  etc.) was hand-created through the Authentik UI/API with no declaration in code, so a newly
+  deployed service (skpulse) renders and forward-auths correctly but never appears on a user's
+  portal, and nothing catches that at review time. This mirrors the existing provider-creating
+  pattern (`optional/skrac/src/skrac/authentik_provision.py`) minus the provider: nothing here
+  creates a group (a typo in `AUTHENTIK_TILE_GROUP` fails loudly rather than shipping an invisible
+  tile), and nothing here creates an Authentik `core.Application`'s provider field, which stays
+  `null`. Also supports a role-shipped icon file (`portal_tile.icon_file`, a path under the role's
+  own `src/config/<app>/`): the task copies it into sksso's media volume
+  (`/var/data/sksso-<env>/media/public/application-icons/sk/<icon_name><ext>`, `icon_name`
+  defaulting to `slug` but normally set explicitly so dev/staging/prod share one uploaded copy
+  instead of writing three) and points `meta_icon` at it, falling back to `portal_tile.icon` (a
+  `fa://` glyph) when no file is shipped or the copy fails. Authentik 2025.12+ has no API endpoint
+  left to set an icon from a URL or upload (the old `set_icon` admin action now answers `405`), so
+  a media-volume file is the only way to give a tile a real logo instead of a Font Awesome glyph.
+  Tests: `v1/tests/test_authentik_portal_tile.py` (happy path: create on first run, then a true
+  no-op on an identical second run; edge case: an update touches only the fields that actually
+  changed, and an existing group binding is never duplicated; failure case: a group name Authentik
+  does not have raises instead of silently producing an invisible tile, and an HTTP error from the
+  API surfaces with its status code).
+
+  **Real logos shipped**: 25 PNGs from `homarr-labs/dashboard-icons` (Apache-2.0; full license
+  text and a per-file attribution table in `shared/third_party/dashboard-icons/`) for every wired
+  service that has an upstream icon in that catalog, matching the names already uploaded
+  by hand on both estates (`alertmanager`, `bookstack`, `forgejo`, `garage`, `grafana`, `immich`,
+  `jaeger`, `lidarr`, `meshcentral`, `n8n`, `netbird`, `nextcloud`, `plex`, `portainer`,
+  `prometheus`, `prowlarr`, `qdrant`, `radarr`, `searxng`, `sonarr`, `stirling-pdf`, `syncthing`,
+  `traefik` (skfence and skfenceha both), `uptime-kuma`, `windmill`) so a redeploy writes to the
+  same `application-icons/sk/<name>.png` path an instance may already have instead of orphaning
+  it. The remaining wired roles (`skboard`, `skdash`, `skgym`, `skhome`, `skmail`, `skpatch`,
+  `skpayment`, `sksec-web`, `skseek`, `skwhoami`) keep their `fa://fa-...` glyph: no checked
+  upstream entry for that exact service.
+
+  Wired into every role in `core/` and `optional/` that exposes a Traefik web UI, default
+  `AUTHENTIK_TILE: true` (opt-out per role, not opt-in: a tile is a bookmark, gated by its group
+  binding, so defaulting it on does not expose anything that was not already reachable):
+  `skboard`, `skbook`, `skdash`, `skfence`, `skfenceha`, `skfetch` (one tile per *arr UI: sonarr,
+  radarr, lidarr, prowlarr, each with its own icon), `skflow`, `skgallery`, `skgit`, `skgym`,
+  `skhome`, `skhub`, `skmail`, `skmon` (one tile per sub-service: Grafana, Prometheus,
+  Alertmanager, Jaeger, each with its own icon), `skorch`, `skpatch`, `skpayment`, `skpdf`,
+  `skpeek`, `skport`, `skpulse`, `sksec-web`, `skseek`, `skstor`, `skstream`, `sksync`,
+  `skvector`, `skwhoami` (one tile per instance: 01/02/03). `sksso` is the one explicit opt-out
+  (it is the identity provider rendering the portal itself; see the `# portal-tile: opt-out`
+  marker in its deploy playbook).
+
+  `skrac` and `skmesh` already provision their own Authentik provider + application when their
+  native OIDC login is turned on (`optional/skrac/tasks/authentik.yml`,
+  `optional/skmesh/tasks/authentik.yml`): their deploy wiring is unchanged, but both
+  `authentik_provision.py` scripts and both Ansible tasks now carry the same icon mechanism
+  (new, optional `cfg["icon"]` → `meta_icon`; the task copies `src/config/<app>/icon.png` to
+  sksso's media as `meshcentral.png` / `netbird.png` respectively, `AUTHENTIK_TILE_ICON_FILE` /
+  `AUTHENTIK_TILE_ICON_NAME` override, `AUTHENTIK_TILE_ICON` fa:// fallback on a failed copy), so
+  they get a real logo too, not just the generic-mechanism roles. Verified:
+  `v1/tests/test_skmesh_auth_modes.py` (39 tests) and `v1/tests/test_skrac_render.py` reran clean.
+
+- v1: new `v1/tests/test_portal_tile_lint.py`: scans every role under `core/` and `optional/` for a
+  Traefik `Host(` router rule and asserts its `deploy_<app>-prod.yml` declares a tile (the shared
+  mechanism above, or a role-owned one like skrac/skmesh's) or carries an explicit
+  `# portal-tile: opt-out (<reason>)` marker. This is the enforcement for the upgrade note above:
+  a future role that ships a web UI with neither fails this test, naming the role, instead of
+  silently repeating the skpulse gap this release fixes. See `docs/ROLE_AUTHORING_CHECKLIST.md`
+  (new file) "Portal tile (Authentik)" for what a role author does to pass it. Render-gate fixture:
+  `v1/tests/render/vars/<role>.with.sksso.yml` added for every wired role (the fake `sksso.api_token`
+  the render harness's real, non-mocked `include_vars` step needs now that the tile defaults on;
+  modeled on the existing `skmesh.with.sksso.yml`), so the existing per-role render suites keep
+  passing with no change to their own assertions.
 
 ## Unreleased (v2.26.16)
 

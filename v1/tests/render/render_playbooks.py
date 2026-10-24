@@ -314,7 +314,19 @@ class Rewriter:
                     # a file or directory copy: verbatim by design, so it lands
                     # under _copy/ and the unrendered-Jinja check skips it. A
                     # directory is only marked here; unpack() copies the tree.
-                    value = ("(lookup('ansible.builtin.file', _render_src, rstrip=False) if _render_src is file"
+                    # A FILE always goes through base64 (BINARY_MARK), never
+                    # raw text: ansible.builtin.file's lookup plugin decodes
+                    # as UTF-8 and silently escapes anything that is not
+                    # (deprecated in ansible-core, an outright error from
+                    # 2.23), which for a real binary source (an icon PNG,
+                    # say) produces lone surrogate codepoints that then blow
+                    # up with UnicodeEncodeError the moment unpack() tries to
+                    # write them back out as text. b64encode sidesteps that
+                    # decode entirely for a real binary file, and round-trips
+                    # a text file exactly as before (unpack() below decodes
+                    # it right back to the same bytes).
+                    value = ("('" + BINARY_MARK + "' ~ (lookup('ansible.builtin.file', _render_src, rstrip=False) | b64encode)"
+                             " if _render_src is file"
                              " else '" + DIR_MARK + "' ~ (_render_src | realpath)"
                              " ~ ('/' if _render_src.endswith('/') else ''))")
                     key = ("(_render_dest ~ ((_render_src | basename) if (_render_dest.endswith('/')"
@@ -348,6 +360,7 @@ def rewrite_task_file(path: Path) -> None:
 
 
 DIR_MARK = "__render_copy_dir__:"
+BINARY_MARK = "__render_copy_b64__:"
 WRITE_TASK = {
     "name": "render: write every collected file in one go",
     "copy": {"content": "{{ _render_files | default({}) | to_json }}",
@@ -371,6 +384,12 @@ def unpack(outdir: Path) -> None:
             shutil.copytree(src.rstrip("/"), into, dirs_exist_ok=True)
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
+        if text.startswith(BINARY_MARK):
+            # a copy:src file (see Rewriter): always base64, so a binary
+            # source (an icon PNG, say) round-trips exactly and a text one
+            # decodes right back to the same string it started as.
+            target.write_bytes(base64.b64decode(text[len(BINARY_MARK):]))
+            continue
         target.write_text(text)
     bundle.unlink()
 

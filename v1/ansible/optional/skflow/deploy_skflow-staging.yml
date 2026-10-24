@@ -294,3 +294,26 @@
       when: skflow.SSO_CLIENT_SECRET | default('', true) | string | length > 0
       tags:
         - deploy
+
+    - name: Create or update the skflow portal tile in Authentik
+      # On by default (AUTHENTIK_TILE: true); opt out per instance with
+      # AUTHENTIK_TILE: false. skflow sits behind the cluster's domain-wide
+      # Traefik ForwardAuth catch-all already; this just gives it a
+      # bookmark tile on the Authentik portal, bound to a group, with no
+      # provider. See shared/tasks/authentik_portal_tile.yml.
+      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
+      vars:
+        portal_tile:
+          enabled: "{{ skflow.AUTHENTIK_TILE | default(true) | bool }}"
+          slug: "{{ skflow.AUTHENTIK_TILE_SLUG | default(app, true) }}"
+          name: "{{ skflow.AUTHENTIK_TILE_NAME | default('SKFlow (Windmill)', true) }}"
+          launch_url: "https://{{ sf_host }}"
+          group: "{{ skflow.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          icon: "{{ skflow.AUTHENTIK_TILE_ICON | default('fa://fa-gears', true) }}"
+          icon_file: "{{ skflow.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
+          icon_name: "{{ skflow.AUTHENTIK_TILE_ICON_NAME | default('windmill', true) }}"
+          open_in_new_tab: "{{ skflow.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
+          description: "{{ skflow.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
+      tags:
+        - config
+        - authentik

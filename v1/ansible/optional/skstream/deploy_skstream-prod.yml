@@ -205,3 +205,26 @@
         state: "{{ 'restarted' if (skstream_unit.changed | default(false)) else 'started' }}"
       delegate_to: "{{ skstream.MEDIA_NODE }}"
       tags: [host, deploy]
+
+    - name: Create or update the skstream portal tile in Authentik
+      # On by default (AUTHENTIK_TILE: true); opt out per instance with
+      # AUTHENTIK_TILE: false. skstream sits behind the cluster's domain-wide
+      # Traefik ForwardAuth catch-all already; this just gives it a
+      # bookmark tile on the Authentik portal, bound to a group, with no
+      # provider. See shared/tasks/authentik_portal_tile.yml.
+      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
+      vars:
+        portal_tile:
+          enabled: "{{ skstream.AUTHENTIK_TILE | default(true) | bool }}"
+          slug: "{{ skstream.AUTHENTIK_TILE_SLUG | default(app, true) }}"
+          name: "{{ skstream.AUTHENTIK_TILE_NAME | default('SKStream (Plex)', true) }}"
+          launch_url: "https://skstream{{ '' if env == 'prod' else '-' + env }}.{{ skstream.CLUSTERNAME }}.{{ skstream.DOMAIN }}"
+          group: "{{ skstream.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          icon: "{{ skstream.AUTHENTIK_TILE_ICON | default('fa://fa-film', true) }}"
+          icon_file: "{{ skstream.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
+          icon_name: "{{ skstream.AUTHENTIK_TILE_ICON_NAME | default('plex', true) }}"
+          open_in_new_tab: "{{ skstream.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
+          description: "{{ skstream.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
+      tags:
+        - config
+        - authentik
