@@ -99,7 +99,13 @@ below is a separate, optional, extra layer, off by default).
    cluster). Whether Authentik's API echoes a provider's `client_secret`
    back on a read is unconfirmed; the task always re-sends it on update,
    so the result is correct either way, just reported "updated" every run
-   if it doesn't.
+   if it doesn't. When `AUTHENTIK_PROVISION` is on, the application also
+   gets a real logo: `src/config/skrac/icon.png` (MeshCentral's upstream
+   icon, see `shared/third_party/dashboard-icons/NOTICE.md`) is copied to
+   sksso's media volume as `application-icons/sk/meshcentral.png` and set
+   as `meta_icon`. Override the shipped file with
+   `AUTHENTIK_TILE_ICON_FILE` / `AUTHENTIK_TILE_ICON_NAME`, or fall back to
+   a `fa://fa-...` glyph with `AUTHENTIK_TILE_ICON` if the copy ever fails.
 2. Set `OIDC_ISSUER` to that application's issuer URL, typically
    `https://<sso host>/application/o/<app slug>/`.
    MeshCentral itself fetches the discovery document, the token and the

@@ -1178,3 +1178,26 @@
       tags:
         - post-deploy
         - ai
+
+    - name: Create or update the skhub portal tile in Authentik
+      # On by default (AUTHENTIK_TILE: true); opt out per instance with
+      # AUTHENTIK_TILE: false. skhub sits behind the cluster's domain-wide
+      # Traefik ForwardAuth catch-all already; this just gives it a
+      # bookmark tile on the Authentik portal, bound to a group, with no
+      # provider. See shared/tasks/authentik_portal_tile.yml.
+      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
+      vars:
+        portal_tile:
+          enabled: "{{ skhub.AUTHENTIK_TILE | default(true) | bool }}"
+          slug: "{{ skhub.AUTHENTIK_TILE_SLUG | default(app, true) }}"
+          name: "{{ skhub.AUTHENTIK_TILE_NAME | default('SKHub (Nextcloud)', true) }}"
+          launch_url: "https://{{ skhub_public_host }}"
+          group: "{{ skhub.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          icon: "{{ skhub.AUTHENTIK_TILE_ICON | default('fa://fa-cloud', true) }}"
+          icon_file: "{{ skhub.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
+          icon_name: "{{ skhub.AUTHENTIK_TILE_ICON_NAME | default('nextcloud', true) }}"
+          open_in_new_tab: "{{ skhub.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
+          description: "{{ skhub.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
+      tags:
+        - config
+        - authentik

@@ -278,3 +278,26 @@
       debug: var=deploy_output.stdout_lines
       tags:
         - deploy
+
+    - name: Create or update the skfence portal tile in Authentik
+      # On by default (AUTHENTIK_TILE: true); opt out per instance with
+      # AUTHENTIK_TILE: false. The dashboard is Traefik's own, gated by
+      # the dashboard-chain middleware, not necessarily the Authentik
+      # catch-all; this adds a bookmark tile with no provider, same shape
+      # as every other role's. See shared/tasks/authentik_portal_tile.yml.
+      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
+      vars:
+        portal_tile:
+          enabled: "{{ skfence.AUTHENTIK_TILE | default(true) | bool }}"
+          slug: "{{ skfence.AUTHENTIK_TILE_SLUG | default(app, true) }}"
+          name: "{{ skfence.AUTHENTIK_TILE_NAME | default('SKFence (Traefik Dashboard)', true) }}"
+          launch_url: "https://{{ skfence.DASHBOARD_HOST | default('skfence' + ('-' + env if env != 'prod' else '') + '.' + (skfence.CLUSTERNAME | default(cluster_name)) + '.' + (skfence.DOMAIN | default(domain))) }}/dashboard/"
+          group: "{{ skfence.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          icon: "{{ skfence.AUTHENTIK_TILE_ICON | default('fa://fa-route', true) }}"
+          icon_file: "{{ skfence.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
+          icon_name: "{{ skfence.AUTHENTIK_TILE_ICON_NAME | default('traefik', true) }}"
+          open_in_new_tab: "{{ skfence.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
+          description: "{{ skfence.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
+      tags:
+        - config
+        - authentik

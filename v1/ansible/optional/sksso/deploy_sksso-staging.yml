@@ -282,3 +282,11 @@
     - name: Print Authentik server status
       debug:
         msg: "Server service exists: {{ server_service.service.ID | default('Not found') }}"
+
+    # portal-tile: opt-out (sksso is Authentik itself, the identity
+    # provider that renders the portal; a tile pointing at itself from
+    # within its own portal has no purpose, and the admin UI is already
+    # one click from "My applications"). See
+    # shared/tasks/authentik_portal_tile.yml for the mechanism every
+    # other role's web UI uses, and v1/tests/test_portal_tile_lint.py for
+    # the check this comment satisfies.

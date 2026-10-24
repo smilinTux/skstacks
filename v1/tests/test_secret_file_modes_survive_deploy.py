@@ -100,7 +100,7 @@ def remode_findings(playbook):
     for play in yaml.safe_load(playbook.read_text()):
         if "hosts" not in play:
             continue
-        ctx = _vars(play.get("vars"), {"playbook_dir": str(base), "env": "dev"})
+        ctx = _vars(play.get("vars"), {"playbook_dir": str(base), "env": "dev", "cluster_name": "cluster1", "domain": "example.com"})
         steps = []
         for section in ("pre_tasks", "tasks", "post_tasks"):
             steps.extend(_flatten(play.get(section), ctx, base, playbook.relative_to(ANSIBLE)))
@@ -151,7 +151,7 @@ def test_walker_sees_link_and_shell_tasks():
         for play in yaml.safe_load(pb.read_text()):
             if "hosts" not in play:
                 continue
-            ctx = _vars(play.get("vars"), {"playbook_dir": str(pb.parent), "env": "dev"})
+            ctx = _vars(play.get("vars"), {"playbook_dir": str(pb.parent), "env": "dev", "cluster_name": "cluster1", "domain": "example.com"})
             for section in ("pre_tasks", "tasks", "post_tasks"):
                 seen += sum(1 for _ in _flatten(play.get(section), ctx, pb.parent, pb.relative_to(ANSIBLE)))
     assert seen > 2000

@@ -64,6 +64,13 @@ idempotent and drift-correcting:
 - with `DEVICE_AUTH_FLOW: true`, the default brand's device code flow, only
   if the brand has none (never overwritten).
 
+The application also gets a real logo: `src/config/skmesh/icon.png`
+(NetBird's upstream icon, see `shared/third_party/dashboard-icons/NOTICE.md`)
+is copied to sksso's media volume as `application-icons/sk/netbird.png` and
+set as `meta_icon`. Override with `AUTHENTIK_TILE_ICON_FILE` /
+`AUTHENTIK_TILE_ICON_NAME`, or fall back to a `fa://fa-...` glyph with
+`AUTHENTIK_TILE_ICON` if the copy ever fails.
+
 Every secret goes in on stdin; the task is `no_log` and the provisioner
 prints status lines only. Management reaches `sso<-env>.<base>` through an
 `extra_hosts` entry to `SSO_HOST_IP` (the edge), and the dashboard's

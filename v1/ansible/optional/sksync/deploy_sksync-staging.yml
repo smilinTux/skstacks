@@ -206,3 +206,26 @@
       debug: var=deploy_output.stdout_lines
       tags:
         - deploy
+
+    - name: Create or update the sksync portal tile in Authentik
+      # On by default (AUTHENTIK_TILE: true); opt out per instance with
+      # AUTHENTIK_TILE: false. sksync sits behind the cluster's domain-wide
+      # Traefik ForwardAuth catch-all already; this just gives it a
+      # bookmark tile on the Authentik portal, bound to a group, with no
+      # provider. See shared/tasks/authentik_portal_tile.yml.
+      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
+      vars:
+        portal_tile:
+          enabled: "{{ sksync.AUTHENTIK_TILE | default(true) | bool }}"
+          slug: "{{ sksync.AUTHENTIK_TILE_SLUG | default(app, true) }}"
+          name: "{{ sksync.AUTHENTIK_TILE_NAME | default('SKSync (Syncthing)', true) }}"
+          launch_url: "https://sksync{{ '' if env == 'prod' else '-' + env }}.{{ sksync.CLUSTERNAME | default(cluster_name) }}.{{ sksync.DOMAIN | default(domain) }}"
+          group: "{{ sksync.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          icon: "{{ sksync.AUTHENTIK_TILE_ICON | default('fa://fa-arrows-rotate', true) }}"
+          icon_file: "{{ sksync.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
+          icon_name: "{{ sksync.AUTHENTIK_TILE_ICON_NAME | default('syncthing', true) }}"
+          open_in_new_tab: "{{ sksync.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
+          description: "{{ sksync.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
+      tags:
+        - config
+        - authentik

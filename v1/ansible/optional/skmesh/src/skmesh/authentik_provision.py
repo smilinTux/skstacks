@@ -198,12 +198,15 @@ def provision(api, cfg):
             if "HTTP 404" in str(exc):
                 return None
             raise
-    ensure(api, "/core/applications/", app_lookup, {
+    app_fields = {
         "name": cfg["app_name"],
         "slug": cfg["app_slug"],
         "provider": prov["pk"],
         "meta_launch_url": cfg["launch_url"],
-    }, "application", key="slug")
+    }
+    if cfg.get("icon"):
+        app_fields["meta_icon"] = cfg["icon"]
+    ensure(api, "/core/applications/", app_lookup, app_fields, "application", key="slug")
 
     # IdP manager service account: view users, nothing else.
     role = ensure(api, "/rbac/roles/",

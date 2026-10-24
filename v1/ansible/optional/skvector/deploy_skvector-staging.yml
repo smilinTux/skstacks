@@ -210,3 +210,26 @@
       debug: var=deploy_output.stdout_lines
       tags:
         - deploy
+
+    - name: Create or update the skvector portal tile in Authentik
+      # On by default (AUTHENTIK_TILE: true); opt out per instance with
+      # AUTHENTIK_TILE: false. skvector sits behind the cluster's domain-wide
+      # Traefik ForwardAuth catch-all already; this just gives it a
+      # bookmark tile on the Authentik portal, bound to a group, with no
+      # provider. See shared/tasks/authentik_portal_tile.yml.
+      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
+      vars:
+        portal_tile:
+          enabled: "{{ skvector.AUTHENTIK_TILE | default(true) | bool }}"
+          slug: "{{ skvector.AUTHENTIK_TILE_SLUG | default(app, true) }}"
+          name: "{{ skvector.AUTHENTIK_TILE_NAME | default('SKVector (Qdrant)', true) }}"
+          launch_url: "https://skvector{{ '' if env == 'prod' else '-' + env }}.{{ skvector.DOMAIN if (skvector.CLOUDFLARED | default(false)) else (skvector.CLUSTERNAME ~ '.' ~ skvector.DOMAIN) }}"
+          group: "{{ skvector.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          icon: "{{ skvector.AUTHENTIK_TILE_ICON | default('fa://fa-database', true) }}"
+          icon_file: "{{ skvector.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
+          icon_name: "{{ skvector.AUTHENTIK_TILE_ICON_NAME | default('qdrant', true) }}"
+          open_in_new_tab: "{{ skvector.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
+          description: "{{ skvector.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
+      tags:
+        - config
+        - authentik
