@@ -55,3 +55,46 @@ def test_skmesh_dashboard_image_is_overridable_per_instance():
     out = env.from_string(SKMESH.read_text()).render(env="prod", skmesh=custom)
     doc = yaml.safe_load(out)
     assert doc["services"]["dashboard"]["image"] == "ghcr.io/smilintux/skmesh:latest"
+
+
+# NAM 2026-10-24: skmesh.nativeassetmanagement.com returned intermittent
+# curl 000s. Root cause: dashboard is attached to two overlay networks
+# (skmesh-{env} + cloud-public-{env}) with no traefik.docker.network label,
+# so Traefik's docker provider could non-deterministically resolve the
+# backend to the skmesh-{env} IP, which Traefik has no interface on - the
+# connection then hung until the client's own timeout fired.
+# management/signal/relay had already been hand-patched live on NAM to
+# traefik.docker.network (and resolved correctly on every sampled request);
+# dashboard still carried only the old traefik.swarm.network label, which
+# is not a label any Traefik version reads, so it was no better than
+# having no network label at all. Every multi-network skmesh service must
+# pin traefik.docker.network so this can't recur on any of them.
+@pytest.mark.parametrize("service", ["management", "signal", "relay", "dashboard"])
+@pytest.mark.parametrize("auth_mode", ["standalone", "authentik"])
+def test_skmesh_multi_network_services_pin_traefik_docker_network(service, auth_mode):
+    env = jinja2.Environment(undefined=jinja2.ChainableUndefined, trim_blocks=True)
+    vars_ = dict(_SKMESH_BASE_VARS, AUTH_MODE=auth_mode)
+    out = env.from_string(SKMESH.read_text()).render(env="prod", skmesh=vars_)
+    doc = yaml.safe_load(out)
+    svc = doc["services"][service]
+    assert set(svc["networks"]) == {"skmesh-prod", "cloud-public-prod"}, (
+        f"{service} is on {svc['networks']!r}: if it ever drops to one "
+        "network the docker.network label below becomes unnecessary, not "
+        "wrong, but this test documents the precondition for the bug."
+    )
+    labels = svc["deploy"]["labels"]
+    assert "traefik.docker.network=cloud-public-prod" in labels
+    # the stale, non-functional label must not come back either.
+    assert not any(lbl.startswith("traefik.swarm.network") for lbl in labels)
+
+
+def test_skmesh_traefik_docker_network_label_follows_env():
+    """A non-prod instance's label must point at ITS own cloud-public
+    network, not prod's - a copy-paste of the literal prod string would
+    silently cross-wire two instances' edges."""
+    env = jinja2.Environment(undefined=jinja2.ChainableUndefined, trim_blocks=True)
+    out = env.from_string(SKMESH.read_text()).render(env="dev", skmesh=dict(_SKMESH_BASE_VARS))
+    doc = yaml.safe_load(out)
+    labels = doc["services"]["dashboard"]["deploy"]["labels"]
+    assert "traefik.docker.network=cloud-public-dev" in labels
+    assert "traefik.docker.network=cloud-public-prod" not in labels
