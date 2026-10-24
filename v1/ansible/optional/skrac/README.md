@@ -153,6 +153,31 @@ mean something in `AUTH_MODE: oidc`: switch the mode or remove them.
 Empty or `false` values are fine. The agent router is identical in both
 modes and never carries `SSO_MIDDLEWARE`.
 
+### OIDC login timeout margin
+
+MeshCentral's OIDC client is the `openid-client@5.7.1` npm package, installed
+on demand (not a static dependency: `meshcentral.js` requires it only when
+`authstrategies.oidc` is set). That package's default HTTP request timeout
+is 3.5s, and MeshCentral 1.2.6's only call to
+`openid-client.custom.setHttpOptionsDefaults` (which could raise it) is
+gated behind an HTTPS proxy agent being configured (`webserver.js`,
+`setupDomainAuthStrategy`); it is never called for a plain deployment, so
+the 3.5s default stands with no `config.json` knob to change it (the schema
+documents `client`/`issuer` metadata passed straight to `openid-client`, not
+its HTTP options).
+
+If sksso's own token-endpoint latency (see sksso README "Colocating server
++ worker with the data node") is already consuming a large share of that
+budget, a login can intermittently cross 3.5s and fail with no retry: the
+client gives up, MeshCentral shows a failed callback, and Traefik logs a
+499 (client closed the request). This is an upstream MeshCentral gap, not
+something this role's `config.json.j2` can route around; the two available
+mitigations are keeping sksso's token endpoint comfortably under budget
+(colocate with its data node) and, if needed, raising the timeout upstream
+(file an issue/PR against Ylianst/MeshCentral exposing a config.json-level
+HTTP timeout, or run a patched image that calls
+`setHttpOptionsDefaults({ timeout: ... })` unconditionally).
+
 ### Traefik, agents and the reverse-proxy trap
 
 MeshCentral agents hold a wss connection to the server and (by default)

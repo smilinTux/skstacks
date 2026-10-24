@@ -10,6 +10,13 @@ networks:
 # POSTGRES_DATA_PATH / REDIS_DATA_PATH on local disk an NFS hang on any other
 # node no longer takes Authentik down. See README.md "Local database on a
 # pinned node". Defaults keep the NFS paths under /var/data/runtime.
+#
+# sksso.colocate_with_data_node (default false) also pins server + worker
+# to DATA_NODE, so every OIDC token-endpoint request's DB/Redis calls stay
+# on loopback instead of crossing the overlay network to another node. See
+# README.md "Local database on a pinned node" for the measured latency gap
+# this closes; it matters most for a downstream OIDC client with a short
+# HTTP timeout (skrac/MeshCentral's openid-client default is 3.5s).
 services:
   postgres:
     image: postgres:16.2
@@ -146,6 +153,9 @@ services:
 {% for node in sksso.placement_exclude_nodes | default([]) %}
 {% set sksso_pl.c = sksso_pl.c + ["node.hostname != " ~ node] %}
 {% endfor %}
+{% if (sksso.colocate_with_data_node | default(false)) and (sksso.DATA_NODE | default("")) %}
+{% set sksso_pl.c = sksso_pl.c + ["node.hostname == " ~ sksso.DATA_NODE] %}
+{% endif %}
       placement:
         constraints: {{ sksso_pl.c | tojson }}
       resources:
@@ -215,6 +225,9 @@ services:
 {% for node in sksso.placement_exclude_nodes | default([]) %}
 {% set sksso_pl.c = sksso_pl.c + ["node.hostname != " ~ node] %}
 {% endfor %}
+{% if (sksso.colocate_with_data_node | default(false)) and (sksso.DATA_NODE | default("")) %}
+{% set sksso_pl.c = sksso_pl.c + ["node.hostname == " ~ sksso.DATA_NODE] %}
+{% endif %}
       placement:
         constraints: {{ sksso_pl.c | tojson }}
       resources:
