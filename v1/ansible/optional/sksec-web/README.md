@@ -247,7 +247,7 @@ path/node guard, and dev/staging/prod playbook parity.
 
 ## Portal tile (Authentik)
 
-Opt-in (`sksec_web.AUTHENTIK_TILE: true`, default `false`): the next deploy creates
+On by default (`sksec_web.AUTHENTIK_TILE`, default `true`; set to `false` to opt out): the next deploy creates
 or updates a provider-less Authentik `core.Application` named `AUTHENTIK_TILE_NAME`
 (default `SKSec Web (CrowdSec)`), launch URL `https://<the public host above>`, icon
 `AUTHENTIK_TILE_ICON` (default `fa://fa-shield-halved`), bound to the group

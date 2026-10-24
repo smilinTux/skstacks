@@ -162,3 +162,28 @@
         msg: "SKWhoami service status: {{ whoami_service_info.stdout | default('not found') }}"
       tags:
         - deploy
+
+    - name: Create or update the skwhoami portal tiles in Authentik
+      # On by default (AUTHENTIK_TILE: true); opt out per instance with
+      # AUTHENTIK_TILE: false. skwhoami runs three identical whoami
+      # instances (routing diagnostic pages), each behind the cluster's
+      # domain-wide Traefik ForwardAuth catch-all already; each gets its
+      # own bookmark tile. See shared/tasks/authentik_portal_tile.yml.
+      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
+      vars:
+        portal_tile:
+          enabled: "{{ skwhoami.AUTHENTIK_TILE | default(true) | bool }}"
+          slug: "{{ item }}{{ '' if env == 'prod' else '-' + env }}"
+          name: "SKWhoami {{ item[-2:] }}"
+          launch_url: "https://{{ item }}{{ '' if env == 'prod' else '-' + env }}.{{ skwhoami.CLUSTERNAME | default(cluster_name) }}.{{ skwhoami.DOMAIN | default(domain) }}"
+          group: "{{ skwhoami.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          icon: "{{ skwhoami.AUTHENTIK_TILE_ICON | default('fa://fa-circle-info', true) }}"
+          open_in_new_tab: true
+          description: ""
+      loop:
+        - skwhoami01
+        - skwhoami02
+        - skwhoami03
+      tags:
+        - config
+        - authentik

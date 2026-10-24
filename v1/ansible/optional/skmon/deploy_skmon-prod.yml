@@ -216,3 +216,32 @@
       debug: var=deploy_output.stdout_lines
       tags:
         - deploy
+
+    - name: Create or update the skmon portal tiles in Authentik
+      # On by default (AUTHENTIK_TILE: true); opt out per instance with
+      # AUTHENTIK_TILE: false. skmon bundles four separate web UIs
+      # (Grafana, Prometheus, Alertmanager, Jaeger), each behind the
+      # cluster's domain-wide Traefik ForwardAuth catch-all already; each
+      # gets its own bookmark tile, bound to one group, with no provider.
+      # See shared/tasks/authentik_portal_tile.yml.
+      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
+      vars:
+        portal_tile:
+          enabled: "{{ skmon.AUTHENTIK_TILE | default(true) | bool }}"
+          slug: "{{ item.key }}{{ '' if env == 'prod' else '-' + env }}"
+          name: "{{ item.name }}"
+          launch_url: "https://{{ item.host_prefix }}{{ '' if env == 'prod' else '-' + env }}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}"
+          group: "{{ skmon.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          icon: "{{ item.icon }}"
+          open_in_new_tab: true
+          description: ""
+      loop:
+        - { key: "skmon", host_prefix: "skmon", name: "SKMon (Grafana)", icon: "fa://fa-chart-line" }
+        - { key: "prometheus", host_prefix: "prometheus", name: "Prometheus", icon: "fa://fa-fire" }
+        - { key: "alertmanager", host_prefix: "alertmanager", name: "Alertmanager", icon: "fa://fa-bell" }
+        - { key: "jaeger", host_prefix: "jaeger", name: "Jaeger", icon: "fa://fa-diagram-project" }
+      loop_control:
+        label: "{{ item.key }}"
+      tags:
+        - config
+        - authentik

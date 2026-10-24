@@ -282,8 +282,9 @@
         - authmode
 
     - name: Create or update the skpulse portal tile in Authentik
-      # Opt-in and off by default (AUTHENTIK_TILE: true); the fleet's
-      # convention until now was a hand-made Authentik bookmark tile
+      # On by default (AUTHENTIK_TILE: true); opt out per instance with
+      # AUTHENTIK_TILE: false. The fleet's convention until now was a
+      # hand-made Authentik bookmark tile
       # (see docs/runbooks/sksso.md "Portal tile icons" on the nor
       # instance). This gives skpulse the same tile as code: a
       # provider-less core.Application bound to a group, so it shows
@@ -291,7 +292,7 @@
       include_tasks: ../../shared/tasks/authentik_portal_tile.yml
       vars:
         portal_tile:
-          enabled: "{{ skpulse.AUTHENTIK_TILE | default(false) | bool }}"
+          enabled: "{{ skpulse.AUTHENTIK_TILE | default(true) | bool }}"
           slug: "{{ skpulse.AUTHENTIK_TILE_SLUG | default(skp_router, true) }}"
           name: "{{ skpulse.AUTHENTIK_TILE_NAME | default('SKPulse (Uptime Kuma)', true) }}"
           launch_url: "https://{{ skp_public_host }}"

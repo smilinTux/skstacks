@@ -112,7 +112,7 @@ service as a monitor via the Uptime Kuma API, given an
 
 ## Portal tile (Authentik)
 
-Opt-in (`skpulse.AUTHENTIK_TILE: true`, default `false`): the next deploy creates or
+On by default (`skpulse.AUTHENTIK_TILE`, default `true`; set to `false` to opt out): the next deploy creates or
 updates a provider-less Authentik `core.Application` named `AUTHENTIK_TILE_NAME`
 (default `SKPulse (Uptime Kuma)`), launch URL `https://<the public host above>`,
 icon `AUTHENTIK_TILE_ICON` (default `fa://fa-heart-pulse`), bound to the group

@@ -134,3 +134,24 @@
     - name: Show deploy output
       debug: var=deploy_output.stdout_lines
       tags: [deploy]
+
+    - name: Create or update the skbook portal tile in Authentik
+      # On by default (AUTHENTIK_TILE: true); opt out per instance with
+      # AUTHENTIK_TILE: false. skbook sits behind the cluster's domain-wide
+      # Traefik ForwardAuth catch-all already; this just gives it a
+      # bookmark tile on the Authentik portal, bound to a group, with no
+      # provider. See shared/tasks/authentik_portal_tile.yml.
+      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
+      vars:
+        portal_tile:
+          enabled: "{{ skbook.AUTHENTIK_TILE | default(true) | bool }}"
+          slug: "{{ skbook.AUTHENTIK_TILE_SLUG | default(app, true) }}"
+          name: "{{ skbook.AUTHENTIK_TILE_NAME | default('SKBook (BookStack)', true) }}"
+          launch_url: "https://skbook{{ '' if env == 'prod' else '-' + env }}.{{ skbook.CLUSTERNAME }}.{{ skbook.DOMAIN }}"
+          group: "{{ skbook.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          icon: "{{ skbook.AUTHENTIK_TILE_ICON | default('fa://fa-book', true) }}"
+          open_in_new_tab: "{{ skbook.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
+          description: "{{ skbook.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
+      tags:
+        - config
+        - authentik

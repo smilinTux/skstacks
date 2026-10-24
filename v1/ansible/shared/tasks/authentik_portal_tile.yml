@@ -27,7 +27,20 @@
 #     name: "SKPulse (Uptime Kuma)"      # Application display name
 #     launch_url: "https://skpulse.example.com"
 #     group: "authentik Admins"          # must already exist in Authentik
-#     icon: "fa://fa-heart-pulse"        # optional, "fa://fa-..." or "application-icons/<file>"
+#     icon: "fa://fa-heart-pulse"        # optional fallback, "fa://fa-..." or an
+#                                         # already-uploaded "application-icons/<file>"
+#     icon_file: "icon.png"              # optional: a file the role ships at
+#                                         # src/config/<app>/<icon_file>. When present
+#                                         # (checked on the controller) this wins over
+#                                         # `icon`: it is copied to sksso's own media
+#                                         # volume (/var/data/sksso-<env>/media/public/
+#                                         # application-icons/sk/<slug><ext>) and
+#                                         # meta_icon is set to that path. Authentik
+#                                         # 2025.12+ has no API endpoint to set an
+#                                         # application's icon from a URL/upload (the
+#                                         # old set_icon action now answers 405); a
+#                                         # file placed directly in its media volume,
+#                                         # referenced by meta_icon, is the only way.
 #     open_in_new_tab: true              # optional, default true
 #     description: ""                    # optional
 #     category: ""                       # optional, the portal's own UI grouping label
@@ -67,6 +80,46 @@
     quiet: true
   when: portal_tile.enabled | default(false) | bool
 
+- name: "Portal tile ({{ app }}): check whether the role ships an icon file"
+  stat:
+    path: "{{ playbook_dir }}/src/config/{{ app }}/{{ portal_tile.icon_file }}"
+  register: portal_tile_icon_stat
+  delegate_to: localhost
+  become: false
+  when: (portal_tile.enabled | default(false) | bool) and (portal_tile.icon_file | default('') | length > 0)
+
+- name: "Portal tile ({{ app }}): ensure sksso's uploaded-icons directory exists"
+  file:
+    path: "/var/data/sksso-{{ env }}/media/public/application-icons/sk"
+    state: directory
+    owner: '1000'
+    group: '1000'
+    mode: '0755'
+  when: (portal_tile.enabled | default(false) | bool) and (portal_tile_icon_stat.stat.exists | default(false))
+
+- name: "Portal tile ({{ app }}): copy the role's icon file into sksso's media"
+  # Authentik 2025.12+ has no API endpoint to set an icon from a URL/upload
+  # (the old set_icon action answers 405); a file placed directly in its
+  # media volume, referenced by meta_icon below, is the only way.
+  copy:
+    src: "{{ playbook_dir }}/src/config/{{ app }}/{{ portal_tile.icon_file }}"
+    dest: >-
+      /var/data/sksso-{{ env }}/media/public/application-icons/sk/{{ portal_tile.slug }}{{
+      (portal_tile.icon_file | regex_search('(\.[A-Za-z0-9]+)$')) | default('.png', true) }}
+    owner: '1000'
+    group: '1000'
+    mode: '0644'
+  when: (portal_tile.enabled | default(false) | bool) and (portal_tile_icon_stat.stat.exists | default(false))
+
+- name: "Portal tile ({{ app }}): resolve the icon (an uploaded file wins over the fa:// fallback)"
+  set_fact:
+    portal_tile_resolved_icon: >-
+      {{ ('application-icons/sk/' ~ portal_tile.slug ~
+          ((portal_tile.icon_file | default('', true) | regex_search('(\.[A-Za-z0-9]+)$')) | default('.png', true)))
+         if (portal_tile_icon_stat.stat.exists | default(false))
+         else (portal_tile.icon | default('')) }}
+  when: portal_tile.enabled | default(false) | bool
+
 - name: "Portal tile ({{ app }}): build the provisioner input"
   set_fact:
     portal_tile_input:
@@ -77,7 +130,7 @@
       name: "{{ portal_tile.name }}"
       launch_url: "{{ portal_tile.launch_url }}"
       group: "{{ portal_tile.group | default('authentik Admins') }}"
-      icon: "{{ portal_tile.icon | default('') }}"
+      icon: "{{ portal_tile_resolved_icon | default('') }}"
       open_in_new_tab: "{{ portal_tile.open_in_new_tab | default(true) | bool }}"
       description: "{{ portal_tile.description | default('') }}"
       category: "{{ portal_tile.category | default('') }}"

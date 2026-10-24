@@ -258,3 +258,24 @@
       debug: var=deploy_output.stdout_lines
       tags:
         - deploy
+
+    - name: Create or update the skorch portal tile in Authentik
+      # On by default (AUTHENTIK_TILE: true); opt out per instance with
+      # AUTHENTIK_TILE: false. skorch sits behind the cluster's domain-wide
+      # Traefik ForwardAuth catch-all already; this just gives it a
+      # bookmark tile on the Authentik portal, bound to a group, with no
+      # provider. See shared/tasks/authentik_portal_tile.yml.
+      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
+      vars:
+        portal_tile:
+          enabled: "{{ skorch_cfg.AUTHENTIK_TILE | default(true) | bool }}"
+          slug: "{{ skorch_cfg.AUTHENTIK_TILE_SLUG | default(app, true) }}"
+          name: "{{ skorch_cfg.AUTHENTIK_TILE_NAME | default('SKOrch (n8n)', true) }}"
+          launch_url: "https://skorch{{ '' if env == 'prod' else '-' + env }}.{{ skorch_cfg.CLUSTERNAME | default(cluster_name) }}.{{ skorch_cfg.DOMAIN | default(domain) }}"
+          group: "{{ skorch_cfg.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          icon: "{{ skorch_cfg.AUTHENTIK_TILE_ICON | default('fa://fa-diagram-project', true) }}"
+          open_in_new_tab: "{{ skorch_cfg.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
+          description: "{{ skorch_cfg.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
+      tags:
+        - config
+        - authentik

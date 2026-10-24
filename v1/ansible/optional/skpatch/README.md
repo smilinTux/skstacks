@@ -296,7 +296,7 @@ On every provisioned node: `/etc/sudoers.d/skpatch` (`0440`), the
 
 ## Portal tile (Authentik)
 
-Opt-in (`skpatch.AUTHENTIK_TILE: true`, default `false`): the next deploy creates or
+On by default (`skpatch.AUTHENTIK_TILE`, default `true`; set to `false` to opt out): the next deploy creates or
 updates a provider-less Authentik `core.Application` named `AUTHENTIK_TILE_NAME`
 (default `SKPatch (Linux updates)`), launch URL `https://<the public host above>`,
 icon `AUTHENTIK_TILE_ICON` (default `fa://fa-wrench`), bound to the group

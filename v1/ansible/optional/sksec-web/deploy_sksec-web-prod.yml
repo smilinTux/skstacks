@@ -309,14 +309,15 @@
             - deploy
 
     - name: Create or update the sksec-web portal tile in Authentik
-      # Opt-in and off by default (AUTHENTIK_TILE: true). sksec-web (the
+      # On by default (AUTHENTIK_TILE: true); opt out per instance with
+      # AUTHENTIK_TILE: false. sksec-web (the
       # CrowdSec Web UI) sits behind the cluster's domain-wide Traefik
       # ForwardAuth catch-all already; this just gives it a bookmark tile
       # on the Authentik portal, bound to a group, with no provider.
       include_tasks: ../../shared/tasks/authentik_portal_tile.yml
       vars:
         portal_tile:
-          enabled: "{{ sksec_web.AUTHENTIK_TILE | default(false) | bool }}"
+          enabled: "{{ sksec_web.AUTHENTIK_TILE | default(true) | bool }}"
           slug: "{{ sksec_web.AUTHENTIK_TILE_SLUG | default(sksw_router, true) }}"
           name: "{{ sksec_web.AUTHENTIK_TILE_NAME | default('SKSec Web (CrowdSec)', true) }}"
           launch_url: "https://{{ sksw_host }}"

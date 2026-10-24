@@ -36,13 +36,43 @@ Each entry says what an instance must do, if anything.
   pattern (`optional/skrac/src/skrac/authentik_provision.py`) minus the provider: nothing here
   creates a group (a typo in `AUTHENTIK_TILE_GROUP` fails loudly rather than shipping an invisible
   tile), and nothing here creates an Authentik `core.Application`'s provider field, which stays
-  `null`. Wired into `optional/skpulse`, `optional/sksec-web` and `optional/skpatch`
-  (dev/staging/prod), each with `AUTHENTIK_TILE*` vault knobs and a role-appropriate default icon
-  and name; all three default off. Tests: `v1/tests/test_authentik_portal_tile.py` (happy path:
-  create on first run, then a true no-op on an identical second run; edge case: an update touches
-  only the fields that actually changed, and an existing group binding is never duplicated; failure
-  case: a group name Authentik does not have raises instead of silently producing an invisible
-  tile, and an HTTP error from the API surfaces with its status code).
+  `null`. Also supports a role-shipped icon file (`portal_tile.icon_file`, a path under the role's
+  own `src/config/<app>/`): the task copies it into sksso's media volume
+  (`/var/data/sksso-<env>/media/public/application-icons/sk/<slug><ext>`) and points `meta_icon`
+  at it, falling back to `portal_tile.icon` (a `fa://` glyph) when no file is shipped. Authentik
+  2025.12+ has no API endpoint left to set an icon from a URL or upload (the old `set_icon` admin
+  action now answers `405`), so a media-volume file is the only way to give a tile a real logo
+  instead of a Font Awesome glyph; no role in this release ships one yet; `icon_file` is a day-one
+  capability for a follow-up asset PR, not exercised here. Tests: `v1/tests/test_authentik_portal_tile.py`
+  (happy path: create on first run, then a true no-op on an identical second run; edge case: an
+  update touches only the fields that actually changed, and an existing group binding is never
+  duplicated; failure case: a group name Authentik does not have raises instead of silently
+  producing an invisible tile, and an HTTP error from the API surfaces with its status code).
+
+  Wired into every role in `core/` and `optional/` that exposes a Traefik web UI, default
+  `AUTHENTIK_TILE: true` (opt-out per role, not opt-in: a tile is a bookmark, gated by its group
+  binding, so defaulting it on does not expose anything that was not already reachable):
+  `skboard`, `skbook`, `skdash`, `skfence`, `skfenceha`, `skfetch` (one tile per *arr UI: sonarr,
+  radarr, lidarr, prowlarr), `skflow`, `skgallery`, `skgit`, `skgym`, `skhome`, `skhub`, `skmail`,
+  `skmon` (one tile per sub-service: Grafana, Prometheus, Alertmanager, Jaeger), `skorch`,
+  `skpatch`, `skpayment`, `skpdf`, `skpeek`, `skport`, `skpulse`, `sksec-web`, `skseek`, `skstor`,
+  `skstream`, `sksync`, `skvector`, `skwhoami` (one tile per instance: 01/02/03). `skrac` and
+  `skmesh` already provision their own Authentik provider + application when their native OIDC
+  login is turned on (`optional/skrac/tasks/authentik.yml`, `optional/skmesh/tasks/authentik.yml`)
+  and are unchanged. `sksso` is the one explicit opt-out (it is the identity provider rendering the
+  portal itself; see the `# portal-tile: opt-out` marker in its deploy playbook).
+
+- v1: new `v1/tests/test_portal_tile_lint.py`: scans every role under `core/` and `optional/` for a
+  Traefik `Host(` router rule and asserts its `deploy_<app>-prod.yml` declares a tile (the shared
+  mechanism above, or a role-owned one like skrac/skmesh's) or carries an explicit
+  `# portal-tile: opt-out (<reason>)` marker. This is the enforcement for the upgrade note above:
+  a future role that ships a web UI with neither fails this test, naming the role, instead of
+  silently repeating the skpulse gap this release fixes. See `docs/ROLE_AUTHORING_CHECKLIST.md`
+  (new file) "Portal tile (Authentik)" for what a role author does to pass it. Render-gate fixture:
+  `v1/tests/render/vars/<role>.with.sksso.yml` added for every wired role (the fake `sksso.api_token`
+  the render harness's real, non-mocked `include_vars` step needs now that the tile defaults on;
+  modeled on the existing `skmesh.with.sksso.yml`), so the existing per-role render suites keep
+  passing with no change to their own assertions.
 
 ## Unreleased (v2.26.16)
 
