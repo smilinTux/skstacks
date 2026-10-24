@@ -37,29 +37,51 @@ Each entry says what an instance must do, if anything.
   tile), and nothing here creates an Authentik `core.Application`'s provider field, which stays
   `null`. Also supports a role-shipped icon file (`portal_tile.icon_file`, a path under the role's
   own `src/config/<app>/`): the task copies it into sksso's media volume
-  (`/var/data/sksso-<env>/media/public/application-icons/sk/<slug><ext>`) and points `meta_icon`
-  at it, falling back to `portal_tile.icon` (a `fa://` glyph) when no file is shipped. Authentik
-  2025.12+ has no API endpoint left to set an icon from a URL or upload (the old `set_icon` admin
-  action now answers `405`), so a media-volume file is the only way to give a tile a real logo
-  instead of a Font Awesome glyph; no role in this release ships one yet; `icon_file` is a day-one
-  capability for a follow-up asset PR, not exercised here. Tests: `v1/tests/test_authentik_portal_tile.py`
-  (happy path: create on first run, then a true no-op on an identical second run; edge case: an
-  update touches only the fields that actually changed, and an existing group binding is never
-  duplicated; failure case: a group name Authentik does not have raises instead of silently
-  producing an invisible tile, and an HTTP error from the API surfaces with its status code).
+  (`/var/data/sksso-<env>/media/public/application-icons/sk/<icon_name><ext>`, `icon_name`
+  defaulting to `slug` but normally set explicitly so dev/staging/prod share one uploaded copy
+  instead of writing three) and points `meta_icon` at it, falling back to `portal_tile.icon` (a
+  `fa://` glyph) when no file is shipped or the copy fails. Authentik 2025.12+ has no API endpoint
+  left to set an icon from a URL or upload (the old `set_icon` admin action now answers `405`), so
+  a media-volume file is the only way to give a tile a real logo instead of a Font Awesome glyph.
+  Tests: `v1/tests/test_authentik_portal_tile.py` (happy path: create on first run, then a true
+  no-op on an identical second run; edge case: an update touches only the fields that actually
+  changed, and an existing group binding is never duplicated; failure case: a group name Authentik
+  does not have raises instead of silently producing an invisible tile, and an HTTP error from the
+  API surfaces with its status code).
+
+  **Real logos shipped**: 25 PNGs from `homarr-labs/dashboard-icons` (Apache-2.0; full license
+  text and a per-file attribution table in `shared/third_party/dashboard-icons/`) for every wired
+  service that has an upstream icon in that catalog, matching the names already uploaded
+  by hand on both estates (`alertmanager`, `bookstack`, `forgejo`, `garage`, `grafana`, `immich`,
+  `jaeger`, `lidarr`, `meshcentral`, `n8n`, `netbird`, `nextcloud`, `plex`, `portainer`,
+  `prometheus`, `prowlarr`, `qdrant`, `radarr`, `searxng`, `sonarr`, `stirling-pdf`, `syncthing`,
+  `traefik` (skfence and skfenceha both), `uptime-kuma`, `windmill`) so a redeploy writes to the
+  same `application-icons/sk/<name>.png` path an instance may already have instead of orphaning
+  it. The remaining wired roles (`skboard`, `skdash`, `skgym`, `skhome`, `skmail`, `skpatch`,
+  `skpayment`, `sksec-web`, `skseek`, `skwhoami`) keep their `fa://fa-...` glyph: no checked
+  upstream entry for that exact service.
 
   Wired into every role in `core/` and `optional/` that exposes a Traefik web UI, default
   `AUTHENTIK_TILE: true` (opt-out per role, not opt-in: a tile is a bookmark, gated by its group
   binding, so defaulting it on does not expose anything that was not already reachable):
   `skboard`, `skbook`, `skdash`, `skfence`, `skfenceha`, `skfetch` (one tile per *arr UI: sonarr,
-  radarr, lidarr, prowlarr), `skflow`, `skgallery`, `skgit`, `skgym`, `skhome`, `skhub`, `skmail`,
-  `skmon` (one tile per sub-service: Grafana, Prometheus, Alertmanager, Jaeger), `skorch`,
-  `skpatch`, `skpayment`, `skpdf`, `skpeek`, `skport`, `skpulse`, `sksec-web`, `skseek`, `skstor`,
-  `skstream`, `sksync`, `skvector`, `skwhoami` (one tile per instance: 01/02/03). `skrac` and
-  `skmesh` already provision their own Authentik provider + application when their native OIDC
-  login is turned on (`optional/skrac/tasks/authentik.yml`, `optional/skmesh/tasks/authentik.yml`)
-  and are unchanged. `sksso` is the one explicit opt-out (it is the identity provider rendering the
-  portal itself; see the `# portal-tile: opt-out` marker in its deploy playbook).
+  radarr, lidarr, prowlarr, each with its own icon), `skflow`, `skgallery`, `skgit`, `skgym`,
+  `skhome`, `skhub`, `skmail`, `skmon` (one tile per sub-service: Grafana, Prometheus,
+  Alertmanager, Jaeger, each with its own icon), `skorch`, `skpatch`, `skpayment`, `skpdf`,
+  `skpeek`, `skport`, `skpulse`, `sksec-web`, `skseek`, `skstor`, `skstream`, `sksync`,
+  `skvector`, `skwhoami` (one tile per instance: 01/02/03). `sksso` is the one explicit opt-out
+  (it is the identity provider rendering the portal itself; see the `# portal-tile: opt-out`
+  marker in its deploy playbook).
+
+  `skrac` and `skmesh` already provision their own Authentik provider + application when their
+  native OIDC login is turned on (`optional/skrac/tasks/authentik.yml`,
+  `optional/skmesh/tasks/authentik.yml`): their deploy wiring is unchanged, but both
+  `authentik_provision.py` scripts and both Ansible tasks now carry the same icon mechanism
+  (new, optional `cfg["icon"]` → `meta_icon`; the task copies `src/config/<app>/icon.png` to
+  sksso's media as `meshcentral.png` / `netbird.png` respectively, `AUTHENTIK_TILE_ICON_FILE` /
+  `AUTHENTIK_TILE_ICON_NAME` override, `AUTHENTIK_TILE_ICON` fa:// fallback on a failed copy), so
+  they get a real logo too, not just the generic-mechanism roles. Verified:
+  `v1/tests/test_skmesh_auth_modes.py` (39 tests) and `v1/tests/test_skrac_render.py` reran clean.
 
 - v1: new `v1/tests/test_portal_tile_lint.py`: scans every role under `core/` and `optional/` for a
   Traefik `Host(` router rule and asserts its `deploy_<app>-prod.yml` declares a tile (the shared

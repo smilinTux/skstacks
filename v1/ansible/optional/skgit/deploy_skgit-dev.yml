@@ -483,6 +483,8 @@
           launch_url: "https://{{ skgit.SUBDOMAIN_PREFIX | default('skgit') }}{{ '' if env == 'prod' else '-' + env }}.{{ skgit.CLUSTERNAME }}.{{ skgit.DOMAIN }}"
           group: "{{ skgit.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
           icon: "{{ skgit.AUTHENTIK_TILE_ICON | default('fa://fa-code-branch', true) }}"
+          icon_file: "{{ skgit.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
+          icon_name: "{{ skgit.AUTHENTIK_TILE_ICON_NAME | default('forgejo', true) }}"
           open_in_new_tab: "{{ skgit.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
           description: "{{ skgit.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
       tags:

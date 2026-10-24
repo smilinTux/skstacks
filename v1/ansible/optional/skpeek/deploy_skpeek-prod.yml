@@ -246,6 +246,8 @@
           launch_url: "https://skpeek{{ '' if env == 'prod' else '-' + env }}.{{ skpeek.CLUSTERNAME | default(cluster_name) }}.{{ skpeek.DOMAIN | default(domain) }}"
           group: "{{ skpeek.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
           icon: "{{ skpeek.AUTHENTIK_TILE_ICON | default('fa://fa-magnifying-glass', true) }}"
+          icon_file: "{{ skpeek.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
+          icon_name: "{{ skpeek.AUTHENTIK_TILE_ICON_NAME | default('searxng', true) }}"
           open_in_new_tab: "{{ skpeek.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
           description: "{{ skpeek.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
       tags:

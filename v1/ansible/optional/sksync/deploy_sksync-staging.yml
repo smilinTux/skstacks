@@ -222,6 +222,8 @@
           launch_url: "https://sksync{{ '' if env == 'prod' else '-' + env }}.{{ sksync.CLUSTERNAME | default(cluster_name) }}.{{ sksync.DOMAIN | default(domain) }}"
           group: "{{ sksync.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
           icon: "{{ sksync.AUTHENTIK_TILE_ICON | default('fa://fa-arrows-rotate', true) }}"
+          icon_file: "{{ sksync.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
+          icon_name: "{{ sksync.AUTHENTIK_TILE_ICON_NAME | default('syncthing', true) }}"
           open_in_new_tab: "{{ sksync.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
           description: "{{ sksync.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
       tags:

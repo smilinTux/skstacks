@@ -408,6 +408,8 @@
           launch_url: "https://{{ skfenceha.DASHBOARD_HOST | default('skfenceha' + ('-' + env if env != 'prod' else '') + '.' + (skfenceha.CLUSTERNAME | default(cluster_name)) + '.' + (skfenceha.DOMAIN | default(domain))) }}/dashboard/"
           group: "{{ skfenceha.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
           icon: "{{ skfenceha.AUTHENTIK_TILE_ICON | default('fa://fa-route', true) }}"
+          icon_file: "{{ skfenceha.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
+          icon_name: "{{ skfenceha.AUTHENTIK_TILE_ICON_NAME | default('traefik', true) }}"
           open_in_new_tab: "{{ skfenceha.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
           description: "{{ skfenceha.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
       tags:

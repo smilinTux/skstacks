@@ -32,6 +32,28 @@
       Authentik once with sksso's src/sksso/ensure-api-token.sh (see the sksso README).
     quiet: true
 
+- name: "Icon: ensure sksso's uploaded-icons directory exists"
+  # Authentik 2025.12+ has no API endpoint to set an icon from a URL or
+  # upload (the old set_icon admin action now answers 405); a file placed
+  # directly in its media volume, referenced by meta_icon, is the only way.
+  file:
+    path: "/var/data/sksso-{{ env }}/media/public/application-icons/sk"
+    state: directory
+    owner: '1000'
+    group: '1000'
+    mode: '0755'
+  when: (skmesh.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) | length > 0)
+
+- name: "Icon: copy skmesh's icon into sksso's media"
+  copy:
+    src: "{{ playbook_dir }}/src/config/{{ app }}/{{ skmesh.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
+    dest: "/var/data/sksso-{{ env }}/media/public/application-icons/sk/{{ skmesh.AUTHENTIK_TILE_ICON_NAME | default('netbird', true) }}.png"
+    owner: '1000'
+    group: '1000'
+    mode: '0644'
+  register: skmesh_icon_copy
+  failed_when: false
+
 - name: Build the Authentik provisioner input
   set_fact:
     skmesh_authentik_input:
@@ -43,6 +65,9 @@
       app_name: "{{ skmesh.AUTHENTIK_APP_NAME | default('SKMesh') }}"
       app_slug: "{{ skmesh.AUTHENTIK_APP_SLUG | default('skmesh') }}"
       launch_url: "https://{{ skmesh_host }}/"
+      icon: >-
+        {{ 'application-icons/sk/' ~ (skmesh.AUTHENTIK_TILE_ICON_NAME | default('netbird', true)) ~ '.png'
+           if (skmesh_icon_copy is succeeded) else (skmesh.AUTHENTIK_TILE_ICON | default('', true)) }}
       redirect_uris:
         - "https://{{ skmesh_host }}/nb-auth"
         - "https://{{ skmesh_host }}/nb-silent-auth"

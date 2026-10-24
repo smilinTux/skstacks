@@ -279,6 +279,8 @@
           launch_url: "https://skstor{{ '' if env == 'prod' else '-' + env }}.{{ skstor.CLUSTERNAME }}.{{ skstor.DOMAIN }}"
           group: "{{ skstor.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
           icon: "{{ skstor.AUTHENTIK_TILE_ICON | default('application-icons/minio-light.png', true) }}"
+          icon_file: "{{ skstor.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
+          icon_name: "{{ skstor.AUTHENTIK_TILE_ICON_NAME | default('garage', true) }}"
           open_in_new_tab: "{{ skstor.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
           description: "{{ skstor.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
       tags:
