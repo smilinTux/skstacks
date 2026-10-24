@@ -244,3 +244,14 @@ defaults, every knob, the `AUTH_MODE` guards (missing SSO, contradictory
 middleware, local without the explicit risk flag), the missing-`LAPI_PASSWORD`
 and too-short-`LAPI_PASSWORD` refusals, the unpinned-image refusal, the data
 path/node guard, and dev/staging/prod playbook parity.
+
+## Portal tile (Authentik)
+
+Opt-in (`sksec_web.AUTHENTIK_TILE: true`, default `false`): the next deploy creates
+or updates a provider-less Authentik `core.Application` named `AUTHENTIK_TILE_NAME`
+(default `SKSec Web (CrowdSec)`), launch URL `https://<the public host above>`, icon
+`AUTHENTIK_TILE_ICON` (default `fa://fa-shield-halved`), bound to the group
+`AUTHENTIK_TILE_GROUP` (default `authentik Admins`, which must already exist). This
+only adds a dashboard bookmark; it creates no provider and changes nothing about
+`AUTH_MODE`/forward auth above. Needs `sksso.api_token` in sksso's own vault (see
+`optional/sksso/README.md`). See `shared/tasks/authentik_portal_tile.yml`.

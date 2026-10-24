@@ -8,6 +8,41 @@ Each entry says what an instance must do, if anything.
 ### Upgrade notes (instances)
 
 - **(all apps, test-only):** new render-time test guards against the class of bug #232/#234 covered: Traefik v3's swarm provider skips any service whose labels carry both the deprecated `traefik.docker.*` family and the current `traefik.swarm.*` family at once ("both Docker and Swarm labels are defined" -> "Skip container"), dropping its routers to the error-pages fallback with no other symptom. `test_no_service_emits_both_traefik_docker_and_swarm_labels` (`test_compose_templates_render.py`) renders every app template with an empty context and fails if any service's labels contain both prefixes; a template needing real fixture vars to render is skipped there and relies on its own app-specific test instead. No template in this release carries `traefik.docker.*` (confirmed by a fleet-wide search: zero occurrences), so this is a test-only addition - nothing renders differently. **Instance action:** none.
+- **Every role with a web UI** (listed in the Changes entry below): new `AUTHENTIK_TILE`, default
+  `true` (on by default: an instance that never sets it gets a tile on its next deploy). Set it to
+  `false` per role to opt out. When on, the deploy creates or updates a provider-less Authentik
+  `core.Application` bound to a group (`AUTHENTIK_TILE_GROUP`, default `authentik Admins`), with a
+  launch URL, icon and open-in-new-tab setting, so the service shows a dashboard tile on the
+  Authentik portal. It never touches auth itself: all of these roles already sit behind the
+  cluster's domain-wide Traefik ForwardAuth catch-all (or, for skrac/skmesh, provision their own
+  OIDC login already), so this only fixes visibility, not access. Needs `sksso.api_token` in
+  sksso's own vault (same automation token `optional/skrac` and `optional/skmesh` already use); an
+  instance missing it gets a loud, named failure on its next deploy of any of these roles, not a
+  silent skip, so upgrading means setting that token first if it is not already set. The only
+  explicit opt-out today is `sksso` itself (it is the portal, a tile pointing at itself is
+  meaningless). See each role's README "Portal tile (Authentik)" where one exists, or
+  `docs/ROLE_AUTHORING_CHECKLIST.md` for the general mechanism.
+
+### Changes
+
+- v1: new shared task `shared/tasks/authentik_portal_tile.yml` + `shared/src/authentik_portal_tile.py`:
+  idempotently creates/updates a provider-less Authentik `core.Application` and its group policy
+  binding (`order: 0`, no policy object), for a service whose auth is already handled by the
+  cluster's domain-wide ForwardAuth catch-all and that only needs a portal bookmark. Root cause:
+  every such tile on nor today (skmon, skfenceha, skport's visibility tile, alertmanager, prometheus,
+  etc.) was hand-created through the Authentik UI/API with no declaration in code, so a newly
+  deployed service (skpulse) renders and forward-auths correctly but never appears on a user's
+  portal, and nothing catches that at review time. This mirrors the existing provider-creating
+  pattern (`optional/skrac/src/skrac/authentik_provision.py`) minus the provider: nothing here
+  creates a group (a typo in `AUTHENTIK_TILE_GROUP` fails loudly rather than shipping an invisible
+  tile), and nothing here creates an Authentik `core.Application`'s provider field, which stays
+  `null`. Wired into `optional/skpulse`, `optional/sksec-web` and `optional/skpatch`
+  (dev/staging/prod), each with `AUTHENTIK_TILE*` vault knobs and a role-appropriate default icon
+  and name; all three default off. Tests: `v1/tests/test_authentik_portal_tile.py` (happy path:
+  create on first run, then a true no-op on an identical second run; edge case: an update touches
+  only the fields that actually changed, and an existing group binding is never duplicated; failure
+  case: a group name Authentik does not have raises instead of silently producing an invisible
+  tile, and an HTTP error from the API surfaces with its status code).
 
 ## Unreleased (v2.26.16)
 

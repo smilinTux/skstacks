@@ -1,0 +1,127 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# Shared task: create or update a provider-less Authentik portal tile
+# (core.Application, no provider, bound to a group) for a service that
+# already sits behind the cluster's domain-wide Traefik ForwardAuth
+# catch-all. This gives it a dashboard bookmark on the Authentik portal
+# without touching auth itself.
+#
+# Caller contract: set `app` and `env` as usual, and define a `portal_tile`
+# dict before including this file:
+#   portal_tile:
+#     enabled: true                      # opt-in; nothing runs when false
+#     slug: skpulse                      # Application slug
+#     name: "SKPulse (Uptime Kuma)"      # Application display name
+#     launch_url: "https://skpulse.example.com"
+#     group: "authentik Admins"          # must already exist in Authentik
+#     icon: "fa://fa-heart-pulse"        # optional, "fa://fa-..." or "application-icons/<file>"
+#     open_in_new_tab: true              # optional, default true
+#     description: ""                    # optional
+#     category: ""                       # optional, the portal's own UI grouping label
+#
+# Needs sksso's automation token (sksso.api_token in sksso's vault,
+# bootstrapped once per cluster with sksso's src/sksso/ensure-api-token.sh,
+# the same token optional/skrac and optional/skmesh already use). sksso's
+# vault file is found the same way those roles find it: this app's own
+# vault filename with its `<app>-` prefix swapped for `sksso-`.
+#
+# Nothing here creates the group: a typo in `portal_tile.group`, or a
+# cluster where that group does not exist yet, fails loudly instead of
+# silently shipping a tile nobody can see.
+
+- name: "Portal tile ({{ app }}): locate sksso's vault (holds sksso.api_token)"
+  set_fact:
+    portal_tile_sksso_vault_file: >-
+      {{ portal_tile.authentik_vault_file | default((vault_file_path | dirname) ~ '/'
+         ~ (vault_file_path | basename | regex_replace('^' ~ app ~ '-', 'sksso-'))) }}
+  when: portal_tile.enabled | default(false) | bool
+
+- name: "Portal tile ({{ app }}): load sksso's vault"
+  include_vars:
+    file: "{{ portal_tile_sksso_vault_file }}"
+    name: portal_tile_sksso_vault
+  no_log: true
+  when: portal_tile.enabled | default(false) | bool
+
+- name: "Portal tile ({{ app }}): check the Authentik automation token is present"
+  assert:
+    that:
+      - (portal_tile_sksso_vault.sksso.api_token | default('') | string | length) >= 32
+    fail_msg: >-
+      sksso.api_token (32+ chars) is missing from {{ portal_tile_sksso_vault_file }}.
+      Generate it (openssl rand -hex 32), add it to sksso's vault, and register it in
+      Authentik once with sksso's src/sksso/ensure-api-token.sh (see the sksso README).
+    quiet: true
+  when: portal_tile.enabled | default(false) | bool
+
+- name: "Portal tile ({{ app }}): build the provisioner input"
+  set_fact:
+    portal_tile_input:
+      url: "{{ portal_tile.authentik_internal_url | default('http://sksso-' ~ env ~ '_server:9000') }}"
+      host: "{{ portal_tile.sso_host | default('sso' ~ ('' if env == 'prod' else '-' ~ env) ~ '.' ~ (portal_tile.base_domain | default(domain))) }}"
+      token: "{{ portal_tile_sksso_vault.sksso.api_token }}"
+      slug: "{{ portal_tile.slug }}"
+      name: "{{ portal_tile.name }}"
+      launch_url: "{{ portal_tile.launch_url }}"
+      group: "{{ portal_tile.group | default('authentik Admins') }}"
+      icon: "{{ portal_tile.icon | default('') }}"
+      open_in_new_tab: "{{ portal_tile.open_in_new_tab | default(true) | bool }}"
+      description: "{{ portal_tile.description | default('') }}"
+      category: "{{ portal_tile.category | default('') }}"
+  no_log: true
+  when: portal_tile.enabled | default(false) | bool
+
+- name: "Portal tile ({{ app }}): stage the provisioner"
+  copy:
+    src: "{{ playbook_dir }}/../../shared/src/authentik_portal_tile.py"
+    dest: "/var/data/config/{{ app }}-{{ env }}/authentik_portal_tile.py"
+    owner: root
+    group: root
+    mode: '0644'
+  when: portal_tile.enabled | default(false) | bool
+
+- name: "Portal tile ({{ app }}): create or update the Application and its group binding"
+  command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - -i
+      - --network
+      - "{{ portal_tile.authentik_network | default('sksso-' ~ env) }}"
+      - -v
+      - "/var/data/config/{{ app }}-{{ env }}/authentik_portal_tile.py:/authentik_portal_tile.py:ro"
+      - "{{ portal_tile.provisioner_image | default('python:3.13.15-alpine@sha256:79e7a9b9ff1cbceff819f856fb374477792a5967759d94df266de7b7b4120e6f') }}"
+      - python
+      - /authentik_portal_tile.py
+    stdin: "{{ portal_tile_input | to_json }}"
+  register: portal_tile_provision
+  changed_when: "'created' in portal_tile_provision.stdout or 'updated (' in portal_tile_provision.stdout"
+  failed_when: false
+  no_log: true
+  when: portal_tile.enabled | default(false) | bool
+
+# The provisioner prints status lines only (never a secret), so its output
+# is safe to show; the task above is no_log because its stdin is secret.
+- name: "Portal tile ({{ app }}): show the provisioner result"
+  debug:
+    msg: "{{ (portal_tile_provision.stdout_lines | default([])) + (portal_tile_provision.stderr_lines | default([])) }}"
+  when: portal_tile.enabled | default(false) | bool
+
+- name: "Portal tile ({{ app }}): fail if provisioning failed"
+  fail:
+    msg: "Authentik portal tile provisioning failed (rc={{ portal_tile_provision.rc | default('?') }}), see the lines above"
+  when: (portal_tile.enabled | default(false) | bool) and (portal_tile_provision.rc | default(1)) != 0
