@@ -32,6 +32,7 @@
       import_tasks: ../../shared/tasks/select_manager_node.yml
       vars:
         target_group: "{{ target_manager_group | default('swarm_managers') }}"
+      tags: always
 
 # Step 2: Deploy to selected manager
 - hosts: selected_manager_group
@@ -44,10 +45,12 @@
   pre_tasks:
     - name: Select vault file based on domain and cluster
       import_tasks: ../../shared/tasks/select_vault_file.yml
+      tags: always
 
     - name: Load vault file
       include_vars: "{{ vault_file_path }}"
       when: vault_file_path is defined
+      tags: always
 
     - name: Resolve the skpulse sign-in settings
       # AUTH_MODE sso (default): Authentik forward auth (SSO_MIDDLEWARE,
@@ -58,7 +61,7 @@
         skp_auth_mode: "{{ skpulse.AUTH_MODE | default('sso', true) | string | lower }}"
         skp_sso_middleware: "{{ (skpulse.SSO_MIDDLEWARE | default('', true) | string) if (skpulse.AUTH_MODE | default('sso', true) | string | lower) != 'sso' else (skpulse.SSO_MIDDLEWARE | default('authentik@file', true) | string) }}"
         skp_router: "skpulse{{ '' if env == 'prod' else '-' + env }}"
-      tags: [config]
+      tags: [config, authmode]
 
     - name: Fail loudly on an unknown AUTH_MODE
       assert:
@@ -69,7 +72,7 @@
           '{{ skp_auth_mode }}'). See README.md "Sign-in, SSO and the
           first admin".
         quiet: true
-      tags: [config]
+      tags: [config, authmode]
 
     - name: Collect contradictory sign-in settings
       # Only key NAMES are ever collected, never a value.
@@ -78,7 +81,7 @@
           {{ (["AUTH_MODE is 'local' (no SSO) but SSO_MIDDLEWARE is set"]
               if (skp_auth_mode == 'local' and (skpulse.SSO_MIDDLEWARE | default('', true) | string | length > 0))
               else []) }}
-      tags: [config]
+      tags: [config, authmode]
 
     - name: Refuse contradictory sign-in settings
       assert:
@@ -89,7 +92,7 @@
           Either set AUTH_MODE: sso, or remove SSO_MIDDLEWARE. See
           README.md "Sign-in, SSO and the first admin".
         quiet: true
-      tags: [config]
+      tags: [config, authmode]
 
     - name: Define network variables from vault (required for idempotent deployment)
       # ⚠️ IMPORTANT: Network subnets MUST match shared/networks registry
