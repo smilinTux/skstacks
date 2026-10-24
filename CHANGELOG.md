@@ -3,7 +3,7 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
-## Unreleased
+## Unreleased (v2.26.16)
 
 ### Upgrade notes (instances)
 
@@ -268,7 +268,7 @@ The skstack06 stages gain checks for this release: every skhealth webhook post v
 - v1: new tool **skstacks-deploy** (`tools/skstacks-deploy`), a one-command v1 app deploy with automatic rollback: renders, deploys, probes the result (`v1/ansible/optional/<app>/probe.yml`, added for skbook, skfetch, skhub, sksso and skstream) and rolls back to the prior image/compose state on a failed probe instead of leaving a broken deploy live. **Instance action**: none; opt in by using the tool for a deploy.
 - v1: new published package **skstacks-config-template** (Gap 1 of the config-template-and-safe-deploy design): `scripts/generate-config-template.sh` and `scripts/scrub-check.sh` turn a private instance config repo into a redacted, shareable template (`templates/config-repo/`), with a CI job (`config-template-drift.yml`) that fails if the template drifts from a fresh render or still carries vault ciphertext or a fleet-specific literal the estate denylist should have caught. **Instance action**: none; an operator who wants to publish their own config layout as a template runs the script.
 
-## Unreleased
+## Unreleased (v2.26.16)
 
 - v1 skbackup: assemble recursive offsite snapshot sources on a private tmpfs with stable dataset-relative paths, including children whose live mountpoints lie outside their parents. Inspect frozen parents outside the backup tree, skip empty containers and preserve parent-owned files only where child directories already exist. Track all mounts for reverse-order trap cleanup, including partial failure and termination. Preserve restic host, tags and source paths so existing seed snapshots remain eligible parents. Tests cover custom mountpoints, a real seed-parent reuse and restore, file-holding parents, unsafe directories and cleanup. **Instance action**: redeploy the skbackup engine before resuming an affected offsite run.
 
