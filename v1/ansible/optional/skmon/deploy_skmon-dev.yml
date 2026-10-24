@@ -233,13 +233,15 @@
           launch_url: "https://{{ item.host_prefix }}{{ '' if env == 'prod' else '-' + env }}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}"
           group: "{{ skmon.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
           icon: "{{ item.icon }}"
+          icon_file: "icons/{{ item.icon_file }}"
+          icon_name: "{{ item.icon_name }}"
           open_in_new_tab: true
           description: ""
       loop:
-        - { key: "skmon", host_prefix: "skmon", name: "SKMon (Grafana)", icon: "fa://fa-chart-line" }
-        - { key: "prometheus", host_prefix: "prometheus", name: "Prometheus", icon: "fa://fa-fire" }
-        - { key: "alertmanager", host_prefix: "alertmanager", name: "Alertmanager", icon: "fa://fa-bell" }
-        - { key: "jaeger", host_prefix: "jaeger", name: "Jaeger", icon: "fa://fa-diagram-project" }
+        - { key: "skmon", host_prefix: "skmon", name: "SKMon (Grafana)", icon: "fa://fa-chart-line", icon_file: "grafana.png", icon_name: "grafana" }
+        - { key: "prometheus", host_prefix: "prometheus", name: "Prometheus", icon: "fa://fa-fire", icon_file: "prometheus.png", icon_name: "prometheus" }
+        - { key: "alertmanager", host_prefix: "alertmanager", name: "Alertmanager", icon: "fa://fa-bell", icon_file: "alertmanager.png", icon_name: "alertmanager" }
+        - { key: "jaeger", host_prefix: "jaeger", name: "Jaeger", icon: "fa://fa-diagram-project", icon_file: "jaeger.png", icon_name: "jaeger" }
       loop_control:
         label: "{{ item.key }}"
       tags:

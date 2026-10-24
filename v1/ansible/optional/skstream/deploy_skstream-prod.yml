@@ -221,6 +221,8 @@
           launch_url: "https://skstream{{ '' if env == 'prod' else '-' + env }}.{{ skstream.CLUSTERNAME }}.{{ skstream.DOMAIN }}"
           group: "{{ skstream.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
           icon: "{{ skstream.AUTHENTIK_TILE_ICON | default('fa://fa-film', true) }}"
+          icon_file: "{{ skstream.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
+          icon_name: "{{ skstream.AUTHENTIK_TILE_ICON_NAME | default('plex', true) }}"
           open_in_new_tab: "{{ skstream.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
           description: "{{ skstream.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
       tags:

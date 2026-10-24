@@ -228,6 +228,8 @@
           launch_url: "https://{{ item.key }}{{ '' if env == 'prod' else '-' + env }}.{{ skfetch.CLUSTERNAME }}.{{ skfetch.DOMAIN }}"
           group: "{{ skfetch.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
           icon: "{{ item.icon }}"
+          icon_file: "icons/{{ item.key }}.png"
+          icon_name: "{{ item.key }}"
           open_in_new_tab: true
           description: ""
       loop:

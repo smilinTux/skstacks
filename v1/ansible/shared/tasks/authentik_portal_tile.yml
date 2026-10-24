@@ -34,13 +34,23 @@
 #                                         # (checked on the controller) this wins over
 #                                         # `icon`: it is copied to sksso's own media
 #                                         # volume (/var/data/sksso-<env>/media/public/
-#                                         # application-icons/sk/<slug><ext>) and
+#                                         # application-icons/sk/<icon_name><ext>) and
 #                                         # meta_icon is set to that path. Authentik
 #                                         # 2025.12+ has no API endpoint to set an
 #                                         # application's icon from a URL/upload (the
 #                                         # old set_icon action now answers 405); a
 #                                         # file placed directly in its media volume,
 #                                         # referenced by meta_icon, is the only way.
+#     icon_name: "uptime-kuma"           # optional: the uploaded file's basename
+#                                         # (default: `slug`). Set this to the same
+#                                         # name across dev/staging/prod (a bare
+#                                         # service name, no env suffix) so every
+#                                         # environment shares one uploaded copy
+#                                         # instead of writing three, and so it
+#                                         # matches a name already uploaded by hand
+#                                         # (this repo's own icon-sourcing note, or an
+#                                         # instance's pre-existing upload) rather than
+#                                         # orphaning it on the next deploy.
 #     open_in_new_tab: true              # optional, default true
 #     description: ""                    # optional
 #     category: ""                       # optional, the portal's own UI grouping label
@@ -104,7 +114,7 @@
   copy:
     src: "{{ playbook_dir }}/src/config/{{ app }}/{{ portal_tile.icon_file }}"
     dest: >-
-      /var/data/sksso-{{ env }}/media/public/application-icons/sk/{{ portal_tile.slug }}{{
+      /var/data/sksso-{{ env }}/media/public/application-icons/sk/{{ portal_tile.icon_name | default(portal_tile.slug, true) }}{{
       (portal_tile.icon_file | regex_search('(\.[A-Za-z0-9]+)$')) | default('.png', true) }}
     owner: '1000'
     group: '1000'
@@ -114,7 +124,7 @@
 - name: "Portal tile ({{ app }}): resolve the icon (an uploaded file wins over the fa:// fallback)"
   set_fact:
     portal_tile_resolved_icon: >-
-      {{ ('application-icons/sk/' ~ portal_tile.slug ~
+      {{ ('application-icons/sk/' ~ (portal_tile.icon_name | default(portal_tile.slug, true)) ~
           ((portal_tile.icon_file | default('', true) | regex_search('(\.[A-Za-z0-9]+)$')) | default('.png', true)))
          if (portal_tile_icon_stat.stat.exists | default(false))
          else (portal_tile.icon | default('')) }}

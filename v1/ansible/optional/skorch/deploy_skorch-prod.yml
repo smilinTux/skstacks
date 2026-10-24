@@ -274,6 +274,8 @@
           launch_url: "https://skorch{{ '' if env == 'prod' else '-' + env }}.{{ skorch_cfg.CLUSTERNAME | default(cluster_name) }}.{{ skorch_cfg.DOMAIN | default(domain) }}"
           group: "{{ skorch_cfg.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
           icon: "{{ skorch_cfg.AUTHENTIK_TILE_ICON | default('fa://fa-diagram-project', true) }}"
+          icon_file: "{{ skorch_cfg.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
+          icon_name: "{{ skorch_cfg.AUTHENTIK_TILE_ICON_NAME | default('n8n', true) }}"
           open_in_new_tab: "{{ skorch_cfg.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
           description: "{{ skorch_cfg.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
       tags:

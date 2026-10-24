@@ -150,6 +150,8 @@
           launch_url: "https://skbook{{ '' if env == 'prod' else '-' + env }}.{{ skbook.CLUSTERNAME }}.{{ skbook.DOMAIN }}"
           group: "{{ skbook.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
           icon: "{{ skbook.AUTHENTIK_TILE_ICON | default('fa://fa-book', true) }}"
+          icon_file: "{{ skbook.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
+          icon_name: "{{ skbook.AUTHENTIK_TILE_ICON_NAME | default('bookstack', true) }}"
           open_in_new_tab: "{{ skbook.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
           description: "{{ skbook.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
       tags:

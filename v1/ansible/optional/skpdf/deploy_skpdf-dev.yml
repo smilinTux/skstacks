@@ -223,6 +223,8 @@
           launch_url: "https://skpdf{{ '' if env == 'prod' else '-' + env }}.{{ skpdf.CLUSTERNAME }}.{{ skpdf.DOMAIN }}"
           group: "{{ skpdf.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
           icon: "{{ skpdf.AUTHENTIK_TILE_ICON | default('fa://fa-file-pdf', true) }}"
+          icon_file: "{{ skpdf.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
+          icon_name: "{{ skpdf.AUTHENTIK_TILE_ICON_NAME | default('stirling-pdf', true) }}"
           open_in_new_tab: "{{ skpdf.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
           description: "{{ skpdf.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
       tags:

@@ -1194,6 +1194,8 @@
           launch_url: "https://{{ skhub_public_host }}"
           group: "{{ skhub.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
           icon: "{{ skhub.AUTHENTIK_TILE_ICON | default('fa://fa-cloud', true) }}"
+          icon_file: "{{ skhub.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
+          icon_name: "{{ skhub.AUTHENTIK_TILE_ICON_NAME | default('nextcloud', true) }}"
           open_in_new_tab: "{{ skhub.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
           description: "{{ skhub.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
       tags:
