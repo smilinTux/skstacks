@@ -3,6 +3,12 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased (v2.26.17)
+
+### Upgrade notes (instances)
+
+- **(all apps, test-only):** new render-time test guards against the class of bug #232/#234 covered: Traefik v3's swarm provider skips any service whose labels carry both the deprecated `traefik.docker.*` family and the current `traefik.swarm.*` family at once ("both Docker and Swarm labels are defined" -> "Skip container"), dropping its routers to the error-pages fallback with no other symptom. `test_no_service_emits_both_traefik_docker_and_swarm_labels` (`test_compose_templates_render.py`) renders every app template with an empty context and fails if any service's labels contain both prefixes; a template needing real fixture vars to render is skipped there and relies on its own app-specific test instead. No template in this release carries `traefik.docker.*` (confirmed by a fleet-wide search: zero occurrences), so this is a test-only addition - nothing renders differently. **Instance action:** none.
+
 ## Unreleased (v2.26.16)
 
 ### Upgrade notes (instances)

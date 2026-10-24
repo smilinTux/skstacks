@@ -55,3 +55,48 @@ def test_skmesh_dashboard_image_is_overridable_per_instance():
     out = env.from_string(SKMESH.read_text()).render(env="prod", skmesh=custom)
     doc = yaml.safe_load(out)
     assert doc["services"]["dashboard"]["image"] == "ghcr.io/smilintux/skmesh:latest"
+
+
+# 2026-10-24: a prior fix attempt (reverted, see CHANGELOG) added
+# traefik.docker.network to a service that already carried the old
+# traefik.swarm.network. Traefik v3's swarm provider skips any service
+# whose labels carry BOTH families at once ("both Docker and Swarm labels
+# are defined" -> "Skip container"): the service silently drops out of
+# Traefik's dynamic config and its router falls through to the
+# error-pages fallback. traefik.swarm.network is the correct, current
+# label for this provider; traefik.docker.* is the deprecated form kept
+# only for back-compat. Applying it fleet-wide by hand (one label-add per
+# service, without removing the old label first) took ~27 production
+# services offline this way before the mechanism was understood. This
+# test is the fleet-wide gate so the same class can't land again, from
+# either direction.
+ALL_TEMPLATES = sorted(ANSIBLE.glob("*/*/src/config/*/*.yml.j2"))
+
+
+@pytest.mark.parametrize("path", ALL_TEMPLATES, ids=lambda p: str(p.relative_to(ANSIBLE)))
+def test_no_service_emits_both_traefik_docker_and_swarm_labels(path):
+    """Best-effort: render each template with an empty per-app context
+    (plus ``app``/``env``) and check whichever services come out the other
+    side. Templates that need real fixture vars to render (passwords,
+    cluster names, ...) raise and are skipped here; they already have
+    their own app-specific render tests."""
+    appname = path.parent.name
+    env = jinja2.Environment(undefined=jinja2.ChainableUndefined, trim_blocks=True)
+    try:
+        out = env.from_string(path.read_text()).render(env="prod", app=appname, **{appname: {}})
+        doc = yaml.safe_load(out)
+        services = (doc or {}).get("services") or {}
+    except Exception:
+        pytest.skip(f"{appname} needs real fixture vars to render; not this test's job")
+        return
+    for svcname, svc in services.items():
+        labels = svc.get("deploy", {}).get("labels") or svc.get("labels") or []
+        if isinstance(labels, dict):
+            labels = [f"{k}={v}" for k, v in labels.items()]
+        has_docker = any(str(lbl).startswith("traefik.docker.") for lbl in labels)
+        has_swarm = any(str(lbl).startswith("traefik.swarm.") for lbl in labels)
+        assert not (has_docker and has_swarm), (
+            f"{appname}:{svcname} carries both traefik.docker.* and "
+            "traefik.swarm.* labels - Traefik's swarm provider skips a "
+            "service with both families defined, dropping its routers"
+        )
