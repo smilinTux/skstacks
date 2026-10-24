@@ -220,3 +220,24 @@
       debug:
         msg: "Immich Server status: {{ 'found' if (immich_service is defined and immich_service.service is defined) else 'not found or starting' }}"
       when: immich_service is defined
+
+    - name: Create or update the skgallery portal tile in Authentik
+      # On by default (AUTHENTIK_TILE: true); opt out per instance with
+      # AUTHENTIK_TILE: false. skgallery sits behind the cluster's domain-wide
+      # Traefik ForwardAuth catch-all already; this just gives it a
+      # bookmark tile on the Authentik portal, bound to a group, with no
+      # provider. See shared/tasks/authentik_portal_tile.yml.
+      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
+      vars:
+        portal_tile:
+          enabled: "{{ skgallery.AUTHENTIK_TILE | default(true) | bool }}"
+          slug: "{{ skgallery.AUTHENTIK_TILE_SLUG | default(app, true) }}"
+          name: "{{ skgallery.AUTHENTIK_TILE_NAME | default('SKGallery (Immich)', true) }}"
+          launch_url: "https://skgallery{{ '' if env == 'prod' else '-' + env }}.{{ skgallery.CLUSTERNAME | default(cluster_name) }}.{{ skgallery.DOMAIN | default(domain) }}"
+          group: "{{ skgallery.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          icon: "{{ skgallery.AUTHENTIK_TILE_ICON | default('fa://fa-images', true) }}"
+          open_in_new_tab: "{{ skgallery.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
+          description: "{{ skgallery.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
+      tags:
+        - config
+        - authentik

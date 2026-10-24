@@ -210,3 +210,33 @@
       debug: var=skfetch_wire.stdout_lines
       when: skfetch.WIRE_ENABLED | default(true) | bool
       tags: [wire]
+
+    - name: Create or update the skfetch portal tiles in Authentik
+      # On by default (AUTHENTIK_TILE: true); opt out per instance with
+      # AUTHENTIK_TILE: false. Each *arr web UI (Sonarr, Radarr, Lidarr,
+      # Prowlarr; same list as skfetch-traefik.yml.j2's `uis`, qBittorrent
+      # is never routed) is already behind the cluster's domain-wide
+      # Traefik ForwardAuth catch-all; each gets its own bookmark tile,
+      # bound to one group, with no provider. See
+      # shared/tasks/authentik_portal_tile.yml.
+      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
+      vars:
+        portal_tile:
+          enabled: "{{ skfetch.AUTHENTIK_TILE | default(true) | bool }}"
+          slug: "{{ item.key }}{{ '' if env == 'prod' else '-' + env }}"
+          name: "{{ item.name }}"
+          launch_url: "https://{{ item.key }}{{ '' if env == 'prod' else '-' + env }}.{{ skfetch.CLUSTERNAME }}.{{ skfetch.DOMAIN }}"
+          group: "{{ skfetch.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          icon: "{{ item.icon }}"
+          open_in_new_tab: true
+          description: ""
+      loop:
+        - { key: "sonarr", name: "Sonarr (skfetch)", icon: "fa://fa-tv" }
+        - { key: "radarr", name: "Radarr (skfetch)", icon: "fa://fa-clapperboard" }
+        - { key: "lidarr", name: "Lidarr (skfetch)", icon: "fa://fa-music" }
+        - { key: "prowlarr", name: "Prowlarr (skfetch)", icon: "fa://fa-satellite-dish" }
+      loop_control:
+        label: "{{ item.key }}"
+      tags:
+        - config
+        - authentik

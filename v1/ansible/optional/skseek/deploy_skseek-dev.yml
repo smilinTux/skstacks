@@ -207,3 +207,24 @@
       when: skseek_service_info.stdout is defined
       tags:
         - deploy
+
+    - name: Create or update the skseek portal tile in Authentik
+      # On by default (AUTHENTIK_TILE: true); opt out per instance with
+      # AUTHENTIK_TILE: false. skseek sits behind the cluster's domain-wide
+      # Traefik ForwardAuth catch-all already; this just gives it a
+      # bookmark tile on the Authentik portal, bound to a group, with no
+      # provider. See shared/tasks/authentik_portal_tile.yml.
+      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
+      vars:
+        portal_tile:
+          enabled: "{{ skseek.AUTHENTIK_TILE | default(true) | bool }}"
+          slug: "{{ skseek.AUTHENTIK_TILE_SLUG | default(app, true) }}"
+          name: "{{ skseek.AUTHENTIK_TILE_NAME | default('SKSeek (Perplexica)', true) }}"
+          launch_url: "https://skseek{{ '' if env == 'prod' else '-' + env }}.{{ skseek.CLUSTERNAME | default(cluster_name) }}.{{ skseek.DOMAIN | default(domain) }}"
+          group: "{{ skseek.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          icon: "{{ skseek.AUTHENTIK_TILE_ICON | default('fa://fa-magnifying-glass', true) }}"
+          open_in_new_tab: "{{ skseek.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
+          description: "{{ skseek.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
+      tags:
+        - config
+        - authentik

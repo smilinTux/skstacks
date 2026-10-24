@@ -375,3 +375,24 @@
     - name: Show deploy output
       debug: var=deploy_output.stdout_lines
       tags: [deploy]
+
+    - name: Create or update the skpayment portal tile in Authentik
+      # On by default (AUTHENTIK_TILE: true); opt out per instance with
+      # AUTHENTIK_TILE: false. skpayment sits behind the cluster's domain-wide
+      # Traefik ForwardAuth catch-all already; this just gives it a
+      # bookmark tile on the Authentik portal, bound to a group, with no
+      # provider. See shared/tasks/authentik_portal_tile.yml.
+      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
+      vars:
+        portal_tile:
+          enabled: "{{ skpayment.AUTHENTIK_TILE | default(true) | bool }}"
+          slug: "{{ skpayment.AUTHENTIK_TILE_SLUG | default(app, true) }}"
+          name: "{{ skpayment.AUTHENTIK_TILE_NAME | default('SKPayment', true) }}"
+          launch_url: "https://{{ skp_host }}"
+          group: "{{ skpayment.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          icon: "{{ skpayment.AUTHENTIK_TILE_ICON | default('fa://fa-credit-card', true) }}"
+          open_in_new_tab: "{{ skpayment.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
+          description: "{{ skpayment.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
+      tags:
+        - config
+        - authentik

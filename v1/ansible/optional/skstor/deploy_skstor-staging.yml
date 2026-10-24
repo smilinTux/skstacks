@@ -263,3 +263,24 @@
       tags:
         - post-deploy
         - bootstrap
+
+    - name: Create or update the skstor portal tile in Authentik
+      # On by default (AUTHENTIK_TILE: true); opt out per instance with
+      # AUTHENTIK_TILE: false. skstor sits behind the cluster's domain-wide
+      # Traefik ForwardAuth catch-all already; this just gives it a
+      # bookmark tile on the Authentik portal, bound to a group, with no
+      # provider. See shared/tasks/authentik_portal_tile.yml.
+      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
+      vars:
+        portal_tile:
+          enabled: "{{ skstor.AUTHENTIK_TILE | default(true) | bool }}"
+          slug: "{{ skstor.AUTHENTIK_TILE_SLUG | default(app, true) }}"
+          name: "{{ skstor.AUTHENTIK_TILE_NAME | default('SKStor (Garage S3)', true) }}"
+          launch_url: "https://skstor{{ '' if env == 'prod' else '-' + env }}.{{ skstor.CLUSTERNAME }}.{{ skstor.DOMAIN }}"
+          group: "{{ skstor.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          icon: "{{ skstor.AUTHENTIK_TILE_ICON | default('application-icons/minio-light.png', true) }}"
+          open_in_new_tab: "{{ skstor.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
+          description: "{{ skstor.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
+      tags:
+        - config
+        - authentik
