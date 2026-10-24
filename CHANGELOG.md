@@ -8,6 +8,19 @@ Each entry says what an instance must do, if anything.
 ### Upgrade notes (instances)
 
 - **(all apps, test-only):** new render-time test guards against the class of bug #232/#234 covered: Traefik v3's swarm provider skips any service whose labels carry both the deprecated `traefik.docker.*` family and the current `traefik.swarm.*` family at once ("both Docker and Swarm labels are defined" -> "Skip container"), dropping its routers to the error-pages fallback with no other symptom. `test_no_service_emits_both_traefik_docker_and_swarm_labels` (`test_compose_templates_render.py`) renders every app template with an empty context and fails if any service's labels contain both prefixes; a template needing real fixture vars to render is skipped there and relies on its own app-specific test instead. No template in this release carries `traefik.docker.*` (confirmed by a fleet-wide search: zero occurrences), so this is a test-only addition - nothing renders differently. **Instance action:** none.
+- **Render-test harness (`v1/tests/render/render_playbooks.py`), no instance action**: fixes a
+  real crash the icon-shipping change below exposed, in test infrastructure only. A `copy: src:
+  dest:` task whose source is binary (an icon PNG) was captured through
+  `lookup('ansible.builtin.file', ...)`, which Ansible already decodes as UTF-8 with lossy
+  escaping for anything that is not (a deprecated behavior removed outright in ansible-core
+  2.23); writing that escaped text back out at `unpack()` time then raised `UnicodeEncodeError`
+  on the lone surrogate codepoints, failing every render test for any role with a binary `copy:`
+  source (`test_skpulse_render.py`, `test_skflow_render.py`, 16 failed + 15 errored). Fixed by
+  base64-encoding every `copy:src` file capture (`BINARY_MARK`) and decoding it back to bytes in
+  `unpack()`; a text file round-trips exactly as before, a binary one no longer crashes the
+  harness. Does not touch a real deploy: `ansible-playbook` itself has always copied binary files
+  correctly, this only affected the render harness's own capture-and-replay step.
+
 - **Every role with a web UI** (listed in the Changes entry below): new `AUTHENTIK_TILE`, default
   `true` (on by default: an instance that never sets it gets a tile on its next deploy). Set it to
   `false` per role to opt out. When on, the deploy creates or updates a provider-less Authentik
