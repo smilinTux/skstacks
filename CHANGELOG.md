@@ -7,6 +7,13 @@ Each entry says what an instance must do, if anything.
 
 ### Upgrade notes (instances)
 
+- **skhub, Talk `turn_servers` 3478 entry**: the post-deploy task now writes `"schemes":"turn"`
+  instead of `"turn,turns"` for `<TURN_DOMAIN>:3478`. aio-talk's eturnal never serves TLS on
+  3478, so the `turns:<host>:3478` URLs it advertised could never connect (confirmed on nor and
+  NAM, 2026-10-25: TLS handshake gets EOF) and only slowed ICE gathering on restricted networks.
+  TURN over TLS is the separate `TALK_TURN_TLS_443` entry (`turns:<TURN_DOMAIN>:443`), unchanged.
+  **Instance action**: none; the next skhub deploy rewrites the entry.
+
 - **skfenceha (HA Traefik edge) and skfence, `DUMPER_IMAGE`**: `traefik-certs-dumper`
   was pinned to `v2.10.0`, which panics (`unsupported key type: ''`) on `acme.json`
   written by Traefik 3.7+ (the account `KeyType` field was dropped). Bumped to
@@ -84,6 +91,13 @@ Each entry says what an instance must do, if anything.
   `docs/ROLE_AUTHORING_CHECKLIST.md` for the general mechanism.
 
 ### Changes
+
+- v1: **skhub** the Talk post-deploy task writes `"schemes":"turn"` (was `"turn,turns"`) for the
+  `<TURN_DOMAIN>:3478` `turn_servers` entry in all three deploy playbooks; eturnal in aio-talk has
+  no TLS listener, so the `turns:` URLs on 3478 were dead. README "Talk HPB TURN" updated. Tests:
+  `v1/tests/test_skhub_internal_ingress_and_stun.py` (3478 entry is `turn` only, with and without
+  `TALK_TURN_TLS_443`). Verified live on nor: Talk advertising `turn:` udp/tcp 3478 plus `turns:` 443,
+  skcall relay-only ICE matrix passes on all three.
 
 - v1: new shared task `shared/tasks/authentik_portal_tile.yml` + `shared/src/authentik_portal_tile.py`:
   idempotently creates/updates a provider-less Authentik `core.Application` and its group policy

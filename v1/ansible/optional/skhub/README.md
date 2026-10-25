@@ -380,7 +380,7 @@ the LAN needs up to about 2 x N x N ports: 100 ports covers about 7, 200 about
 process of about 1 MB with the default userland proxy).
 
 Router forwards (all to the pinned node's LAN address): 3478 tcp and udp, and
-the relay range udp. Talk's own TURN settings (`turn,turns` at
+the relay range udp. Talk's own TURN settings (`turn` at
 `skhub.<base>:3478`, set by the post-deploy task) do not change. Other
 clients may use the same server with credentials minted from
 `skhub.turn_secret` (TURN REST scheme: user `<expiry>:<name>`, password
