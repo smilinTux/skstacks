@@ -63,7 +63,11 @@ FAKE_DOCKER = textwrap.dedent('''\
         sys.exit(code)
     if a[:2] == ["service", "ps"]:
         assert a[2] == st["service"], a
-        done(0, f"{st['node']} Running 9 seconds ago" if st["node"] else "")
+        if st["node"]:
+            done(0, f"{st['node']} Running 9 seconds ago")
+        if st.get("error"):
+            done(0, f" Pending 10 minutes ago {st['error']}")
+        done(0, "")
     if a[:1] == ["ps"]:
         assert "label=com.docker.swarm.service.name=" + st["service"] in a, a
         done(0, "fakecid")
@@ -113,9 +117,9 @@ FAKE_DOCKER = textwrap.dedent('''\
 pytestmark = pytest.mark.skipif(shutil.which("ansible-playbook") is None, reason="needs ansible-playbook")
 
 
-def _state(tmp_path, lists=None, node="localhost", lapi_fail_first=0, env="prod"):
+def _state(tmp_path, lists=None, node="localhost", lapi_fail_first=0, env="prod", error=""):
     st = {"service": f"sksec-{env}_crowdsec", "node": node, "lapi_fail_first": lapi_fail_first,
-          "lapi_calls": 0, "lists": lists or [], "calls": [], "mutations": []}
+          "lapi_calls": 0, "lists": lists or [], "calls": [], "mutations": [], "error": error}
     p = tmp_path / "state.json"
     p.write_text(json.dumps(st))
     return p
@@ -257,6 +261,22 @@ def test_no_running_crowdsec_task_fails_the_play(tmp_path):
     assert r.returncode != 0
     assert st["mutations"] == []
     assert not any(c[:1] == ["exec"] for c in st["calls"])
+
+
+def test_unschedulable_crowdsec_task_fails_with_a_clear_message(tmp_path):
+    """A "no suitable node" placement deadlock (sksec.DATA_NODE disagreeing
+    with whichever manager skfenceha's failover pick gave the acme-master
+    label -- see sksec.yml.j2 "placement") must fail the play with the
+    real cause, not a bare "no Running task yet" timeout that leaves an
+    operator to go find this by hand (found live on the skstack06 lab,
+    2026-10-25)."""
+    state = _state(tmp_path, node="",
+                   error="no suitable node (scheduling constraints not satisfied on 4 nodes)")
+    r, st = _run(tmp_path, {"ALLOWLIST_CIDRS": CIDRS, "LAPI_WAIT_SECONDS": 1}, state=state)
+    assert r.returncode != 0
+    assert st["mutations"] == []
+    assert "cannot be scheduled on ANY node" in _log(r)
+    assert "DATA_NODE" in _log(r)
 
 
 def test_a_string_instead_of_a_list_fails_closed(tmp_path):
