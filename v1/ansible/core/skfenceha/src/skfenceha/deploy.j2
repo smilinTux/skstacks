@@ -45,7 +45,7 @@ if [ ! -f "${COMPOSE_FILE}" ]; then
 fi
 
 echo -e "${YELLOW}Deploying stack configuration...${NC}"
-record_preexisting "${STACK_NAME}_traefik-worker" "${STACK_NAME}_socket-proxy" "${STACK_NAME}_traefik-certs-dumper"
+record_preexisting "${STACK_NAME}_traefik-worker" "${STACK_NAME}_socket-proxy" "${STACK_NAME}_traefik-certs-dumper" "${STACK_NAME}_traefik-certs-watch"
 timeout 60 docker stack deploy \
     -c "${COMPOSE_FILE}" \
     --prune \
@@ -100,6 +100,7 @@ fi
 
 preexisted "${STACK_NAME}_socket-proxy" && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false "${STACK_NAME}_socket-proxy" || true
 preexisted "${STACK_NAME}_traefik-certs-dumper" && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false "${STACK_NAME}_traefik-certs-dumper" || true
+preexisted "${STACK_NAME}_traefik-certs-watch" && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false "${STACK_NAME}_traefik-certs-watch" || true
 
 echo -e "${YELLOW}Waiting for services to stabilize...${NC}"
 sleep 10

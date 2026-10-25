@@ -45,6 +45,37 @@ instance can run only one of skfence or skfenceha at a time but the
 framework default for each is tracked independently. Pin a digest to stage
 a tactical version ahead of or instead of a full framework release.
 
+**certs-dumper image (`DUMPER_IMAGE`)**: same convention, pins
+`traefik-certs-dumper`'s image (default
+`ldez/traefik-certs-dumper:v2.11.4@sha256:...`; v2.10.0 panics
+("unsupported key type: ''") on acme.json written by Traefik 3.7+, since
+the account KeyType field was dropped -- see CHANGELOG). `skfence.DUMPER_IMAGE`
+is the same knob for skfence's own dumper, independent of this one.
+
+**Cert reload without a restart (`traefik-certs-watch`)**: `traefik-worker`
+reads `acme.json` once, at container start, and never again -- a cert renewed
+or newly issued by `traefik-acme` never reached a running worker without
+restarting it (confirmed on the NAM estate, 2026-10-24; a worker cert expired
+on one estate because nothing ever restarted the workers after a renewal).
+Fixed by `traefik-certs-watch`: a tiny sidecar (global mode, same placement
+as `traefik-worker`, no Docker socket, no network) that runs on every
+manager node, polls the shared, read-only `/certs` directory
+`traefik-certs-dumper` already writes (previously mounted into
+`traefik-worker` but never used), and -- only when the result actually
+changes -- (re)writes a `tls.certificates` file (`certs-generated.yml`) into
+the same shared `dynamic/` directory `traefik-worker`'s file provider
+already watches (`watch: true`). Traefik's own file-provider watch has no
+polling fallback and relies on local fsnotify, which a write from a
+*different* node never reaches over NFS (the dynamic config directory is
+shared NFS too, which is also why a change rendered by Ansible on one
+manager needs confirming on every manager before you rely on it); running
+this sidecar on every node sidesteps that instead of fighting it, because
+each node's own write to the shared file is always a *local* write as far
+as that same node's own Traefik watch is concerned. `skfenceha.CERTS_WATCH_IMAGE` and
+`skfenceha.CERTS_WATCH_INTERVAL_SECONDS` (default 15) override the sidecar's
+image and poll interval; `certs-generated.yml` is a framework-reserved
+dynamic file name (an instance's `EXTRA_DYNAMIC_FILES` cannot use it).
+
 **Instance-owned dynamic files (`EXTRA_DYNAMIC_FILES`)**: the playbooks render
 a fixed set of Traefik dynamic files (`routers.yml`, `services.yml`,
 `middlewares.yml`, `tls.yml`). An instance that needs routes of its own (for

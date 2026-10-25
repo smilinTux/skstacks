@@ -270,6 +270,14 @@
         group: root
         mode: '0755'
 
+    - name: Deploy traefik-certs-watch sidecar script
+      copy:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/certs-watch.sh"
+        dest: "/var/data/config/{{ app }}-{{ env }}/certs-watch.sh"
+        owner: root
+        group: root
+        mode: '0755'
+
     - name: Deploy dynamic config (routers, services, middlewares, TLS options) to both the worker and ACME-master directories
       template:
         src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.1.src }}"
@@ -308,6 +316,7 @@
           - middlewares.yml
           - tls.yml
           - sksec.yml
+          - certs-generated.yml
       tags:
         - config
         - dynamic

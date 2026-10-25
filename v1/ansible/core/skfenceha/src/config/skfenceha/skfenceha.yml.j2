@@ -262,7 +262,12 @@ services:
     # would not reproduce real parity, only a component of it, so this is
     # an instance-only addition on top of the framework rather than a
     # framework hook.
-    image: ldez/traefik-certs-dumper:v2.10.0
+    # v2.10.0 panics ("unsupported key type: ''") on acme.json
+    # written by Traefik 3.7+ (the account KeyType field was dropped);
+    # fixed in v2.11.4. Pin a digest here (skfenceha.DUMPER_IMAGE) to
+    # stage a tactical version ahead of or instead of a full framework
+    # release, same convention as TRAEFIK_IMAGE.
+    image: {{ skfenceha.DUMPER_IMAGE | default('ldez/traefik-certs-dumper:v2.11.4@sha256:a34b27edf8e5e96a215035a6bfba00d769d2638f8444a5dd6dc27299d75f43c5', true) }}
     command:
       - file
       - --version
@@ -300,6 +305,67 @@ services:
       - /etc/localtime:/etc/localtime:ro
     networks:
       - cloud-public-{{ env }}
+
+  # Regenerates a Traefik file-provider TLS config (tls.certificates) from
+  # traefik-certs-dumper's PEM output, on every manager node independently
+  # (global mode, same placement as traefik-worker). Exists because
+  # traefik-worker only ever reads acme.json once at container start (see
+  # this role's README, "Cert reload without a restart"): a cert renewed
+  # or newly issued by traefik-acme never reaches a running worker without
+  # this sidecar.
+  #
+  # Why every node runs its own copy instead of one shared instance: the
+  # dynamic config directory this writes into is shared NFS, and NFS gives
+  # no change notification to a DIFFERENT node than the one that wrote the
+  # file (confirmed on the NAM estate, 2026-10-24: a write on node A never
+  # fired node B's inotify watch, see CHANGELOG). Running this on every
+  # node turns that limitation to our advantage instead of fighting it:
+  # each node's own write is always a LOCAL write as far as that SAME
+  # node's own Traefik file-provider watch is concerned, and a local write
+  # always fires fsnotify, backing store notwithstanding. No leader
+  # election, no cross-node signaling, no raw Docker socket access (unlike
+  # the socket-proxy-fronted swarm/docker providers, this sidecar talks to
+  # no API at all): every node redundantly computes and -- only when the
+  # result actually changes -- writes the exact same file. See
+  # src/config/skfenceha/certs-watch.sh for the full mechanism and why a
+  # single shared instance or Traefik's own file-provider watch (fsnotify
+  # only, confirmed no polling fallback in Traefik v3.7) could not do this
+  # alone.
+  traefik-certs-watch:
+    image: {{ skfenceha.CERTS_WATCH_IMAGE | default('busybox:1.36.1-musl@sha256:3c6ae8008e2c2eedd141725c30b20d9c36b026eb796688f88205845ef17aa213', true) }}
+    entrypoint: /certs-watch.sh
+    environment:
+      - CERTS_DIR=/certs
+      - DEST_FILE=/dynamic-out/certs-generated.yml
+      - INTERVAL={{ skfenceha.CERTS_WATCH_INTERVAL_SECONDS | default(15, true) }}
+    deploy:
+      mode: global
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          cpus: '0.05'
+          memory: 32M
+        reservations:
+          cpus: '0.01'
+          memory: 16M
+      labels:
+        - traefik.enable=false
+    healthcheck:
+      test: ["CMD", "test", "-f", "/dynamic-out/certs-generated.yml"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    volumes:
+      - /var/data/config/{{ app }}-{{ env }}/certs-watch.sh:/certs-watch.sh:ro
+      - /var/data/runtime/{{ app }}-{{ env }}/certs:/certs:ro
+      - /var/data/config/{{ app }}-{{ env }}/dynamic:/dynamic-out
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
 
 networks:
   cloud-edge-{{ env }}:
