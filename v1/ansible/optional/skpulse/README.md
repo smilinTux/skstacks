@@ -91,8 +91,21 @@ only admins reach the dashboard.
 **Health check**: `docker service ls --filter name=skpulse-<env>_skpulse`
 shows `1/1`.
 
-**Gotchas**: the first admin account is still created through Kuma's own
-first-run web UI (interactive, not vault-driven); complete it before
+**First-run setup is automatic as of this release.** A fresh instance's
+deploy itself completes Kuma's own setup (POST /setup-database, then the
+"setup" socket event to create the first admin, username `skadmin`, a
+freshly generated password) -- no manual click-through, even behind
+Authentik's forward-auth gate. The generated password lands in
+`~/.skstacks-generated/<app>-<env>-<host>-admin-password` on whichever
+controller ran the deploy (0600, outside any git tree, never printed);
+move it into the instance vault if anyone needs to sign in to Kuma
+directly (AUTH_MODE: sso does not need it day to day). An instance
+deployed before this release, or one whose admin got created by hand
+some other way, is unaffected: the entry-page check is the gate, and it
+is a no-op once a database already exists.
+
+**Older gotcha, now only relevant pre-upgrade**: the first admin account
+used to be created only through Kuma's own first-run web UI; complete it before
 relying on `AUTH_MODE: sso` to auto-login (Kuma auto-logs in the single
 admin account once `disableAuth` is true, so create that account, THEN let
 the next deploy flip the setting). That "next deploy" does not have to be

@@ -243,7 +243,160 @@
         - deploy
         - authmode
 
-    - name: Count existing Kuma admin users (never flip the sign-in setting before first-run setup finishes)
+    - name: Check Kuma's own entry-page (first-run setup not finished vs. a normal running app)
+      # curl FROM INSIDE the container: port 3001 is only reachable on its
+      # own overlay network (the same reason skpulse_disable_auth_toggle
+      # below already runs through docker exec, not a host-level call --
+      # there is no published host port for this service, Traefik reaches
+      # it over the overlay network like every other role here).
+      shell: >
+        docker exec {{ skpulse_cid.stdout }} curl -s -m 10
+        http://127.0.0.1:{{ skpulse_internal_port | default(3001) }}/api/entry-page
+      register: skpulse_entry_page_raw
+      changed_when: false
+      failed_when: false
+      when: skpulse_cid.stdout | default('') | length > 0
+      tags:
+        - deploy
+        - authmode
+
+    - name: Parse the entry-page response
+      set_fact:
+        skpulse_entry_page_type: "{{ (skpulse_entry_page_raw.stdout | default('{}') | from_json).type | default('') }}"
+      when: skpulse_entry_page_raw.stdout | default('') | length > 0
+      tags:
+        - deploy
+        - authmode
+
+    - name: Decide whether first-run setup is needed
+      # /api/entry-page is Kuma's own authoritative signal (setup-database.js
+      # sets needSetup from whether db-config.json exists and is valid) --
+      # no separate user-count check needed, and none is available yet at
+      # this point in the play anyway. Defaults to false (skip) if the
+      # container isn't reachable at all, the safe direction: never attempt
+      # setup against a state we could not actually confirm needs it.
+      set_fact:
+        skp_needs_first_run: "{{ (skpulse_entry_page_type | default('')) == 'setup-database' }}"
+      tags:
+        - deploy
+        - authmode
+
+    - name: Ensure the local generated-secrets directory exists (controller only, never a git tree)
+      file:
+        path: "{{ lookup('env', 'HOME') }}/.skstacks-generated"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+      become: false
+      when: skp_needs_first_run | default(false) | bool
+      tags:
+        - deploy
+        - authmode
+
+    - name: Generate (or reuse) the first admin's password, local to this controller only
+      # The password lookup itself generates-and-caches AT this exact path:
+      # first run writes a fresh random value here, every later run (incl.
+      # --tags authmode) reads the SAME value back instead of regenerating.
+      # Outside any git tree on purpose (never committed); the operator is
+      # told where it is and should move it into the instance vault for
+      # anyone else to be able to log in later -- this is only load-bearing
+      # for the ONE-TIME setup call below, not for ongoing sign-in once
+      # AUTH_MODE: sso's disableAuth takes over.
+      set_fact:
+        skp_admin_pw_file: "{{ lookup('env', 'HOME') }}/.skstacks-generated/{{ app }}-{{ env }}-{{ inventory_hostname }}-admin-password"
+        skp_admin_pw_materialized: "{{ lookup('ansible.builtin.password', lookup('env', 'HOME') + '/.skstacks-generated/' + app + '-' + env + '-' + inventory_hostname + '-admin-password', length=32, chars=['ascii_letters', 'digits']) }}"
+      no_log: true
+      when: skp_needs_first_run | default(false) | bool
+      tags:
+        - deploy
+        - authmode
+
+    - name: Copy the generated password onto the target host (controller -> target, Ansible transfer)
+      # skp_admin_pw_file lives on the CONTROLLER (the task that generated
+      # it ran delegate_to: localhost); the script and docker cp below run
+      # ON the target manager, so this file has to actually cross hosts
+      # first, same as any other copy: task in this playbook.
+      copy:
+        src: "{{ skp_admin_pw_file }}"
+        dest: "/tmp/skp_admin_pw.txt"
+        mode: "0600"
+      no_log: true
+      when: skp_admin_pw_file is defined
+      tags:
+        - deploy
+        - authmode
+
+    - name: Copy the first-run setup script onto the target host
+      copy:
+        src: "{{ playbook_dir }}/src/{{ app }}/kuma_first_run_setup.py"
+        dest: "/tmp/kuma_first_run_setup.py"
+        mode: "0644"
+      when: skp_admin_pw_file is defined
+      tags:
+        - deploy
+        - authmode
+
+    - name: Write the entry-page config the script reads (no secrets, just host/port)
+      copy:
+        content: '{"host":"127.0.0.1","port":{{ skpulse_internal_port | default(3001) }}}'
+        dest: "/tmp/skp_first_run_cfg.json"
+        mode: "0644"
+      when: skp_admin_pw_file is defined
+      tags:
+        - deploy
+        - authmode
+
+    - name: Copy the script, config and password into the container (now all co-located on the target)
+      shell: >
+        docker cp /tmp/kuma_first_run_setup.py {{ skpulse_cid.stdout }}:/tmp/kuma_first_run_setup.py
+        && docker cp /tmp/skp_first_run_cfg.json {{ skpulse_cid.stdout }}:/tmp/skp_first_run_cfg.json
+        && docker cp /tmp/skp_admin_pw.txt {{ skpulse_cid.stdout }}:/tmp/skp_admin_pw.txt
+      changed_when: true
+      when: skp_admin_pw_file is defined
+      tags:
+        - deploy
+        - authmode
+
+    - name: Complete Kuma's own first-run setup (sqlite + first admin), idempotent
+      # Safe to re-run: skips /setup-database if already configured, skips
+      # "setup" if an admin already exists (see the script's own docstring).
+      # Does NOT set disableAuth itself -- the existing toggle task below
+      # does that once this makes the admin-exists condition true.
+      shell: >
+        docker exec {{ skpulse_cid.stdout }} python3 /tmp/kuma_first_run_setup.py
+        /tmp/skp_first_run_cfg.json /tmp/skp_admin_pw.txt
+      register: skpulse_first_run_setup
+      changed_when: "'PASS' in skpulse_first_run_setup.stdout or 'skipping' in skpulse_first_run_setup.stdout"
+      failed_when: skpulse_first_run_setup.rc != 0
+      when: skp_admin_pw_file is defined
+      tags:
+        - deploy
+        - authmode
+
+    - name: Clean up the first-run setup helper files (target and container)
+      shell: >
+        docker exec {{ skpulse_cid.stdout }} sh -c 'rm -f /tmp/kuma_first_run_setup.py /tmp/skp_first_run_cfg.json /tmp/skp_admin_pw.txt';
+        rm -f /tmp/kuma_first_run_setup.py /tmp/skp_first_run_cfg.json /tmp/skp_admin_pw.txt
+      changed_when: false
+      when: skp_admin_pw_file is defined
+      tags:
+        - deploy
+        - authmode
+
+    - name: Report where the generated admin password landed (never the value itself)
+      debug:
+        msg: >-
+          First admin 'skadmin' created with a freshly generated password,
+          saved on this controller at {{ skp_admin_pw_file }} (0600). Move it
+          into the instance vault if anyone else needs to sign in directly;
+          AUTH_MODE: sso does not need it day to day (Authentik + disableAuth
+          is the only gate once the next task below runs).
+      when: skp_admin_pw_file is defined and skpulse_first_run_setup.rc | default(1) == 0
+      tags:
+        - deploy
+        - authmode
+
+    - name: Re-count Kuma admin users (picks up the account the task above may have just created)
       shell: >
         docker exec {{ skpulse_cid.stdout }} sqlite3 /app/data/kuma.db
         "SELECT COUNT(*) FROM user;"
