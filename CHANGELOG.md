@@ -7,6 +7,37 @@ Each entry says what an instance must do, if anything.
 
 ### Upgrade notes (instances)
 
+- **skfenceha (HA Traefik edge) and skfence, `DUMPER_IMAGE`**: `traefik-certs-dumper`
+  was pinned to `v2.10.0`, which panics (`unsupported key type: ''`) on `acme.json`
+  written by Traefik 3.7+ (the account `KeyType` field was dropped). Bumped to
+  `v2.11.4` by digest in both roles (tactically live on two estates since
+  2026-10-24; this lands the framework pin). **Instance action**: none for the
+  version bump itself (the default moves); an instance pinning its own
+  `DUMPER_IMAGE`/`skfence.DUMPER_IMAGE` ahead of the framework is unaffected.
+- **skfenceha only, new `traefik-certs-watch` sidecar**: `traefik-worker` reads
+  `acme.json` once at container start and never again, so a cert renewed or
+  newly issued by `traefik-acme` never reached a running worker without
+  restarting every worker by hand (confirmed on the NAM estate, 2026-10-24: a
+  worker cert expiring 2026-12-14 with nothing to renew it at the edge). Fixed
+  by a new global-mode sidecar, one per manager node (same placement as
+  `traefik-worker`, no Docker socket, no network), that turns
+  `traefik-certs-dumper`'s already-dumped PEM output (mounted into
+  `traefik-worker` since this role's first version, but never read by it)
+  into a Traefik file-provider `tls.certificates` dynamic file
+  (`certs-generated.yml`) that `traefik-worker`'s existing file provider
+  already watches. Every node redundantly regenerates and writes the same
+  file because the shared dynamic directory is NFS and a write from a
+  *different* node never fires another node's `fsnotify` watch (the
+  mechanism Traefik's file provider relies on, confirmed from its v3.7
+  source: no polling fallback exists); each node's own write to that shared
+  file is always a *local* write as far as that same node's own watch is
+  concerned, so this sidesteps the limitation instead of needing to defeat
+  it. **Instance action**: none to pick up the fix (redeploying skfenceha
+  adds the sidecar automatically); `skfenceha.CERTS_WATCH_IMAGE` and
+  `skfenceha.CERTS_WATCH_INTERVAL_SECONDS` (default 15) are available to
+  override it, and `certs-generated.yml` is now a reserved dynamic file name
+  (`EXTRA_DYNAMIC_FILES` on skfenceha cannot use it). See the skfenceha
+  README, "Cert reload without a restart".
 - **(all apps, test-only):** new render-time test guards against the class of bug #232/#234 covered: Traefik v3's swarm provider skips any service whose labels carry both the deprecated `traefik.docker.*` family and the current `traefik.swarm.*` family at once ("both Docker and Swarm labels are defined" -> "Skip container"), dropping its routers to the error-pages fallback with no other symptom. `test_no_service_emits_both_traefik_docker_and_swarm_labels` (`test_compose_templates_render.py`) renders every app template with an empty context and fails if any service's labels contain both prefixes; a template needing real fixture vars to render is skipped there and relies on its own app-specific test instead. No template in this release carries `traefik.docker.*` (confirmed by a fleet-wide search: zero occurrences), so this is a test-only addition - nothing renders differently. **Instance action:** none.
 - **Secret-file-mode test harness (`v1/tests/test_secret_files_not_world_readable.py` +
   `test_secret_file_modes_survive_deploy.py`), no instance action**: this walker's own minimal
@@ -124,6 +155,59 @@ Each entry says what an instance must do, if anything.
   the render harness's real, non-mocked `include_vars` step needs now that the tile defaults on;
   modeled on the existing `skmesh.with.sksso.yml`), so the existing per-role render suites keep
   passing with no change to their own assertions.
+
+- v1: `ldez/traefik-certs-dumper` bumped from `v2.10.0` to `v2.11.4` by digest in
+  both `core/skfence/src/config/skfence/skfence.yml.j2` and
+  `core/skfenceha/src/config/skfenceha/skfenceha.yml.j2`, each behind a new
+  `DUMPER_IMAGE` override knob (same convention as the existing `TRAEFIK_IMAGE`
+  knob, two independent vault keys since an instance runs only one of the two
+  roles). v2.10.0 panics on the account-level ACME data Traefik 3.7+ writes to
+  `acme.json` (the `KeyType` field was removed from the account struct);
+  v2.11.4 parses it. Tests:
+  `v1/tests/test_dumper_image_knob.py` (default is the fixed version on both
+  roles, override replaces it, the two roles' knobs are independent, and
+  `traefik-worker`'s existing `/certs:ro` mount -- previously unused -- is
+  still there for `traefik-certs-watch` to rely on).
+
+- v1 (skfenceha only): new `traefik-certs-watch` global-mode sidecar
+  (`src/config/skfenceha/certs-watch.sh`, `busybox:1.36.1-musl` by digest,
+  overridable via `CERTS_WATCH_IMAGE`/`CERTS_WATCH_INTERVAL_SECONDS`) closes
+  the gap where a cert `traefik-acme` renews or newly issues never reaches a
+  running `traefik-worker`, since the worker only ever reads `acme.json` once
+  at startup. The sidecar polls the shared, read-only `/certs` directory
+  `traefik-certs-dumper` already populates and -- only when the computed
+  result changes -- atomically rewrites a `tls.certificates` file
+  (`certs-generated.yml`) into the same shared `dynamic/` directory
+  `traefik-worker`'s file provider already watches with `watch: true`. It
+  deliberately runs on every manager node rather than once centrally: the
+  shared dynamic directory is NFS, and NFS does not propagate a write's
+  change notification to a different node's `fsnotify` watch (reproduced on
+  the NAM estate, 2026-10-24, and confirmed as inherent to Traefik v3.7's
+  file provider by reading its source: `watcher.Add()` is only ever called on
+  the configured directory itself, with no polling fallback). Running the
+  regenerator on every node instead means every node's own write is a local
+  write to that same node's own watch, which always fires regardless of
+  backing store -- proven end-to-end against a real, unmodified
+  `traefik:v3.7.16` container (the same digest this framework pins): before,
+  it served `CN=TRAEFIK DEFAULT CERT` for a test SNI with no matching
+  dynamic cert; a cert was generated and the sidecar run once against the
+  same shared directory the running container's file provider watches; the
+  container's `StartedAt`/`RestartCount` were unchanged throughout, and a
+  second TLS handshake for the same SNI then returned the injected
+  `CN=test.example.com` cert, with zero restart. Also added
+  `certs-generated.yml` to the dynamic-file reserved-name list (skfenceha
+  only -- skfence has no such sidecar, since its single Traefik process is
+  the same one doing the renewal, with no cross-process staleness to fix)
+  and deploy.j2 tracking (`record_preexisting`/`preexisted`, so a fresh
+  install does not force-restart it mid-first-boot, same as every other
+  service in this stack). Tests: `v1/tests/test_skfenceha_certs_watch.py`
+  (render shape: global mode, same placement as `traefik-worker`, pinned
+  image + both override knobs, `/certs` read-only vs. `/dynamic-out`
+  read-write, no Docker socket, no network, script is POSIX `/bin/sh` with
+  no bashisms, script defaults match the compose environment) and
+  `v1/tests/test_skfenceha_certs_watch_reserved_name.py` (reserved name
+  present on skfenceha in all three envs, absent on skfence, and the
+  `certs-watch.sh` deploy task exists with the right mode in all three envs).
 
 ## Unreleased (v2.26.16)
 
