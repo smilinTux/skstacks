@@ -305,6 +305,16 @@ def test_tls443_appends_a_turns_443_tcp_entry(pb):
 
 
 @pytest.mark.parametrize("pb", PLAYBOOKS, ids=lambda p: p.name)
+@pytest.mark.parametrize("extra", [{}, TLS], ids=["tls443-off", "tls443-on"])
+def test_3478_entry_is_plain_turn_only(pb, extra):
+    # eturnal in aio-talk has no TLS listener on 3478, so turns: there is a dead URL.
+    entry = _turn_servers(_talk_shell(pb, **extra))[0]
+    assert entry["server"].endswith(":3478")
+    assert entry["schemes"] == "turn"
+    assert entry["protocols"] == "udp,tcp"
+
+
+@pytest.mark.parametrize("pb", PLAYBOOKS, ids=lambda p: p.name)
 def test_talk_task_stays_no_log(pb):
     assert _talk_task(pb).get("no_log") is True
 

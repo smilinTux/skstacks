@@ -940,7 +940,7 @@
       shell: |
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
         docker exec "$CONTAINER_ID" php occ config:app:set spreed signaling_servers --value='{"servers":[{"server":"https://{{ skhub_public_host }}/standalone-signaling/","verify":true}],"secret":"{{ skhub.signaling_secret }}"}' 2>&1 || true
-        docker exec "$CONTAINER_ID" php occ config:app:set spreed turn_servers --value='[{"schemes":"turn,turns","server":"{{ skhub.TURN_DOMAIN | default(skhub.CLUSTERNAME ~ "." ~ skhub.DOMAIN, true) }}:3478","secret":"{{ skhub.turn_secret }}","protocols":"udp,tcp"}{% if (skhub.TALK_TURN_TLS_443 | default(false) | string | lower) in ['true', 'yes', 'on', '1'] %},{"schemes":"turns","server":"{{ skhub.TURN_DOMAIN }}:443","secret":"{{ skhub.turn_secret }}","protocols":"tcp"}{% endif %}]' 2>&1 || true
+        docker exec "$CONTAINER_ID" php occ config:app:set spreed turn_servers --value='[{"schemes":"turn","server":"{{ skhub.TURN_DOMAIN | default(skhub.CLUSTERNAME ~ "." ~ skhub.DOMAIN, true) }}:3478","secret":"{{ skhub.turn_secret }}","protocols":"udp,tcp"}{% if (skhub.TALK_TURN_TLS_443 | default(false) | string | lower) in ['true', 'yes', 'on', '1'] %},{"schemes":"turns","server":"{{ skhub.TURN_DOMAIN }}:443","secret":"{{ skhub.turn_secret }}","protocols":"tcp"}{% endif %}]' 2>&1 || true
         {% if (skhub.TALK_STUN_SERVERS | default([], true) | length) > 0 %}
         docker exec "$CONTAINER_ID" php occ config:app:set spreed stun_servers --value='{{ skhub.TALK_STUN_SERVERS | map('string') | list | to_json }}' 2>&1 || true
         {% endif %}
