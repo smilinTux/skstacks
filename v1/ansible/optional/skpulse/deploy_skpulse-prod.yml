@@ -256,7 +256,7 @@
 
     - name: Find the running skpulse container (for the sign-in setting toggle)
       shell: docker ps -q -f "name={{ app }}-{{ env }}_skpulse" | head -1
-      delegate_to: "{{ skpulse_node.stdout | trim }}"
+      delegate_to: "{{ skpulse_node.stdout | default('') | trim }}"
       register: skpulse_cid
       changed_when: false
       failed_when: skpulse_cid.rc != 0 or (skpulse_cid.stdout | trim | length == 0)
@@ -269,7 +269,7 @@
       shell: >
         docker exec {{ skpulse_cid.stdout }} sqlite3 /app/data/kuma.db
         "SELECT COUNT(*) FROM user;"
-      delegate_to: "{{ skpulse_node.stdout | trim }}"
+      delegate_to: "{{ skpulse_node.stdout | default('') | trim }}"
       register: skpulse_user_count
       changed_when: false
       failed_when: false
@@ -294,7 +294,7 @@
         docker exec {{ skpulse_cid.stdout }} sqlite3 /app/data/kuma.db
         "INSERT INTO setting (key, value, type) VALUES ('disableAuth', '{{ 'true' if skp_auth_mode == 'sso' else 'false' }}', 'general')
          ON CONFLICT(key) DO UPDATE SET value=excluded.value, type=excluded.type;"
-      delegate_to: "{{ skpulse_node.stdout | trim }}"
+      delegate_to: "{{ skpulse_node.stdout | default('') | trim }}"
       register: skpulse_disable_auth_toggle
       changed_when: skpulse_disable_auth_toggle.rc == 0
       when: >
