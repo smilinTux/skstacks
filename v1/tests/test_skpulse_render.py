@@ -216,7 +216,7 @@ def test_skpulse_node_is_resolved_before_any_docker_ps_exec(base_out):
     # resolved strictly before the container lookup, which must delegate to it
     assert pb.index("Find the swarm node running the skpulse task") < pb.index("Find the running skpulse container")
     container_block = pb.split("Find the running skpulse container")[1].split("- name:")[0]
-    assert 'delegate_to: "{{ skpulse_node.stdout | trim }}"' in container_block
+    assert 'delegate_to: "{{ skpulse_node.stdout | default(inventory_hostname) | trim }}"' in container_block
 
 
 def test_skpulse_node_resolution_fails_closed_not_silently(base_out):
@@ -232,9 +232,9 @@ def test_skpulse_node_resolution_fails_closed_not_silently(base_out):
 def test_skpulse_admin_count_and_disable_auth_also_delegate_to_the_resolved_node(base_out):
     pb = (ROLE / "deploy_skpulse-prod.yml").read_text()
     count_block = pb.split("Count existing Kuma admin users")[1].split("- name:")[0]
-    assert 'delegate_to: "{{ skpulse_node.stdout | trim }}"' in count_block
+    assert 'delegate_to: "{{ skpulse_node.stdout | default(inventory_hostname) | trim }}"' in count_block
     toggle_block = pb.split("Align Kuma's own login")[1].split("tags:")[0]
-    assert 'delegate_to: "{{ skpulse_node.stdout | trim }}"' in toggle_block
+    assert 'delegate_to: "{{ skpulse_node.stdout | default(inventory_hostname) | trim }}"' in toggle_block
 
 
 def test_disable_auth_toggle_is_gated_on_first_setup_having_finished(base_out):
