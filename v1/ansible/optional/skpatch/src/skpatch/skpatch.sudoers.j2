@@ -1,17 +1,28 @@
 # Managed by SKStacks optional/skpatch (provision_skpatch_nodes.yml).
 # Do not edit by hand; rerun the playbook instead. Exact commands, absolute
-# paths, no NOPASSWD: ALL, no unbounded wildcards: the upstream
-# linux-update-dashboard project's own sudoers-setup guidance.
+# paths, no NOPASSWD: ALL, no unbounded wildcards.
 #
-# Read-only commands (always present): list what is upgradable and whether
-# a reboot is pending. Neither of these actually needs root on a normal
-# Debian/Ubuntu host (dpkg's status file and /var/run/reboot-required are
-# both world-readable), but they are allowlisted anyway so a future
-# distro's equivalent (which may need root) can be swapped in here without
-# widening anything else.
-{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt list --upgradable
-{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get -s dist-upgrade
-{{ skpatch_user }} ALL=(root) NOPASSWD: /bin/cat /var/run/reboot-required
+# Confirmed against the shipped image's own server bundle
+# (/app/dist/server/index.js, ghcr.io/theduffman85/linux-update-dashboard),
+# not the upstream project's README -- found live 2026-10-28, the first
+# time this check was ever reached end to end: the README-derived guesses
+# this file used to carry (`apt list --upgradable`, `apt-get -s
+# dist-upgrade`, `cat /var/run/reboot-required`) did not match a single
+# command the app actually runs, so every check failed closed with
+# "sudo: a password is required". The app self-documents its own
+# sudoers-relevant commands via "# Sudoers-relevant command: ..." lines in
+# its generated scripts; these are copied verbatim from there.
+#
+# Listing upgradable packages (`apt list --upgradable`) and simulating an
+# upgrade (`apt-get -s -o Debug::NoLocking=1 upgrade`, which explicitly
+# disables the dpkg lock requirement) both run as the plain user, no sudo
+# at all -- neither needs a sudoers line. The reboot-pending check is a
+# plain `[ -f /run/reboot-required ]` file test, not `cat`, also no sudo.
+#
+# Read-only commands (always present): refresh APT's metadata and audit
+# dpkg's own state, both of which genuinely need root.
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/dpkg --audit
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get -o DPkg::Lock::Timeout=60 update -qq
 
 {% if skp_node_allow_actions | bool %}
 # Actions (upgrade/reboot): only present when this host's
@@ -19,16 +30,20 @@
 # the host sets nothing) is true. Hypervisors, the NAS and anything else
 # that must stay report-only set skpatch_allow_actions: false in their own
 # group_vars, which keeps this whole block off regardless of the
-# instance-wide knob.
-{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get -y upgrade
-{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get -y dist-upgrade
-{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get -y autoremove
+# instance-wide knob. Same DPkg::Lock::Timeout=60 flag as the read-only
+# update above (the app always passes it); "upgrade"/"full-upgrade", not
+# "dist-upgrade" -- confirmed against getUpgradeAllCommand/
+# getFullUpgradeAllCommand/the apt autoremove sudoersRelevantCommand() call
+# in the same server bundle.
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get -o DPkg::Lock::Timeout=60 upgrade -y
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get -o DPkg::Lock::Timeout=60 full-upgrade -y
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get -o DPkg::Lock::Timeout=60 autoremove -y
 {{ skpatch_user }} ALL=(root) NOPASSWD: /usr/sbin/reboot
 {% endif %}
 
 # Debian/Ubuntu (apt) is every host in both estates today. A non-Debian
 # target needs its own read (and, if ALLOW_ACTIONS, action) lines added
-# here by hand before provisioning it; this template does not guess at a
-# package manager it has not been asked to support. See README
-# "Provisioning and least privilege" for the dnf/pacman/apk command set
-# the upstream project documents.
+# here by hand before provisioning it, confirmed the SAME way this file
+# was corrected: read the shipped image's own server bundle for the exact
+# "# Sudoers-relevant command: ..." lines that package manager emits,
+# never the upstream project's README alone.
