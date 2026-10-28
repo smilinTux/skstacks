@@ -126,7 +126,7 @@
         owner: root
         group: root
         mode: '0440'
-        validate: 'visudo -cf %s'
+        validate: '/usr/sbin/visudo -cf %s'
       when: skpatch_state == 'present'
 
     - name: Remove the sudoers rule (absent)

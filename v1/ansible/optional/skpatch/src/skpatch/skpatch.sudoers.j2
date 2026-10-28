@@ -26,7 +26,7 @@
 # "syntax error" pointing at the unescaped "::" in DPkg::Lock::Timeout=60)
 # -- the escaped form still matches the real, unescaped argv sudo sees at
 # exec time (confirmed by running the exact command through sudo -n as
-# skpatch-ro after installing this file).
+# the provisioned account after installing this file).
 {{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/dpkg --audit
 {{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout\=60 update -qq
 
