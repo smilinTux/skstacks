@@ -233,11 +233,37 @@
         - deploy
         - authmode
 
+    - name: Find the swarm node running the skpulse task (for the sign-in setting toggle)
+      # docker ps/exec below are per-node; skpulse can be placement-constrained
+      # to a worker (see skpulse.yml.j2's node.role == worker constraint), so
+      # the task's actual running node must be resolved first -- the same
+      # class of bug already found and fixed in the skstack06 test harness's
+      # own KUMA_IP lookup (tools/skpulse_sso_proof.py). A plain `docker ps`
+      # on whichever host happens to be the ansible target (e.g. a manager)
+      # finds nothing when the container runs elsewhere, which used to
+      # silently skip every task below -- including the disableAuth
+      # alignment, a security-relevant setting. Fails the play (fail closed)
+      # once a database exists: a missing Running task at that point is an
+      # anomaly, not a normal first-run state, and must never be papered
+      # over with a silent skip.
+      shell: >
+        docker service ps "{{ app }}-{{ env }}_skpulse" --filter "desired-state=running"
+        --format "{{ '{{.Node}} {{.CurrentState}}' }}"
+        | awk '$2 == "Running" {print $1; exit}'
+      register: skpulse_node
+      changed_when: false
+      failed_when: skpulse_node.rc != 0 or (skpulse_node.stdout | trim | length == 0)
+      when: skpulse_db_stat.stat.exists | default(false)
+      tags:
+        - deploy
+        - authmode
+
     - name: Find the running skpulse container (for the sign-in setting toggle)
       shell: docker ps -q -f "name={{ app }}-{{ env }}_skpulse" | head -1
+      delegate_to: "{{ skpulse_node.stdout | default(inventory_hostname) | trim }}"
       register: skpulse_cid
       changed_when: false
-      failed_when: false
+      failed_when: skpulse_cid.rc != 0 or (skpulse_cid.stdout | trim | length == 0)
       when: skpulse_db_stat.stat.exists | default(false)
       tags:
         - deploy
@@ -400,6 +426,7 @@
       shell: >
         docker exec {{ skpulse_cid.stdout }} sqlite3 /app/data/kuma.db
         "SELECT COUNT(*) FROM user;"
+      delegate_to: "{{ skpulse_node.stdout | default(inventory_hostname) | trim }}"
       register: skpulse_user_count
       changed_when: false
       failed_when: false
@@ -424,6 +451,7 @@
         docker exec {{ skpulse_cid.stdout }} sqlite3 /app/data/kuma.db
         "INSERT INTO setting (key, value, type) VALUES ('disableAuth', '{{ 'true' if skp_auth_mode == 'sso' else 'false' }}', 'general')
          ON CONFLICT(key) DO UPDATE SET value=excluded.value, type=excluded.type;"
+      delegate_to: "{{ skpulse_node.stdout | default(inventory_hostname) | trim }}"
       register: skpulse_disable_auth_toggle
       changed_when: skpulse_disable_auth_toggle.rc == 0
       when: >
