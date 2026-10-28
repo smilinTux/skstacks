@@ -298,6 +298,13 @@
       debug: var=deploy_output.stdout_lines
       tags: [deploy]
 
+    # crowdsec-web-ui 2026.10.10+ ignores its own env vars past first boot
+    # (see tasks/patch_app_config_yaml.yml); patch config.yaml directly for
+    # every later deploy, before anything else touches the app.
+    - name: Patch the owned keys in config.yaml for every deploy after the first
+      include_tasks:
+        file: tasks/patch_app_config_yaml.yml
+
     # Register this role's own CrowdSec machine credential against the
     # cluster's core/sksec LAPI (idempotent; never re-keys an existing one).
     - name: Register the sksec-web machine with CrowdSec
