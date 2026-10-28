@@ -20,9 +20,15 @@
 # plain `[ -f /run/reboot-required ]` file test, not `cat`, also no sudo.
 #
 # Read-only commands (always present): refresh APT's metadata and audit
-# dpkg's own state, both of which genuinely need root.
+# dpkg's own state, both of which genuinely need root. sudoers treats
+# ":" and "=" inside a command's arguments as meta-characters that must
+# be backslash-escaped (found live 2026-10-28, via visudo -cf itself:
+# "syntax error" pointing at the unescaped "::" in DPkg::Lock::Timeout=60)
+# -- the escaped form still matches the real, unescaped argv sudo sees at
+# exec time (confirmed by running the exact command through sudo -n as
+# skpatch-ro after installing this file).
 {{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/dpkg --audit
-{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get -o DPkg::Lock::Timeout=60 update -qq
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout\=60 update -qq
 
 {% if skp_node_allow_actions | bool %}
 # Actions (upgrade/reboot): only present when this host's
@@ -35,9 +41,9 @@
 # "dist-upgrade" -- confirmed against getUpgradeAllCommand/
 # getFullUpgradeAllCommand/the apt autoremove sudoersRelevantCommand() call
 # in the same server bundle.
-{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get -o DPkg::Lock::Timeout=60 upgrade -y
-{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get -o DPkg::Lock::Timeout=60 full-upgrade -y
-{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get -o DPkg::Lock::Timeout=60 autoremove -y
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout\=60 upgrade -y
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout\=60 full-upgrade -y
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout\=60 autoremove -y
 {{ skpatch_user }} ALL=(root) NOPASSWD: /usr/sbin/reboot
 {% endif %}
 
