@@ -54,8 +54,17 @@ ACTION_CMDS = (
 # The old, wrong command set this file used to carry (README-derived
 # guesses, never confirmed against the shipped image) -- asserted ABSENT
 # everywhere below as a standing regression guard.
-STALE_CMDS = ("apt list --upgradable", "apt-get -s dist-upgrade", "cat /var/run/reboot-required",
-              "apt-get -y upgrade", "apt-get -y dist-upgrade", "apt-get -y autoremove")
+# The literal bare phrases also appear inside this file's own
+# explanatory comment (quoting the old wrong commands by name, in
+# backticks, for the record) -- so the regression guard below checks
+# for the actual sudoers RULE form (NOPASSWD: <absolute path> ...),
+# which never appears in comment prose, not the bare phrase.
+STALE_CMDS = ("NOPASSWD: /usr/bin/apt list --upgradable",
+              "NOPASSWD: /usr/bin/apt-get -s dist-upgrade",
+              "NOPASSWD: /bin/cat /var/run/reboot-required",
+              "NOPASSWD: /usr/bin/apt-get -y upgrade",
+              "NOPASSWD: /usr/bin/apt-get -y dist-upgrade",
+              "NOPASSWD: /usr/bin/apt-get -y autoremove")
 
 
 def run(tmp: Path, vault: dict | None, extra_vars: dict | None = None) -> dict:
