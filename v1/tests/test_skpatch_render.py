@@ -101,7 +101,7 @@ def test_default_service_image_and_single_replica(base_out):
     assert dashboard["deploy"]["placement"]["constraints"] == ["node.role == worker"]
     assert dashboard["volumes"] == ["/var/data/skpatch-prod/data:/data"]
     assert dashboard["networks"] == ["skpatch-prod", "cloud-public-prod"]
-    assert dashboard["healthcheck"]["test"] == ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3001/"]
+    assert dashboard["healthcheck"]["test"] == ["CMD", "/usr/local/bin/node", "-e", "require('http').get('http://127.0.0.1:3001/',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))"]
     assert (dashboard["healthcheck"]["interval"], dashboard["healthcheck"]["timeout"],
             dashboard["healthcheck"]["retries"], dashboard["healthcheck"]["start_period"]) == ("30s", "10s", 3, "30s")
 
@@ -275,3 +275,20 @@ def test_env_playbooks_differ_only_in_env_and_subnets():
     prod = norm((ROLE / "deploy_skpatch-prod.yml").read_text())
     for env in ("dev", "staging"):
         assert norm((ROLE / f"deploy_skpatch-{env}.yml").read_text()) == prod, env
+
+
+
+# --- the healthcheck never assumes a binary the pinned image may lack ------
+
+def test_dashboard_healthcheck_does_not_use_wget_or_curl(base_out):
+    # Regression guard for the bug found live 2026-10-27: same publisher/
+    # base image as sksec-web's crowdsec-web-ui (Debian slim, no wget or
+    # curl), so a healthcheck test calling either one always fails -- the
+    # app itself was healthy and running the whole time, but Swarm killed
+    # and replaced the task every ~65-70s forever on the failing probe.
+    # node is guaranteed present (it runs the app); the healthcheck must
+    # use it directly rather than assume a shell utility.
+    test = compose(base_out)["services"]["dashboard"]["healthcheck"]["test"]
+    joined = " ".join(test)
+    assert "wget" not in joined and "curl" not in joined, joined
+    assert "node" in joined
