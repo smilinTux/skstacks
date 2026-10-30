@@ -113,6 +113,12 @@ def ensure_application(api, cfg):
         obj = api.call("POST", "/core/applications/", desired)
         print("application: created")
         return obj
+    if current.get("provider") is not None:
+        # The slug is already a provider-backed app (an OIDC login, say).
+        # Nulling its provider would 404 its discovery URL and break every
+        # SSO login through it, so keep the provider and manage only the tile.
+        del desired["provider"]
+        print("application: keeping its existing provider")
     changed = {k: v for k, v in desired.items() if not same(current.get(k), v)}
     if not changed:
         print("application: unchanged")
