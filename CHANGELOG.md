@@ -14,6 +14,16 @@ Each entry says what an instance must do, if anything.
   TURN over TLS is the separate `TALK_TURN_TLS_443` entry (`turns:<TURN_DOMAIN>:443`), unchanged.
   **Instance action**: none; the next skhub deploy rewrites the entry.
 
+- **Authentik portal tiles (every role with `AUTHENTIK_TILE`, default on since #231)**:
+  `authentik_portal_tile.py` PATCHed an existing Application with `provider: null` on every
+  deploy. When the tile's slug is also a provider-backed app (for example skhub's slug used by
+  Nextcloud `user_oidc`), that detached the provider, the OIDC discovery URL returned 404 and
+  every SSO login through it failed ("Could not reach the OpenID Connect provider"). The tile
+  now leaves an existing provider untouched and manages only the tile fields; new tiles are
+  still created provider-less. **Instance action**: if a deploy since #231 already detached a
+  provider, reattach it once in Authentik (Applications, the app, Provider); deploys no longer
+  undo it.
+
 - **skfenceha (HA Traefik edge) and skfence, `DUMPER_IMAGE`**: `traefik-certs-dumper`
   was pinned to `v2.10.0`, which panics (`unsupported key type: ''`) on `acme.json`
   written by Traefik 3.7+ (the account `KeyType` field was dropped). Bumped to
