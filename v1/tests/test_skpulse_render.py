@@ -197,6 +197,46 @@ def test_local_mode_with_sso_middleware_never_prints_the_value(tmp_path):
 
 # --- the disableAuth toggle is wired, gated, and fails closed ---------------
 
+def test_skpulse_node_is_resolved_before_any_docker_ps_exec(base_out):
+    # Regression guard for the bug found live 2026-10-27: a plain
+    # `docker ps`/`docker exec` on whichever host ansible happens to
+    # target (e.g. a manager) finds nothing when skpulse's task is
+    # actually scheduled elsewhere (it can be placement-constrained to a
+    # worker), silently skipping the admin-count and disableAuth tasks
+    # below -- a security-relevant setting left in an unknown state with
+    # no visible signal. The node must be resolved via `docker service ps
+    # --filter desired-state=running` BEFORE the container lookup, not
+    # inferred from the ansible target host.
+    pb = (ROLE / "deploy_skpulse-prod.yml").read_text()
+    assert "Find the swarm node running the skpulse task" in pb
+    node_block = pb.split("Find the swarm node running the skpulse task")[1].split("- name:")[0]
+    assert "docker service ps" in node_block
+    assert "desired-state=running" in node_block
+    assert "register: skpulse_node" in node_block
+    # resolved strictly before the container lookup, which must delegate to it
+    assert pb.index("Find the swarm node running the skpulse task") < pb.index("Find the running skpulse container")
+    container_block = pb.split("Find the running skpulse container")[1].split("- name:")[0]
+    assert 'delegate_to: "{{ skpulse_node.stdout | default(inventory_hostname) | trim }}"' in container_block
+
+
+def test_skpulse_node_resolution_fails_closed_not_silently(base_out):
+    # No Running task found must fail the play, not silently fall through
+    # to skpulse_cid being empty and every later task quietly skipping.
+    pb = (ROLE / "deploy_skpulse-prod.yml").read_text()
+    node_block = pb.split("Find the swarm node running the skpulse task")[1].split("- name:")[0]
+    assert "failed_when: skpulse_node.rc != 0 or (skpulse_node.stdout | trim | length == 0)" in node_block
+    container_block = pb.split("Find the running skpulse container")[1].split("- name:")[0]
+    assert "failed_when: skpulse_cid.rc != 0 or (skpulse_cid.stdout | trim | length == 0)" in container_block
+
+
+def test_skpulse_admin_count_and_disable_auth_also_delegate_to_the_resolved_node(base_out):
+    pb = (ROLE / "deploy_skpulse-prod.yml").read_text()
+    count_block = pb.split("Count existing Kuma admin users")[1].split("- name:")[0]
+    assert 'delegate_to: "{{ skpulse_node.stdout | default(inventory_hostname) | trim }}"' in count_block
+    toggle_block = pb.split("Align Kuma's own login")[1].split("tags:")[0]
+    assert 'delegate_to: "{{ skpulse_node.stdout | default(inventory_hostname) | trim }}"' in toggle_block
+
+
 def test_disable_auth_toggle_is_gated_on_first_setup_having_finished(base_out):
     # the render harness's fake filesystem has no kuma.db, so the toggle
     # must be unconditionally gated on it: it must never run against an

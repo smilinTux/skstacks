@@ -278,9 +278,16 @@ sksec:
   CROWDSEC_DB_PATH: /var/lib/sksec/crowdsec-db
 ```
 
-- `DATA_NODE` adds `node.hostname == <DATA_NODE>` to the crowdsec service
-  (combined with the HA-mode `traefik.acme.master` constraint if
-  `TRAEFIK_HA_MODE` is also set; the bouncer stays floating either way).
+- `DATA_NODE` pins the crowdsec service to `node.hostname == <DATA_NODE>`
+  ONLY -- it replaces the HA-mode `traefik.acme.master` constraint rather
+  than combining with it, even when `TRAEFIK_HA_MODE` is also set (the
+  bouncer stays floating either way). `skfenceha`'s manager selection is an
+  ordered failover pick, not guaranteed to land the acme-master label on
+  any fixed hostname, so ANDing both constraints together made the
+  service permanently unschedulable ("no suitable node") the moment they
+  disagreed, with no self-heal (found live on the skstack06 lab,
+  2026-10-25). Without `DATA_NODE`, HA mode still pins to whichever
+  manager currently holds the `traefik.acme.master` label, unchanged.
 - A path outside `/var/data` is local: the deploy creates it on `DATA_NODE`
   (owner root, mode 0750, never recursive) and no longer creates the old
   `/var/data/runtime/.../crowdsec-db` path. The play fails if the path is
