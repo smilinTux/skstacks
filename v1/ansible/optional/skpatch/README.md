@@ -98,6 +98,8 @@ matter most when reading this role for the first time:
 | `SSH_PUBLIC_KEY` | required by provisioning | Public half of this estate's dedicated keypair. |
 | `PROVISION_USER` | `skpatch-ro` | The low-privilege account `provision_skpatch_nodes.yml` creates on each target node. |
 | `DATA_NODE` | `""` | Required if `DATA_PATH` is local disk, not shared storage; pins the single dashboard replica there. |
+| `CLUSTERNAME` | inventory `cluster_name` | First label of the dashboard host (`skpatch.<CLUSTERNAME>.<DOMAIN>`) and the stack name suffix. |
+| `DOMAIN` | inventory `domain` | Zone the dashboard host lives under; with `CLOUDFLARED: true` the host is `skpatch.<DOMAIN>` instead. |
 
 **Per-host actions ceiling:** set `skpatch_allow_actions: false` in the
 group_vars of every hypervisor, NAS, or any host that must never be
