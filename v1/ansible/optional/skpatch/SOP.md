@@ -167,8 +167,17 @@ skpatch:
   CLOUDFLARED: false                        # true: default host is under DOMAIN, not CLUSTERNAME.DOMAIN
   HOSTNAME: ""                              # public host; default skpatch[-dev|-staging].<base domain>
   TRAEFIK_MIDDLEWARES: ""                   # default default-no-error-pages@file
-  AUTH_MODE: sso                            # sso (Authentik forward auth, whole router) | local
-  SSO_MIDDLEWARE: ""                        # sso mode: default authentik@file; must be empty in local mode
+  AUTH_MODE: sso                            # sso (Authentik forward auth, whole router) | local | oidc
+  SSO_MIDDLEWARE: ""                        # sso mode: default authentik@file; must be empty in local/oidc mode
+  OIDC_ISSUER: ""                           # oidc mode: required, e.g. https://<sso host>/application/o/<client id>/
+  OIDC_CLIENT_ID: ""                        # oidc mode: default the router name (e.g. skpatch)
+  OIDC_CLIENT_SECRET: ""                    # oidc mode: required, >= 32 chars, same value as sksso's SKPATCH_OIDC_CLIENT_SECRET
+  OIDC_SCOPE: "openid profile email groups"
+  OIDC_GROUPS_CLAIM: groups
+  OIDC_ADMIN_GROUPS: "authentik Admins"     # CSV of Authentik group names
+  OIDC_READ_ONLY_GROUPS: ""                 # CSV, default none
+  OIDC_UNMATCHED_ROLE: deny                 # deny | admin | read-only
+  OIDC_END_SESSION: true
   TLS_OPTIONS: ""                           # default intermediate@file; "none" = no tls.options label
   TZ: UTC
   LUDASH_LOG_LEVEL: info

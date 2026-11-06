@@ -370,6 +370,71 @@ blueprint without applying it: `docker exec -i <server container> sh -c 'cat >
 `Importer.from_string(yaml).validate()` (it runs in a transaction that is
 rolled back).
 
+## sksec-web / skpatch (OIDC) login
+
+`sksso.SKSEC_WEB_OIDC_CLIENT_SECRET` / `sksso.SKPATCH_OIDC_CLIENT_SECRET`
+(32+ chars, `openssl rand -hex 32`) give `sksec-web` (crowdsec-web-ui) /
+`skpatch` (linux-update-dashboard) their own OIDC login as code, when that
+role's own `AUTH_MODE: oidc` is set (see `optional/sksec-web/README.md` /
+`optional/skpatch/README.md` "Sign-in..."). Unset, nothing changes. Set,
+the deploy renders `/var/data/config/sksso-<env>/blueprints/<app>-oidc.yaml`
+(no secret inside) and mounts the blueprints directory at
+`/blueprints/custom` (read only) in `server` and `worker`, same mechanism
+as skflow above; the secret lands in `sksso.env` (0600) as
+`<APP>_OIDC_CLIENT_SECRET`, which the blueprint reads with `!Env`.
+
+Unlike skflow (Windmill), neither app needs a provisioner script on its own
+side: both read their OIDC config from plain environment variables at
+startup (that role's own deploy playbook renders them), verified against
+the pinned upstream source. No Windmill-style "set a global API setting"
+step exists or is needed.
+
+The blueprint creates or adopts (matched by name or slug, so an object made
+by hand is taken over, not duplicated):
+
+| Object | Value |
+|---|---|
+| OAuth2 provider `<app>` | confidential, client id `<app>` (default; `<APP>_OIDC_CLIENT_ID` overrides), strict redirect `https://<app host>/api/auth/oidc/callback`, authorization flow `default-provider-authorization-implicit-consent`, invalidation flow `default-provider-invalidation-flow`, signing key `authentik Self-signed Certificate`, subject mode `hashed_user_id`, issuer mode `per_provider`, scopes openid, email, profile, and a private `groups` scope mapping (`request.user.ak_groups.all()`) |
+| Application `<app>` | name `<APP>_APP_NAME` (default `SKSec Web (CrowdSec)` / `SKPatch (Linux updates)`), launch URL `https://<app host>/` |
+
+**No policy binding here, unlike skflow's blueprint above.** The
+Application slug (`<app>`, i.e. the plain router name: `sksec-web` or
+`skpatch`, same for both envs other than prod) is the SAME slug each
+role's own portal tile defaults `AUTHENTIK_TILE_SLUG` to, so
+`shared/tasks/authentik_portal_tile.yml` (run from that role's own deploy,
+after this blueprint) finds this exact Application and manages its tile
+fields and **group binding** itself, keeping this provider in place rather
+than nulling it (`shared/src/authentik_portal_tile.py` "keeping its
+existing provider", #242) -- one Authentik Application per app, not two.
+Who may sign in is therefore that role's own `AUTHENTIK_TILE_GROUP`
+(default `authentik Admins`), not a group this blueprint owns.
+
+```yaml
+sksso:
+  SKSEC_WEB_OIDC_CLIENT_SECRET: "..."  # same value as sksec_web.OIDC_CLIENT_SECRET
+  SKSEC_WEB_HOST: sksec-web.example.org  # default sksec-web[-<env>].<base>
+  SKSEC_WEB_OIDC_CLIENT_ID: sksec-web
+  SKSEC_WEB_APP_NAME: "SKSec Web (CrowdSec)"
+  SKPATCH_OIDC_CLIENT_SECRET: "..."     # same value as skpatch.OIDC_CLIENT_SECRET
+  SKPATCH_HOST: skpatch.example.org       # default skpatch[-<env>].<base>
+  SKPATCH_OIDC_CLIENT_ID: skpatch
+  SKPATCH_APP_NAME: "SKPatch (Linux updates)"
+```
+
+Run order across the two roles' playbooks: deploy (or redeploy) `sksso`
+with the relevant `<APP>_OIDC_CLIENT_SECRET` set, THEN deploy that app with
+its own matching `AUTH_MODE: oidc` / `OIDC_CLIENT_SECRET`. Running the
+app's deploy first is not an error: its portal tile task creates a
+provider-less Application at that slug, and the next `sksso` deploy's
+blueprint apply sets the provider onto that SAME object (Authentik
+blueprints are authoritative for the fields they declare), so the two
+converge regardless of order. There is no teardown path: turning `AUTH_MODE`
+back to `sso`/`local` and removing the `sksso` vault key stops this
+blueprint from being rendered or re-applied, but the provider/application it
+already created in Authentik is not deleted (same limitation as skflow's
+blueprint above); clean it up by hand if the app is being retired, not just
+switched back to forward auth.
+
 ## SSO for skhub and skflow
 
 Authentik (this role) is the identity provider for two apps in the estate. Both use native OAuth2/OIDC, so

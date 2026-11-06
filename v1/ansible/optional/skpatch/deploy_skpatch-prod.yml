@@ -20,7 +20,9 @@
 # SQLite file under /data holding encrypted SSH credentials, exactly ONE
 # replica). This app holds SSH keys that can reach every host it is pointed
 # at: AUTH_MODE defaults to sso (Authentik forward auth on the whole
-# router, same as skhome) and ALLOW_ACTIONS defaults to false (upgrade/
+# router, same as skhome); oidc gives the dashboard its own OIDC login
+# against sksso instead (no forward auth, one sign-in, no separate
+# first-run account). ALLOW_ACTIONS defaults to false (upgrade/
 # reboot stay off; this role never writes a privileged sudoers line on a
 # target node unless the operator sets it explicitly, see
 # provision_skpatch_nodes.yml). Opt-in: nothing renders unless this
@@ -109,6 +111,24 @@
         skp_host: "{{ skpatch.HOSTNAME | default('skpatch' + ('' if env == 'prod' else '-' + env) + '.' + skp_base_domain, true) }}"
       tags: [config]
 
+    - name: Resolve the skpatch OIDC settings
+      # AUTH_MODE oidc: the dashboard does its own OIDC against sksso
+      # (Authentik); no forward-auth middleware in front (skp_sso_middleware
+      # above already resolves empty for any mode other than sso). The
+      # client id defaults to the router name so it is the SAME Authentik
+      # Application slug the blueprint (sksso.SKPATCH_OIDC_CLIENT_SECRET)
+      # and the portal tile below both use -- one object, not two. See
+      # README.md "Sign-in and the admin group".
+      set_fact:
+        skp_oidc_client_id: "{{ skpatch.OIDC_CLIENT_ID | default(skp_router, true) }}"
+        skp_oidc_scope: "{{ skpatch.OIDC_SCOPE | default('openid profile email groups', true) }}"
+        skp_oidc_groups_claim: "{{ skpatch.OIDC_GROUPS_CLAIM | default('groups', true) }}"
+        skp_oidc_admin_groups: "{{ skpatch.OIDC_ADMIN_GROUPS | default('authentik Admins', true) }}"
+        skp_oidc_read_only_groups: "{{ skpatch.OIDC_READ_ONLY_GROUPS | default('', true) }}"
+        skp_oidc_unmatched_role: "{{ skpatch.OIDC_UNMATCHED_ROLE | default('deny', true) | string | lower }}"
+        skp_oidc_end_session: "{{ skpatch.OIDC_END_SESSION | default(true) | bool }}"
+      tags: [config]
+
     - name: Validate the image pin and the public host
       assert:
         that:
@@ -124,11 +144,29 @@
     - name: Fail loudly on an unknown AUTH_MODE
       assert:
         that:
-          - skp_auth_mode in ['sso', 'local']
+          - skp_auth_mode in ['sso', 'local', 'oidc']
         fail_msg: >-
-          ERROR: skpatch.AUTH_MODE must be 'sso' or 'local' (it is
+          ERROR: skpatch.AUTH_MODE must be 'sso', 'local' or 'oidc' (it is
           '{{ skp_auth_mode }}'). See README.md "Sign-in and the admin
           group".
+        quiet: true
+      tags: [config]
+
+    - name: Refuse AUTH_MODE oidc without its own issuer and client secret
+      # oidc mode is the dashboard's OWN OIDC login (no forward auth), so it
+      # needs its own issuer/secret rather than SSO_MIDDLEWARE.
+      assert:
+        that:
+          - skp_auth_mode != 'oidc' or (skpatch.OIDC_ISSUER | default('', true) | string | length > 0)
+          - skp_auth_mode != 'oidc' or (skpatch.OIDC_CLIENT_SECRET | default('', true) | string | length >= 32)
+          - skp_oidc_unmatched_role in ['deny', 'admin', 'read-only']
+        fail_msg: >-
+          ERROR: skpatch.AUTH_MODE: oidc needs OIDC_ISSUER (the Authentik
+          application's issuer URL, e.g.
+          https://<sso host>/application/o/{{ skp_oidc_client_id }}/) and
+          OIDC_CLIENT_SECRET (32+ chars, the same value as sksso's
+          SKPATCH_OIDC_CLIENT_SECRET); OIDC_UNMATCHED_ROLE must be deny,
+          admin or read-only. See README.md "Sign-in and the admin group".
         quiet: true
       tags: [config]
 
@@ -138,7 +176,8 @@
       set_fact:
         skp_auth_conflicts: >-
           {{ (["AUTH_MODE is 'local' (no SSO) but SSO_MIDDLEWARE is set"] if (skp_auth_mode == 'local' and skp_sso_middleware | length > 0) else [])
-             + (['TRAEFIK_MIDDLEWARES carries forward auth (' ~ skp_middlewares ~ '): with AUTH_MODE local it is SSO under another name; use AUTH_MODE sso (SSO_MIDDLEWARE) instead']
+             + (["AUTH_MODE is 'oidc' (the app's own OIDC, no forward auth) but SSO_MIDDLEWARE is set"] if (skp_auth_mode == 'oidc' and skp_sso_middleware | length > 0) else [])
+             + (['TRAEFIK_MIDDLEWARES carries forward auth (' ~ skp_middlewares ~ '): with AUTH_MODE ' ~ skp_auth_mode ~ ' it is SSO under another name; use AUTH_MODE sso (SSO_MIDDLEWARE) instead']
                 if ('authentik' in skp_middlewares | lower) or (skp_sso_middleware | length > 0 and skp_sso_middleware in skp_middlewares.split(',')) else []) }}
       tags: [config]
 
@@ -304,12 +343,17 @@
 
     - name: Create or update the skpatch portal tile in Authentik
       # On by default (AUTHENTIK_TILE: true); opt out per instance with
-      # AUTHENTIK_TILE: false. skpatch (linux
-      # update dashboard) sits behind the cluster's domain-wide Traefik
-      # ForwardAuth catch-all already; this just gives it a bookmark tile
-      # on the Authentik portal. Defaults to the admin group: this app
-      # holds the keys to every node it reaches (see "Resolve the
-      # skpatch settings" above).
+      # AUTHENTIK_TILE: false. AUTH_MODE sso/local: skpatch (linux update
+      # dashboard) sits behind the cluster's domain-wide Traefik ForwardAuth
+      # catch-all already (or has none at all in local mode); this just
+      # gives it a bookmark tile on the Authentik portal. AUTH_MODE oidc:
+      # the slug below is the SAME one sksso's blueprint
+      # (tasks/skpatch_blueprint.yml) gives the real OAuth2 application, so
+      # this updates that one Application's tile fields and group binding
+      # instead of creating a second, provider-less one (see
+      # shared/src/authentik_portal_tile.py "keeping its existing
+      # provider"). Defaults to the admin group: this app holds the keys to
+      # every node it reaches (see "Resolve the skpatch settings" above).
       include_tasks: ../../shared/tasks/authentik_portal_tile.yml
       vars:
         portal_tile:
