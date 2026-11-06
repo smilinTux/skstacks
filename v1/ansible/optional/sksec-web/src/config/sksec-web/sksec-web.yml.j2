@@ -28,7 +28,14 @@ services:
     # The image's own HEALTHCHECK already probes /api/health (public,
     # unauthenticated); re-declare it on the framework's schedule.
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      # 2026.10.10 switched this image's base to a Debian slim with no
+      # wget/curl (confirmed live: every probe failed with "wget:
+      # executable file not found in $PATH", so the task was marked
+      # unhealthy and killed/replaced in an endless loop, ~65-70s after
+      # every start -- the app itself never crashed). node is guaranteed
+      # present (it runs the app), so probe with it directly instead of
+      # assuming a shell utility the image may or may not ship.
+      test: ["CMD", "/usr/local/bin/node", "-e", "require('http').get('http://127.0.0.1:3000/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
       interval: {{ hc_interval }}
       timeout: {{ hc_timeout }}
       retries: {{ hc_retries }}

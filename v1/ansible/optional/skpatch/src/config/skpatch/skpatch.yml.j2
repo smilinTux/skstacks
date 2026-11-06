@@ -26,7 +26,12 @@ services:
     volumes:
       - {{ skp_data_path }}:/data
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3001/"]
+      # Same image publisher/base as sksec-web's crowdsec-web-ui (Debian
+      # slim, no wget/curl -- confirmed live the same way: wget exec
+      # fails, task marked unhealthy and killed/replaced in a loop, app
+      # itself never crashes). node is guaranteed present (it runs the
+      # app); probe with it directly instead of assuming a shell utility.
+      test: ["CMD", "/usr/local/bin/node", "-e", "require('http').get('http://127.0.0.1:3001/',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))"]
       interval: {{ hc_interval }}
       timeout: {{ hc_timeout }}
       retries: {{ hc_retries }}

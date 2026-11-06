@@ -95,10 +95,20 @@
           {{ inventory_hostname }}: skpatch account {{ skpatch_state }},
           actions {{ 'ALLOWED (upgrade/reboot sudoers lines will be written)' if (skpatch_state == 'present' and skp_node_allow_actions | bool) else 'report-only' }}.
 
-    - name: Create the skpatch group
+    - name: Create the skpatch group (present)
+      # Found live 2026-10-28, the first time the absent (de-provision)
+      # path was ever reached end to end: this task used to compute
+      # state inline for BOTH present and absent, with no when: guard,
+      # so on an absent run it executed FIRST (file order, before the
+      # user is removed below) and groupdel refused: "cannot remove the
+      # primary group of user 'skpatch-ro'". The absent case is
+      # already handled correctly, in the right order (after the user),
+      # by "Remove the group (absent)" below -- this task now only
+      # handles present, matching every sibling present-only task here.
       group:
         name: "{{ skpatch_user }}"
-        state: "{{ 'present' if skpatch_state == 'present' else 'absent' }}"
+        state: present
+      when: skpatch_state == 'present'
 
     - name: Create the skpatch account (present)
       user:
@@ -126,7 +136,7 @@
         owner: root
         group: root
         mode: '0440'
-        validate: 'visudo -cf %s'
+        validate: '/usr/sbin/visudo -cf %s'
       when: skpatch_state == 'present'
 
     - name: Remove the sudoers rule (absent)

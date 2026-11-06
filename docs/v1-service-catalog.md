@@ -58,7 +58,7 @@ tag yet.
 | [skmesh](#skmesh) | optional | Netbird self-hosted WireGuard mesh VPN | netbird `0.80.0` (mgmt/signal/relay), dashboard `v2.94.0` | sksso (OIDC app) | `skmesh.<cluster>.<domain>` (path-routed) | `skmesh-<env>/database-dump` | `NETBIRD_*` secrets, `POSTGRES_PASSWORD`, `SSO_HOST_IP` | `DEPLOY_COTURN` (false) | v2.19.0 |
 | [skmon](#skmon) | optional | Observability stack (metrics/logs/tracing) | Prometheus `v3.15.0`, Grafana `13.2.2`, Loki `3.5.4`, Jaeger `1.76.0` | none | `prometheus\|skmon\|alertmanager\|jaeger[-env].<cluster>.<domain>` | `skmon-<env>/{prometheus,grafana,loki-data,...}` | `GRAFANA_ADMIN_USER/_PASSWORD`, `GRAFANA_SECRET_KEY`, `CLUSTERNAME`, `DOMAIN` | `SMTP_ENABLED` (false), `EXTRA_SCRAPE_CONFIGS`, `replicas` (1; 0 = parked), `GRAFANA_PLUGINS`, `GRAFANA_BASIC_AUTH` (true), `GRAFANA_HEALTH_START_PERIOD` (60s) | v2.15.0 |
 | [skorch](#skorch) | optional | n8n workflow automation | n8n (digest-pinned) + pgvector Postgres | none | `skorch[-env].<cluster>.<domain>` | `skorch-<env>/{n8n_data,database-backup,gpg-keys}` | `POSTGRES_USER/_PASSWORD/_DB`, `REDIS_PASSWORD` | `enable_gpg_signer` (false) | v2.18.0 |
-| [skpatch](#skpatch) | optional | Linux update/patch dashboard (SSH, holds a key per estate) | linux-update-dashboard `2026.10.9` (upstream, digest-pinned) | skfence or skfenceha; sksso for default `AUTH_MODE: sso` | `skpatch[-env].<cluster>.<domain>` | `skpatch-<env>/data` | `LUDASH_ENCRYPTION_KEY`, `SSH_PUBLIC_KEY` (provisioning) | `AUTH_MODE` (sso), `ALLOW_ACTIONS` (false, enforced by `provision_skpatch_nodes.yml`, not this deploy), `DATA_NODE` (floating) | pending |
+| [skpatch](#skpatch) | optional | Linux update/patch dashboard (SSH, holds a key per estate); host half of the [skpatch program](./skpatch-program.md) | linux-update-dashboard `2026.10.9` (upstream, digest-pinned) | skfence or skfenceha; sksso for default `AUTH_MODE: sso` | `skpatch[-env].<cluster>.<domain>` | `skpatch-<env>/data` | `LUDASH_ENCRYPTION_KEY`, `SSH_PUBLIC_KEY` (provisioning) | `AUTH_MODE` (sso), `ALLOW_ACTIONS` (false, enforced by `provision_skpatch_nodes.yml`, not this deploy), `DATA_NODE` (floating) | pending |
 | [skpdf](#skpdf) | optional | Stirling-PDF toolkit | Stirling-PDF `2.14.3` | none | `skpdf[-env].<cluster>.<domain>` | `skpdf-<env>/{trainingData,customFiles}` | `CLUSTERNAME`, `DOMAIN`; `SECURITY_INITIAL_PASSWORD` if login on | `SECURITY_ENABLELOGIN` (false) | v2.13.0 |
 | [skpeek](#skpeek) | optional | SearXNG metasearch engine | SearXNG (digest-pinned) + Valkey `8-alpine` | none | `skpeek[-env].<cluster>.<domain>` | `skpeek-<env>/etc` | `SECRET_KEY` | none notable | v2.16.0 |
 | [skport](#skport) | optional | Portainer CE (Swarm web UI) | Portainer CE `2.45.1` | skfence or skfenceha (socket-proxy) | `skport[-env].<cluster>.<domain>` | `skport-<env>/data` | `CLUSTERNAME`, `DOMAIN` | none (no baked admin password) | v2.19.0 |
@@ -859,7 +859,10 @@ auth model.
 updates across a fleet over SSH. The highest-trust app in this catalog: it
 is designed to hold a credential that can SSH into every node it is
 pointed at. `ALLOW_ACTIONS` in the vault is metadata only; the real
-enforcement is a separate playbook.
+enforcement is a separate playbook. This role is the host-patching half
+of the wider [skpatch program](./skpatch-program.md), which also covers
+container-image scanning and the Renovate/release pipeline that keeps
+images current.
 
 **Prerequisites**: run `provision_skpatch_nodes.yml` against the target
 estate's nodes (creates the low-privilege account, installs one
@@ -891,7 +894,10 @@ node only gets the upgrade/reboot sudoers lines when ITS OWN
 group_vars of every hypervisor and NAS, permanently, regardless of the
 instance-wide knob. One SSH keypair per estate, never a reused admin key;
 never let one estate's instance hold another estate's keys. See the
-[README](../v1/ansible/optional/skpatch/README.md).
+[README](../v1/ansible/optional/skpatch/README.md) and
+[SOP](../v1/ansible/optional/skpatch/SOP.md) for the full detail, and
+[the skpatch program](./skpatch-program.md) for how this fits the image
+side of the same effort.
 
 ### skpdf
 
