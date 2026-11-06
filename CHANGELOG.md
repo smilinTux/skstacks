@@ -102,6 +102,20 @@ Each entry says what an instance must do, if anything.
 
 ### Changes
 
+- Docs only, no instance action: new `docs/skpatch-program.md` documents the skpatch program as a
+  whole (host patching via the existing `skpatch` role, plus the planned image-patching pipeline:
+  Trivy SBOM scanning + Dependency-Track packaged as `skbom`, Renovate run as an `skflow`
+  (Windmill) `f/skpatch` flow, and a Forgejo Actions runner on a dedicated build host), with the
+  four standard architecture diagrams (system context, component view, data-flow with a crypto
+  label on every hop, sequence), the cadence/policy table, and the release path (gate, tag the
+  exact tested commit, forward-merge, deploy one estate then the other). `v1/ansible/optional/
+  skpatch/README.md` is reworked to the `sk-standards` README-as-hub shape and a new
+  `v1/ansible/optional/skpatch/SOP.md` carries the full 9-section operating procedure plus a
+  mermaid diagram of the role itself, with a `docs-evidence` block (5 hermetic checks). Both
+  `docs/v1-service-catalog.md` and `docs/ROLE_AUTHORING_CHECKLIST.md` now link to the new docs;
+  the checklist gained a "Role docs (README + SOP)" section naming skpatch as the reference
+  implementation of that shape. No role behavior, template, or vault default changed.
+
 - v1: **skhub** the Talk post-deploy task writes `"schemes":"turn"` (was `"turn,turns"`) for the
   `<TURN_DOMAIN>:3478` `turn_servers` entry in all three deploy playbooks; eturnal in aio-talk has
   no TLS listener, so the `turns:` URLs on 3478 were dead. README "Talk HPB TURN" updated. Tests:

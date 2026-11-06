@@ -48,6 +48,23 @@ under `core/` and `optional/` for a `Host(` rule, then checks the role's
 `deploy_<app>-prod.yml` for one of the three options above. A role with a
 web UI and none of them fails the suite, naming the role.
 
+## Role docs (README + SOP)
+
+Per [`sk-standards`](https://github.com/smilinTux/sk-standards)'
+[`SK_REPO_DOC_STANDARD`](https://github.com/smilinTux/sk-standards/blob/main/standards/SK_REPO_DOC_STANDARD.md),
+a role's README is the hub (purpose, quickstart, "Start here", config
+knobs, "Related projects / See also") and its `SOP.md` carries the full
+operating procedure in the standard's 9-section order, with at least one
+mermaid architecture diagram of the role itself. **Reference
+implementation:** `v1/ansible/optional/skpatch/`
+([README](../v1/ansible/optional/skpatch/README.md) ·
+[SOP](../v1/ansible/optional/skpatch/SOP.md)): a role with a nontrivial
+privilege model (an SSH credential per estate, a gated sudoers
+allowlist) is exactly the case where splitting "what and why" (README)
+from "how, in full" (SOP) earns its keep. Not yet backfilled onto every
+existing role; new or substantially reworked roles should follow this
+shape going forward.
+
 ## Everything else
 
 (Not yet written up here; see individual role READMEs and
