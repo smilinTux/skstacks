@@ -74,6 +74,7 @@ current document-pipeline tenant uses, which any tenant should follow:
 | `server` | `SERVER_REPLICAS` (1) | UI and API on port 8000, behind Traefik |
 | `worker` | `WORKER_REPLICAS` (2) | Runs jobs (worker group `WORKER_GROUP`, default `default`) |
 | `worker-native` | `NATIVE_WORKER_REPLICAS` (0) | Optional, native jobs only (`NATIVE_MODE`), worker group `native` |
+| `worker-<name>` | `TAGGED_WORKERS` (unset) | Optional, one pool per entry, pinned to `WORKER_TAGS` so a slow or bursty script does not starve the shared workers |
 | `postgres` | 1 | Windmill's database (absent when `DATABASE_URL` is set) |
 | `postgres-db-backup` | 1 | `pg_dumpall` archives for skbackup (absent when `DATABASE_URL` is set) |
 
@@ -360,6 +361,13 @@ skflow:
   WORKER_MEMORY_LIMIT: 2048M
   WORKER_MEMORY_RESERVATION: 256M
   NATIVE_WORKER_REPLICAS: 0                 # >0 adds worker-native
+  # Tag-scoped worker pools. Each entry adds one `worker-<name>` service
+  # running ONLY jobs tagged with its `tags`, so a long or bursty script
+  # gets its own capacity instead of occupying the shared workers. `cpus`,
+  # `memory_limit` and `memory_reservation` are optional and fall back to
+  # the shared WORKER_* values. Register the tag in Windmill itself too
+  # (POST /api/settings/global/custom_tags) or no job will carry it.
+  TAGGED_WORKERS: []                        # e.g. [{name: catchup, tags: fwe-catchup, replicas: 2}]
   NATIVE_WORKER_CPUS: "1.00"
   NATIVE_WORKER_MEMORY_LIMIT: 1024M
   POSTGRES_CPUS: "1.00"
