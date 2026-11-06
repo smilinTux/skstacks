@@ -1,0 +1,162 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# crowdsec-web-ui 2026.10.10+ deprecated its env-var configuration in favor
+# of /app/data/config.yaml: TZ, PERMISSION_READ_ONLY, CROWDSEC_URL,
+# CROWDSEC_USER and CROWDSEC_LOOKBACK_PERIOD are read ONLY on first boot
+# (to seed config.yaml when it does not exist yet) and are silently ignored
+# on every later start -- the app's own log says so ("these variables do
+# not affect application settings and can be removed"). Found live
+# 2026-10-28: a redeploy with sksec_web.READ_ONLY: false updated the env
+# file correctly, but the already-created config.yaml kept ui.readOnly:
+# true forever, so the delete-allowed check (README "Decision deletion")
+# never actually worked past the very first deploy.
+#
+# First install: config.yaml does not exist yet, so this task block is a
+# no-op (when: ... stat.exists) and the env vars above keep doing their
+# original job of seeding it.
+#
+# Every later deploy: patch ONLY the 5 keys this role actually owns,
+# round-tripping through ruamel.yaml (preserves comments and any key an
+# operator or the app itself added by hand -- never template/overwrite the
+# whole file). The patch itself is computed on the controller (ruamel.yaml
+# is part of this project's own ~/.skenv venv, the same python every other
+# SK* tool here assumes; see scripts/install.sh), then pushed back only
+# when at least one owned value actually differs, with a timestamped
+# backup of the original alongside it. A parse failure fails the whole
+# play closed rather than guessing.
+
+- name: Find the swarm node running the {{ app }} task (for the config.yaml patch)
+  shell: |
+    STATES=$(docker service ps "{{ app }}-{{ env }}_app" --filter "desired-state=running" --format "{{ '{{.Node}} {{.CurrentState}}' }}")
+    NODE=$(printf '%s\n' "$STATES" | awk '$2 == "Running" {print $1; exit}')
+    if [ -z "$NODE" ]; then
+      echo "{{ app }}-{{ env }}_app has no Running task yet; current: $(printf '%s' "${STATES:-no task scheduled}" | tr '\n' ';')" >&2
+      exit 1
+    fi
+    echo "$NODE"
+  register: sksw_app_node
+  until: sksw_app_node.rc == 0 and (sksw_app_node.stdout | trim | length > 0)
+  retries: 24
+  delay: 5
+  changed_when: false
+  check_mode: false
+  tags: [config, deploy]
+
+- name: Check whether the app's config.yaml exists yet (not yet on first install -- env vars seed it)
+  stat:
+    path: "{{ sksw_data_path }}/config.yaml"
+  delegate_to: "{{ sksw_app_node.stdout | default(inventory_hostname) | trim }}"
+  register: sksw_app_config_stat
+  check_mode: false
+  tags: [config, deploy]
+
+- name: Read the existing config.yaml
+  slurp:
+    path: "{{ sksw_data_path }}/config.yaml"
+  delegate_to: "{{ sksw_app_node.stdout | default(inventory_hostname) | trim }}"
+  register: sksw_app_config_slurp
+  when: sksw_app_config_stat.stat.exists | default(false)
+  check_mode: false
+  tags: [config, deploy]
+
+- name: Reserve a local scratch path for the patched config.yaml
+  tempfile:
+    state: file
+    suffix: sksw-config.yaml
+  delegate_to: localhost
+  become: false
+  register: sksw_app_config_tmp_file
+  when: sksw_app_config_stat.stat.exists | default(false)
+  tags: [config, deploy]
+
+- name: Compute the patched config.yaml on the controller (ruamel round-trip, owned keys only)
+  shell: ~/.skenv/bin/python3 "{{ playbook_dir }}/tasks/patch_sksw_config_yaml.py"
+  delegate_to: localhost
+  become: false
+  register: sksw_app_config_patch
+  changed_when: "(sksw_app_config_patch.stdout | trim) == 'CHANGED'"
+  failed_when: sksw_app_config_patch.rc != 0
+  when: sksw_app_config_stat.stat.exists | default(false)
+  check_mode: false
+  environment:
+    SKSW_CFG_B64: "{{ sksw_app_config_slurp.content }}"
+    SKSW_READ_ONLY: "{{ sksec_web.READ_ONLY | default(true) | bool | lower }}"
+    SKSW_TIMEZONE: "{{ sksec_web.TZ | default('UTC', true) }}"
+    SKSW_LOOKBACK: "{{ sksec_web.SYNC_LOOKBACK | default('168h', true) }}"
+    SKSW_LAPI_URL: "{{ sksw_lapi_url }}"
+    SKSW_LAPI_USER: "{{ sksec_web.LAPI_USERNAME | default('sksec-web', true) }}"
+    SKSW_OUT_FILE: "{{ sksw_app_config_tmp_file.path }}"
+  tags: [config, deploy]
+
+- name: Back up the existing config.yaml before patching (timestamped, never overwritten)
+  shell: |
+    set -e
+    cp "{{ sksw_data_path }}/config.yaml" "{{ sksw_data_path }}/config.yaml.bak-$(date -u +%Y%m%dT%H%M%SZ)"
+  delegate_to: "{{ sksw_app_node.stdout | default(inventory_hostname) | trim }}"
+  register: sksw_app_config_backup
+  when: >-
+    sksw_app_config_stat.stat.exists | default(false) and
+    (sksw_app_config_patch.stdout | default('') | trim) == 'CHANGED'
+  changed_when: true
+  tags: [config, deploy]
+
+- name: Write the patched config.yaml (only the owned keys changed; everything else round-tripped as-is)
+  copy:
+    src: "{{ sksw_app_config_tmp_file.path }}"
+    dest: "{{ sksw_data_path }}/config.yaml"
+    mode: "0644"
+  delegate_to: "{{ sksw_app_node.stdout | default(inventory_hostname) | trim }}"
+  register: sksw_app_config_write
+  when: >-
+    sksw_app_config_stat.stat.exists | default(false) and
+    (sksw_app_config_patch.stdout | default('') | trim) == 'CHANGED'
+  tags: [config, deploy]
+
+- name: Force-restart {{ app }}-{{ env }}_app to pick up the patched config.yaml
+  # docker service update is a swarm CONTROL-PLANE command (same bug class
+  # as every other node-affinity fix this cycle, but inverted): it must
+  # run on a manager, never delegated to sksw_app_node (the worker running
+  # the app's own task/data). This play already runs on a manager
+  # (hosts: selected_manager_group), so no delegate_to is needed or
+  # correct here. Found live 2026-10-28: delegating this to sksw_app_node
+  # (the worker) failed immediately: "This node is not a swarm manager."
+  shell: docker service update --force "{{ app }}-{{ env }}_app" >/dev/null
+  when: sksw_app_config_write is changed
+  tags: [config, deploy]
+
+- name: Wait for {{ app }}-{{ env }}_app to converge after the config.yaml restart
+  # Same reasoning as the force-restart task above: docker service ls is a
+  # control-plane read, runs on this play's own manager host, never
+  # delegated to the worker.
+  shell: |
+    for i in $(seq 1 24); do
+      r=$(docker service ls --format '{{ "{{.Name}} {{.Replicas}}" }}' | awk -v s="{{ app }}-{{ env }}_app" '$1==s{print $2}')
+      [ "$r" = "1/1" ] && exit 0
+      sleep 5
+    done
+    exit 1
+  when: sksw_app_config_write is changed
+  changed_when: false
+  tags: [config, deploy]
+
+- name: Remove the local patched-config scratch file
+  file:
+    path: "{{ sksw_app_config_tmp_file.path }}"
+    state: absent
+  delegate_to: localhost
+  become: false
+  when: sksw_app_config_stat.stat.exists | default(false)
+  tags: [config, deploy]

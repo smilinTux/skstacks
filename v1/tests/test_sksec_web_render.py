@@ -101,7 +101,7 @@ def test_default_service_image_and_single_app_replica(base_out):
     assert app["deploy"]["placement"]["constraints"] == ["node.role == worker"]
     assert app["volumes"] == ["/var/data/sksec-web-prod/data:/app/data"]
     assert app["networks"] == ["sksec-prod", "cloud-public-prod"]
-    assert app["healthcheck"]["test"] == ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+    assert app["healthcheck"]["test"] == ["CMD", "/usr/local/bin/node", "-e", "require('http').get('http://127.0.0.1:3000/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
     assert (app["healthcheck"]["interval"], app["healthcheck"]["timeout"], app["healthcheck"]["retries"],
             app["healthcheck"]["start_period"]) == ("30s", "5s", 3, "15s")
 
@@ -222,3 +222,20 @@ def test_env_playbooks_render_with_their_own_subnet_and_host(tmp_path, env):
     app = compose(out, env)["services"]["app"]
     lab = labels(app)
     assert lab["traefik.http.routers.sksec-web-{0}.rule".format(env)] == f"Host(`sksec-web-{env}.render.example.test`)"
+
+
+
+# --- the healthcheck never assumes a binary the pinned image may lack ------
+
+def test_app_healthcheck_does_not_use_wget_or_curl(base_out):
+    # Regression guard for the bug found live 2026-10-27: the pinned
+    # crowdsec-web-ui image's base has neither wget nor curl, so a
+    # healthcheck test calling either one always fails -- the app itself
+    # was healthy and running the whole time, but Swarm killed and
+    # replaced the task every ~65-70s forever on the failing probe. node
+    # is guaranteed present (it runs the app); the healthcheck must use
+    # it directly rather than assume a shell utility.
+    test = compose(base_out)["services"]["app"]["healthcheck"]["test"]
+    joined = " ".join(test)
+    assert "wget" not in joined and "curl" not in joined, joined
+    assert "node" in joined
