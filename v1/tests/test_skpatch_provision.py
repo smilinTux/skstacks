@@ -252,3 +252,35 @@ def test_absent_removes_the_account_key_and_sudoers_rule():
     assert "state: absent" in pb_text
     assert "remove: true" in pb_text
     assert "/etc/sudoers.d/skpatch" in pb_text
+
+
+def _task(pb_text, name):
+    return pb_text.split(name)[1].split("- name:")[0]
+
+
+def test_account_gets_a_fixed_non_system_uid_outside_the_container_range():
+    # Found on the ziowk01 gate 2026-11-06: `system: true` handed skpatch-ro uid
+    # 999, the uid the postgres containers run as, so userdel refused forever
+    # ("currently used by process"). The account must own a fixed uid/gid far
+    # above the SYS_UID range (100..999) and the first regular users.
+    pb_text = PB.read_text()
+    create = _task(pb_text, "Create the skpatch account (present)")
+    assert "system: true" not in create
+    assert "uid: \"{{ skpatch_uid }}\"" in create
+    group = _task(pb_text, "Create the skpatch group (present)")
+    assert "gid: \"{{ skpatch_uid }}\"" in group
+    default = yaml.safe_load(pb_text)[0]["vars"]["skpatch_uid"]
+    assert "skpatch.PROVISION_UID" in default
+    assert int(default.split("default(")[1].split(",")[0].strip(" )")) >= 5000
+
+
+def test_absent_terminates_the_accounts_sessions_then_forces_userdel():
+    pb_text = PB.read_text()
+    end = pb_text.index("End the account's own sessions and processes (absent)")
+    remove = pb_text.index("Remove the account and its home, key included (absent)")
+    assert end < remove
+    sessions = _task(pb_text, "End the account's own sessions and processes (absent)")
+    assert "loginctl terminate-user" in sessions
+    assert "pkill -KILL -u" in sessions
+    assert "when: skpatch_state == 'absent'" in sessions
+    assert "force: true" in _task(pb_text, "Remove the account and its home, key included (absent)")

@@ -194,6 +194,7 @@ skpatch:
   # Read by provision_skpatch_nodes.yml, not the swarm deploy:
   ALLOW_ACTIONS: false                      # instance-wide default; a host's own skpatch_allow_actions: false always wins
   PROVISION_USER: skpatch-ro                # the low-privilege account's name
+  PROVISION_UID: 5201                       # its fixed uid and gid; never a system uid (containers share the host's uid space)
   SSH_PUBLIC_KEY: ""                        # required by provision_skpatch_nodes.yml; one keypair per estate
 ```
 
