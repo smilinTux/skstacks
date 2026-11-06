@@ -142,20 +142,78 @@ without regenerating a fresh keystore (which, note, makes any previously
 stored integration credential unreadable, the same risk skpatch's own
 `LUDASH_ENCRYPTION_KEY` carries).
 
-## Configuration knobs (vault)
+## Configuration (vault)
 
-The full reference (every key, every default) is SOP §6. The ones that
-matter most when reading this role for the first time:
+`skbom:` in `optional/group_vars/<env>/skbom-<env>-<domain dashed>-<cluster>_vault.yml`
+(or `skbom-<env>_vault.yml`). Every key this role reads; SOP.md §6 carries
+the same block alongside the build/test/deploy/troubleshooting procedure.
 
-| Key | Default | What it controls |
-|---|---|---|
-| `CLUSTERNAME` | inventory `cluster_name` | Part of the default host (`skbom[-env].<cluster>.<domain>`), same convention as every other optional role. |
-| `DOMAIN` | inventory `domain` | The base domain; see `CLOUDFLARED` to drop the cluster segment. |
-| `DB_PASSWORD` | required, no default | Postgres password for the stack's own database. Secret. |
-| `PLACEMENT_CONSTRAINTS` | `["node.labels.skbom == true"]` | Where apiserver/frontend/Postgres land. Label a node before deploying. |
-| `OIDC_ENABLED` | `false` | Dependency-Track's own OIDC login against Authentik. All-or-nothing with `OIDC_ISSUER`/`OIDC_CLIENT_ID`. |
-| `EXTRA_JAVA_OPTIONS` | `-Xmx3g` | apiserver JVM heap; the node this targets has 8GB. |
-| `DATA_NODE` | `""` | Required if any of the three data paths is local disk, not shared storage. |
+```yaml
+skbom:
+  # REQUIRED (no default)
+  DB_PASSWORD: ""                           # 16+ chars; Postgres password. Secret.
+
+  # optional
+  CLUSTERNAME: cluster1                     # default: inventory cluster_name
+  DOMAIN: example.com                       # default: inventory domain
+  CLOUDFLARED: false                        # true: default host is under DOMAIN, not CLUSTERNAME.DOMAIN
+  HOSTNAME: ""                              # public host; default skbom[-dev|-staging].<base domain>
+  APISERVER_IMAGE: ""                       # default dependencytrack/apiserver:4.14.6@sha256:...; must carry @sha256:
+  FRONTEND_IMAGE: ""                        # default dependencytrack/frontend:4.14.6@sha256:...; must carry @sha256:
+  POSTGRES_IMAGE: ""                        # default postgres:17.7-alpine@sha256:...; must carry @sha256: (same literal as skflow's default)
+  POSTGRES_BACKUP_IMAGE: ""                 # dump sidecar, default postgres:17.7@sha256:...; must carry @sha256:
+  DB_USERNAME: dtrack                       # Postgres role name AND ALPINE_DATABASE_USERNAME
+  DB_NAME: dtrack                           # Postgres database name
+  EXTRA_JAVA_OPTIONS: "-Xmx3g"               # apiserver JVM heap; the target node has 8GB
+  LOGGING_LEVEL: INFO                       # apiserver LOGGING_LEVEL
+  TZ: UTC
+  # OIDC login (Dependency-Track's own, not a forward-auth proxy) - OFF by
+  # default. All-or-nothing: OIDC_ENABLED: true needs OIDC_ISSUER and
+  # OIDC_CLIENT_ID both set, or the deploy refuses.
+  OIDC_ENABLED: false
+  OIDC_ISSUER: ""                           # e.g. https://sso.example.com/application/o/skbom/
+  OIDC_CLIENT_ID: ""                        # one Authentik OIDC app (public/SPA client), used by apiserver AND frontend
+  OIDC_USERNAME_CLAIM: preferred_username    # apiserver ALPINE_OIDC_USERNAME_CLAIM
+  OIDC_TEAMS_CLAIM: groups                  # apiserver ALPINE_OIDC_TEAMS_CLAIM
+  OIDC_USER_PROVISIONING: true              # apiserver ALPINE_OIDC_USER_PROVISIONING
+  OIDC_TEAM_SYNCHRONIZATION: false          # apiserver ALPINE_OIDC_TEAM_SYNCHRONIZATION
+  OIDC_LOGIN_BUTTON_TEXT: "Login with SSO"  # frontend's login button label
+  EXTRA_ENV: {}                             # extra apiserver env vars (map), written to apiserver.env
+  PLACEMENT_CONSTRAINTS: ["node.labels.skbom == true"]   # NOT node.role == worker; label a node first
+  DATA_NODE: ""                             # required when APISERVER_DATA_PATH/POSTGRES_PATH/DUMP_PATH are outside /var/data
+  APISERVER_DATA_PATH: ""                   # default /var/data/skbom-<env>/apiserver-data
+  POSTGRES_PATH: ""                         # default /var/data/runtime/skbom-<env>/postgres
+  DUMP_PATH: ""                             # default /var/data/skbom-<env>/database-dump
+  TRAEFIK_MIDDLEWARES: ""                   # default default-no-error-pages@file (both routers)
+  TLS_OPTIONS: ""                           # default intermediate@file; "none" = no tls.options label
+  APISERVER_CPUS: "2.00"
+  APISERVER_MEMORY_LIMIT: 4096M
+  APISERVER_MEMORY_RESERVATION: 1024M
+  FRONTEND_REPLICAS: 1
+  FRONTEND_CPUS: "0.50"
+  FRONTEND_MEMORY_LIMIT: 256M
+  FRONTEND_MEMORY_RESERVATION: 64M
+  POSTGRES_CPUS: "1.00"
+  POSTGRES_MEMORY_LIMIT: 1024M
+  POSTGRES_MEMORY_RESERVATION: 256M
+  HEALTH_CHECK_INTERVAL: 30s
+  HEALTH_CHECK_TIMEOUT: 10s
+  HEALTH_CHECK_RETRIES: 3
+  HEALTH_CHECK_START_PERIOD: 90s            # apiserver's first boot runs schema migrations
+  BACKUP_FREQUENCY: 86400                   # seconds between dumps
+  BACKUP_KEEP_DAYS: 7                       # BACKUP_NUM_KEEP is accepted as a fallback
+  LOG_MAX_SIZE: 10m
+  LOG_MAX_FILES: 3
+  AUTHENTIK_TILE: true                      # false opts out of the portal tile
+  AUTHENTIK_TILE_SLUG: ""                   # default skbom[-env]
+  AUTHENTIK_TILE_NAME: "SKBom (Dependency-Track)"
+  AUTHENTIK_TILE_GROUP: "authentik Admins"
+  AUTHENTIK_TILE_ICON: "fa://fa-shield-halved"
+  AUTHENTIK_TILE_ICON_FILE: "icon.png"
+  AUTHENTIK_TILE_ICON_NAME: "skbom"
+  AUTHENTIK_TILE_OPEN_IN_NEW_TAB: true
+  AUTHENTIK_TILE_DESCRIPTION: ""
+```
 
 ## Related projects / See also
 

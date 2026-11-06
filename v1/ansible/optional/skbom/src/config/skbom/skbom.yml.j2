@@ -57,8 +57,13 @@ services:
     deploy:
       mode: replicated
       replicas: 1
+      # db_constraints, not app_constraints: apiserver's /data (secret,
+      # keystore) is local state exactly like Postgres's data directory,
+      # so it gets the same DATA_NODE pin when APISERVER_DATA_PATH is
+      # local disk (see the deploy's "Fail closed on a local data path"
+      # guard, which checks all three paths together).
       placement:
-        constraints: {{ app_constraints | tojson }}
+        constraints: {{ db_constraints | tojson }}
       resources:
         limits:
           cpus: '{{ skbom.APISERVER_CPUS | default("2.00", true) }}'
