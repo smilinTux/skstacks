@@ -7,6 +7,25 @@ Each entry says what an instance must do, if anything.
 
 ### Upgrade notes (instances)
 
+- **skpatch Phase 1 (image pin audit, 2026-11-06), skgraph/skvector/sksync/skpdf/skorch
+  defaults**: a fleet-wide audit of every image still running `:latest` on the nor and
+  NAM estates found these five framework defaults were the real gaps (the rest of the
+  audited list was already pinned, either as an existing framework default or an
+  instance override; `docker service ls` just never shows the `@sha256` suffix, which
+  is what made them look unpinned at a glance). `skgraph.FALKORDB_VERSION` (`v4.18.8`),
+  `skvector.QDRANT_VERSION` (`v1.17.0`), and `sksync.SYNCTHING_VERSION` (`2.0.13`) kept
+  a real version tag but no digest; all three now carry the digest for the version
+  running today, a no-op at the next deploy. `skpdf.IMAGE_TAG`'s default was stale
+  (`2.14.3`; `3.1.0` is what every instance pinning its own override is actually
+  running) and `skorch_cfg.N8N_VERSION`'s default pinned an old digest with no tag
+  (`n8nio/n8n@sha256:cae1f28d...`); both are bumped to the version running today
+  (`3.1.0`, `2.40.7`) with its digest. **Instance action**: none; an instance pinning
+  its own override is unaffected, one relying on the default picks up the version
+  bump (skpdf, skorch) or just gains the digest (skgraph, skvector, sksync) on its
+  next deploy. `v1/tests/test_no_latest_images.py` already covers all five generically
+  (it walks every `v1/ansible/*/*/src/**/*.j2`), so no scope-list change was needed;
+  confirmed the five new defaults also match `renovate.json`'s regex managers so
+  Renovate can track them going forward.
 - **skhub, Talk `turn_servers` 3478 entry**: the post-deploy task now writes `"schemes":"turn"`
   instead of `"turn,turns"` for `<TURN_DOMAIN>:3478`. aio-talk's eturnal never serves TLS on
   3478, so the `turns:<host>:3478` URLs it advertised could never connect (confirmed on nor and
