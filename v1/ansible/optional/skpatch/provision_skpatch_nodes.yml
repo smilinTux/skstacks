@@ -52,6 +52,13 @@
     # from the derived fact every task below reads.
     skpatch_state: "{{ skpatch_provision_state | default('present') }}"
     skpatch_user: "{{ skpatch.PROVISION_USER | default('skpatch-ro', true) }}"
+    # A fixed uid/gid well above the SYS_UID range and the first regular
+    # users. `system: true` used to let useradd pick a free system uid, and
+    # on a swarm node that was 999: the uid the postgres images run as, so
+    # every container process "used" the account and userdel refused
+    # forever (gate 2026-11-06). Containers share the host's uid space; a
+    # host account must never sit on one of their numbers.
+    skpatch_uid: "{{ skpatch.PROVISION_UID | default(5201, true) }}"
   pre_tasks:
     - name: Select vault file based on domain and cluster
       import_tasks: ../../shared/tasks/select_vault_file.yml
@@ -107,6 +114,7 @@
       # handles present, matching every sibling present-only task here.
       group:
         name: "{{ skpatch_user }}"
+        gid: "{{ skpatch_uid }}"
         state: present
       when: skpatch_state == 'present'
 
@@ -117,7 +125,7 @@
         shell: /bin/bash
         comment: "skpatch low-privilege update-reporting account (framework-managed, see optional/skpatch)"
         create_home: true
-        system: true
+        uid: "{{ skpatch_uid }}"
         state: present
       when: skpatch_state == 'present'
 
@@ -145,11 +153,23 @@
         state: absent
       when: skpatch_state == 'absent'
 
+    - name: End the account's own sessions and processes (absent)
+      # The dashboard polls nodes over ssh; a de-provision can land while
+      # one of its sessions is still open, and userdel refuses while any
+      # process runs under the uid. Ends only this account's sessions.
+      shell: |
+        loginctl terminate-user "{{ skpatch_user }}" 2>/dev/null || true
+        pkill -KILL -u "{{ skpatch_user }}" 2>/dev/null || true
+        true
+      changed_when: false
+      when: skpatch_state == 'absent'
+
     - name: Remove the account and its home, key included (absent)
       user:
         name: "{{ skpatch_user }}"
         state: absent
         remove: true
+        force: true
       when: skpatch_state == 'absent'
 
     - name: Remove the group (absent)

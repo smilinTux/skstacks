@@ -9,8 +9,21 @@
 #   - traefik_service_name is auto-detected (skfence or skfenceha)
 #
 # Multi-Node HA Mode:
-#   - CrowdSec pinned to ACME master node (exclusive database write access)
-#   - Reads Traefik logs from: /var/data/logs/{traefik_service_name}-{env}/traefik/acme-node/ (ACME master logs)
+#   - Reads Traefik logs from the shared /var/data mount the same way in
+#     every mode: both the worker/ and acme/ subdirectories (every node
+#     appends to its own file there; see acquis.yaml.j2). CrowdSec does not
+#     need to run on any particular node to read them.
+#   - Without sksec.DATA_NODE: pinned to the traefik.acme.master node (one
+#     always exists, so this is just a cheap way to land on a single
+#     stable node when there is no LAPI-db reason to pick one -- NOT
+#     because CrowdSec needs anything local to the ACME master itself).
+#   - With sksec.DATA_NODE: pinned to DATA_NODE only (see "LAPI db
+#     location" below) -- the acme-master label is NOT also required.
+#     skfenceha's manager selection is an ordered failover pick, not
+#     guaranteed to land on any fixed hostname, so ANDing both constraints
+#     together made the service permanently unschedulable the moment the
+#     label landed on a manager other than DATA_NODE (found live on the
+#     skstack06 lab, 2026-10-25, coord card sksec-ha-placement).
 #   - traefik_service_name is auto-detected (skfence or skfenceha)
 #   - Set TRAEFIK_HA_MODE=true in vault to enable HA mode
 #
@@ -79,12 +92,20 @@ services:
       mode: replicated
       replicas: 1
       placement:
-        # In HA mode: Pin to ACME master node (exclusive database write access)
-        # With sksec.DATA_NODE set: also pin to the node holding the local
-        # LAPI db (a path outside /var/data is local disk; moving crowdsec
+        # sksec.DATA_NODE set: pin to the node holding the local LAPI db
+        # ONLY (a path outside /var/data is local disk; moving crowdsec
         # without its db is an empty db, same risk sksso's DATA_NODE guards
-        # against for postgres/redis).
-        # In single-node, no DATA_NODE: runs on any node.
+        # against for postgres/redis). This is the single source of truth
+        # for where crowdsec runs once a local db exists -- it is NOT also
+        # ANDed with the HA acme-master label: skfenceha's manager
+        # selection (an ordered failover pick) is not guaranteed to land on
+        # any fixed hostname, so requiring both made the service
+        # permanently unschedulable whenever they disagreed, with no
+        # self-heal (found live on the skstack06 lab, 2026-10-25).
+        # HA mode without DATA_NODE (not yet moved off NFS): pin to
+        # whichever manager currently holds the acme-master label, same as
+        # before -- a stable single node to run on, nothing more.
+        # Neither set: single-node, runs on any node.
         preferences:
           - spread: node.labels.zone
       resources:

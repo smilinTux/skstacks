@@ -47,13 +47,21 @@
 
 - name: Wait for the swarm node running the CrowdSec task
   shell: |
-    STATES=$(docker service ps "{{ app }}-{{ env }}_crowdsec" --filter "desired-state=running" --format "{{ '{{.Node}} {{.CurrentState}}' }}")
+    STATES=$(docker service ps "{{ app }}-{{ env }}_crowdsec" --filter "desired-state=running" --format "{{ '{{.Node}} {{.CurrentState}} {{.Error}}' }}")
     NODE=$(printf '%s\n' "$STATES" | awk '$2 == "Running" {print $1; exit}')
-    if [ -z "$NODE" ]; then
-      echo "{{ app }}-{{ env }}_crowdsec has no Running task yet; current: $(printf '%s' "${STATES:-no task scheduled}" | tr '\n' ';')" >&2
-      exit 1
+    if [ -n "$NODE" ]; then
+      echo "$NODE"
+      exit 0
     fi
-    echo "$NODE"
+    # "no suitable node" is a placement-constraint deadlock, not a slow
+    # start: fail with the real cause instead of a bare timeout, so this
+    # never gets left silently unschedulable (see sksec.yml.j2 "placement").
+    if printf '%s\n' "$STATES" | grep -q 'no suitable node'; then
+      echo "{{ app }}-{{ env }}_crowdsec cannot be scheduled on ANY node ($(printf '%s' "$STATES" | tr '\n' ';')). Check that sksec.DATA_NODE (if set) names a node that exists and is Ready, or -- if DATA_NODE is unset -- that exactly one manager carries the traefik.acme.master label skfenceha assigns on every deploy. See sksec's README.md 'Moving the LAPI db off NFS'." >&2
+    else
+      echo "{{ app }}-{{ env }}_crowdsec has no Running task yet; current: $(printf '%s' "${STATES:-no task scheduled}" | tr '\n' ';')" >&2
+    fi
+    exit 1
   register: sksec_crowdsec_node
   until: sksec_crowdsec_node.rc == 0 and (sksec_crowdsec_node.stdout | trim | length > 0)
   retries: "{{ sksec_lapi_wait_retries }}"
