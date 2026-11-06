@@ -229,12 +229,15 @@ def test_skpulse_node_resolution_fails_closed_not_silently(base_out):
     assert "failed_when: skpulse_cid.rc != 0 or (skpulse_cid.stdout | trim | length == 0)" in container_block
 
 
-def test_skpulse_admin_count_and_disable_auth_also_delegate_to_the_resolved_node(base_out):
+def test_skpulse_first_run_setup_and_disable_auth_also_delegate_to_the_resolved_node(base_out):
+    # Every docker exec/cp against the Kuma container must run on the node the
+    # task resolved, not on whichever manager ansible targeted (v2.26.16).
     pb = (ROLE / "deploy_skpulse-prod.yml").read_text()
-    count_block = pb.split("Count existing Kuma admin users")[1].split("- name:")[0]
-    assert 'delegate_to: "{{ skpulse_node.stdout | default(inventory_hostname) | trim }}"' in count_block
+    delegate = 'delegate_to: "{{ skpulse_node.stdout | default(inventory_hostname) | trim }}"'
+    setup_block = pb.split("Complete Kuma's own first-run setup")[1].split("- name:")[0]
+    assert delegate in setup_block
     toggle_block = pb.split("Align Kuma's own login")[1].split("tags:")[0]
-    assert 'delegate_to: "{{ skpulse_node.stdout | default(inventory_hostname) | trim }}"' in toggle_block
+    assert delegate in toggle_block
 
 
 def test_disable_auth_toggle_is_gated_on_first_setup_having_finished(base_out):
