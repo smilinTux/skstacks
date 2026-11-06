@@ -102,6 +102,36 @@ Each entry says what an instance must do, if anything.
 
 ### Changes
 
+- v1: new optional role **skbom** (`v1/ansible/optional/skbom/`): OWASP Dependency-Track
+  (Apache-2.0), the image-patching half of the skpatch program (`docs/skpatch-program.md`): an
+  SBOM store matched continuously against NVD/GHSA/OSV, replacing the hand-kept CVE register
+  the program's design doc describes retiring. Two upstream images, `dependencytrack/apiserver`
+  and `dependencytrack/frontend`, release `4.14.6` (the latest 4.x stable release; v5 is a
+  separate major line, see the README "Why 4.x, not 5.x"), both multi-arch and pinned by the
+  manifest-list digest, resolved from the Docker Hub registry API and cross-checked by actually
+  pulling both images. Its own Postgres uses the identical `postgres:17.7-alpine` digest
+  `skflow` defaults to (the two share a registry layer on any node running both) plus a
+  `pg_dumpall` sidecar copied from skflow's own dump loop. One host, two Traefik routers:
+  `PathPrefix(`/api`)` to `apiserver`, everything else to `frontend`, each with its own
+  `loadbalancer.server.port` label on its own service (not one service proxying to the other,
+  unlike skgym). Default placement constraint is `node.labels.skbom == true`, not the bare
+  `node.role == worker` most optional roles default to, because apiserver needs a node sized
+  for its JVM heap (`EXTRA_JAVA_OPTIONS` default `-Xmx3g`); apiserver's own `/data` (a
+  secret/keystore) shares Postgres's `DATA_NODE` pin since it is local state too. OIDC login
+  against Authentik (Dependency-Track's own, not a forward-auth proxy) is off by default and
+  validated all-or-nothing: `OIDC_ENABLED: true` needs both `OIDC_ISSUER` and `OIDC_CLIENT_ID`,
+  or the deploy refuses. Health checks confirmed against the live images rather than assumed:
+  apiserver's unauthenticated `GET /health` and frontend's `GET /`, both over `curl`/`wget`
+  (both images ship a real HTTP client, unlike the thin image sksec-web was burned by). Tests:
+  `v1/tests/test_skbom_render.py` (happy path, every knob set, the OIDC all-or-nothing guard,
+  the three-path `DATA_NODE` guard, loud failures for a missing/short `DB_PASSWORD` and an
+  unpinned image); keeps `v1/tests/test_compose_templates_render.py` (the `traefik.docker.*` /
+  `traefik.swarm.*` lint from #235), `v1/tests/test_no_latest_images.py` and
+  `v1/tests/test_unique_subnets.py` (new subnets `skbom-{prod,staging,dev}` =
+  `172.16.{64,65,66}.0/24`) green. Catalog row + detail section in
+  `docs/v1-service-catalog.md`; full 9-section SOP in
+  `v1/ansible/optional/skbom/SOP.md`.
+
 - v1: **skhub** the Talk post-deploy task writes `"schemes":"turn"` (was `"turn,turns"`) for the
   `<TURN_DOMAIN>:3478` `turn_servers` entry in all three deploy playbooks; eturnal in aio-talk has
   no TLS listener, so the `turns:` URLs on 3478 were dead. README "Talk HPB TURN" updated. Tests:
