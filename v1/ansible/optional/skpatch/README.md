@@ -163,9 +163,12 @@ A separate, idempotent, reversible playbook, not a swarm deploy. It runs
 against whatever inventory group holds the nodes an estate's skpatch
 instance should be able to reach, and:
 
-1. Creates a dedicated system account (`skpatch.PROVISION_USER`, default
-   `skpatch-ro`) on each targeted host. Never reuses an existing admin
-   account.
+1. Creates a dedicated account (`skpatch.PROVISION_USER`, default
+   `skpatch-ro`, fixed uid/gid `skpatch.PROVISION_UID`, default `5201`) on
+   each targeted host. Never reuses an existing admin account, and never a
+   system uid: containers share the host's uid space, and a host account
+   on a container's uid (postgres runs as 999) can never be removed while
+   that container runs.
 2. Installs exactly one authorized key: `skpatch.SSH_PUBLIC_KEY` (the
    public half of that estate's dedicated keypair), `exclusive: true` (no
    other key survives on that account).
@@ -250,6 +253,7 @@ skpatch:
   # Read by provision_skpatch_nodes.yml, not the swarm deploy:
   ALLOW_ACTIONS: false                      # instance-wide default; a host's own skpatch_allow_actions: false always wins
   PROVISION_USER: skpatch-ro                # the low-privilege account's name
+  PROVISION_UID: 5201                       # its fixed uid and gid; never a system uid (containers share the host's uid space)
   SSH_PUBLIC_KEY: ""                        # required by provision_skpatch_nodes.yml; one keypair per estate
 ```
 
