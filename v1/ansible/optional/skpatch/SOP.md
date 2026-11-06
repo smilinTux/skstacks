@@ -180,10 +180,17 @@ skpatch:
   HEALTH_CHECK_INTERVAL: 30s
   HEALTH_CHECK_TIMEOUT: 10s
   HEALTH_CHECK_RETRIES: 3
+  HEALTH_CHECK_START_PERIOD: 60s
   DASHBOARD_CPUS: "0.50"
   DASHBOARD_MEMORY_LIMIT: 384M
   DASHBOARD_MEMORY_RESERVATION: 64M
   AUTHENTIK_TILE: true                      # false opts out of the portal tile
+  AUTHENTIK_TILE_NAME: SKPatch              # tile title; slug/description/icon/group/open-in-new-tab below
+  AUTHENTIK_TILE_SLUG: skpatch
+  AUTHENTIK_TILE_DESCRIPTION: "Linux update dashboard"
+  AUTHENTIK_TILE_ICON: "fa://fa-wrench"
+  AUTHENTIK_TILE_GROUP: "authentik Admins"  # must already exist
+  AUTHENTIK_TILE_OPEN_IN_NEW_TAB: true
   # Read by provision_skpatch_nodes.yml, not the swarm deploy:
   ALLOW_ACTIONS: false                      # instance-wide default; a host's own skpatch_allow_actions: false always wins
   PROVISION_USER: skpatch-ro                # the low-privilege account's name

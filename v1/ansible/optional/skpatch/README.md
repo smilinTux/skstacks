@@ -101,6 +101,47 @@ matter most when reading this role for the first time:
 | `CLUSTERNAME` | inventory `cluster_name` | First label of the dashboard host (`skpatch.<CLUSTERNAME>.<DOMAIN>`) and the stack name suffix. |
 | `DOMAIN` | inventory `domain` | Zone the dashboard host lives under; with `CLOUDFLARED: true` the host is `skpatch.<DOMAIN>` instead. |
 
+Full vault contract (every key the deploy and the provisioning playbook
+read; SOP §6 carries the same block):
+
+```yaml
+skpatch:
+  LUDASH_ENCRYPTION_KEY: "<openssl rand -base64 32>"  # required, secret, >= 32 chars
+  CLUSTERNAME: cluster1                     # default: inventory cluster_name
+  DOMAIN: example.com                       # default: inventory domain
+  CLOUDFLARED: false                        # true: default host is under DOMAIN, not CLUSTERNAME.DOMAIN
+  HOSTNAME: ""                              # public host; default skpatch[-dev|-staging].<base domain>
+  TRAEFIK_MIDDLEWARES: ""                   # default default-no-error-pages@file
+  AUTH_MODE: sso                            # sso (Authentik forward auth, whole router) | local
+  SSO_MIDDLEWARE: ""                        # sso mode: default authentik@file; must be empty in local mode
+  TLS_OPTIONS: ""                           # default intermediate@file; "none" = no tls.options label
+  TZ: UTC
+  LUDASH_LOG_LEVEL: info
+  extra_env: {}                             # any other upstream app variable, verbatim into skpatch.env
+  IMAGE: ""                                 # default: the pinned linux-update-dashboard digest in defaults/main.yml; must carry @sha256:
+  DATA_PATH: ""                             # default /var/data/skpatch-<env>/data
+  DATA_NODE: ""                             # pin dashboard to this node (required with a local path)
+  PLACEMENT_CONSTRAINTS: []                 # default ["node.role == worker"]
+  HEALTH_CHECK_INTERVAL: 30s
+  HEALTH_CHECK_TIMEOUT: 10s
+  HEALTH_CHECK_RETRIES: 3
+  HEALTH_CHECK_START_PERIOD: 60s
+  DASHBOARD_CPUS: "0.50"
+  DASHBOARD_MEMORY_LIMIT: 384M
+  DASHBOARD_MEMORY_RESERVATION: 64M
+  AUTHENTIK_TILE: true                      # false opts out of the portal tile
+  AUTHENTIK_TILE_NAME: SKPatch              # tile title; slug/description/icon/group/open-in-new-tab below
+  AUTHENTIK_TILE_SLUG: skpatch
+  AUTHENTIK_TILE_DESCRIPTION: "Linux update dashboard"
+  AUTHENTIK_TILE_ICON: "fa://fa-wrench"
+  AUTHENTIK_TILE_GROUP: "authentik Admins"  # must already exist
+  AUTHENTIK_TILE_OPEN_IN_NEW_TAB: true
+  # Read by provision_skpatch_nodes.yml, not the swarm deploy:
+  ALLOW_ACTIONS: false                      # instance-wide default; a host's own skpatch_allow_actions: false always wins
+  PROVISION_USER: skpatch-ro                # the low-privilege account's name
+  SSH_PUBLIC_KEY: ""                        # required by provision_skpatch_nodes.yml; one keypair per estate
+```
+
 **Per-host actions ceiling:** set `skpatch_allow_actions: false` in the
 group_vars of every hypervisor, NAS, or any host that must never be
 upgraded or rebooted through this app. That per-host `false` always
