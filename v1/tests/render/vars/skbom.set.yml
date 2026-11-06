@@ -1,0 +1,54 @@
+# The "set" pass: every optional knob set, fake values only.
+skbom:
+  CLOUDFLARED: true
+  HOSTNAME: skbom.example.test
+  APISERVER_IMAGE: "registry.example.test/dependencytrack-apiserver:4.14.6@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  FRONTEND_IMAGE: "registry.example.test/dependencytrack-frontend:4.14.6@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  POSTGRES_IMAGE: "registry.example.test/postgres:17.7-alpine@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  POSTGRES_BACKUP_IMAGE: "registry.example.test/postgres:17.7@sha256:3333333333333333333333333333333333333333333333333333333333333333"
+  DB_USERNAME: "dtrack-example"
+  DB_NAME: "dtrack-example-db"
+  EXTRA_JAVA_OPTIONS: "-Xmx6g"
+  LOGGING_LEVEL: "DEBUG"
+  TZ: "Etc/UTC"
+  OIDC_ENABLED: true
+  OIDC_ISSUER: "https://sso.example.test/application/o/skbom/"
+  OIDC_CLIENT_ID: "example-skbom-oidc-client-not-a-secret"
+  OIDC_USERNAME_CLAIM: "email"
+  OIDC_TEAMS_CLAIM: "dt-teams"
+  OIDC_USER_PROVISIONING: false
+  OIDC_TEAM_SYNCHRONIZATION: true
+  OIDC_LOGIN_BUTTON_TEXT: "Sign in with Example SSO"
+  EXTRA_ENV:
+    SOME_UPSTREAM_VAR: "example-value"
+  DATA_NODE: render-node-1
+  PLACEMENT_CONSTRAINTS: ["node.role == worker", "node.labels.skbom == true"]
+  APISERVER_DATA_PATH: /var/lib/skbom-render/apiserver-data
+  POSTGRES_PATH: /var/lib/skbom-render/postgres
+  DUMP_PATH: /var/lib/skbom-render/dump
+  TRAEFIK_MIDDLEWARES: "crowdsec-bouncer@file,default-no-error-pages@file"
+  TLS_OPTIONS: "none"
+  APISERVER_CPUS: "4.00"
+  APISERVER_MEMORY_LIMIT: "6144M"
+  APISERVER_MEMORY_RESERVATION: "2048M"
+  FRONTEND_REPLICAS: 2
+  FRONTEND_CPUS: "1.00"
+  FRONTEND_MEMORY_LIMIT: "512M"
+  FRONTEND_MEMORY_RESERVATION: "128M"
+  POSTGRES_CPUS: "2.00"
+  POSTGRES_MEMORY_LIMIT: "2048M"
+  POSTGRES_MEMORY_RESERVATION: "512M"
+  HEALTH_CHECK_INTERVAL: "15s"
+  HEALTH_CHECK_TIMEOUT: "5s"
+  HEALTH_CHECK_RETRIES: 5
+  HEALTH_CHECK_START_PERIOD: "180s"
+  BACKUP_FREQUENCY: 3600
+  BACKUP_KEEP_DAYS: 14
+  LOG_MAX_SIZE: "20m"
+  LOG_MAX_FILES: "5"
+  AUTHENTIK_TILE_SLUG: "skbom-example"
+  AUTHENTIK_TILE_NAME: "Example Dependency-Track"
+  AUTHENTIK_TILE_GROUP: "example Admins"
+  AUTHENTIK_TILE_ICON: "fa://fa-bug"
+  AUTHENTIK_TILE_OPEN_IN_NEW_TAB: false
+  AUTHENTIK_TILE_DESCRIPTION: "Example description"

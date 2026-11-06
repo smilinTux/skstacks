@@ -1,0 +1,311 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# skbom: OWASP Dependency-Track (upstream github.com/DependencyTrack/
+# dependency-track, Apache-2.0) as the image-patching half of the skpatch
+# program (../../../docs/skpatch-program.md): an SBOM store that matches
+# every uploaded SBOM continuously against NVD/GHSA/OSV. Two upstream
+# images, both pinned by digest: `apiserver` (Java API, unauthenticated
+# /health) and `frontend` (a static SPA, nginx, pointed at apiserver by
+# API_BASE_URL). Its own Postgres with a pg_dumpall sidecar, the same
+# pattern and the same Postgres image skflow uses. Opt-in: nothing renders
+# unless this playbook runs. See README.md.
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+# Step 1: Select manager node with failover
+# Run on all hosts to ensure it executes even with -l limit
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+# Step 2: Deploy to selected manager
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skbom
+    env: dev
+    service_name: skbom
+    service_type: optional
+    # Dependency-Track 4.14.6 (the latest 4.x stable release at the time
+    # this role was written; v5 exists but is a separate major line, see
+    # README.md "Upstream, license and image"), Postgres 17.7-alpine (the
+    # same literal skflow's own default uses) and (for the bash dump loop)
+    # Postgres 17.7 Debian, all multi-arch manifest-list digests. The
+    # compose template writes the same literals so v1/scripts/list_images.py
+    # sees the pins; test_skbom_render.py keeps the two equal.
+    skb_default_apiserver_image: "dependencytrack/apiserver:4.14.6@sha256:3110dd66ee9d1b4b9a4dc6c51c68c23f14ba006b6e5a74d0b5204e169a1da09a"
+    skb_default_frontend_image: "dependencytrack/frontend:4.14.6@sha256:f298c3e6061096bf76575a1bbe994528089141856ec7b2ec63469cf3f2abeedf"
+    skb_default_pg_image: "postgres:17.7-alpine@sha256:bb377b7239d2774ac8cc76f481596ce96c5a6b5e9d141f6d0a0ee371a6e7c0f2"
+    skb_default_pg_backup_image: "postgres:17.7@sha256:2006493727bd5277eece187319af1ef82b4cf82cf4fc1ed00da0775b646ac2a4"
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Refuse a missing skbom vault block
+      assert:
+        that:
+          - skbom is defined and skbom is mapping
+        fail_msg: >-
+          ERROR: no skbom vault block. Add `skbom:` to the skbom vault
+          file (see README.md "Configuration (vault)").
+        quiet: true
+      tags: [config]
+
+    - name: Resolve the skbom settings
+      set_fact:
+        skb_base_domain: "{{ skbom.DOMAIN | default(domain) if skbom.CLOUDFLARED | default(false) | bool else (skbom.CLUSTERNAME | default(cluster_name)) ~ '.' ~ (skbom.DOMAIN | default(domain)) }}"
+        skb_apiserver_image: "{{ skbom.APISERVER_IMAGE | default(skb_default_apiserver_image, true) }}"
+        skb_frontend_image: "{{ skbom.FRONTEND_IMAGE | default(skb_default_frontend_image, true) }}"
+        skb_pg_image: "{{ skbom.POSTGRES_IMAGE | default(skb_default_pg_image, true) }}"
+        skb_pg_backup_image: "{{ skbom.POSTGRES_BACKUP_IMAGE | default(skb_default_pg_backup_image, true) }}"
+        skb_apiserver_data_path: "{{ skbom.APISERVER_DATA_PATH | default('/var/data/' + app + '-' + env + '/apiserver-data', true) }}"
+        skb_pg_path: "{{ skbom.POSTGRES_PATH | default('/var/data/runtime/' + app + '-' + env + '/postgres', true) }}"
+        skb_dump_path: "{{ skbom.DUMP_PATH | default('/var/data/' + app + '-' + env + '/database-dump', true) }}"
+        skb_data_node: "{{ skbom.DATA_NODE | default('', true) | string }}"
+        skb_middlewares: "{{ skbom.TRAEFIK_MIDDLEWARES | default('default-no-error-pages@file', true) }}"
+        skb_tls_options: "{{ skbom.TLS_OPTIONS | default('intermediate@file', true) }}"
+        skb_router: "skbom{{ '' if env == 'prod' else '-' + env }}"
+        skb_oidc_on: "{{ skbom.OIDC_ENABLED | default(false) | bool }}"
+      tags: [config]
+
+    - name: Resolve the public host
+      set_fact:
+        skb_host: "{{ skbom.HOSTNAME | default('skbom' + ('' if env == 'prod' else '-' + env) + '.' + skb_base_domain, true) }}"
+      tags: [config]
+
+    - name: Refuse a database without a password, or a weak one
+      # No external-DATABASE_URL escape hatch, unlike skflow: Dependency-
+      # Track always gets its own dedicated database here.
+      assert:
+        that:
+          - skbom.DB_PASSWORD | default('', true) | string | length >= 16
+        fail_msg: >-
+          ERROR: skbom needs DB_PASSWORD (at least 16 characters). See
+          README.md "Configuration (vault)".
+        quiet: true
+      tags: [config]
+
+    - name: Validate the image pins and the public host
+      assert:
+        that:
+          - "'@sha256:' in skb_apiserver_image"
+          - "'@sha256:' in skb_frontend_image"
+          - "'@sha256:' in skb_pg_image"
+          - "'@sha256:' in skb_pg_backup_image"
+          - skb_host is match('^[A-Za-z0-9][A-Za-z0-9.-]*$')
+        fail_msg: >-
+          ERROR: skbom.APISERVER_IMAGE, FRONTEND_IMAGE, POSTGRES_IMAGE and
+          POSTGRES_BACKUP_IMAGE must each be pinned by digest (@sha256:),
+          and HOSTNAME (or CLUSTERNAME/DOMAIN) must be a plain host name.
+          APISERVER_IMAGE is {{ skb_apiserver_image }}, FRONTEND_IMAGE is
+          {{ skb_frontend_image }}, host is {{ skb_host }}.
+        quiet: true
+      tags: [config]
+
+    - name: Refuse OIDC turned on without an issuer and a client id
+      # Only key NAMES are collected here, never a value from the vault.
+      assert:
+        that:
+          - not skb_oidc_on or ((skbom.OIDC_ISSUER | default('', true) | string | length > 0) and (skbom.OIDC_CLIENT_ID | default('', true) | string | length > 0))
+        fail_msg: >-
+          ERROR: skbom.OIDC_ENABLED is true but OIDC_ISSUER and/or
+          OIDC_CLIENT_ID is empty. Both are required together, or leave
+          OIDC_ENABLED false. See README.md "OIDC login".
+        quiet: true
+      tags: [config]
+
+    - name: Fail closed on a local data path without a pinned data node
+      # A path outside /var/data is local disk on one node: without
+      # DATA_NODE swarm may reschedule apiserver or Postgres elsewhere and
+      # start against an empty directory (apiserver's /data holds its own
+      # secret/keystore; Postgres holds every SBOM and finding). Same rule
+      # as skflow/skvector/skrac.
+      assert:
+        that:
+          - (skb_data_node | length > 0) or (skb_apiserver_data_path.startswith('/var/data/') and skb_pg_path.startswith('/var/data/') and skb_dump_path.startswith('/var/data/'))
+        fail_msg: >-
+          skbom.APISERVER_DATA_PATH / POSTGRES_PATH / DUMP_PATH point at
+          local disk ({{ skb_apiserver_data_path }}, {{ skb_pg_path }},
+          {{ skb_dump_path }}) but skbom.DATA_NODE is empty. Set DATA_NODE
+          to the node holding the data.
+        quiet: true
+      tags: [config]
+
+    - name: Define network variables from vault (idempotent network creation)
+      # Subnets: skbom-prod 172.16.64.0/24, -staging .65, -dev .66
+      # (reserved for skbom, checked against v1/tests/test_unique_subnets.py).
+      # Override with the flat per-env skbom_<env>_networks.
+      set_fact:
+        app_networks: "{{ skbom_dev_networks | default([
+          { 'name': 'skbom-dev', 'subnet': '172.16.66.0/24', 'driver': 'overlay', 'attachable': true },
+          { 'name': 'cloud-public-dev', 'subnet': '172.16.202.0/24', 'driver': 'overlay', 'attachable': true }
+        ]) }}"
+      tags: [networks, config]
+
+  tasks:
+    - name: Deploying {{ app }}
+      debug:
+        msg: Running SKStacks deploy {{ app }} scripts...
+
+    - name: Create the {{ app }} directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - /var/data/{{ app }}-{{ env }}
+        - /var/data/config/{{ app }}-{{ env }}
+        - /var/data/runtime/{{ app }}-{{ env }}
+
+    - name: Create the {{ app }} apiserver data, Postgres data and dump directories on shared storage (not recursive)
+      # apiserver runs as uid 1000 with no root entrypoint step (confirmed:
+      # `docker inspect ... Config.User` is "1000"), so this role, not the
+      # container, must own the directory. 70 is the postgres uid in the
+      # alpine image (same as skflow's own Postgres directory).
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.owner }}"
+        mode: '0700'
+      loop:
+        - { path: "{{ skb_apiserver_data_path }}", owner: "1000" }
+        - { path: "{{ skb_pg_path }}", owner: "70" }
+        - { path: "{{ skb_dump_path }}", owner: "root" }
+      when: item.path.startswith('/var/data/')
+
+    - name: Create the {{ app }} local apiserver data, Postgres data and dump directories on the data node (not recursive)
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.owner }}"
+        mode: '0700'
+      loop:
+        - { path: "{{ skb_apiserver_data_path }}", owner: "1000" }
+        - { path: "{{ skb_pg_path }}", owner: "70" }
+        - { path: "{{ skb_dump_path }}", owner: "root" }
+      when: not item.path.startswith('/var/data/')
+      # Ansible templates delegate_to before it evaluates when, so it must
+      # render with DATA_NODE unset too (the guard above requires DATA_NODE
+      # whenever this task actually runs).
+      delegate_to: "{{ skbom.DATA_NODE | default(inventory_hostname, true) }}"
+
+    - name: Process {{ app }} environment templates (root only, they carry the database password)
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ item.dest }}"
+        owner: root
+        group: root
+        mode: '0600'
+      loop:
+        - { src: "apiserver.env.j2", dest: "apiserver.env" }
+        - { src: "frontend.env.j2", dest: "frontend.env" }
+        - { src: "postgres.env.j2", dest: "postgres.env" }
+        - { src: "postgres-backup.env.j2", dest: "postgres-backup.env" }
+      no_log: true
+      tags: [templates]
+
+    - name: Process {{ app }} Docker Compose template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags: [compose]
+
+    - name: Create docker-compose.yml symlink
+      file:
+        src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags: [compose]
+
+    - name: Process deploy script template
+      template:
+        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/deploy"
+        owner: root
+        group: root
+        mode: '0755'
+      tags: [deploy-script]
+
+    - name: Create {{ app }} control script symlink
+      file:
+        src: "/var/data/{{ app }}-{{ env }}/deploy"
+        dest: "/var/data/deploy_{{ app }}-{{ env }}"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags: [deploy-script]
+
+    - name: Ensure overlay networks exist from app_networks variable
+      include_tasks: ../../shared/tasks/create_networks.yml
+      tags: [networks]
+
+    - name: Deploy {{ app }} stack
+      # env_file contents are read by `docker stack deploy` into the
+      # service spec, so a changed password or setting rolls the services
+      # by itself; no forced restart is needed.
+      shell: |
+        cd /var/data/{{ app }}-{{ env }}
+        ./deploy
+      register: deploy_output
+      tags: [deploy]
+
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags: [deploy]
+
+    - name: Create or update the skbom portal tile in Authentik
+      # On by default (AUTHENTIK_TILE: true); opt out per instance with
+      # AUTHENTIK_TILE: false. skbom sits behind the cluster's domain-wide
+      # Traefik ForwardAuth catch-all (or its own OIDC login, when
+      # OIDC_ENABLED) already; this just gives it a bookmark tile on the
+      # Authentik portal. See shared/tasks/authentik_portal_tile.yml.
+      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
+      vars:
+        portal_tile:
+          enabled: "{{ skbom.AUTHENTIK_TILE | default(true) | bool }}"
+          slug: "{{ skbom.AUTHENTIK_TILE_SLUG | default(skb_router, true) }}"
+          name: "{{ skbom.AUTHENTIK_TILE_NAME | default('SKBom (Dependency-Track)', true) }}"
+          launch_url: "https://{{ skb_host }}"
+          group: "{{ skbom.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          icon: "{{ skbom.AUTHENTIK_TILE_ICON | default('fa://fa-shield-halved', true) }}"
+          icon_file: "{{ skbom.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
+          icon_name: "{{ skbom.AUTHENTIK_TILE_ICON_NAME | default('skbom', true) }}"
+          open_in_new_tab: "{{ skbom.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
+          description: "{{ skbom.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
+      tags:
+        - config
+        - authentik

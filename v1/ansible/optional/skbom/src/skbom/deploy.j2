@@ -1,0 +1,45 @@
+#!/bin/bash
+set -e
+
+# skbom (Dependency-Track) Deploy Script
+# Environment: {{ env }}
+APPNAME=skbom
+STACK_NAME=skbom-{{ env }}
+CONFIG_DIR="/var/data/config/${STACK_NAME}"
+COMPOSE_FILE="${CONFIG_DIR}/skbom.yml"
+APISERVER="${STACK_NAME}_apiserver"
+
+if [ ! -f "${COMPOSE_FILE}" ]; then
+    echo "Error: Compose file not found: ${COMPOSE_FILE}"
+    exit 1
+fi
+
+cd "${CONFIG_DIR}"
+
+# env_file values are copied into the service spec here, so a changed
+# setting or password rolls the affected services without a forced restart.
+docker stack deploy \
+    -c "${COMPOSE_FILE}" \
+    --prune \
+    --with-registry-auth \
+    "${STACK_NAME}"
+
+# First boot runs Dependency-Track's own schema migrations before /health
+# answers UP, so the poll budget is generous (HEALTH_WAIT_SECONDS, default
+# 600) and the result is a warning, never a failed deploy.
+echo "Waiting for ${APISERVER} to converge..."
+WAIT=${HEALTH_WAIT_SECONDS:-600}
+for _ in $(seq 1 $(( (WAIT + 4) / 5 ))); do
+    REPLICAS=$(docker service ls --filter "name=${APISERVER}" --format "{% raw %}{{.Replicas}}{% endraw %}")
+    [[ -n "$REPLICAS" && "${REPLICAS%%/*}" == "${REPLICAS##*/}" && "${REPLICAS##*/}" != 0 ]] && break
+    sleep 5
+done
+if [[ -n "$REPLICAS" && "${REPLICAS%%/*}" == "${REPLICAS##*/}" && "${REPLICAS##*/}" != 0 ]]; then
+    echo "${APISERVER} is running (${REPLICAS})"
+else
+    echo "${APISERVER} not converged: ${REPLICAS}"
+    docker service logs --tail 20 "${APISERVER}" || true
+fi
+echo "Dependency-Track UI: https://{{ skb_host }}/"
+echo "Dependency-Track API: https://{{ skb_host }}/api/version"
+echo "Deployment complete!"

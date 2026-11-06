@@ -41,6 +41,7 @@ tag yet.
 | [skha](#skha) | core | Keepalived VRRP floating VIP | keepalived (apt, unpinned) | none | VIP only, no container ports | none (host config) | `vip`, `auth_pass` | `health_checks` list | pending |
 | [sksec](#sksec) | core | CrowdSec agent + Traefik bouncer | crowdsec `v1.6.11` + bouncer `0.5.0` | skfence or skfenceha | forwardAuth middleware only, no public router | `config/sksec-<env>/` | `CROWDSEC_AGENT_HOST`, `COLLECTIONS` | `TRAEFIK_HA_MODE` (false) | v2.19.0 |
 | [skboard](#skboard) | optional | Vikunja task board (sqlite) | Vikunja `0.24.6` | none | `skboard[-env].<cluster>.<domain>` | `skboard-<env>/data` | `JWT_SECRET`, `CLUSTERNAME`, `DOMAIN` | mailer (off) | v2.19.0 |
+| [skbom](#skbom) | optional | OWASP Dependency-Track (SBOM store + CVE matching), the image-patching half of the skpatch program | Dependency-Track `4.14.6` apiserver + frontend, Postgres `17.7` (all digest-pinned) | skfence or skfenceha; sksso for the portal tile or `OIDC_ENABLED` | `skbom[-env].<cluster>.<domain>` | `skbom-<env>/apiserver-data`, `runtime/skbom-<env>/postgres`, `skbom-<env>/database-dump` | `DB_PASSWORD` | `OIDC_ENABLED` (false), `PLACEMENT_CONSTRAINTS` (`node.labels.skbom == true`, not a bare worker), `DATA_NODE` (floating) | pending |
 | [skbook](#skbook) | optional | BookStack wiki + MariaDB | BookStack `v26.09-ls285`, MariaDB `10.11` | none | `skbook[-env].<cluster>.<domain>` | `skbook-<env>/bookstack/config`, `runtime/skbook-<env>/db` | `MYSQL_ROOT_PASSWORD`, `DB_USERNAME`/`DB_PASSWORD`, `APP_KEY` | `ENABLE_SSO` (false) | v2.19.0 |
 | [skdash](#skdash) | optional | Dashy service dashboard, Traefik-API discovery | Dashy `4.7.10` | none | `skdash[-env].<cluster>.<domain>` | `skdash-<env>/config` | `CLUSTERNAME`, `DOMAIN`; `discovery.traefik_api_url`/`_token` if discovery on | `discovery.enabled` (true) | pending |
 | [skdesk](#skdesk) | optional | RustDesk relay (hbbs/hbbr) | rustdesk-server (digest-pinned) | none | host ports 21115-21119 (host networking) | `skdesk-<env>/data` | `PLACEMENT_HOSTNAME` | `ENCRYPTED_ONLY` (true) | v2.19.0 |
@@ -292,6 +293,46 @@ shell/curl). Check `docker service ps <stack>_vikunja` or hit the router URL.
 **Gotchas**: single-manager, sqlite-on-shared-storage deploy; after 3
 restart failures in 120s Swarm stops retrying and the service sits at 0
 replicas until forced. See its [README](../v1/ansible/optional/skboard/README.md).
+
+### skbom
+
+OWASP Dependency-Track: `apiserver` (Java API, does the CVE matching) and
+`frontend` (static SPA) behind one host, Traefik routing
+`PathPrefix(`/api`)` to `apiserver` and everything else to `frontend`,
+plus its own Postgres and a `pg_dumpall` sidecar (the same Postgres image
+[skflow](#skflow) defaults to, so the two share a layer). The image-side
+CVE register for the wider [skpatch program](../docs/skpatch-program.md);
+the host-patching half is the separate [skpatch](#skpatch) role.
+
+**Prerequisites**: none to deploy; the planned `skflow` `f/skpatch/sbom`
+flow is what actually feeds it SBOMs on a schedule.
+
+**Minimal vault snippet**:
+
+```yaml
+skbom:
+  DB_PASSWORD: "changeme"
+  CLUSTERNAME: "<cluster>"
+  DOMAIN: "example.com"
+```
+
+**Deploy**: `deploy_skbom-<env>.yml`, standard invocation. Label the
+target node first (`docker node update --label-add skbom=true <node>`):
+the default placement constraint is the node label, not a bare worker
+match, because apiserver needs a node sized for its JVM heap.
+
+**Health check**: `curl -s https://skbom.<cluster>.<domain>/api/version`
+(apiserver's `/health` is the container healthcheck; `/api/version` is a
+second unauthenticated endpoint that doubles as a human-friendly probe).
+
+**Gotchas**: `apiserver`'s `/data` (its own secret/keystore, encrypts any
+integration credential it stores) is local state exactly like Postgres's
+data directory, not stateless like a typical API container, so it shares
+Postgres's `DATA_NODE` pin rather than the stateless placement the
+frontend gets. OIDC login (Dependency-Track's own, not a forward-auth
+proxy) is off by default and validated all-or-nothing: `OIDC_ENABLED:
+true` needs both `OIDC_ISSUER` and `OIDC_CLIENT_ID`, or the deploy
+refuses. See the [README](../v1/ansible/optional/skbom/README.md).
 
 ### skbook
 
