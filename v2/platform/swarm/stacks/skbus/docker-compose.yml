@@ -3,7 +3,7 @@
 # coordination. Passwords come from the secret backend (env), never committed.
 services:
   nats:
-    image: nats:2.10-alpine
+    image: nats:2.15-alpine
     command: ["--config", "/etc/nats/nats-server.conf"]
     environment:
       - NATS_SERVER_NAME={{.Task.Slot}}              # unique per replica

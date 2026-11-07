@@ -46,7 +46,7 @@ healthcheck:
 # Deploy block — NATS JetStream message bus, HA (3-node cluster).
 deploy:
   container: nats
-  image: "nats:2.10-alpine"
+  image: "nats:2.15-alpine"
   command: ["-js", "-m", "8222"]
   ports:
     - "4222:4222"
