@@ -54,7 +54,7 @@ healthcheck:
 # Deploy block — Garage S3-compatible object store, HA (3 nodes, replication_factor=3).
 deploy:
   container: garage
-  image: "dxflrs/garage:v1.0.1"
+  image: "dxflrs/garage:v1.3.1"
   ports:
     - "3900:3900"
     - "3903:3903"
