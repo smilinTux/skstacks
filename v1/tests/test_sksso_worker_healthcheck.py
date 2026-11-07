@@ -7,8 +7,10 @@ it always matched itself and passed whether or not a worker was running
 (prod: "healthy" on Authentik 2025.12.3, which has no celery at all). The
 check now matches argv elements exactly: a process with a `worker` argument
 and either `manage` (`python -m manage worker`, the worker of Authentik 2024.x
-with celery in-process and of 2025.10+ with dramatiq) or a celery executable
-(older releases).
+with celery in-process and of 2025.10+ with dramatiq), `ak` (`ak worker`, the
+Rust worker of 2026.5+: without this, Swarm kills a healthy worker every few
+minutes, seen upgrading nor on 2026-11-06) or a celery executable (older
+releases).
 
 The test runs the rendered healthcheck's own Python against a fake /proc
 that also holds the checker's own processes."""
@@ -53,6 +55,7 @@ INIT = ["dumb-init", "--", "ak", "worker"]
 
 
 @pytest.mark.parametrize("worker", [
+    ["dumb-init", "--", "ak", "worker"],
     ["/ak-root/venv/bin/python", "/ak-root/venv/bin/celery", "-A", "authentik.root.celery", "worker"],
     ["python", "-m", "manage", "worker", "--pid-file", "/dev/shm//authentik-worker.pid"],
 ])

@@ -7,6 +7,11 @@ Each entry says what an instance must do, if anything.
 
 ### Upgrade notes (instances)
 
+- **sksso on Authentik 2026.5 or newer**: the worker healthcheck only recognized `manage` and
+  `celery` processes, so the Rust worker introduced in 2026.5 (`ak worker`) was marked unhealthy
+  and killed by Swarm every few minutes although it was working. The check now accepts `ak`
+  too. Redeploy sksso before or with an upgrade to 2026.5+.
+
 - **skpatch Phase 1 (image pin audit, 2026-11-06), skgraph/skvector/sksync/skpdf/skorch
   defaults**: a fleet-wide audit of every image still running `:latest` on the nor and
   NAM estates found these five framework defaults were the real gaps (the rest of the
