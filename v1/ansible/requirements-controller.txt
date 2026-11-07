@@ -1,0 +1,8 @@
+# Python packages the Ansible CONTROLLER needs (the machine running
+# ansible-playbook), installed into the same Python as ansible itself:
+#   "$(head -1 "$(command -v ansible-playbook)" | sed 's/^#!//')" -m pip install -r v1/ansible/requirements-controller.txt
+# Target hosts need none of these.
+
+# sksec-web: tasks/patch_sksw_config_yaml.py round-trips the app's
+# config.yaml, keeping comments and keys it does not own.
+ruamel.yaml==0.19.1
