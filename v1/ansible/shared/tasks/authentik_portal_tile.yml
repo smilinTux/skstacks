@@ -59,7 +59,9 @@
 # bootstrapped once per cluster with sksso's src/sksso/ensure-api-token.sh,
 # the same token optional/skrac and optional/skmesh already use). sksso's
 # vault file is found the same way those roles find it: this app's own
-# vault filename with its `<app>-` prefix swapped for `sksso-`.
+# vault filename with its `<app>-` prefix swapped for `sksso-`. sksso is an
+# optional role, so for a core role (skfence, skfenceha) the directory is
+# also swapped from core/group_vars to optional/group_vars.
 #
 # Nothing here creates the group: a typo in `portal_tile.group`, or a
 # cluster where that group does not exist yet, fails loudly instead of
@@ -68,7 +70,8 @@
 - name: "Portal tile ({{ app }}): locate sksso's vault (holds sksso.api_token)"
   set_fact:
     portal_tile_sksso_vault_file: >-
-      {{ portal_tile.authentik_vault_file | default((vault_file_path | dirname) ~ '/'
+      {{ portal_tile.authentik_vault_file | default((vault_file_path
+         | replace('/core/group_vars/', '/optional/group_vars/') | dirname) ~ '/'
          ~ (vault_file_path | basename | regex_replace('^' ~ app ~ '-', 'sksso-'))) }}
   when: portal_tile.enabled | default(false) | bool
 

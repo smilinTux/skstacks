@@ -67,7 +67,7 @@
       launch_url: "https://{{ skmesh_host }}/"
       icon: >-
         {{ 'application-icons/sk/' ~ (skmesh.AUTHENTIK_TILE_ICON_NAME | default('netbird', true)) ~ '.png'
-           if (skmesh_icon_copy is succeeded) else (skmesh.AUTHENTIK_TILE_ICON | default('', true)) }}
+           if (skmesh_icon_copy is defined and skmesh_icon_copy is succeeded) else (skmesh.AUTHENTIK_TILE_ICON | default('', true)) }}
       redirect_uris:
         - "https://{{ skmesh_host }}/nb-auth"
         - "https://{{ skmesh_host }}/nb-silent-auth"
