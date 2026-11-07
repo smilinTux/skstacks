@@ -18,7 +18,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
       - run: pip install pytest pyyaml
@@ -32,7 +32,7 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
       - run: bash v2/skwire/build_pyz.sh "$GITHUB_WORKSPACE/skwire.pyz"
@@ -54,7 +54,7 @@ jobs:
           # (system Python) or `pip install skwire`. Re-add macos-13 here if needed.
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
       - run: pip install pyinstaller
@@ -89,7 +89,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions: { contents: write }
     steps:
-      - uses: actions/checkout@v4               # for the installer scripts
+      - uses: actions/checkout@v7               # for the installer scripts
       - uses: actions/download-artifact@v4
         with: { path: artifacts }
       - name: collect artifacts + installers
