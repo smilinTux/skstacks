@@ -60,7 +60,7 @@ services:
   # Executes CI/CD workflows from SKGit
   # =============================================================================
   forgejo-runner:
-    image: code.forgejo.org/forgejo/runner:{{ skgit.RUNNER_VERSION | default('11.1.2') }}
+    image: code.forgejo.org/forgejo/runner:{{ skgit.RUNNER_VERSION | default('13.2.1') }}
     container_name: skgit-{{ env }}-runner
     hostname: skgit-{{ env }}-runner
     restart: unless-stopped
