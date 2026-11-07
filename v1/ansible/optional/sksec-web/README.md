@@ -121,26 +121,68 @@ itself still refuses the delete.
 
 ## Sign-in and SSO
 
-`AUTH_MODE` (same two-path pattern as skhome/skgym):
+`AUTH_MODE`:
 
 - **`sso` (default): Authentik forward auth in front.** `SSO_MIDDLEWARE`
   (default `authentik@file`) guards the whole router. Authentik needs a
   proxy provider in forward-auth mode covering the `sksec-web` host, bound
   to the embedded outpost, **with its application restricted to the
   cluster's admin group** (see "Why this is admin-grade" above). Users
-  still sign in to the dashboard's own account system afterward (or its
-  own OIDC, if an operator wires that up separately; out of scope here).
+  still sign in to the dashboard's own account system afterward (a
+  separate first-run local account, unless `oidc` below is used instead).
 - **`local`: no SSO.** The dashboard's own accounts only. Refused unless
   `sksec_web.ALLOW_LOCAL_PUBLIC_RISK: true` is also set (naming the risk
   explicitly), because an admin-grade CrowdSec console with no forward auth
   in front of it must never be an accident.
+- **`oidc`: the dashboard's own OIDC login against sksso (Authentik), no
+  forward auth.** One sign-in, no separate first-run account, Authentik
+  group membership decides the role. Verified against the pinned
+  `crowdsec-web-ui` source (`server/config.ts`, `server/app-auth.ts`):
+  - Required: `OIDC_ISSUER` (the Authentik application's issuer URL, e.g.
+    `https://<sso host>/application/o/<client id>/`; `issuer_mode:
+    per_provider` on sksso's blueprint, see below) and `OIDC_CLIENT_SECRET`
+    (32+ chars, **the same value** as sksso's
+    `SKSEC_WEB_OIDC_CLIENT_SECRET`).
+  - `OIDC_CLIENT_ID` defaults to the router name (e.g. `sksec-web`), the
+    same slug the portal tile below defaults to -- keep them matched (see
+    "Portal tile" below for why).
+  - `OIDC_SCOPE` (default `openid profile email groups`), `OIDC_GROUPS_CLAIM`
+    (default `groups`), `OIDC_ADMIN_GROUPS` (default `authentik Admins`,
+    CSV of Authentik group names), `OIDC_READ_ONLY_GROUPS` (CSV, default
+    none), `OIDC_UNMATCHED_ROLE` (`deny` default, or `admin`/`read-only`
+    for a group that matched neither list).
+  - `OIDC_END_SESSION` (default `true`): also end the Authentik session on
+    sign-out.
+  - This role also sets `AUTH_ENABLED=true` and
+    `AUTH_PASSWORD_LOGIN_ENABLED=false`, closing the separate first-run
+    local-account path this mode exists to remove; upstream keeps password
+    login enabled anyway if neither OIDC nor a passkey ends up configured
+    (lockout fallback), which does not trigger here since OIDC is.
+  - **Known caveat (verified in `server/app-auth.ts`):** these settings are
+    read from the app's env on every request, but an **env value is only
+    the default** -- if an OIDC-admin signs in and changes anything under
+    the dashboard's own Settings -> Authentication page, that saved value
+    is written to the app's SQLite database and then wins over the env
+    on every later read until cleared by hand (Settings -> reset to
+    default, or editing the row directly). Operators who manage this vault
+    block must never also hand-edit the OIDC section of that Settings
+    page. (`skpatch`'s equivalent setting is the opposite: its env vars are
+    *pinned*, always win, and lock the field in its own UI -- see
+    `../skpatch/README.md` "Sign-in and the admin group".)
 
 Guard (the deploy refuses, naming the keys): an `AUTH_MODE` other than
-`sso`/`local`; `AUTH_MODE: local` with `SSO_MIDDLEWARE` set; a forward-auth
-middleware (`authentik`, or the configured `SSO_MIDDLEWARE` name) inside
-`TRAEFIK_MIDDLEWARES` directly (in `local` mode that is SSO under another
-name; in either mode, use `AUTH_MODE: sso` / `SSO_MIDDLEWARE` instead);
-`AUTH_MODE: local` without `ALLOW_LOCAL_PUBLIC_RISK: true`.
+`sso`/`local`/`oidc`; `AUTH_MODE: local` or `oidc` with `SSO_MIDDLEWARE`
+set; a forward-auth middleware (`authentik`, or the configured
+`SSO_MIDDLEWARE` name) inside `TRAEFIK_MIDDLEWARES` directly (in `local`/
+`oidc` mode that is SSO under another name; use `AUTH_MODE: sso` /
+`SSO_MIDDLEWARE` instead); `AUTH_MODE: local` without
+`ALLOW_LOCAL_PUBLIC_RISK: true`; `AUTH_MODE: oidc` without `OIDC_ISSUER` or
+a 32+ char `OIDC_CLIENT_SECRET`, or an `OIDC_UNMATCHED_ROLE` other than
+`deny`/`admin`/`read-only`.
+
+The Authentik side (the OAuth2 provider + application, as code) is
+rendered by **sksso**, not this role: see
+`../sksso/README.md` "sksec-web / skpatch (OIDC) login".
 
 ## Design
 
@@ -206,9 +248,18 @@ sksec_web:
   # READ_ONLY: true
   # SESSION_SECRET: "..."
   # SYNC_LOOKBACK: "168h"
-  # AUTH_MODE: sso
-  # SSO_MIDDLEWARE: authentik@file
-  # ALLOW_LOCAL_PUBLIC_RISK: false
+  # AUTH_MODE: sso                            # sso | local | oidc, see "Sign-in and SSO"
+  # SSO_MIDDLEWARE: authentik@file            # sso mode only; must be unset in local/oidc
+  # ALLOW_LOCAL_PUBLIC_RISK: false            # required true with AUTH_MODE: local
+  # OIDC_ISSUER: ""                           # oidc mode: required, e.g. https://<sso host>/application/o/<client id>/
+  # OIDC_CLIENT_ID: ""                        # oidc mode: default the router name (e.g. sksec-web)
+  # OIDC_CLIENT_SECRET: ""                    # oidc mode: required, >= 32 chars, same value as sksso's SKSEC_WEB_OIDC_CLIENT_SECRET
+  # OIDC_SCOPE: "openid profile email groups"
+  # OIDC_GROUPS_CLAIM: groups
+  # OIDC_ADMIN_GROUPS: "authentik Admins"     # CSV of Authentik group names
+  # OIDC_READ_ONLY_GROUPS: ""                 # CSV, default none
+  # OIDC_UNMATCHED_ROLE: deny                 # deny | admin | read-only
+  # OIDC_END_SESSION: true
   # HOSTNAME: sksec-web.example.com
   # TRAEFIK_MIDDLEWARES: default-no-error-pages@file
   # TLS_OPTIONS: intermediate@file
@@ -241,17 +292,27 @@ network and registers against its LAPI; it fails loudly (no Running
 
 `v1/tests/test_sksec_web_render.py` (real Ansible, `v1/tests/render/`):
 defaults, every knob, the `AUTH_MODE` guards (missing SSO, contradictory
-middleware, local without the explicit risk flag), the missing-`LAPI_PASSWORD`
-and too-short-`LAPI_PASSWORD` refusals, the unpinned-image refusal, the data
-path/node guard, and dev/staging/prod playbook parity.
+middleware, local without the explicit risk flag, oidc without its issuer/
+secret or with a bad unmatched role), the `oidc` mode env rendering, the
+missing-`LAPI_PASSWORD` and too-short-`LAPI_PASSWORD` refusals, the
+unpinned-image refusal, the data path/node guard, and dev/staging/prod
+playbook parity. `v1/tests/test_sksec_web_skpatch_oidc_sso.py` covers the
+sksso side (the Authentik blueprint).
 
 ## Portal tile (Authentik)
 
 On by default (`sksec_web.AUTHENTIK_TILE`, default `true`; set to `false` to opt out): the next deploy creates
-or updates a provider-less Authentik `core.Application` named `AUTHENTIK_TILE_NAME`
+or updates an Authentik `core.Application` named `AUTHENTIK_TILE_NAME`
 (default `SKSec Web (CrowdSec)`), launch URL `https://<the public host above>`, icon
 `AUTHENTIK_TILE_ICON` (default `fa://fa-shield-halved`), bound to the group
-`AUTHENTIK_TILE_GROUP` (default `authentik Admins`, which must already exist). This
-only adds a dashboard bookmark; it creates no provider and changes nothing about
-`AUTH_MODE`/forward auth above. Needs `sksso.api_token` in sksso's own vault (see
+`AUTHENTIK_TILE_GROUP` (default `authentik Admins`, which must already exist).
+**`AUTH_MODE: sso`/`local`:** this adds a provider-less dashboard bookmark only;
+it creates no provider and changes nothing about
+`AUTH_MODE`/forward auth above. **`AUTH_MODE: oidc`:** this role's own
+`AUTHENTIK_TILE_SLUG` defaults to the same router name sksso's blueprint
+gives the real OAuth2 application (see "Sign-in and SSO"), so this updates
+that SAME Application's tile fields and group binding instead of creating
+a second, provider-less one -- one Authentik Application, not two (see
+`shared/src/authentik_portal_tile.py` "keeping its existing provider").
+Needs `sksso.api_token` in sksso's own vault (see
 `optional/sksso/README.md`). See `shared/tasks/authentik_portal_tile.yml`.

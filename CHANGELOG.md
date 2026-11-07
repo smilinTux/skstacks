@@ -7,6 +7,40 @@ Each entry says what an instance must do, if anything.
 
 ### Upgrade notes (instances)
 
+- **sksso on Authentik 2026.5 or newer**: the worker healthcheck only recognized `manage` and
+  `celery` processes, so the worker introduced in 2026.5 (`ak worker`) was marked unhealthy and
+  killed by Swarm every few minutes although it was working. It now uses the image's own
+  `ak healthcheck`. Redeploy sksso before or with an upgrade to 2026.5+.
+- **sksec-web / skpatch new `AUTH_MODE: oidc` (2026-11-06), via sksso as code**: both
+  roles default to `AUTH_MODE: sso` and keep doing exactly what they did before
+  (byte-identical render when `AUTH_MODE` is unset) -- this is additive, not a default
+  change. The new third mode gives the dashboard its own OIDC login against sksso
+  (Authentik), with no forward-auth middleware in front and Authentik group membership
+  deciding the role (admin/read-only/deny), closing the "sign in to Authentik, then
+  still hit the app's own first-run local-account screen" gap both roles' READMEs
+  previously called "out of scope". Verified against the pinned upstream source
+  (`crowdsec-web-ui` `server/config.ts`/`server/app-auth.ts`,
+  `linux-update-dashboard` `server/auth/auth-config.ts`/`server/auth/oidc.ts`), not
+  just docs. sksso renders the Authentik side as code (OAuth2 provider + application +
+  a private `groups` scope mapping), the same blueprint mechanism skflow (Windmill) already
+  uses, gated on a new `sksso.SKSEC_WEB_OIDC_CLIENT_SECRET` / `sksso.SKPATCH_OIDC_CLIENT_SECRET`
+  (same value as each app's own `OIDC_CLIENT_SECRET`). The blueprint's Application slug
+  defaults to the same router name each role's own portal tile (`AUTHENTIK_TILE_SLUG`)
+  already defaults to, so the existing portal-tile provisioner
+  (`shared/src/authentik_portal_tile.py`, its provider-preservation logic from #242)
+  manages that ONE Authentik Application's tile + group binding instead of creating a
+  second, provider-less one. **Instance action**: none to keep current behavior. To
+  adopt `oidc` on an existing `sso`/`local` instance: (1) in sksso's vault, set
+  `SKSEC_WEB_OIDC_CLIENT_SECRET` / `SKPATCH_OIDC_CLIENT_SECRET` (32+ chars) and
+  redeploy sksso; (2) in that app's own vault, set `AUTH_MODE: oidc`, `OIDC_ISSUER`
+  (`https://<sso host>/application/o/<client id>/`), and the SAME client secret in
+  `OIDC_CLIENT_SECRET`, then redeploy that app. There is no teardown path yet: flipping
+  back to `sso`/`local` and removing the secret from sksso's vault stops the blueprint
+  from being re-applied, but does not delete the provider/application Authentik already
+  has (same limitation skflow's blueprint has had all along); clean that up by hand if
+  retiring OIDC for an app rather than redeploying it elsewhere. Tests:
+  `v1/tests/test_sksec_web_render.py`, `v1/tests/test_skpatch_render.py`,
+  `v1/tests/test_sksec_web_skpatch_oidc_sso.py`.
 - **sksec-web config patcher runs with the controller's own Python**: `tasks/patch_app_config_yaml.yml` called a hardcoded `~/.skenv/bin/python3`, so a
   controller without that venv (or without ruamel.yaml in it) failed the deploy with
   `ModuleNotFoundError`. It now uses `ansible_playbook_python`, and the controller's
