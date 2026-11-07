@@ -1,4 +1,4 @@
-# Managed by SKStacks optional/skpatch (provision_skpatch_nodes.yml).
+# Managed by SKStacks optional/skpatch-hosts (provision_skpatch_hosts_nodes.yml).
 # Do not edit by hand; rerun the playbook instead. Exact commands, absolute
 # paths, no NOPASSWD: ALL, no unbounded wildcards.
 #
@@ -32,9 +32,9 @@
 
 {% if skp_node_allow_actions | bool %}
 # Actions (upgrade/reboot): only present when this host's
-# skpatch_allow_actions (or the instance-wide skpatch.ALLOW_ACTIONS when
+# skpatch_hosts_allow_actions (or the instance-wide skpatch_hosts.ALLOW_ACTIONS when
 # the host sets nothing) is true. Hypervisors, the NAS and anything else
-# that must stay report-only set skpatch_allow_actions: false in their own
+# that must stay report-only set skpatch_hosts_allow_actions: false in their own
 # group_vars, which keeps this whole block off regardless of the
 # instance-wide knob. Same DPkg::Lock::Timeout=60 flag as the read-only
 # update above (the app always passes it); "upgrade"/"full-upgrade", not

@@ -6,7 +6,7 @@
 Ansible role. It has two halves that both answer the same question,
 "is everything we run current and free of a known fix-available CVE,
 and if not, how fast does that get closed", for two different kinds of
-thing: **hosts** (Linux packages, via the `skpatch` role, already
+thing: **hosts** (Linux packages, via the `skpatch-hosts` role, already
 deployed) and **container images** (via a scan-and-automate pipeline that
 is partly built: `renovate.json` exists, the rest is landing in phases).
 
@@ -16,12 +16,12 @@ is partly built: `renovate.json` exists, the rest is landing in phases).
   inventories every container image an estate runs, scans it for known
   vulnerabilities, opens the dependency bumps that close them, and gates
   every bump through the same release process as a hand-written change.
-  It sits alongside the existing `skpatch` role, which does the
+  It sits alongside the existing `skpatch-hosts` role, which does the
   equivalent job for host-level Linux packages over SSH.
 - **Key entry points:**
-  - [`v1/ansible/optional/skpatch/README.md`](../v1/ansible/optional/skpatch/README.md):
+  - [`v1/ansible/optional/skpatch-hosts/README.md`](../v1/ansible/optional/skpatch-hosts/README.md):
     the host-patching role, deploy, provisioning, the sudoers allowlist.
-  - [`v1/ansible/optional/skpatch/SOP.md`](../v1/ansible/optional/skpatch/SOP.md):
+  - [`v1/ansible/optional/skpatch-hosts/SOP.md`](../v1/ansible/optional/skpatch-hosts/SOP.md):
     that role's own operating procedures (build, test, deploy, troubleshoot).
   - [`renovate.json`](../renovate.json): the dependency-bump automation
     for both v1 and v2 image references; see
@@ -73,7 +73,7 @@ release gate except the one documented same-day lane.
 
 | Component | Role | Status |
 |---|---|---|
-| `skpatch` (Ansible role) | Host-level Linux package updates over SSH, report-only by default (see its own [README](../v1/ansible/optional/skpatch/README.md)). | **Live:** deployed per-estate already. |
+| `skpatch-hosts` (Ansible role) | Host-level Linux package updates over SSH, report-only by default (see its own [README](../v1/ansible/optional/skpatch-hosts/README.md)). | **Live:** deployed per-estate already. |
 | `renovate.json` (this repo) | Detects outdated/vulnerable image pins across `v1/**/*.j2` and `v2/**/*.yaml`, opens grouped PRs. | **Live config, not yet running:** no scheduler has executed it (see [`docs/dependency-updates.md`](./dependency-updates.md) "Turning it on"). |
 | `skred-scan` (`.github/workflows/skred-scan.yml`) | Nightly source-code scan (gitleaks, trivy, semgrep) plus the estate denylist gate. Scans repo **source**, not running images. | **Live.** |
 | `skbom` | Dependency-Track (vulnerability register, matched continuously against NVD/GHSA/OSV) plus a daily Trivy SBOM job that feeds it. Lives behind SSO with a portal tile. | **Planned.** Not yet a role in this framework; stood up per-estate as its own service. |
@@ -101,8 +101,8 @@ flowchart LR
     skbom[("skbom<br/>Dependency-Track")] <-->|"https TLS1.3 (classical)<br/>SBOM upload / match"| skflow
     skbom -->|"https TLS1.3 (classical)<br/>outbound only"| feeds([NVD / GHSA / OSV])
     skflow -->|"https TLS1.3 (classical)"| notify([chat + unified GTD])
-    skpatchrole["skpatch role<br/>(host patching, per estate)"] -->|"ssh ed25519 (classical)"| estateA
-    skpatchrole -->|"ssh ed25519 (classical)"| estateB
+    skpatchhostsrole["skpatch-hosts role<br/>(host patching, per estate)"] -->|"ssh ed25519 (classical)"| estateA
+    skpatchhostsrole -->|"ssh ed25519 (classical)"| estateB
 ```
 
 ### 3.2 Component view: the moving parts
@@ -122,7 +122,7 @@ flowchart TD
     end
     subgraph estate["each estate"]
       swarmhosts["Swarm manager/worker nodes"]
-      skpatchdash["skpatch dashboard<br/>(linux-update-dashboard)"]
+      skpatchhostsdash["skpatch-hosts dashboard<br/>(linux-update-dashboard)"]
     end
 
     skflowsrv -->|"dispatch via webhook"| skflowworker
@@ -137,7 +137,7 @@ flowchart TD
     gatevm -->|"status.json, green/glitch"| runner2
     runner2 -->|"f/skrelease: tag + forward-merge"| skgit2
     skflowworker -->|"f/ops/notify: alerts, GTD upsert"| ops([chat + GTD])
-    skpatchdash -->|"ssh (per estate's own keypair)"| swarmhosts
+    skpatchhostsdash -->|"ssh (per estate's own keypair)"| swarmhosts
 ```
 
 ### 3.3 Data-flow: what moves, transformed how, protected by what
@@ -205,7 +205,7 @@ sequenceDiagram
 | High, fix available | Weekly batch (Monday PRs, mid-week estate A, end-of-week estate B). |
 | Upstream rebuild on the same tag (new digest, no CVE fix implied) | Weekly batch, digest bumps grouped per service. |
 | Everything else | Monthly review from the `skbom` dashboard. |
-| Host packages | The `skpatch` role (report-only by default) plus unattended security upgrades on every node. |
+| Host packages | The `skpatch-hosts` role (report-only by default) plus unattended security upgrades on every node. |
 
 Honest limit: the release gate takes on the order of hours on today's
 gate host, so "same day" means same day, not same hour. Shortening that
@@ -259,7 +259,7 @@ continuously instead of by hand.
 
 So this document does not overstate anything it links to:
 
-- **Live:** the `skpatch` role (host patching), `renovate.json` (config
+- **Live:** the `skpatch-hosts` role (host patching), `renovate.json` (config
   only, see below), the `skred-scan` nightly source scan and estate
   denylist gate.
 - **Configured but not yet executing:** `renovate.json` is correct and
@@ -277,5 +277,5 @@ So this document does not overstate anything it links to:
 
 - ⬆️ **Depends on:** [skgit](https://github.com/smilinTux/skstacks/blob/main/docs/v1-service-catalog.md#skgit), the repo-of-record and CI dispatch target for every bump this program opens.
 - ⬆️ **Depends on:** [skflow](https://github.com/smilinTux/skstacks/blob/main/docs/v1-service-catalog.md#skflow), the Windmill engine the `f/skpatch`/`f/skrelease`/`f/ops` flows run on.
-- ↔️ **Sibling:** the `skpatch` role itself: [README](../v1/ansible/optional/skpatch/README.md) · [SOP](../v1/ansible/optional/skpatch/SOP.md).
+- ↔️ **Sibling:** the `skpatch-hosts` role itself: [README](../v1/ansible/optional/skpatch-hosts/README.md) · [SOP](../v1/ansible/optional/skpatch-hosts/SOP.md).
 - 📐 **Standards:** [sk-standards](https://github.com/smilinTux/sk-standards), the doc/SOP, architecture & data-flow, and cryptography standards this document follows.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Create or update a provider-less Authentik portal tile, idempotently.
 
-Some roles (skpulse/Uptime Kuma, sksec-web/CrowdSec Web UI, skpatch/linux
+Some roles (skpulse/Uptime Kuma, sksec-web/CrowdSec Web UI, skpatch-hosts/linux
 update dashboard, and others) sit behind the cluster's domain-wide Traefik
 ForwardAuth catch-all (authentik@file on the router): Authentik already
 gates the host, so no OAuth2/Proxy *provider* is needed for auth. What was

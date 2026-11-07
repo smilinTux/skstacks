@@ -166,9 +166,9 @@ itself still refuses the delete.
     on every later read until cleared by hand (Settings -> reset to
     default, or editing the row directly). Operators who manage this vault
     block must never also hand-edit the OIDC section of that Settings
-    page. (`skpatch`'s equivalent setting is the opposite: its env vars are
+    page. (`skpatch-hosts`'s equivalent setting is the opposite: its env vars are
     *pinned*, always win, and lock the field in its own UI -- see
-    `../skpatch/README.md` "Sign-in and the admin group".)
+    `../skpatch-hosts/README.md` "Sign-in and the admin group".)
 
 Guard (the deploy refuses, naming the keys): an `AUTH_MODE` other than
 `sso`/`local`/`oidc`; `AUTH_MODE: local` or `oidc` with `SSO_MIDDLEWARE`
@@ -182,7 +182,7 @@ a 32+ char `OIDC_CLIENT_SECRET`, or an `OIDC_UNMATCHED_ROLE` other than
 
 The Authentik side (the OAuth2 provider + application, as code) is
 rendered by **sksso**, not this role: see
-`../sksso/README.md` "sksec-web / skpatch (OIDC) login".
+`../sksso/README.md` "sksec-web / skpatch-hosts (OIDC) login".
 
 ## Design
 
@@ -296,7 +296,7 @@ middleware, local without the explicit risk flag, oidc without its issuer/
 secret or with a bad unmatched role), the `oidc` mode env rendering, the
 missing-`LAPI_PASSWORD` and too-short-`LAPI_PASSWORD` refusals, the
 unpinned-image refusal, the data path/node guard, and dev/staging/prod
-playbook parity. `v1/tests/test_sksec_web_skpatch_oidc_sso.py` covers the
+playbook parity. `v1/tests/test_sksec_web_skpatch_hosts_oidc_sso.py` covers the
 sksso side (the Authentik blueprint).
 
 ## Portal tile (Authentik)

@@ -81,7 +81,7 @@ def web_ui_roles():
 
 def test_detects_known_web_ui_roles():
     found = {role for _, role in web_ui_roles()}
-    for expected in ("skpulse", "sksec-web", "skpatch", "skmon", "skport", "skfenceha"):
+    for expected in ("skpulse", "sksec-web", "skpatch-hosts", "skmon", "skport", "skfenceha"):
         assert expected in found
 
 
@@ -93,7 +93,7 @@ def test_does_not_flag_api_only_roles():
 
 # --- happy path: a role wired with each accepted mechanism ---------------
 
-@pytest.mark.parametrize("kind,role", [("optional", "skpulse"), ("optional", "sksec-web"), ("optional", "skpatch")])
+@pytest.mark.parametrize("kind,role", [("optional", "skpulse"), ("optional", "sksec-web"), ("optional", "skpatch-hosts")])
 def test_generic_mechanism_role_is_covered(kind, role):
     assert is_covered(kind, role)
 

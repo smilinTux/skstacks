@@ -1,6 +1,6 @@
 # skbom
 
-**Deploys [OWASP Dependency-Track](https://github.com/DependencyTrack/dependency-track) (Apache-2.0) on the swarm: an SBOM store that matches every uploaded SBOM continuously against NVD/GHSA/OSV.** This is the image-patching half of the wider [skpatch program](../../../../docs/skpatch-program.md); the host-patching half (Linux package updates over SSH) is the separate `skpatch` role. **Maturity tier:** T0, Classical (see "Honest claims"). **Version phase:** framework `v1` tree (see this repo's own [Versions table](../../../../README.md#versions): "Published, one service at a time", not the generic ecosystem `VERSION_LIFECYCLE` "Legacy" phase).
+**Deploys [OWASP Dependency-Track](https://github.com/DependencyTrack/dependency-track) (Apache-2.0) on the swarm: an SBOM store that matches every uploaded SBOM continuously against NVD/GHSA/OSV.** This is the image-patching half of the wider [skpatch program](../../../../docs/skpatch-program.md); the host-patching half (Linux package updates over SSH) is the separate `skpatch-hosts` role. **Maturity tier:** T0, Classical (see "Honest claims"). **Version phase:** framework `v1` tree (see this repo's own [Versions table](../../../../README.md#versions): "Published, one service at a time", not the generic ecosystem `VERSION_LIFECYCLE` "Legacy" phase).
 
 Opt-in: nothing renders or changes for an instance that never runs
 `deploy_skbom-<env>.yml`.
@@ -139,7 +139,7 @@ dump). Point skbackup at `/var/data/skbom-<env>/database-dump`. The
 `apiserver-data` directory (the secret/keystore) is not covered by this
 loop; add it to skbackup separately if an instance wants it recoverable
 without regenerating a fresh keystore (which, note, makes any previously
-stored integration credential unreadable, the same risk skpatch's own
+stored integration credential unreadable, the same risk skpatch-hosts's own
 `LUDASH_ENCRYPTION_KEY` carries).
 
 ## Configuration (vault)
@@ -219,7 +219,7 @@ skbom:
 
 - ⬆️ **Depends on:** [skfence / skfenceha](https://github.com/smilinTux/skstacks/blob/main/docs/v1-service-catalog.md#skfence), Traefik ingress every router here assumes.
 - ⬇️ **Part of:** [the skpatch program](../../../../docs/skpatch-program.md): this role is the image-patching half's CVE register; the planned `skflow` `f/skpatch` flows feed it SBOMs on a schedule.
-- ↔️ **Sibling:** [skpatch](../skpatch/), the host-patching half of the same program.
+- ↔️ **Sibling:** [skpatch-hosts](../skpatch-hosts/), the host-patching half of the same program.
 - ↔️ **Sibling:** [skflow](https://github.com/smilinTux/skstacks/blob/main/docs/v1-service-catalog.md#skflow), Windmill, the engine the program's `f/skpatch`/`f/skrelease`/`f/ops` flows run on; this role's Postgres image default is copied from it on purpose.
 - ↔️ **Sibling:** [skgym](../skgym/), another two-image role behind one host, routed differently: its `web` proxies to `api` internally, this role's Traefik routes to both services directly.
 - 📐 **Standards:** [sk-standards](https://github.com/smilinTux/sk-standards), the doc/SOP, architecture & data-flow, and cryptography standards this README and its SOP follow.

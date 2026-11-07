@@ -12,6 +12,38 @@ Each entry says what an instance must do, if anything.
   now in the pin too, so the running version is readable from `docker service ls`).
   **Instance action**: none for an instance on the default; the next skstream deploy
   updates Plex. An instance pinning its own `PLEX_IMAGE` is unaffected.
+- **skpatch role renamed to skpatch-hosts, plus opt-in host auto-registration**: the
+  Ansible role at `v1/ansible/optional/skpatch/` moved to `v1/ansible/optional/skpatch-hosts/`
+  (role dir, both deploy and provisioning playbook filenames, the `skpatch_hosts:` vault
+  namespace, stack/network/router/default-host names, the `AUTHENTIK_TILE_SLUG` default,
+  and sksso's companion OIDC vault keys `SKPATCH_HOSTS_OIDC_CLIENT_SECRET`/`_HOST`/
+  `_CLIENT_ID`/`_APP_NAME`); the **skpatch program** name (`docs/skpatch-program.md`, the
+  planned `skflow` `f/skpatch` flows) is unchanged -- this role is only the host-patching
+  half of it. The portal tile's default name also changes to "SKPatch Hosts" (previously
+  "SKPatch (Linux updates)"). **Instance action**: see
+  `v1/ansible/optional/skpatch-hosts/SOP.md` "Migrating an existing skpatch instance to
+  skpatch-hosts" for the full in-place recipe (rename the vault file and its top-level
+  key, deploy the new stack alongside the still-running old one, reprovision under the
+  new playbook name, verify, then remove the old stack -- `DATA_PATH` and the provisioned
+  `skpatch-ro` account are kept, so no credential or SSH-access loss).
+
+  **Also new on this role**: `provision_skpatch_hosts_nodes.yml`, on every `present` run,
+  can now upsert the target group's nodes as dashboard systems through the upstream app's
+  own API (`src/skpatch-hosts/systems_sync.py`), so the dashboard is never empty after a
+  deploy. Opt-in (`skpatch_hosts.API_TOKEN` + `API_CREDENTIAL_ID`, both unset by default);
+  idempotent by the upstream app's own `(hostname, port, username)` uniqueness (confirmed
+  against the pinned `linux-update-dashboard` source, `system-service.ts`); a node no
+  longer in the target group is reported, never deleted. Researched: the dashboard's API
+  tokens are a separate auth path from session-cookie login, so `AUTH_MODE: oidc` with
+  password login off does not block them -- no local-admin-password bootstrap is needed.
+  What IS unavoidable: every token, regardless of permissions, is barred from
+  `/api/credentials` (upstream's own token-scope list), and registering a system needs an
+  existing `credentialId`; only a signed-in human can create that credential, through the
+  UI, once per estate. See README.md "Automatic host registration" for that one-time
+  bootstrap (mint a token with `systems:add`/`systems:edit`, add one SSH credential for
+  the estate's existing keypair, put both values in the vault). Tests:
+  `v1/tests/test_skpatch_hosts_render.py`, `test_skpatch_hosts_provision.py`,
+  `test_skpatch_hosts_systems_sync.py`, `test_sksec_web_skpatch_hosts_oidc_sso.py`.
 
 - **sksso on Authentik 2026.5 or newer**: the worker healthcheck only recognized `manage` and
   `celery` processes, so the worker introduced in 2026.5 (`ak worker`) was marked unhealthy and

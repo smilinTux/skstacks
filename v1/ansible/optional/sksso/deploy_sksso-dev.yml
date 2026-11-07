@@ -214,14 +214,14 @@
         - templates
         - deploy
 
-    - name: skpatch (linux update dashboard) OAuth2 blueprint (sksso.SKPATCH_OIDC_CLIENT_SECRET)
+    - name: skpatch-hosts (linux update dashboard) OAuth2 blueprint (sksso.SKPATCH_HOSTS_OIDC_CLIENT_SECRET)
       include_tasks:
-        file: tasks/skpatch_blueprint.yml
+        file: tasks/skpatch_hosts_blueprint.yml
         apply:
           tags:
             - templates
             - deploy
-      when: sksso.SKPATCH_OIDC_CLIENT_SECRET | default('', true) | string | length > 0
+      when: sksso.SKPATCH_HOSTS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0
       tags:
         - templates
         - deploy

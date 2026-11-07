@@ -1,5 +1,5 @@
 """shared/src/authentik_portal_tile.py: the provider-less bookmark-tile
-provisioner used by skpulse/sksec-web/skpatch (and any future role) to put
+provisioner used by skpulse/sksec-web/skpatch-hosts (and any future role) to put
 a dashboard tile on the Authentik portal for a service that already sits
 behind the cluster's domain-wide ForwardAuth catch-all.
 

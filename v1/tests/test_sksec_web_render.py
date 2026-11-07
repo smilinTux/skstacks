@@ -170,7 +170,7 @@ def test_auth_mode_oidc_client_id_defaults_to_the_same_slug_as_the_portal_tile(t
     # Design requirement: the OIDC blueprint and the portal tile must manage
     # the SAME Authentik Application (one object, not two). sksso's own
     # blueprint defaults its client id/slug to the router name too (see
-    # test_sksec_web_skpatch_oidc_sso.py); this just pins sksec-web's own
+    # test_sksec_web_skpatch_hosts_oidc_sso.py); this just pins sksec-web's own
     # side of that default: OIDC_CLIENT_ID and the portal tile's slug both
     # fall back to the router name when unset.
     out = ok(tmp_path, BASE | OIDC_VAULT)

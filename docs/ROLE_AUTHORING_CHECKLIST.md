@@ -56,9 +56,9 @@ a role's README is the hub (purpose, quickstart, "Start here", config
 knobs, "Related projects / See also") and its `SOP.md` carries the full
 operating procedure in the standard's 9-section order, with at least one
 mermaid architecture diagram of the role itself. **Reference
-implementation:** `v1/ansible/optional/skpatch/`
-([README](../v1/ansible/optional/skpatch/README.md) ·
-[SOP](../v1/ansible/optional/skpatch/SOP.md)): a role with a nontrivial
+implementation:** `v1/ansible/optional/skpatch-hosts/`
+([README](../v1/ansible/optional/skpatch-hosts/README.md) ·
+[SOP](../v1/ansible/optional/skpatch-hosts/SOP.md)): a role with a nontrivial
 privilege model (an SSH credential per estate, a gated sudoers
 allowlist) is exactly the case where splitting "what and why" (README)
 from "how, in full" (SOP) earns its keep. Not yet backfilled onto every

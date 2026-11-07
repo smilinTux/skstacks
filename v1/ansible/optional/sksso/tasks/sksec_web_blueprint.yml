@@ -5,7 +5,7 @@
 # server and worker); the worker applies it. The client secret reaches
 # Authentik as the SKSEC_WEB_OIDC_CLIENT_SECRET env var (see sksso.env.j2)
 # and is read with !Env, so it is not in the blueprint file. See the README
-# section "sksec-web / skpatch (OIDC) login".
+# section "sksec-web / skpatch-hosts (OIDC) login".
 
 - name: Resolve the sksec-web OIDC settings
   set_fact:
