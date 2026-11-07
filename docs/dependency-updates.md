@@ -66,7 +66,7 @@ already uses standard file shapes for them:
 OpenTofu (`v2/infra/tofu/**`) has no container image references to pin - the
 `image =` fields there are cloud-provider VM/AMI names (Hetzner, Proxmox),
 and `registry_mirrors` is a list of mirror URLs, not a versioned image. v3
-is a single `CLAUDE.md` placeholder with nothing to pin.
+is a single `AGENTS.md` placeholder with nothing to pin.
 
 ## Grouping and review
 
