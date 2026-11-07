@@ -7,6 +7,12 @@ Each entry says what an instance must do, if anything.
 
 ### Upgrade notes (instances)
 
+- **skstream: Plex 1.43.5.11079 (from 1.43.4.10903)**: `PLEX_IMAGE`'s default moves to
+  `plexinc/pms-docker:1.43.5.11079-b3b13e506` with its multi-arch digest (the version tag is
+  now in the pin too, so the running version is readable from `docker service ls`).
+  **Instance action**: none for an instance on the default; the next skstream deploy
+  updates Plex. An instance pinning its own `PLEX_IMAGE` is unaffected.
+
 - **sksso on Authentik 2026.5 or newer**: the worker healthcheck only recognized `manage` and
   `celery` processes, so the worker introduced in 2026.5 (`ak worker`) was marked unhealthy and
   killed by Swarm every few minutes although it was working. It now uses the image's own
