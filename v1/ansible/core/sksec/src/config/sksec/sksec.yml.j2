@@ -90,10 +90,15 @@ services:
       - sksec{{ env_suffix }}
       - cloud-public{{ env_suffix }}
     deploy:
+{# stop-first, never start-first: crowdsec is ONE replica owning ONE SQLite
+   LAPI db. start-first runs the old and new LAPI side by side (two writers),
+   and on a node with no spare reservation the new task cannot schedule, so
+   the update strands at 2/1 (nor, 2026-11-06, coord card ef917e74). The
+   bouncer is stateless and stays start-first. #}
       update_config:
         parallelism: 1
         delay: 10s
-        order: start-first
+        order: stop-first
       restart_policy:
         condition: any
         delay: 10s
