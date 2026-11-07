@@ -4,7 +4,7 @@
 # swap off Loki (Apache-2.0, ~87% less RAM).
 services:
   prometheus:
-    image: prom/prometheus:v3.2.1
+    image: prom/prometheus:v3.16.0
     command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d"]
     volumes:
       - ${SKMON_CONFIG_DIR}/prometheus.yml:/etc/prometheus/prometheus.yml:ro
@@ -13,7 +13,7 @@ services:
     deploy: { replicas: 1, restart_policy: { condition: any } }
 
   victorialogs:
-    image: victoriametrics/victoria-logs:v1.18.0-victorialogs
+    image: victoriametrics/victoria-logs:v1.24.0-victorialogs
     command: ["--storageDataPath=/vlogs", "--retentionPeriod=30d"]
     volumes:
       - victorialogs-data:/vlogs
@@ -21,7 +21,7 @@ services:
     deploy: { replicas: 1, restart_policy: { condition: any } }
 
   tempo:
-    image: grafana/tempo:2.7.1
+    image: grafana/tempo:2.10.10
     command: ["-config.file=/etc/tempo/tempo.yml"]
     volumes:
       - ${SKMON_CONFIG_DIR}/tempo.yml:/etc/tempo/tempo.yml:ro
@@ -30,7 +30,7 @@ services:
     deploy: { replicas: 1, restart_policy: { condition: any } }
 
   grafana:
-    image: grafana/grafana:11.5.2
+    image: grafana/grafana:11.6.16
     environment:
       - GF_SECURITY_ADMIN_PASSWORD__FILE=/run/secrets/grafana_admin_password
     secrets: [grafana_admin_password]
@@ -41,7 +41,7 @@ services:
     deploy: { replicas: 1, restart_policy: { condition: any } }
 
   alloy:
-    image: grafana/alloy:v1.7.1
+    image: grafana/alloy:v1.21.3
     command: ["run", "/etc/alloy/config.alloy"]
     volumes:
       - ${SKMON_CONFIG_DIR}/config.alloy:/etc/alloy/config.alloy:ro
