@@ -20,7 +20,14 @@ import io
 import os
 import sys
 
-from ruamel.yaml import YAML
+try:
+    from ruamel.yaml import YAML
+except ImportError:  # the controller python, not the target, needs it
+    sys.exit(
+        "ERROR: ruamel.yaml is not installed for the Python running "
+        "ansible-playbook (" + sys.executable + "). Install the controller "
+        "requirements: pip install -r v1/ansible/requirements-controller.txt"
+    )
 
 raw = base64.b64decode(os.environ["SKSW_CFG_B64"])
 yaml = YAML()
