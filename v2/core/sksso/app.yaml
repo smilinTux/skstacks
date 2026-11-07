@@ -51,7 +51,7 @@ healthcheck:
 # Deploy block — Authentik SSO server, HA replicas behind the Gateway.
 deploy:
   container: authentik-server
-  image: "ghcr.io/goauthentik/server:2024.10"
+  image: "ghcr.io/goauthentik/server:2024.12"
   command: ["server"]
   ports:
     - "9000:9000"
