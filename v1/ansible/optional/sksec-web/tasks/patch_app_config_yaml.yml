@@ -31,9 +31,10 @@
 # Every later deploy: patch ONLY the 5 keys this role actually owns,
 # round-tripping through ruamel.yaml (preserves comments and any key an
 # operator or the app itself added by hand -- never template/overwrite the
-# whole file). The patch itself is computed on the controller (ruamel.yaml
-# is part of this project's own ~/.skenv venv, the same python every other
-# SK* tool here assumes; see scripts/install.sh), then pushed back only
+# whole file). The patch itself is computed on the controller, by the same
+# Python that runs ansible-playbook (ansible_playbook_python, never a
+# hardcoded venv path), which needs ruamel.yaml from
+# v1/ansible/requirements-controller.txt; then it is pushed back only
 # when at least one owned value actually differs, with a timestamped
 # backup of the original alongside it. A parse failure fails the whole
 # play closed rather than guessing.
@@ -83,7 +84,7 @@
   tags: [config, deploy]
 
 - name: Compute the patched config.yaml on the controller (ruamel round-trip, owned keys only)
-  shell: ~/.skenv/bin/python3 "{{ playbook_dir }}/tasks/patch_sksw_config_yaml.py"
+  shell: '"{{ ansible_playbook_python }}" "{{ playbook_dir }}/tasks/patch_sksw_config_yaml.py"'
   delegate_to: localhost
   become: false
   register: sksw_app_config_patch

@@ -79,6 +79,14 @@ Each entry says what an instance must do, if anything.
   retiring OIDC for an app rather than redeploying it elsewhere. Tests:
   `v1/tests/test_sksec_web_render.py`, `v1/tests/test_skpatch_render.py`,
   `v1/tests/test_sksec_web_skpatch_oidc_sso.py`.
+- **sksec-web config patcher runs with the controller's own Python**: `tasks/patch_app_config_yaml.yml` called a hardcoded `~/.skenv/bin/python3`, so a
+  controller without that venv (or without ruamel.yaml in it) failed the deploy with
+  `ModuleNotFoundError`. It now uses `ansible_playbook_python`, and the controller's
+  packages are listed in the new `v1/ansible/requirements-controller.txt`; a missing
+  ruamel.yaml fails with an install hint. `v1/tests/test_no_hardcoded_controller_venv.py`
+  keeps any task from hardcoding a venv again. **Instance action**: install
+  `v1/ansible/requirements-controller.txt` into the Python that runs `ansible-playbook`
+  on each deploy controller (a no-op where ruamel.yaml 0.19.1 is already there).
 
 - **skpatch Phase 1 (image pin audit, 2026-11-06), skgraph/skvector/sksync/skpdf/skorch
   defaults**: a fleet-wide audit of every image still running `:latest` on the nor and
