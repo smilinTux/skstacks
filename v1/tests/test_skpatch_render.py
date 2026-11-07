@@ -150,6 +150,93 @@ def test_auth_mode_local_is_one_router_without_sso(tmp_path):
     }
 
 
+# --- AUTH_MODE oidc: the dashboard's own OIDC, no forward auth ------------
+
+OIDC_VAULT = {
+    "AUTH_MODE": "oidc",
+    "OIDC_ISSUER": "https://sso.example.test/application/o/skpatch/",
+    "OIDC_CLIENT_SECRET": "example-oidc-client-secret-not-a-real-secret-01",
+}
+
+
+def test_auth_mode_oidc_is_one_router_without_sso(tmp_path):
+    out = ok(tmp_path, BASE | OIDC_VAULT)
+    lab = labels(compose(out)["services"]["dashboard"])
+    assert lab["traefik.http.routers.skpatch.middlewares"] == "default-no-error-pages@file"
+    assert "authentik" not in lab["traefik.http.routers.skpatch.middlewares"]
+
+
+def test_auth_mode_oidc_renders_the_auth_env(tmp_path):
+    out = ok(tmp_path, BASE | OIDC_VAULT)
+    env = env_file(out)
+    assert env["LUDASH_OIDC_ISSUER"] == OIDC_VAULT["OIDC_ISSUER"]
+    assert env["LUDASH_OIDC_CLIENT_ID"] == "skpatch"
+    assert env["LUDASH_OIDC_CLIENT_SECRET"] == OIDC_VAULT["OIDC_CLIENT_SECRET"]
+    assert env["LUDASH_OIDC_SCOPE"] == "openid profile email groups"
+    assert env["LUDASH_OIDC_GROUPS_CLAIM"] == "groups"
+    assert env["LUDASH_OIDC_ADMIN_GROUPS"] == "authentik Admins"
+    assert "LUDASH_OIDC_READ_ONLY_GROUPS" not in env
+    assert env["LUDASH_OIDC_UNMATCHED_ROLE"] == "deny"
+    assert env["LUDASH_OIDC_END_SESSION"] == "true"
+    assert env["LUDASH_PASSWORD_LOGIN_ENABLED"] == "false"
+    # LUDASH_BASE_URL/LUDASH_TRUST_PROXY are unconditional in every mode.
+    assert env["LUDASH_BASE_URL"] == "https://skpatch.render.example.test"
+    assert env["LUDASH_TRUST_PROXY"] == "true"
+
+
+def test_auth_mode_oidc_client_id_defaults_to_the_same_slug_as_the_portal_tile(tmp_path):
+    # Design requirement: the OIDC blueprint and the portal tile must manage
+    # the SAME Authentik Application (one object, not two). sksso's own
+    # blueprint defaults its client id/slug to the router name too (see
+    # test_sksec_web_skpatch_oidc_sso.py).
+    out = ok(tmp_path, BASE | OIDC_VAULT)
+    assert env_file(out)["LUDASH_OIDC_CLIENT_ID"] == "skpatch"
+    pb = (ROLE / "deploy_skpatch-prod.yml").read_text()
+    assert 'skp_oidc_client_id: "{{ skpatch.OIDC_CLIENT_ID | default(skp_router, true) }}"' in pb
+    assert 'slug: "{{ skpatch.AUTHENTIK_TILE_SLUG | default(skp_router, true) }}"' in pb
+
+
+def test_auth_mode_oidc_custom_scope_and_groups(tmp_path):
+    out = ok(tmp_path, BASE | OIDC_VAULT | {
+        "OIDC_SCOPE": "openid profile email groups offline_access",
+        "OIDC_GROUPS_CLAIM": "roles",
+        "OIDC_ADMIN_GROUPS": "skpatch-admins",
+        "OIDC_READ_ONLY_GROUPS": "skpatch-viewers",
+        "OIDC_UNMATCHED_ROLE": "read-only",
+        "OIDC_END_SESSION": False,
+        "OIDC_CLIENT_ID": "skpatch-custom",
+    })
+    env = env_file(out)
+    assert env["LUDASH_OIDC_SCOPE"] == "openid profile email groups offline_access"
+    assert env["LUDASH_OIDC_GROUPS_CLAIM"] == "roles"
+    assert env["LUDASH_OIDC_ADMIN_GROUPS"] == "skpatch-admins"
+    assert env["LUDASH_OIDC_READ_ONLY_GROUPS"] == "skpatch-viewers"
+    assert env["LUDASH_OIDC_UNMATCHED_ROLE"] == "read-only"
+    assert env["LUDASH_OIDC_END_SESSION"] == "false"
+    assert env["LUDASH_OIDC_CLIENT_ID"] == "skpatch-custom"
+
+
+def test_auth_mode_oidc_refuses_missing_issuer(tmp_path):
+    log = fails(tmp_path, BASE | {k: v for k, v in OIDC_VAULT.items() if k != "OIDC_ISSUER"})
+    assert "needs OIDC_ISSUER" in log
+
+
+def test_auth_mode_oidc_refuses_short_client_secret(tmp_path):
+    log = fails(tmp_path, BASE | OIDC_VAULT | {"OIDC_CLIENT_SECRET": "too-short"})
+    assert "OIDC_CLIENT_SECRET" in log
+    assert "too-short" not in log
+
+
+def test_auth_mode_oidc_refuses_an_sso_middleware(tmp_path):
+    log = fails(tmp_path, BASE | OIDC_VAULT | {"SSO_MIDDLEWARE": "authentik@file"})
+    assert "AUTH_MODE is 'oidc'" in log and "SSO_MIDDLEWARE is set" in log
+
+
+def test_auth_mode_oidc_refuses_bad_unmatched_role(tmp_path):
+    log = fails(tmp_path, BASE | OIDC_VAULT | {"OIDC_UNMATCHED_ROLE": "superadmin"})
+    assert "OIDC_UNMATCHED_ROLE must be deny" in log
+
+
 def test_default_env_binds_the_host_and_trusts_the_proxy(base_out):
     assert env_file(base_out) == {
         "LUDASH_ENCRYPTION_KEY": "example-ludash-key-not-a-secret-0123456789AB",
@@ -235,10 +322,10 @@ def test_unpinned_image_fails(tmp_path):
     assert "must be pinned by digest" in log
 
 
-@pytest.mark.parametrize("mode", ["oidc", "authentik", "off", "none"])
+@pytest.mark.parametrize("mode", ["authentik", "off", "none", "bogus"])
 def test_unknown_auth_mode_fails(tmp_path, mode):
     log = fails(tmp_path, BASE | {"AUTH_MODE": mode})
-    assert "skpatch.AUTH_MODE must be 'sso' or 'local'" in log
+    assert "skpatch.AUTH_MODE must be 'sso', 'local' or 'oidc'" in log
 
 
 def test_auth_mode_local_refuses_an_sso_middleware(tmp_path):

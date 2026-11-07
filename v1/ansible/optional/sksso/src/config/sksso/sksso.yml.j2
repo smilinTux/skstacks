@@ -17,6 +17,12 @@ networks:
 # README.md "Local database on a pinned node" for the measured latency gap
 # this closes; it matters most for a downstream OIDC client with a short
 # HTTP timeout (skrac/MeshCentral's openid-client default is 3.5s).
+{# The /blueprints/custom mount (server + worker) is needed when ANY app's
+   own OAuth2/OIDC blueprint is rendered: skflow (Windmill), sksec-web
+   (AUTH_MODE: oidc) or skpatch (AUTH_MODE: oidc). A Jinja comment, so
+   unset knobs still render byte-identical to the v2.26.3 baseline. The
+   condition is inlined in each {% if %} guard, never a {% set %}, so this
+   0644 file is never treated as carrying a secret value. #}
 services:
   postgres:
     image: postgres:16.2
@@ -200,7 +206,7 @@ services:
       - /var/data/config/{{ app }}-{{ env }}/custom/user_settings.py:/data/user_settings.py:ro
 {% endif %}
       - /var/data/{{ app }}-{{ env }}/custom-templates:/templates
-{% if sksso.SKFLOW_OIDC_CLIENT_SECRET | default('', true) | string | length > 0 %}
+{% if (sksso.SKFLOW_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKSEC_WEB_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKPATCH_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) %}
       - /var/data/config/{{ app }}-{{ env }}/blueprints:/blueprints/custom:ro
 {% endif %}
       - /etc/localtime:/etc/localtime:ro
@@ -249,7 +255,7 @@ services:
       - /var/data/config/{{ app }}-{{ env }}/custom/user_settings.py:/data/user_settings.py:ro
 {% endif %}
       - /var/data/{{ app }}-{{ env }}/custom-templates:/templates
-{% if sksso.SKFLOW_OIDC_CLIENT_SECRET | default('', true) | string | length > 0 %}
+{% if (sksso.SKFLOW_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKSEC_WEB_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKPATCH_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) %}
       - /var/data/config/{{ app }}-{{ env }}/blueprints:/blueprints/custom:ro
 {% endif %}
       - /etc/localtime:/etc/localtime:ro
