@@ -21,7 +21,7 @@ version: '3.8'
 
 services:
   falkordb:
-    image: falkordb/falkordb:{{ skgraph.FALKORDB_VERSION | default('v4.18.8@sha256:bbebe3dc3fd109f9a88a48fc97cd146bf4301410872d4dd5d4a755c2d71e37a7') }}
+    image: falkordb/falkordb:{{ skgraph.FALKORDB_VERSION | default('v4.22.3@sha256:725b74d400124862c9e0f318c56bfb3c55b97cd7f301d9dfe8685980fb3c8195') }}
     env_file: /var/data/config/skgraph-{{ env }}/skgraph.env
     logging:
       driver: json-file
