@@ -31,7 +31,7 @@ jobs:
           # gitleaks scans git history. The default shallow clone hid most of
           # it: 98 findings in CI against 249 on a full clone.
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with: { python-version: '3.12' }
 
       - name: install scanners (gitleaks, trivy, semgrep)
