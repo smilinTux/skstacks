@@ -58,7 +58,7 @@ healthcheck:
 # is wired as platform components, not a single container.
 deploy:
   container: forgejo
-  image: "codeberg.org/forgejo/forgejo:10"
+  image: "codeberg.org/forgejo/forgejo:17"
   ports:
     - "3000:3000"
   volumes:

@@ -2,7 +2,7 @@
 # Lightweight self-hosted Git; the GitOps repo + CI live here by default.
 services:
   forgejo:
-    image: codeberg.org/forgejo/forgejo:12
+    image: codeberg.org/forgejo/forgejo:17
     environment:
       - FORGEJO__server__DOMAIN=git.${SKSTACKS_DOMAIN}
       - FORGEJO__server__ROOT_URL=https://git.${SKSTACKS_DOMAIN}/
