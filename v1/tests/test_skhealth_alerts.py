@@ -259,4 +259,11 @@ def test_summary_line_reports_the_runs_own_cost(host):
         out = skhealth(host, *args, now=1000).stdout.splitlines()[-1]
         m = re.search(r"cpu (\d+\.\d\d)s, peak RSS (\d+\.\d) MiB \(largest command (\d+\.\d) MiB\); checks run: ", out)
         assert m, out
-        assert 1.0 < float(m.group(2)) < 128.0, "the engine's own RSS, under the unit's MemoryMax"
+        # The engine runs inside this pytest process (load_engine/exec_module), so
+        # RUSAGE_SELF here is pytest's own peak, which grows with the suite (129.4
+        # MiB in the v2.26.17 gate preflight). Check the line reports this process's
+        # peak, not that pytest fits the unit's 128 MiB MemoryMax; the real budget is
+        # measured on a live host by the lab stage.
+        import resource
+        own = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+        assert 1.0 < float(m.group(2)) <= own + 0.1, "the engine reports its own process peak RSS"
