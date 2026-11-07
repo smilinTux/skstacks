@@ -1,9 +1,9 @@
-"""provision_skpatch_nodes.yml rendered through REAL Ansible, same harness
+"""provision_skpatch_hosts_nodes.yml rendered through REAL Ansible, same harness
 machinery as render/render_playbooks.py (user/group/authorized_key/file
 tasks are stubbed, never touching this test host's real accounts; the
 sudoers template IS rendered for real, so its exact content is checked).
 Covers: the per-host actions ceiling (vault ALLOW_ACTIONS vs a host's own
-skpatch_allow_actions, the host var always wins), the missing/malformed
+skpatch_hosts_allow_actions, the host var always wins), the missing/malformed
 public key guard, present/absent, and -- because the render harness
 rewrites `template:` into a plain Jinja2 set_fact (it never calls the
 real `ansible.builtin.template` module, so `validate: ...` is NEVER
@@ -15,7 +15,7 @@ The command set asserted here (dpkg --audit; apt-get -o
 DPkg::Lock::Timeout=60 {update -qq,upgrade -y,full-upgrade -y,
 autoremove -y}; reboot) is confirmed against the shipped image's own
 server bundle, not the upstream project's README -- see
-src/skpatch/skpatch.sudoers.j2's header comment and the 2026-10-28
+src/skpatch-hosts/skpatch-hosts.sudoers.j2's header comment and the 2026-10-28
 sudoers-mismatch fix for the live evidence. The commands used to be
 `apt list --upgradable`, `apt-get -s dist-upgrade` and
 `cat /var/run/reboot-required`, none of which the app actually runs;
@@ -35,8 +35,8 @@ import render_playbooks as rp  # noqa: E402
 
 pytestmark = pytest.mark.skipif(shutil.which("ansible-playbook") is None, reason="ansible-playbook not installed")
 
-ROLE = rp.ANSIBLE / "optional" / "skpatch"
-PB = ROLE / "provision_skpatch_nodes.yml"
+ROLE = rp.ANSIBLE / "optional" / "skpatch-hosts"
+PB = ROLE / "provision_skpatch_hosts_nodes.yml"
 PUBKEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexampleexampleexampleexampleexampleexamplekey example@render"
 
 # The real, confirmed-live argv (sudoers-escaped: ":" and "=" inside a
@@ -77,21 +77,21 @@ def run(tmp: Path, vault: dict | None, extra_vars: dict | None = None) -> dict:
     run_dir = tmp / "run"
     vault_dir = run_dir / "vaults" / "optional" / "group_vars" / "prod"
     vault_dir.mkdir(parents=True)
-    doc = {} if vault is None else {"skpatch": vault}
-    (vault_dir / "skpatch-prod_vault.yml").write_text(yaml.safe_dump(doc))
+    doc = {} if vault is None else {"skpatch_hosts": vault}
+    (vault_dir / "skpatch-hosts-prod_vault.yml").write_text(yaml.safe_dump(doc))
 
     inv_dir = run_dir / "inventory"
     shutil.copytree(rp.FIXTURES, inv_dir)
     rp.write_inventory(inv_dir / "hosts.yml", "swarm_managers")
-    # extra per-host vars (skpatch_allow_actions) merge onto localhost.
+    # extra per-host vars (skpatch_hosts_allow_actions) merge onto localhost.
     inv = yaml.safe_load((inv_dir / "hosts.yml").read_text())
     inv["all"]["hosts"]["localhost"].update((extra_vars or {}))
     (inv_dir / "hosts.yml").write_text(yaml.safe_dump(inv))
 
     outdir = run_dir / "out"
     (outdir / "_shell").mkdir(parents=True)
-    render_pb = work / "ansible" / "optional" / "skpatch" / "_render_provision.yml"
-    rp.build_render_playbook(work / "ansible" / "optional" / "skpatch" / "provision_skpatch_nodes.yml", render_pb)
+    render_pb = work / "ansible" / "optional" / "skpatch-hosts" / "_render_provision.yml"
+    rp.build_render_playbook(work / "ansible" / "optional" / "skpatch-hosts" / "provision_skpatch_hosts_nodes.yml", render_pb)
 
     env_vars = dict(__import__("os").environ,
                      ANSIBLE_LOCAL_TEMP=str(run_dir / ".ansible_tmp"),
@@ -199,14 +199,14 @@ def test_provision_task_validates_with_the_real_visudo_before_install():
 
 def test_host_level_false_overrides_global_true(tmp_path):
     text = sudoers(tmp_path, {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True},
-                   extra_vars={"skpatch_allow_actions": False})
+                   extra_vars={"skpatch_hosts_allow_actions": False})
     for cmd in ACTION_CMDS:
         assert cmd not in text
 
 
 def test_host_level_true_overrides_global_false(tmp_path):
     text = sudoers(tmp_path, {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": False},
-                   extra_vars={"skpatch_allow_actions": True})
+                   extra_vars={"skpatch_hosts_allow_actions": True})
     for cmd in ACTION_CMDS:
         assert cmd in text
 
@@ -227,7 +227,7 @@ def test_unset_host_level_falls_back_to_the_global_default(tmp_path):
 ], ids=["no-block", "missing", "empty", "garbage", "wrong-prefix"])
 def test_missing_or_malformed_public_key_fails_loudly(tmp_path, vault):
     log = fails(tmp_path, vault)
-    assert "skpatch.SSH_PUBLIC_KEY is required" in log
+    assert "skpatch_hosts.SSH_PUBLIC_KEY is required" in log
 
 
 def test_valid_key_types_are_each_accepted(tmp_path):
@@ -264,13 +264,13 @@ def test_account_gets_a_fixed_non_system_uid_outside_the_container_range():
     # ("currently used by process"). The account must own a fixed uid/gid far
     # above the SYS_UID range (100..999) and the first regular users.
     pb_text = PB.read_text()
-    create = _task(pb_text, "Create the skpatch account (present)")
+    create = _task(pb_text, "Create the skpatch-hosts account (present)")
     assert "system: true" not in create
     assert "uid: \"{{ skpatch_uid }}\"" in create
-    group = _task(pb_text, "Create the skpatch group (present)")
+    group = _task(pb_text, "Create the skpatch-hosts group (present)")
     assert "gid: \"{{ skpatch_uid }}\"" in group
     default = yaml.safe_load(pb_text)[0]["vars"]["skpatch_uid"]
-    assert "skpatch.PROVISION_UID" in default
+    assert "skpatch_hosts.PROVISION_UID" in default
     assert int(default.split("default(")[1].split(",")[0].strip(" )")) >= 5000
 
 

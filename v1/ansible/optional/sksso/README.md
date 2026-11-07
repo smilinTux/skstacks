@@ -370,13 +370,13 @@ blueprint without applying it: `docker exec -i <server container> sh -c 'cat >
 `Importer.from_string(yaml).validate()` (it runs in a transaction that is
 rolled back).
 
-## sksec-web / skpatch (OIDC) login
+## sksec-web / skpatch-hosts (OIDC) login
 
-`sksso.SKSEC_WEB_OIDC_CLIENT_SECRET` / `sksso.SKPATCH_OIDC_CLIENT_SECRET`
+`sksso.SKSEC_WEB_OIDC_CLIENT_SECRET` / `sksso.SKPATCH_HOSTS_OIDC_CLIENT_SECRET`
 (32+ chars, `openssl rand -hex 32`) give `sksec-web` (crowdsec-web-ui) /
-`skpatch` (linux-update-dashboard) their own OIDC login as code, when that
+`skpatch-hosts` (linux-update-dashboard) their own OIDC login as code, when that
 role's own `AUTH_MODE: oidc` is set (see `optional/sksec-web/README.md` /
-`optional/skpatch/README.md` "Sign-in..."). Unset, nothing changes. Set,
+`optional/skpatch-hosts/README.md` "Sign-in..."). Unset, nothing changes. Set,
 the deploy renders `/var/data/config/sksso-<env>/blueprints/<app>-oidc.yaml`
 (no secret inside) and mounts the blueprints directory at
 `/blueprints/custom` (read only) in `server` and `worker`, same mechanism
@@ -395,11 +395,11 @@ by hand is taken over, not duplicated):
 | Object | Value |
 |---|---|
 | OAuth2 provider `<app>` | confidential, client id `<app>` (default; `<APP>_OIDC_CLIENT_ID` overrides), strict redirect `https://<app host>/api/auth/oidc/callback`, authorization flow `default-provider-authorization-implicit-consent`, invalidation flow `default-provider-invalidation-flow`, signing key `authentik Self-signed Certificate`, subject mode `hashed_user_id`, issuer mode `per_provider`, scopes openid, email, profile, and a private `groups` scope mapping (`request.user.ak_groups.all()`) |
-| Application `<app>` | name `<APP>_APP_NAME` (default `SKSec Web (CrowdSec)` / `SKPatch (Linux updates)`), launch URL `https://<app host>/` |
+| Application `<app>` | name `<APP>_APP_NAME` (default `SKSec Web (CrowdSec)` / `SKPatch Hosts`), launch URL `https://<app host>/` |
 
 **No policy binding here, unlike skflow's blueprint above.** The
 Application slug (`<app>`, i.e. the plain router name: `sksec-web` or
-`skpatch`, same for both envs other than prod) is the SAME slug each
+`skpatch-hosts`, same for both envs other than prod) is the SAME slug each
 role's own portal tile defaults `AUTHENTIK_TILE_SLUG` to, so
 `shared/tasks/authentik_portal_tile.yml` (run from that role's own deploy,
 after this blueprint) finds this exact Application and manages its tile
@@ -415,10 +415,10 @@ sksso:
   SKSEC_WEB_HOST: sksec-web.example.org  # default sksec-web[-<env>].<base>
   SKSEC_WEB_OIDC_CLIENT_ID: sksec-web
   SKSEC_WEB_APP_NAME: "SKSec Web (CrowdSec)"
-  SKPATCH_OIDC_CLIENT_SECRET: "..."     # same value as skpatch.OIDC_CLIENT_SECRET
-  SKPATCH_HOST: skpatch.example.org       # default skpatch[-<env>].<base>
-  SKPATCH_OIDC_CLIENT_ID: skpatch
-  SKPATCH_APP_NAME: "SKPatch (Linux updates)"
+  SKPATCH_HOSTS_OIDC_CLIENT_SECRET: "..."     # same value as skpatch_hosts.OIDC_CLIENT_SECRET
+  SKPATCH_HOSTS_HOST: skpatch-hosts.example.org       # default skpatch-hosts[-<env>].<base>
+  SKPATCH_HOSTS_OIDC_CLIENT_ID: skpatch-hosts
+  SKPATCH_HOSTS_APP_NAME: "SKPatch Hosts"
 ```
 
 Run order across the two roles' playbooks: deploy (or redeploy) `sksso`

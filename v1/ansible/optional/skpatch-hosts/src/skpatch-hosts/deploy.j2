@@ -19,12 +19,12 @@ preexisted() {
     return 1
 }
 
-# skpatch (linux-update-dashboard) Deploy Script
+# skpatch-hosts (linux-update-dashboard) Deploy Script
 # Environment: {{ env }}
-APPNAME=skpatch
-STACK_NAME=skpatch-{{ env }}
+APPNAME=skpatch-hosts
+STACK_NAME=skpatch-hosts-{{ env }}
 CONFIG_DIR="/var/data/config/${STACK_NAME}"
-COMPOSE_FILE="${CONFIG_DIR}/skpatch.yml"
+COMPOSE_FILE="${CONFIG_DIR}/skpatch-hosts.yml"
 DASHBOARD="${STACK_NAME}_dashboard"
 
 if [ -f "${CONFIG_DIR}/${APPNAME}.sh.env" ]; then
@@ -62,5 +62,5 @@ else
     echo "${DASHBOARD} not converged: ${REPLICAS}"
     docker service logs --tail 20 "${DASHBOARD}" || true
 fi
-echo "Web UI: https://${SKPATCH_HOST:-unknown}/"
+echo "Web UI: https://${SKPATCH_HOSTS_HOST:-unknown}/"
 echo "Deployment complete!"

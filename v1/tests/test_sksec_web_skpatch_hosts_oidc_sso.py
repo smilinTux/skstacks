@@ -1,15 +1,15 @@
-"""sksec-web and skpatch single sign-on through sksso (Authentik), as code
+"""sksec-web and skpatch-hosts single sign-on through sksso (Authentik), as code
 (AUTH_MODE: oidc on either app's own deploy).
 
 Authentik side: sksso renders a blueprint for the app's own OAuth2/OIDC
 provider + application when sksso.SKSEC_WEB_OIDC_CLIENT_SECRET /
-sksso.SKPATCH_OIDC_CLIENT_SECRET is set (and nothing changes when it is
+sksso.SKPATCH_HOSTS_OIDC_CLIENT_SECRET is set (and nothing changes when it is
 not); the client secret is never in the blueprint, only the !Env reference.
 Unlike skflow (Windmill), neither app needs its own provisioner script:
 both read their OIDC config from plain env vars (verified against the
 pinned crowdsec-web-ui / linux-update-dashboard source, see the two roles'
 own README "Sign-in..." sections), which the apps' own deploy playbooks
-render (covered by test_sksec_web_render.py / test_skpatch_render.py).
+render (covered by test_sksec_web_render.py / test_skpatch_hosts_render.py).
 
 This file covers only the sksso side, and the one design constraint that
 spans both roles: the blueprint's Application slug defaults to the SAME
@@ -27,9 +27,9 @@ import yaml
 OPT = pathlib.Path(__file__).resolve().parents[1] / "ansible/optional"
 SKSSO = OPT / "sksso"
 SKSW = OPT / "sksec-web"
-SKPATCH = OPT / "skpatch"
+SKPATCH_HOSTS = OPT / "skpatch-hosts"
 SKSW_SECRET = "sksec-web-oidc-client-secret-0123456789abcdef"
-SKPATCH_SECRET = "skpatch-oidc-client-secret-0123456789abcdef"
+SKPATCH_HOSTS_SECRET = "skpatch-hosts-oidc-client-secret-0123456789abcdef"
 
 
 class _Loader(yaml.SafeLoader):
@@ -55,9 +55,9 @@ def _blueprint(name, **over):
                    sksso_sksec_web_app_name="SKSec Web (CrowdSec)")
         path = SKSSO / "src/config/sksso/blueprints/sksec-web-oidc.yaml.j2"
     else:
-        ctx = dict(sksso_skpatch_client_id="skpatch", sksso_skpatch_host="skpatch.example.com",
-                   sksso_skpatch_app_name="SKPatch (Linux updates)")
-        path = SKSSO / "src/config/sksso/blueprints/skpatch-oidc.yaml.j2"
+        ctx = dict(sksso_skpatch_hosts_client_id="skpatch-hosts", sksso_skpatch_hosts_host="skpatch-hosts.example.com",
+                   sksso_skpatch_hosts_app_name="SKPatch Hosts")
+        path = SKSSO / "src/config/sksso/blueprints/skpatch-hosts-oidc.yaml.j2"
     ctx.update(over)
     text = path.read_text()
     return text, yaml.load(_jenv(True).from_string(text).render(**ctx), _Loader)
@@ -82,7 +82,7 @@ def _tasks(role, name):
 
 # ---------------------------------------------------------------- Authentik
 
-@pytest.mark.parametrize("name,env_prefix", [("sksec-web", "AUTH"), ("skpatch", "LUDASH")])
+@pytest.mark.parametrize("name,env_prefix", [("sksec-web", "AUTH"), ("skpatch-hosts", "LUDASH")])
 def test_blueprint_describes_the_provider_and_application(name, env_prefix):
     text, bp = _blueprint(name)
     entries = {e["model"]: e for e in bp["entries"]}
@@ -105,10 +105,10 @@ def test_blueprint_describes_the_provider_and_application(name, env_prefix):
     assert "authentik_policies.policybinding" not in entries
 
 
-@pytest.mark.parametrize("name", ["sksec-web", "skpatch"])
+@pytest.mark.parametrize("name", ["sksec-web", "skpatch-hosts"])
 def test_blueprint_never_carries_the_secret_only_an_env_reference(name):
-    secret_env = "SKSEC_WEB_OIDC_CLIENT_SECRET" if name == "sksec-web" else "SKPATCH_OIDC_CLIENT_SECRET"
-    secret = SKSW_SECRET if name == "sksec-web" else SKPATCH_SECRET
+    secret_env = "SKSEC_WEB_OIDC_CLIENT_SECRET" if name == "sksec-web" else "SKPATCH_HOSTS_OIDC_CLIENT_SECRET"
+    secret = SKSW_SECRET if name == "sksec-web" else SKPATCH_HOSTS_SECRET
     text, bp = _blueprint(name)
     prov = next(e for e in bp["entries"] if e["model"].endswith("oauth2provider"))
     assert prov["attrs"]["client_secret"] == ("!Env", secret_env)
@@ -121,7 +121,7 @@ def test_compose_mounts_blueprints_when_either_app_is_enabled():
         assert not any("/blueprints/" in v for v in off)
         on_sksw = _compose(SKSEC_WEB_OIDC_CLIENT_SECRET=SKSW_SECRET)[svc]["volumes"]
         assert "/var/data/config/sksso-prod/blueprints:/blueprints/custom:ro" in on_sksw
-        on_skp = _compose(SKPATCH_OIDC_CLIENT_SECRET=SKPATCH_SECRET)[svc]["volumes"]
+        on_skp = _compose(SKPATCH_HOSTS_OIDC_CLIENT_SECRET=SKPATCH_HOSTS_SECRET)[svc]["volumes"]
         assert "/var/data/config/sksso-prod/blueprints:/blueprints/custom:ro" in on_skp
 
 
@@ -131,11 +131,11 @@ def test_env_file_carries_each_secret_only_when_enabled():
             "CLUSTERNAME": "c", "DOMAIN": "example.com"}
     off = _jenv().from_string(tpl).render(env="prod", sksso=base)
     assert "SKSEC_WEB_OIDC_CLIENT_SECRET=" not in off
-    assert "SKPATCH_OIDC_CLIENT_SECRET=" not in off
+    assert "SKPATCH_HOSTS_OIDC_CLIENT_SECRET=" not in off
     on = _jenv().from_string(tpl).render(env="prod", sksso=dict(
-        base, SKSEC_WEB_OIDC_CLIENT_SECRET=SKSW_SECRET, SKPATCH_OIDC_CLIENT_SECRET=SKPATCH_SECRET))
+        base, SKSEC_WEB_OIDC_CLIENT_SECRET=SKSW_SECRET, SKPATCH_HOSTS_OIDC_CLIENT_SECRET=SKPATCH_HOSTS_SECRET))
     assert f"\nSKSEC_WEB_OIDC_CLIENT_SECRET={SKSW_SECRET}\n" in on
-    assert f"\nSKPATCH_OIDC_CLIENT_SECRET={SKPATCH_SECRET}\n" in on
+    assert f"\nSKPATCH_HOSTS_OIDC_CLIENT_SECRET={SKPATCH_HOSTS_SECRET}\n" in on
 
 
 @pytest.mark.parametrize("env", ["dev", "staging", "prod"])
@@ -144,14 +144,14 @@ def test_sksso_playbooks_render_both_blueprints_before_the_compose(env):
     names = [t.get("name", "") for t in tasks]
     for task_file, when_key in (
         ("tasks/sksec_web_blueprint.yml", "SKSEC_WEB_OIDC_CLIENT_SECRET"),
-        ("tasks/skpatch_blueprint.yml", "SKPATCH_OIDC_CLIENT_SECRET"),
+        ("tasks/skpatch_hosts_blueprint.yml", "SKPATCH_HOSTS_OIDC_CLIENT_SECRET"),
     ):
         i = next(i for i, t in enumerate(tasks) if _inc(t) == task_file)
         assert tasks[i]["when"] == f"sksso.{when_key} | default('', true) | string | length > 0"
         assert i < names.index("Process {{ app }} Docker Compose template") < names.index("Deploy {{ app }} stack")
 
 
-@pytest.mark.parametrize("role,task_file", [("sksso", "sksec_web_blueprint.yml"), ("sksso", "skpatch_blueprint.yml")])
+@pytest.mark.parametrize("role,task_file", [("sksso", "sksec_web_blueprint.yml"), ("sksso", "skpatch_hosts_blueprint.yml")])
 def test_blueprint_task_refuses_a_short_secret(role, task_file):
     assert_task = next(t for t in _tasks(role, task_file) if "assert" in t)
     assert any(">= 32" in c for c in assert_task["assert"]["that"])
@@ -168,10 +168,10 @@ def test_sksec_web_oidc_client_id_defaults_to_the_router_name_like_the_portal_ti
     assert "default('sksec-web'" in facts["sksso_sksec_web_client_id"]
 
 
-def test_skpatch_oidc_client_id_defaults_to_the_router_name_like_the_portal_tile():
-    pb = (SKPATCH / "deploy_skpatch-prod.yml").read_text()
-    assert 'skp_oidc_client_id: "{{ skpatch.OIDC_CLIENT_ID | default(skp_router, true) }}"' in pb
-    assert 'slug: "{{ skpatch.AUTHENTIK_TILE_SLUG | default(skp_router, true) }}"' in pb
-    blueprint_tasks = _tasks("sksso", "skpatch_blueprint.yml")
-    facts = next(t["set_fact"] for t in blueprint_tasks if "sksso_skpatch_client_id" in (t.get("set_fact") or {}))
-    assert "default('skpatch'" in facts["sksso_skpatch_client_id"]
+def test_skpatch_hosts_oidc_client_id_defaults_to_the_router_name_like_the_portal_tile():
+    pb = (SKPATCH_HOSTS / "deploy_skpatch-hosts-prod.yml").read_text()
+    assert 'skp_oidc_client_id: "{{ skpatch_hosts.OIDC_CLIENT_ID | default(skp_router, true) }}"' in pb
+    assert 'slug: "{{ skpatch_hosts.AUTHENTIK_TILE_SLUG | default(skp_router, true) }}"' in pb
+    blueprint_tasks = _tasks("sksso", "skpatch_hosts_blueprint.yml")
+    facts = next(t["set_fact"] for t in blueprint_tasks if "sksso_skpatch_hosts_client_id" in (t.get("set_fact") or {}))
+    assert "default('skpatch-hosts'" in facts["sksso_skpatch_hosts_client_id"]

@@ -1,11 +1,11 @@
 # The "set" pass: every optional knob set, fake values only.
-skpatch:
+skpatch_hosts:
   CLOUDFLARED: true
   HOSTNAME: patch.example.test
   IMAGE: "registry.example.test/linux-update-dashboard:2026.10.9@sha256:0000000000000000000000000000000000000000000000000000000000000000"
   DATA_NODE: render-node-1
-  DATA_PATH: /var/lib/skpatch-render/data
-  PLACEMENT_CONSTRAINTS: ["node.role == worker", "node.labels.skpatch == true"]
+  DATA_PATH: /var/lib/skpatch-hosts-render/data
+  PLACEMENT_CONSTRAINTS: ["node.role == worker", "node.labels.skpatch-hosts == true"]
   TRAEFIK_MIDDLEWARES: "crowdsec-bouncer@file,default-no-error-pages@file"
   AUTH_MODE: sso
   SSO_MIDDLEWARE: "authentik@file"

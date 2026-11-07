@@ -14,7 +14,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 ---
-# skpatch: linux-update-dashboard (self-hosted Linux patch/update dashboard,
+# skpatch-hosts: linux-update-dashboard (self-hosted Linux patch/update dashboard,
 # upstream github.com/TheDuffman85/linux-update-dashboard, AGPL-3.0) behind
 # skfenceha. One upstream image, digest-pinned: `dashboard` (Node, one
 # SQLite file under /data holding encrypted SSH credentials, exactly ONE
@@ -25,7 +25,7 @@
 # first-run account). ALLOW_ACTIONS defaults to false (upgrade/
 # reboot stay off; this role never writes a privileged sudoers line on a
 # target node unless the operator sets it explicitly, see
-# provision_skpatch_nodes.yml). Opt-in: nothing renders unless this
+# provision_skpatch_hosts_nodes.yml). Opt-in: nothing renders unless this
 # playbook runs. See README.md.
 - import_playbook: ../../shared/meta/skstack-header.yml
 
@@ -45,14 +45,14 @@
 - hosts: selected_manager_group
   become: true
   vars:
-    app: skpatch
-    env: staging
-    service_name: skpatch
+    app: skpatch-hosts
+    env: dev
+    service_name: skpatch-hosts
     service_type: optional
     # linux-update-dashboard 2026.10.9 (upstream release image, multi-arch
     # amd64/arm64, pinned by the manifest-LIST digest so either architecture
     # resolves correctly). The compose template writes the same literal so
-    # v1/scripts/list_images.py sees the pin; test_skpatch_render.py keeps
+    # v1/scripts/list_images.py sees the pin; test_skpatch_hosts_render.py keeps
     # the two equal.
     skp_default_image: "ghcr.io/theduffman85/linux-update-dashboard:2026.10.9@sha256:1fb855a4d4b5eacc0ef3a9816064184492e9d068fb4da353c62871faeeeb1543"
   pre_tasks:
@@ -63,7 +63,7 @@
       include_vars: "{{ vault_file_path }}"
       when: vault_file_path is defined
 
-    - name: Fail loudly when the skpatch vault block or its encryption key is missing
+    - name: Fail loudly when the skpatch-hosts vault block or its encryption key is missing
       # LUDASH_ENCRYPTION_KEY encrypts every SSH credential and password the
       # dashboard stores for every node it reaches. The deploy writes it
       # into the app's env file (the vault is the source of truth, not a
@@ -71,24 +71,24 @@
       # stored credential unreadable and they must be re-entered.
       assert:
         that:
-          - skpatch is defined and skpatch is mapping
-          - skpatch.LUDASH_ENCRYPTION_KEY | default('', true) | string | length >= 32
+          - skpatch_hosts is defined and skpatch_hosts is mapping
+          - skpatch_hosts.LUDASH_ENCRYPTION_KEY | default('', true) | string | length >= 32
         fail_msg: >-
-          ERROR: skpatch.LUDASH_ENCRYPTION_KEY is required (a random string
+          ERROR: skpatch_hosts.LUDASH_ENCRYPTION_KEY is required (a random string
           of at least 32 characters, e.g. `openssl rand -base64 32`) in the
-          skpatch vault block. See README.md "Configuration (vault)".
+          skpatch-hosts vault block. See README.md "Configuration (vault)".
         quiet: true
       tags: [config]
 
-    - name: Resolve the skpatch settings
+    - name: Resolve the skpatch-hosts settings
       set_fact:
-        skp_base_domain: "{{ skpatch.DOMAIN | default(domain) if skpatch.CLOUDFLARED | default(false) | bool else (skpatch.CLUSTERNAME | default(cluster_name)) ~ '.' ~ (skpatch.DOMAIN | default(domain)) }}"
-        skp_image: "{{ skpatch.IMAGE | default(skp_default_image, true) }}"
-        skp_data_path: "{{ skpatch.DATA_PATH | default('/var/data/' + app + '-' + env + '/data', true) }}"
-        skp_data_node: "{{ skpatch.DATA_NODE | default('', true) | string }}"
+        skp_base_domain: "{{ skpatch_hosts.DOMAIN | default(domain) if skpatch_hosts.CLOUDFLARED | default(false) | bool else (skpatch_hosts.CLUSTERNAME | default(cluster_name)) ~ '.' ~ (skpatch_hosts.DOMAIN | default(domain)) }}"
+        skp_image: "{{ skpatch_hosts.IMAGE | default(skp_default_image, true) }}"
+        skp_data_path: "{{ skpatch_hosts.DATA_PATH | default('/var/data/' + app + '-' + env + '/data', true) }}"
+        skp_data_node: "{{ skpatch_hosts.DATA_NODE | default('', true) | string }}"
         # default-no-error-pages@file: the dashboard's own JSON API errors
         # (credential validation, login) should not be replaced with HTML.
-        skp_middlewares: "{{ skpatch.TRAEFIK_MIDDLEWARES | default('default-no-error-pages@file', true) }}"
+        skp_middlewares: "{{ skpatch_hosts.TRAEFIK_MIDDLEWARES | default('default-no-error-pages@file', true) }}"
         # AUTH_MODE sso (default): Authentik forward auth (SSO_MIDDLEWARE,
         # default authentik@file) in front of the WHOLE router (this app has
         # no separate external API consumer to carve out, unlike skgym).
@@ -96,37 +96,37 @@
         # SSO_MIDDLEWARE allowed. Bind the Authentik application to the
         # instance's admin group only: this app holds the keys to every
         # node it reaches.
-        skp_auth_mode: "{{ skpatch.AUTH_MODE | default('sso', true) | string | lower }}"
-        skp_sso_middleware: "{{ (skpatch.SSO_MIDDLEWARE | default('', true) | string) if (skpatch.AUTH_MODE | default('sso', true) | string | lower) != 'sso' else (skpatch.SSO_MIDDLEWARE | default('authentik@file', true) | string) }}"
-        skp_tls_options: "{{ skpatch.TLS_OPTIONS | default('intermediate@file', true) }}"
-        skp_router: "skpatch{{ '' if env == 'prod' else '-' + env }}"
+        skp_auth_mode: "{{ skpatch_hosts.AUTH_MODE | default('sso', true) | string | lower }}"
+        skp_sso_middleware: "{{ (skpatch_hosts.SSO_MIDDLEWARE | default('', true) | string) if (skpatch_hosts.AUTH_MODE | default('sso', true) | string | lower) != 'sso' else (skpatch_hosts.SSO_MIDDLEWARE | default('authentik@file', true) | string) }}"
+        skp_tls_options: "{{ skpatch_hosts.TLS_OPTIONS | default('intermediate@file', true) }}"
+        skp_router: "skpatch-hosts{{ '' if env == 'prod' else '-' + env }}"
         # ALLOW_ACTIONS is metadata for the operator and for
-        # provision_skpatch_nodes.yml: it never arms a sudoers rule by
+        # provision_skpatch_hosts_nodes.yml: it never arms a sudoers rule by
         # itself. Default false: report-only.
-        skp_allow_actions: "{{ skpatch.ALLOW_ACTIONS | default(false) | bool }}"
+        skp_allow_actions: "{{ skpatch_hosts.ALLOW_ACTIONS | default(false) | bool }}"
       tags: [config]
 
     - name: Resolve the public host
       set_fact:
-        skp_host: "{{ skpatch.HOSTNAME | default('skpatch' + ('' if env == 'prod' else '-' + env) + '.' + skp_base_domain, true) }}"
+        skp_host: "{{ skpatch_hosts.HOSTNAME | default('skpatch-hosts' + ('' if env == 'prod' else '-' + env) + '.' + skp_base_domain, true) }}"
       tags: [config]
 
-    - name: Resolve the skpatch OIDC settings
+    - name: Resolve the skpatch-hosts OIDC settings
       # AUTH_MODE oidc: the dashboard does its own OIDC against sksso
       # (Authentik); no forward-auth middleware in front (skp_sso_middleware
       # above already resolves empty for any mode other than sso). The
       # client id defaults to the router name so it is the SAME Authentik
-      # Application slug the blueprint (sksso.SKPATCH_OIDC_CLIENT_SECRET)
+      # Application slug the blueprint (sksso.SKPATCH_HOSTS_OIDC_CLIENT_SECRET)
       # and the portal tile below both use -- one object, not two. See
       # README.md "Sign-in and the admin group".
       set_fact:
-        skp_oidc_client_id: "{{ skpatch.OIDC_CLIENT_ID | default(skp_router, true) }}"
-        skp_oidc_scope: "{{ skpatch.OIDC_SCOPE | default('openid profile email groups', true) }}"
-        skp_oidc_groups_claim: "{{ skpatch.OIDC_GROUPS_CLAIM | default('groups', true) }}"
-        skp_oidc_admin_groups: "{{ skpatch.OIDC_ADMIN_GROUPS | default('authentik Admins', true) }}"
-        skp_oidc_read_only_groups: "{{ skpatch.OIDC_READ_ONLY_GROUPS | default('', true) }}"
-        skp_oidc_unmatched_role: "{{ skpatch.OIDC_UNMATCHED_ROLE | default('deny', true) | string | lower }}"
-        skp_oidc_end_session: "{{ skpatch.OIDC_END_SESSION | default(true) | bool }}"
+        skp_oidc_client_id: "{{ skpatch_hosts.OIDC_CLIENT_ID | default(skp_router, true) }}"
+        skp_oidc_scope: "{{ skpatch_hosts.OIDC_SCOPE | default('openid profile email groups', true) }}"
+        skp_oidc_groups_claim: "{{ skpatch_hosts.OIDC_GROUPS_CLAIM | default('groups', true) }}"
+        skp_oidc_admin_groups: "{{ skpatch_hosts.OIDC_ADMIN_GROUPS | default('authentik Admins', true) }}"
+        skp_oidc_read_only_groups: "{{ skpatch_hosts.OIDC_READ_ONLY_GROUPS | default('', true) }}"
+        skp_oidc_unmatched_role: "{{ skpatch_hosts.OIDC_UNMATCHED_ROLE | default('deny', true) | string | lower }}"
+        skp_oidc_end_session: "{{ skpatch_hosts.OIDC_END_SESSION | default(true) | bool }}"
       tags: [config]
 
     - name: Validate the image pin and the public host
@@ -135,7 +135,7 @@
           - "'@sha256:' in skp_image"
           - skp_host is match('^[A-Za-z0-9][A-Za-z0-9.-]*$')
         fail_msg: >-
-          ERROR: skpatch.IMAGE must be pinned by digest (@sha256:) and
+          ERROR: skpatch_hosts.IMAGE must be pinned by digest (@sha256:) and
           HOSTNAME (or CLUSTERNAME/DOMAIN) must be a plain host name. IMAGE
           is {{ skp_image }}, host is {{ skp_host }}.
         quiet: true
@@ -146,7 +146,7 @@
         that:
           - skp_auth_mode in ['sso', 'local', 'oidc']
         fail_msg: >-
-          ERROR: skpatch.AUTH_MODE must be 'sso', 'local' or 'oidc' (it is
+          ERROR: skpatch_hosts.AUTH_MODE must be 'sso', 'local' or 'oidc' (it is
           '{{ skp_auth_mode }}'). See README.md "Sign-in and the admin
           group".
         quiet: true
@@ -157,15 +157,15 @@
       # needs its own issuer/secret rather than SSO_MIDDLEWARE.
       assert:
         that:
-          - skp_auth_mode != 'oidc' or (skpatch.OIDC_ISSUER | default('', true) | string | length > 0)
-          - skp_auth_mode != 'oidc' or (skpatch.OIDC_CLIENT_SECRET | default('', true) | string | length >= 32)
+          - skp_auth_mode != 'oidc' or (skpatch_hosts.OIDC_ISSUER | default('', true) | string | length > 0)
+          - skp_auth_mode != 'oidc' or (skpatch_hosts.OIDC_CLIENT_SECRET | default('', true) | string | length >= 32)
           - skp_oidc_unmatched_role in ['deny', 'admin', 'read-only']
         fail_msg: >-
-          ERROR: skpatch.AUTH_MODE: oidc needs OIDC_ISSUER (the Authentik
+          ERROR: skpatch_hosts.AUTH_MODE: oidc needs OIDC_ISSUER (the Authentik
           application's issuer URL, e.g.
           https://<sso host>/application/o/{{ skp_oidc_client_id }}/) and
           OIDC_CLIENT_SECRET (32+ chars, the same value as sksso's
-          SKPATCH_OIDC_CLIENT_SECRET); OIDC_UNMATCHED_ROLE must be deny,
+          SKPATCH_HOSTS_OIDC_CLIENT_SECRET); OIDC_UNMATCHED_ROLE must be deny,
           admin or read-only. See README.md "Sign-in and the admin group".
         quiet: true
       tags: [config]
@@ -186,7 +186,7 @@
         that:
           - skp_auth_conflicts | length == 0
         fail_msg: >-
-          ERROR: the skpatch vault block contradicts itself: {{ skp_auth_conflicts | join('; ') }}.
+          ERROR: the skpatch-hosts vault block contradicts itself: {{ skp_auth_conflicts | join('; ') }}.
           See README.md "Sign-in and the admin group".
         quiet: true
       tags: [config]
@@ -200,20 +200,20 @@
         that:
           - (skp_data_node | length > 0) or (skp_data_path.startswith('/var/data/'))
         fail_msg: >-
-          skpatch.DATA_PATH points at local disk ({{ skp_data_path }}) but
-          skpatch.DATA_NODE is empty. Set DATA_NODE to the node holding the
+          skpatch_hosts.DATA_PATH points at local disk ({{ skp_data_path }}) but
+          skpatch_hosts.DATA_NODE is empty. Set DATA_NODE to the node holding the
           data.
         quiet: true
       tags: [config]
 
     - name: Define network variables from vault (idempotent network creation)
-      # Subnets: skpatch-prod 172.16.154.0/24, -staging .155, -dev .156
-      # (reserved for skpatch, checked against v1/tests/test_unique_subnets.py).
+      # Subnets: skpatch-hosts-prod 172.16.154.0/24, -staging .155, -dev .156
+      # (reserved for skpatch-hosts, checked against v1/tests/test_unique_subnets.py).
       # Override with the flat per-env skpatch_<env>_networks.
       set_fact:
-        app_networks: "{{ skpatch_staging_networks | default([
-          { 'name': 'skpatch-staging', 'subnet': '172.16.155.0/24', 'driver': 'overlay', 'attachable': true },
-          { 'name': 'cloud-public-staging', 'subnet': '172.16.201.0/24', 'driver': 'overlay', 'attachable': true }
+        app_networks: "{{ skpatch_hosts_dev_networks | default([
+          { 'name': 'skpatch-hosts-dev', 'subnet': '172.16.156.0/24', 'driver': 'overlay', 'attachable': true },
+          { 'name': 'cloud-public-dev', 'subnet': '172.16.202.0/24', 'driver': 'overlay', 'attachable': true }
         ]) }}"
       tags: [networks, config]
 
@@ -225,8 +225,8 @@
     - name: Report the access posture
       debug:
         msg: >-
-          skpatch auth: {{ 'sso (' ~ skp_sso_middleware ~ ' in front of the whole app)' if skp_auth_mode == 'sso' else 'local (its own login only, no forward auth)' }};
-          actions: {{ 'ALLOWED (upstream upgrade/reboot buttons can work, if a target node was provisioned with an actions sudoers rule)' if skp_allow_actions | bool else 'REPORT-ONLY (ALLOW_ACTIONS is false; this knob does not by itself grant anything, see provision_skpatch_nodes.yml)' }}.
+          skpatch-hosts auth: {{ 'sso (' ~ skp_sso_middleware ~ ' in front of the whole app)' if skp_auth_mode == 'sso' else 'local (its own login only, no forward auth)' }};
+          actions: {{ 'ALLOWED (upstream upgrade/reboot buttons can work, if a target node was provisioned with an actions sudoers rule)' if skp_allow_actions | bool else 'REPORT-ONLY (ALLOW_ACTIONS is false; this knob does not by itself grant anything, see provision_skpatch_hosts_nodes.yml)' }}.
       tags: [config]
 
     - name: Create the {{ app }} directories
@@ -264,7 +264,7 @@
       # Ansible templates delegate_to before it evaluates when, so it must
       # render with DATA_NODE unset too (the guard above requires DATA_NODE
       # whenever this task actually runs).
-      delegate_to: "{{ skpatch.DATA_NODE | default(inventory_hostname, true) }}"
+      delegate_to: "{{ skpatch_hosts.DATA_NODE | default(inventory_hostname, true) }}"
 
     - name: Process {{ app }} app env (root only)
       template:
@@ -341,30 +341,30 @@
       debug: var=deploy_output.stdout_lines
       tags: [deploy]
 
-    - name: Create or update the skpatch portal tile in Authentik
+    - name: Create or update the skpatch-hosts portal tile in Authentik
       # On by default (AUTHENTIK_TILE: true); opt out per instance with
-      # AUTHENTIK_TILE: false. AUTH_MODE sso/local: skpatch (linux update
+      # AUTHENTIK_TILE: false. AUTH_MODE sso/local: skpatch-hosts (linux update
       # dashboard) sits behind the cluster's domain-wide Traefik ForwardAuth
       # catch-all already (or has none at all in local mode); this just
       # gives it a bookmark tile on the Authentik portal. AUTH_MODE oidc:
       # the slug below is the SAME one sksso's blueprint
-      # (tasks/skpatch_blueprint.yml) gives the real OAuth2 application, so
+      # (tasks/skpatch_hosts_blueprint.yml) gives the real OAuth2 application, so
       # this updates that one Application's tile fields and group binding
       # instead of creating a second, provider-less one (see
       # shared/src/authentik_portal_tile.py "keeping its existing
       # provider"). Defaults to the admin group: this app holds the keys to
-      # every node it reaches (see "Resolve the skpatch settings" above).
+      # every node it reaches (see "Resolve the skpatch-hosts settings" above).
       include_tasks: ../../shared/tasks/authentik_portal_tile.yml
       vars:
         portal_tile:
-          enabled: "{{ skpatch.AUTHENTIK_TILE | default(true) | bool }}"
-          slug: "{{ skpatch.AUTHENTIK_TILE_SLUG | default(skp_router, true) }}"
-          name: "{{ skpatch.AUTHENTIK_TILE_NAME | default('SKPatch (Linux updates)', true) }}"
+          enabled: "{{ skpatch_hosts.AUTHENTIK_TILE | default(true) | bool }}"
+          slug: "{{ skpatch_hosts.AUTHENTIK_TILE_SLUG | default(skp_router, true) }}"
+          name: "{{ skpatch_hosts.AUTHENTIK_TILE_NAME | default('SKPatch Hosts', true) }}"
           launch_url: "https://{{ skp_host }}"
-          group: "{{ skpatch.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
-          icon: "{{ skpatch.AUTHENTIK_TILE_ICON | default('fa://fa-wrench', true) }}"
-          open_in_new_tab: "{{ skpatch.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
-          description: "{{ skpatch.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
+          group: "{{ skpatch_hosts.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          icon: "{{ skpatch_hosts.AUTHENTIK_TILE_ICON | default('fa://fa-wrench', true) }}"
+          open_in_new_tab: "{{ skpatch_hosts.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
+          description: "{{ skpatch_hosts.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
       tags:
         - config
         - authentik
