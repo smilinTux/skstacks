@@ -5,7 +5,7 @@
 #   SKCACHE_DATA_DIR  — host path for persistence (optional; named volume default)
 services:
   valkey:
-    image: valkey/valkey:8-alpine
+    image: valkey/valkey:9-alpine
     environment:
       - VALKEY_PASSWORD=${VALKEY_PASSWORD}
       # valkey-cli (8.x) reads REDISCLI_AUTH itself, so the healthcheck below
