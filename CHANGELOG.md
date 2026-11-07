@@ -7,6 +7,17 @@ Each entry says what an instance must do, if anything.
 
 ### Upgrade notes (instances)
 
+- **sksso: `skworld` branding pack with a working password-recovery flow**: setting
+  `sksso.branding: skworld` now copies the SKWorld login look (logo, favicon, orange
+  theme) and installs `apply-branding`, which sets the default brand, applies
+  Authentik's stock `default-recovery-flow` when it is missing, and links it to the
+  login page so "Forgot password?" appears. Recovery email uses sksso's global email
+  settings. `tasks/branding.yml` no longer requires `templates/` or
+  `nextcloud-theming.sh` in a pack (skipped when absent); the `nam` pack behaves as
+  before. **Instance action**: none for an instance without `sksso.branding` or on
+  `nam`. To adopt, set `branding: skworld` in the sksso vars, deploy sksso, then run
+  `/var/data/sksso-<env>/apply-branding sksso-<env>` once on the node hosting the
+  `_server` container.
 - **Portal tiles on core roles find sksso's vault again**: skfence and skfenceha (core
   roles) looked for sksso's vault under `core/group_vars/<env>/`, but sksso is optional
   and its vault lives under `optional/group_vars/<env>/`, so their default-on portal tile
