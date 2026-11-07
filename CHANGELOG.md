@@ -7,6 +7,10 @@ Each entry says what an instance must do, if anything.
 
 ### Upgrade notes (instances)
 
+- **Docs: one agent instructions file, `AGENTS.md`**: the root `CLAUDE.md` shim is removed and
+  `AGENTS.md` is reshaped to the sk-standards AGENT_INSTRUCTIONS_STANDARD (commands copied from
+  CI). `v2/CLAUDE.md` and `v3/CLAUDE.md` become nested `AGENTS.md` files. Claude Code reads
+  `AGENTS.md` natively and skips it when a `CLAUDE.md` sits next to it. **Instance action**: none.
 - **Tests: skhealth cost line no longer flakes on a long suite**: the test ran the
   engine inside pytest and held pytest's own peak RSS to the unit's 128 MiB budget,
   which a 5000-test run crossed (129.4 MiB). It now checks the line reports the
