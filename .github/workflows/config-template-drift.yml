@@ -67,7 +67,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with: { python-version: '3.15' }
       - run: pip install pytest pyyaml ansible-core
       - run: python -m pytest -q scripts/tests/test_config_template_tooling.py
 
@@ -76,7 +76,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with: { python-version: '3.15' }
       - run: pip install ansible-core
       - name: Generate template contents from this checkout
         run: scripts/generate-config-template.sh "$RUNNER_TEMP/generated"
@@ -133,6 +133,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with: { python-version: '3.15' }
       - run: pip install 'ansible-core==2.21.3' pyyaml jsonschema pytest
       - run: python v1/tests/render/render_playbooks.py --service skbook --env prod --pass base
