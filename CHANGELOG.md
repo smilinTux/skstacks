@@ -7,6 +7,10 @@ Each entry says what an instance must do, if anything.
 
 ### Upgrade notes (instances)
 
+- **sksso on Authentik 2026.5 or newer**: the worker healthcheck only recognized `manage` and
+  `celery` processes, so the worker introduced in 2026.5 (`ak worker`) was marked unhealthy and
+  killed by Swarm every few minutes although it was working. It now uses the image's own
+  `ak healthcheck`. Redeploy sksso before or with an upgrade to 2026.5+.
 - **sksec-web / skpatch new `AUTH_MODE: oidc` (2026-11-06), via sksso as code**: both
   roles default to `AUTH_MODE: sso` and keep doing exactly what they did before
   (byte-identical render when `AUTH_MODE` is unset) -- this is additive, not a default
