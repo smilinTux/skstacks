@@ -7,6 +7,12 @@ Each entry says what an instance must do, if anything.
 
 ### Upgrade notes (instances)
 
+- **CI: superseded PR runs are cancelled, Renovate rebases only on conflict**: every
+  test and scan workflow (not the release or deploy ones) now has a concurrency group
+  per workflow and PR, so a new push to a PR cancels its older run; pushes to main
+  still queue. `renovate.json` sets `rebaseWhen: conflicted`, so a merge to main no
+  longer rebases every open Renovate PR (with strict up-to-date protection that
+  queued about six workflows per PR on each merge). **Instance action**: none.
 - **sksso: `skworld` branding pack with a working password-recovery flow**: setting
   `sksso.branding: skworld` now copies the SKWorld login look (logo, favicon, orange
   theme) and installs `apply-branding`, which sets the default brand, applies

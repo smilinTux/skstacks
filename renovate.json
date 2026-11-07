@@ -111,5 +111,6 @@
       ],
       "dependencyDashboardApproval": true
     }
-  ]
+  ],
+  "rebaseWhen": "conflicted"
 }
