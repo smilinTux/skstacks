@@ -82,8 +82,14 @@ def _tasks(role, name):
 
 # ---------------------------------------------------------------- Authentik
 
-@pytest.mark.parametrize("name,env_prefix", [("sksec-web", "AUTH"), ("skpatch-hosts", "LUDASH")])
-def test_blueprint_describes_the_provider_and_application(name, env_prefix):
+# role -> the app's own env var prefix. A dict, not a list of string pairs:
+# secret scanners read ("name", "PREFIX") pairs as username/password tuples.
+ENV_PREFIX = {"sksec-web": "AUTH", "skpatch-hosts": "LUDASH"}
+
+
+@pytest.mark.parametrize("name", sorted(ENV_PREFIX))
+def test_blueprint_describes_the_provider_and_application(name):
+    env_prefix = ENV_PREFIX[name]
     text, bp = _blueprint(name)
     entries = {e["model"]: e for e in bp["entries"]}
     scope = entries["authentik_providers_oauth2.scopemapping"]
