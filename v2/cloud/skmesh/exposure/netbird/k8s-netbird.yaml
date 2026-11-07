@@ -22,7 +22,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: netbird
-          image: netbirdio/netbird:0.62.0
+          image: netbirdio/netbird:0.82.0
           securityContext:
             # ponytail: root + NET_ADMIN is what a WireGuard peer needs; writable
             # state lives only in the emptyDirs below. Add a mount if a new
