@@ -1,1 +1,3 @@
 :root { --pf-global--primary-color--100: #E0561F; --pf-global--primary-color--200: #B8441A; --pf-global--link--Color: #E0561F; --pf-global--link--Color--hover: #B8441A; }
+/* Hide the always-appended "Powered by authentik" footer item (the last li of ak-brand-links). */
+ak-brand-links li:last-child { display: none !important; }

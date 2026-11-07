@@ -113,7 +113,10 @@ and installs `apply-branding` next to `deploy`. Run `apply-branding [stack]` onc
 after the stack is up (idempotent). It:
 
 - sets the default brand: title (env `SKWORLD_BRAND_TITLE`, default "SKWorld"),
-  logo, favicon and custom CSS;
+  logo, favicon and custom CSS (orange accent, and the "Powered by authentik"
+  footer hidden);
+- sets the login flow's heading (env `SKWORLD_FLOW_TITLE`, default "Welcome to the
+  Kingdom");
 - makes sure the stock password-recovery flow exists: when no flow with slug
   `default-recovery-flow` is present it applies Authentik's own blueprint
   `example/flows-recovery-email-verification.yaml` in-process (an existing flow is

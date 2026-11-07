@@ -12,6 +12,7 @@ from authentik.flows.models import Flow
 from authentik.stages.identification.models import IdentificationStage
 
 TITLE = os.environ.get("SKWORLD_BRAND_TITLE", "SKWorld")
+FLOW_TITLE = os.environ.get("SKWORLD_FLOW_TITLE", "Welcome to the Kingdom")
 PACK = "/media/public/skworld"
 RECOVERY_SLUG = "default-recovery-flow"
 BLUEPRINT = "/blueprints/example/flows-recovery-email-verification.yaml"
@@ -47,6 +48,12 @@ if recovery:
     b.flow_recovery = recovery
 b.save()
 print("brand ok", b.branding_title, len(css), "recovery" if recovery else "no-recovery")
+
+# 2b. Login flow heading ("Welcome to authentik!" by default).
+if b.flow_authentication and FLOW_TITLE and b.flow_authentication.title != FLOW_TITLE:
+    b.flow_authentication.title = FLOW_TITLE
+    b.flow_authentication.save()
+print("flow title ok", b.flow_authentication.title if b.flow_authentication else "(no login flow)")
 
 # 3. Identification stage(s) of the brand's login flow: show "Forgot password?".
 if recovery and b.flow_authentication:
