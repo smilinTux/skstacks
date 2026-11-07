@@ -98,7 +98,7 @@ services:
 {% endif %}
 
   db:
-    image: mariadb:10.11
+    image: mariadb:13.0
     env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}.env
     # --tmpdir points MariaDB's scratch/sort space at a local (non-NFS) path
     # inside the container's own overlay filesystem, not the NFS-backed
@@ -139,7 +139,7 @@ services:
           memory: {{ skbook.DB_RESOURCES_RESERVATIONS_MEMORY | default("256M") }}
 
   db-backup:
-    image: mariadb:10.11
+    image: mariadb:13.0
     env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}-db-backup.env
     volumes:
       - /var/data/{{ app }}-{{ env }}/database-dump:/dump
