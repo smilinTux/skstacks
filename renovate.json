@@ -3,7 +3,7 @@
   "extends": [
     "config:recommended"
   ],
-  "baseBranches": [
+  "baseBranchPatterns": [
     "main"
   ],
   "dependencyDashboard": true,
@@ -20,8 +20,8 @@
     {
       "customType": "regex",
       "description": "v1/ansible compose templates (Jinja): literal image refs, digest-only refs, and Jinja default() pins, either as the tag or as the whole image reference",
-      "fileMatch": [
-        "^v1/ansible/.+\\.j2$"
+      "managerFilePatterns": [
+        "/^v1/ansible/.+\\.j2$/"
       ],
       "matchStrings": [
         "image:\\s*\"?(?<depName>[\\w.-]+(?:/[\\w.-]+)*):(?<currentValue>[\\w.-]+)(?:@(?<currentDigest>sha256:[a-f0-9]+))?\"?",
@@ -35,9 +35,9 @@
     {
       "customType": "regex",
       "description": "v2 plain-YAML app manifests, compose/swarm-compose files, and the 2 skfence Jinja compose templates: literal image refs (v2 has no Jinja default() image pins today; the one bash-style ${VERSION:-latest} reference in v2/apps/skfence is not extractable by this pattern and is called out in docs/dependency-updates.md)",
-      "fileMatch": [
-        "^v2/.+\\.ya?ml$",
-        "^v2/.+\\.ya?ml\\.j2$"
+      "managerFilePatterns": [
+        "/^v2/.+\\.ya?ml$/",
+        "/^v2/.+\\.ya?ml\\.j2$/"
       ],
       "matchStrings": [
         "image:\\s*\"?(?<depName>[\\w.-]+(?:/[\\w.-]+)*):(?<currentValue>[\\w.-]+)(?:@(?<currentDigest>sha256:[a-f0-9]+))?\"?",
