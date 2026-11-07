@@ -7,6 +7,10 @@ Each entry says what an instance must do, if anything.
 
 ### Upgrade notes (instances)
 
+- **Tests: skhealth cost line no longer flakes on a long suite**: the test ran the
+  engine inside pytest and held pytest's own peak RSS to the unit's 128 MiB budget,
+  which a 5000-test run crossed (129.4 MiB). It now checks the line reports the
+  process's own peak. **Instance action**: none.
 - **CI: superseded PR runs are cancelled, Renovate rebases only on conflict**: every
   test and scan workflow (not the release or deploy ones) now has a concurrency group
   per workflow and PR, so a new push to a PR cancels its older run; pushes to main
