@@ -19,6 +19,12 @@ on:
     - cron: '17 7 * * *'        # nightly drift/dep-CVE sweep
   workflow_dispatch:
 
+concurrency:
+  # One run per workflow per PR (or ref): a new push to a PR cancels the
+  # superseded run; pushes to main queue instead of cancelling.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 

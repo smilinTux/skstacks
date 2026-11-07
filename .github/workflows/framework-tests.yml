@@ -9,6 +9,12 @@ on:
   pull_request:
     paths: ['v1/**', 'v2/platform/**', 'v2/infra/tofu/**', 'tools/**', '.github/workflows/framework-tests.yml']
 
+concurrency:
+  # One run per workflow per PR (or ref): a new push to a PR cancels the
+  # superseded run; pushes to main queue instead of cancelling.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   ansible:
     runs-on: ubuntu-latest
