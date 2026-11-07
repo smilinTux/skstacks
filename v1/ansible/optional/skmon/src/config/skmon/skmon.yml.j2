@@ -17,7 +17,7 @@ version: '3.8'
 
 services:
   prometheus:
-    image: prom/prometheus:v3.15.0
+    image: prom/prometheus:v3.16.0
     volumes:
       - /var/data/config/skmon-{{ env }}/prometheus:/etc/prometheus:ro
       - /var/data/skmon-{{ env }}/prometheus/data:/prometheus
@@ -57,7 +57,7 @@ services:
       start_period: 30s
 
   grafana:
-    image: grafana/grafana:13.2.2
+    image: grafana/grafana:13.3.0
     env_file:
       - /var/data/config/skmon-{{ env }}/skmon.env
     environment:
@@ -102,7 +102,7 @@ services:
       start_period: {{ skmon.GRAFANA_HEALTH_START_PERIOD | default('60s') }}
 
   loki:
-    image: grafana/loki:3.5.4
+    image: grafana/loki:3.7.9
     command: -config.file=/etc/loki/local-config.yaml
     volumes:
       - /var/data/config/skmon-{{ env }}/loki:/etc/loki
@@ -123,7 +123,7 @@ services:
           memory: {{ skmon.LOKI_MEMORY_RESERVATION | default("256M") }}
 
   promtail:
-    image: grafana/promtail:2.9.15
+    image: grafana/promtail:2.9.17
     command: -config.file=/etc/promtail/promtail-config.yaml
     volumes:
       - /var/data/config/skmon-{{ env }}/promtail:/etc/promtail
@@ -210,7 +210,7 @@ services:
           memory: {{ skmon.NODE_EXPORTER_MEMORY_RESERVATION | default("32M") }}
 
   alertmanager:
-    image: prom/alertmanager:{{ skmon.ALERTMANAGER_IMAGE_VERSION | default('v0.34.1') }}
+    image: prom/alertmanager:{{ skmon.ALERTMANAGER_IMAGE_VERSION | default('v0.34.2') }}
     user: "0:0"
     command:
       - '--config.file=/etc/alertmanager/config.yml'
