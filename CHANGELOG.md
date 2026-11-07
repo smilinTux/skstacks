@@ -7,6 +7,17 @@ Each entry says what an instance must do, if anything.
 
 ### Upgrade notes (instances)
 
+- **sksso: `skworld` branding pack with a working password-recovery flow**: setting
+  `sksso.branding: skworld` now copies the SKWorld login look (logo, favicon, orange
+  theme) and installs `apply-branding`, which sets the default brand, applies
+  Authentik's stock `default-recovery-flow` when it is missing, and links it to the
+  login page so "Forgot password?" appears. Recovery email uses sksso's global email
+  settings. `tasks/branding.yml` no longer requires `templates/` or
+  `nextcloud-theming.sh` in a pack (skipped when absent); the `nam` pack behaves as
+  before. **Instance action**: none for an instance without `sksso.branding` or on
+  `nam`. To adopt, set `branding: skworld` in the sksso vars, deploy sksso, then run
+  `/var/data/sksso-<env>/apply-branding sksso-<env>` once on the node hosting the
+  `_server` container.
 - **skstream: Plex 1.43.5.11079 (from 1.43.4.10903)**: `PLEX_IMAGE`'s default moves to
   `plexinc/pms-docker:1.43.5.11079-b3b13e506` with its multi-arch digest (the version tag is
   now in the pin too, so the running version is readable from `docker service ls`).

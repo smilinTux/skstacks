@@ -101,6 +101,33 @@ sksso:
 
 ## Branding
 
+Two packs ship: `nam` (below) and `skworld`. A pack is optional parts only: the
+media dir is required, `templates/` and `nextcloud-theming.sh` are copied only when
+the pack has them.
+
+### `branding: skworld`
+
+`sksso.branding: skworld` copies `branding/skworld/media/` (logo, favicon, orange
+`skworld.css`, `apply_branding.py`) to `/var/data/sksso-<env>/media/public/skworld/`
+and installs `apply-branding` next to `deploy`. Run `apply-branding [stack]` once
+after the stack is up (idempotent). It:
+
+- sets the default brand: title (env `SKWORLD_BRAND_TITLE`, default "SKWorld"),
+  logo, favicon and custom CSS;
+- makes sure the stock password-recovery flow exists: when no flow with slug
+  `default-recovery-flow` is present it applies Authentik's own blueprint
+  `example/flows-recovery-email-verification.yaml` in-process (an existing flow is
+  never overwritten), and sets it as the brand's recovery flow;
+- points the identification stage(s) of the brand's login flow at that flow, so the
+  login page shows "Forgot password?".
+
+Recovery email is sent through sksso's global email settings
+(`AUTHENTIK_EMAIL__*` in `sksso.env`, `sksso.email_from`); the skworld pack ships no
+email templates. Rollback: clear the brand's logo, favicon, custom CSS and recovery
+flow in the admin UI, and clear `recovery_flow` on the identification stage.
+
+### `branding: nam`
+
 `sksso.branding: nam` copies the NAM brand pack (`branding/nam/`) to shared
 storage on every deploy: logo, favicon, flow background and `nam.css` to
 `/var/data/sksso-<env>/media/public/nam/`, and the branded email templates
