@@ -18,6 +18,13 @@ Each entry says what an instance must do, if anything.
   `nam`. To adopt, set `branding: skworld` in the sksso vars, deploy sksso, then run
   `/var/data/sksso-<env>/apply-branding sksso-<env>` once on the node hosting the
   `_server` container.
+- **Portal tiles on core roles find sksso's vault again**: skfence and skfenceha (core
+  roles) looked for sksso's vault under `core/group_vars/<env>/`, but sksso is optional
+  and its vault lives under `optional/group_vars/<env>/`, so their default-on portal tile
+  task failed with "Could not find or access ... sksso-..._vault.yml". The shared
+  `authentik_portal_tile.yml` now swaps the directory for core roles too. skmesh's tile
+  no longer errors when its icon copy result is undefined. **Instance action**: none;
+  `portal_tile.authentik_vault_file` still overrides the path.
 - **skstream: Plex 1.43.5.11079 (from 1.43.4.10903)**: `PLEX_IMAGE`'s default moves to
   `plexinc/pms-docker:1.43.5.11079-b3b13e506` with its multi-arch digest (the version tag is
   now in the pin too, so the running version is readable from `docker service ls`).

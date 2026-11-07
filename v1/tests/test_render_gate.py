@@ -120,6 +120,18 @@ def test_companion_vaults_are_staged_beside_the_services_own(tmp_path):
     assert not (vault_dir / "nope-prod_vault.yml").exists()
 
 
+def test_core_role_companion_vault_lands_in_the_companions_type_dir(tmp_path):
+    vars_dir = tmp_path / "vars"
+    vars_dir.mkdir()
+    (vars_dir / "skfence.with.sksso.yml").write_text("sksso:\n  api_token: fake\n")
+    root = tmp_path / "vaults"
+    own = root / "core" / "group_vars" / "prod"
+    own.mkdir(parents=True)
+    assert rp.stage_companion_vaults("skfence", "prod", own, vars_dir, vaults_root=root) == ["sksso"]
+    assert (root / "optional" / "group_vars" / "prod" / "sksso-prod_vault.yml").exists()
+    assert not (own / "sksso-prod_vault.yml").exists()
+
+
 def test_skmesh_authentik_pass_has_its_sksso_vault():
     assert (rp.VARS / "skmesh.with.sksso.yml").exists()
     assert "api_token" in rp.load_vars(rp.VARS / "skmesh.with.sksso.yml")["sksso"]
