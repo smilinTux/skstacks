@@ -7,7 +7,7 @@
 #   GARAGE_CONFIG_DIR  — host path holding garage.toml (rpc_secret, S3 region, etc.)
 services:
   garage:
-    image: dxflrs/garage:v1.0.1
+    image: dxflrs/garage:v1.3.1
     networks:
       - skstacks
     volumes:
