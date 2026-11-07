@@ -23,7 +23,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: cloudflared
-          image: cloudflare/cloudflared:2026.6.1
+          image: cloudflare/cloudflared:2026.10.7
           args: ["tunnel", "--no-autoupdate", "run"]
           env:
             - name: TUNNEL_TOKEN
