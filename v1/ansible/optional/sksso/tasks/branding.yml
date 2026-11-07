@@ -1,7 +1,8 @@
-# sksso.branding (a pack name under branding/, today only "nam"): put the pack
+# sksso.branding (a pack name under branding/: "nam" or "skworld"): put the pack
 # on shared storage so Authentik serves it. Authentik reads logo, favicon and
 # flow background from media/public/<pack>/ and email templates from
-# custom-templates/. This only copies files; applying them to the database is
+# custom-templates/. A pack may omit templates/ and nextcloud-theming.sh (the
+# skworld pack has neither); both are skipped when absent. This only copies files; applying them to the database is
 # the idempotent helper rendered next to the deploy script
 # (/var/data/<app>-<env>/apply-branding), run once after the stack is up.
 # See README "Branding".
@@ -35,13 +36,24 @@
     group: "{{ sksso.authentik_uid | default(1000) }}"
     mode: '0644'
 
-- name: Copy branded email templates
+- name: Check whether the pack ships email templates and a Nextcloud theming helper
+  stat:
+    path: "{{ playbook_dir }}/branding/{{ sksso.branding }}/{{ item }}"
+  loop:
+    - templates
+    - nextcloud-theming.sh
+  register: sksso_branding_optional
+  delegate_to: localhost
+  become: false
+
+- name: Copy branded email templates (only when the pack has templates/)
   copy:
     src: "{{ playbook_dir }}/branding/{{ sksso.branding }}/templates/"
     dest: "/var/data/{{ app }}-{{ env }}/custom-templates/"
     owner: root
     group: root
     mode: '0644'
+  when: (sksso_branding_optional.results | selectattr('item', 'equalto', 'templates') | first).stat.exists
 
 - name: Install the branding helpers next to the deploy script
   copy:
@@ -53,3 +65,6 @@
   loop:
     - { src: apply-branding.sh, dest: apply-branding }
     - { src: nextcloud-theming.sh, dest: nextcloud-theming }
+  when: >-
+    item.src != 'nextcloud-theming.sh'
+    or (sksso_branding_optional.results | selectattr('item', 'equalto', 'nextcloud-theming.sh') | first).stat.exists
