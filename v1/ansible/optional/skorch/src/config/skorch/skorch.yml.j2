@@ -80,7 +80,7 @@ services:
         delay: 5s
 
   redis:
-    image: redis:7.4.7-alpine
+    image: redis:8.10.3-alpine
     command: redis-server /usr/local/etc/redis/redis.conf
     networks:
       - skorch-{{ env }}
