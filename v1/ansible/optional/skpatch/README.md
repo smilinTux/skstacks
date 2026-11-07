@@ -93,7 +93,7 @@ matter most when reading this role for the first time:
 | Key | Default | What it controls |
 |---|---|---|
 | `LUDASH_ENCRYPTION_KEY` | required, no default | AES-256-GCM key for the credential store. Losing it makes every stored credential unreadable. |
-| `AUTH_MODE` | `sso` | `sso` puts Authentik forward auth in front of the whole router (default); `local` uses the app's own login only. |
+| `AUTH_MODE` | `sso` | `sso` puts Authentik forward auth in front of the whole router (default); `local` uses the app's own login only; `oidc` is the dashboard's own OIDC login against sksso, no forward auth. See "Sign-in and the admin group". |
 | `ALLOW_ACTIONS` | `false` | Instance-wide **metadata**. A node only gets upgrade/reboot sudoers lines when its own `skpatch_allow_actions` (or, if unset, this) is `true`. |
 | `SSH_PUBLIC_KEY` | required by provisioning | Public half of this estate's dedicated keypair. |
 | `PROVISION_USER` | `skpatch-ro` | The low-privilege account `provision_skpatch_nodes.yml` creates on each target node. |
@@ -112,8 +112,17 @@ skpatch:
   CLOUDFLARED: false                        # true: default host is under DOMAIN, not CLUSTERNAME.DOMAIN
   HOSTNAME: ""                              # public host; default skpatch[-dev|-staging].<base domain>
   TRAEFIK_MIDDLEWARES: ""                   # default default-no-error-pages@file
-  AUTH_MODE: sso                            # sso (Authentik forward auth, whole router) | local
-  SSO_MIDDLEWARE: ""                        # sso mode: default authentik@file; must be empty in local mode
+  AUTH_MODE: sso                            # sso (Authentik forward auth, whole router) | local | oidc
+  SSO_MIDDLEWARE: ""                        # sso mode: default authentik@file; must be empty in local/oidc mode
+  OIDC_ISSUER: ""                           # oidc mode: required, e.g. https://<sso host>/application/o/<client id>/
+  OIDC_CLIENT_ID: ""                        # oidc mode: default the router name (e.g. skpatch)
+  OIDC_CLIENT_SECRET: ""                    # oidc mode: required, >= 32 chars, same value as sksso's SKPATCH_OIDC_CLIENT_SECRET
+  OIDC_SCOPE: "openid profile email groups"
+  OIDC_GROUPS_CLAIM: groups
+  OIDC_ADMIN_GROUPS: "authentik Admins"     # CSV of Authentik group names
+  OIDC_READ_ONLY_GROUPS: ""                 # CSV, default none
+  OIDC_UNMATCHED_ROLE: deny                 # deny | admin | read-only
+  OIDC_END_SESSION: true
   TLS_OPTIONS: ""                           # default intermediate@file; "none" = no tls.options label
   TZ: UTC
   LUDASH_LOG_LEVEL: info
@@ -147,6 +156,62 @@ skpatch:
 group_vars of every hypervisor, NAS, or any host that must never be
 upgraded or rebooted through this app. That per-host `false` always
 wins over the vault's instance-wide `ALLOW_ACTIONS: true`.
+
+## Sign-in and the admin group
+
+`AUTH_MODE`:
+
+- **`sso` (default): Authentik forward auth on the whole router.**
+  `SSO_MIDDLEWARE` (default `authentik@file`). Authentik needs a proxy
+  provider in forward-auth mode covering the `skpatch` host, bound to the
+  embedded outpost, with its application restricted to the admin group
+  (this app holds the keys to every node it reaches). Users still sign in
+  to the dashboard's own account system afterward (a separate first-run
+  local account, unless `oidc` below is used instead).
+- **`local`: the app's own login only** (password/TOTP/passkey), no
+  `SSO_MIDDLEWARE` allowed.
+- **`oidc`: the dashboard's own OIDC login against sksso (Authentik), no
+  forward auth.** One sign-in, no separate first-run account, Authentik
+  group membership decides the role. Verified against the pinned
+  `linux-update-dashboard` source (`server/auth/auth-config.ts`,
+  `server/auth/oidc.ts`, `server/routes/auth.ts`):
+  - Required: `OIDC_ISSUER` (the Authentik application's issuer URL, e.g.
+    `https://<sso host>/application/o/<client id>/`; `issuer_mode:
+    per_provider` on sksso's blueprint, see below) and `OIDC_CLIENT_SECRET`
+    (32+ chars, **the same value** as sksso's `SKPATCH_OIDC_CLIENT_SECRET`).
+  - `OIDC_CLIENT_ID` defaults to the router name (e.g. `skpatch`), the same
+    slug `AUTHENTIK_TILE_SLUG` already defaults to above: sksso's blueprint
+    (below) and this role's own portal tile then manage the SAME Authentik
+    Application (see `shared/src/authentik_portal_tile.py` "keeping its
+    existing provider"), not two.
+  - `OIDC_SCOPE` (default `openid profile email groups`), `OIDC_GROUPS_CLAIM`
+    (default `groups`), `OIDC_ADMIN_GROUPS` (default `authentik Admins`,
+    CSV of Authentik group names), `OIDC_READ_ONLY_GROUPS` (CSV, default
+    none), `OIDC_UNMATCHED_ROLE` (`deny` default, or `admin`/`read-only`
+    for a group that matched neither list).
+  - `OIDC_END_SESSION` (default `true`): also end the Authentik session on
+    sign-out.
+  - This role also sets `LUDASH_PASSWORD_LOGIN_ENABLED=false`, closing the
+    separate first-run local-account path this mode exists to remove.
+  - **Verified (`auth-config.ts`): every `LUDASH_OIDC_*` /
+    `LUDASH_PASSWORD_LOGIN_ENABLED` value here is *pinned*.** It always
+    wins over anything saved in the dashboard's own Settings page and is
+    never written back to its database, so a vault change here cannot
+    drift the way it can on sksec-web's equivalent (see
+    `../sksec-web/README.md` "Sign-in and SSO" for that caveat); removing
+    the env var restores whatever was last saved there, if anything.
+
+Guard (the deploy refuses, naming the keys): an `AUTH_MODE` other than
+`sso`/`local`/`oidc`; `SSO_MIDDLEWARE` set with `AUTH_MODE: local` or
+`oidc`; a forward-auth middleware (`authentik`, or the configured
+`SSO_MIDDLEWARE` name) inside `TRAEFIK_MIDDLEWARES` directly (SSO under
+another name; use `AUTH_MODE: sso` / `SSO_MIDDLEWARE` instead);
+`AUTH_MODE: oidc` without `OIDC_ISSUER` or a 32+ char `OIDC_CLIENT_SECRET`,
+or an `OIDC_UNMATCHED_ROLE` other than `deny`/`admin`/`read-only`.
+
+The Authentik side (the OAuth2 provider + application, as code) is
+rendered by **sksso**, not this role: see `../sksso/README.md`
+"sksec-web / skpatch (OIDC) login".
 
 ## Related projects / See also
 
