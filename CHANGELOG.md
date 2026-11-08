@@ -7,6 +7,21 @@ Each entry says what an instance must do, if anything.
 
 ### Upgrade notes (instances)
 
+- **skstream: cli_debrid pinned to v0.7.81, viewer watchlists as code**: the DUMB and
+  cli_debrid configs are seeded once, so per-viewer watchlist sources and the cli_debrid version
+  lived only on the media node (nor had six managed Plex Home sources, a friends RSS source and a
+  hand-patched `plex_watchlist.py`). New `skstream-converge` runs on `MEDIA_NODE` every deploy
+  and upserts only what skstream owns: `CLI_DEBRID_VERSION` (default `v0.7.81`, which carries
+  upstream's managed Plex Home fix de5c411f; `''` = no pin), `PLEX_OTHER_WATCHLISTS` (one source
+  per viewer with their own token) and `PLEX_FRIENDS_WATCHLIST` (owner's friends RSS feed, Plex
+  Pass). Other sources and UI edits are never touched. A new pin restarts `skstream-dumb`; a
+  sources-only change restarts cli_debrid alone (the rclone mount stays up). The play now refuses
+  a `DUMB_EXTRA_BINDS` entry over `plex_watchlist.py` while a release is pinned.
+  **Instance action**: an instance with that patch bind must drop it from the vault in the same
+  deploy. The first deploy upgrades cli_debrid (nor: 0.7.23 to 0.7.81): back up
+  `<LOCAL_ROOT>/dumb-data/cli_debrid` first. Move viewer tokens into `PLEX_OTHER_WATCHLISTS` and
+  set `PLEX_FRIENDS_WATCHLIST: true` where friends should count; existing matching sources are
+  adopted by username, not duplicated.
 - **Portal tile skips cleanly when sksso is not deployed yet**: the default-on tile provisioner
   joins `sksso-<env>`, so any role deployed before sksso (a fresh cluster, the release lab:
   skvector in the v2.26.17 gate) failed with "network sksso-dev not found". The shared task now

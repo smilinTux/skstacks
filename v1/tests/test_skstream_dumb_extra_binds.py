@@ -72,7 +72,8 @@ def test_only_extra_lines_are_added():
 
 def _assert_task(env):
     tasks = [t for play in yaml.safe_load(PLAYBOOKS[env].read_text()) for t in play.get("tasks", [])]
-    return [t for t in tasks if "assert" in t and "DUMB_EXTRA_BINDS" in json.dumps(t)]
+    # the per-entry validator; the plex_watchlist.py refusal is a separate, loopless assert
+    return [t for t in tasks if "assert" in t and "loop" in t and "DUMB_EXTRA_BINDS" in json.dumps(t)]
 
 
 @pytest.mark.parametrize("env", ["dev", "staging", "prod"])
