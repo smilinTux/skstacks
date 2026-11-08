@@ -6,10 +6,41 @@
 # registration off, selected_manager is never set and every skipped task
 # that delegates to it failed ("'selected_manager' is undefined", the
 # v2.26.17 gate). A skipped include_tasks templates nothing inside it.
-- name: Select manager node to reach the dashboard's overlay network
-  import_tasks: ../../../shared/tasks/select_manager_node.yml
-  vars:
-    target_group: "{{ skpatch_hosts_register_manager_group | default('swarm_managers') }}"
+# Pick a reachable swarm manager from the inventory group directly. The
+# shared select_manager_node.yml keeps only managers inside the play's own
+# hosts (-l), which is right for a deploy but never true here: this play's
+# hosts are the nodes being registered (workers, hypervisors, a NAS), so it
+# found no manager and failed (v2.26.17 gate, provision -l <worker>).
+- name: List the swarm managers that can reach the dashboard's overlay network
+  set_fact:
+    skp_reg_managers: "{{ groups[skpatch_hosts_register_manager_group | default('swarm_managers')] | default([]) }}"
+
+- name: Fail when the inventory has no swarm manager group
+  fail:
+    msg: >-
+      Host registration needs a swarm manager to reach the dashboard, but group
+      '{{ skpatch_hosts_register_manager_group | default('swarm_managers') }}' is empty or missing
+      from the inventory.
+  when: skp_reg_managers | length == 0
+
+- name: Check which swarm managers answer
+  wait_for_connection:
+    timeout: 10
+  delegate_to: "{{ item }}"
+  loop: "{{ skp_reg_managers }}"
+  register: skp_reg_manager_check
+  ignore_errors: true  # keeps each result's failed flag, unlike failed_when: false
+
+- name: Use the first swarm manager that answered
+  set_fact:
+    selected_manager: >-
+      {{ (skp_reg_manager_check.results | selectattr('failed', 'false') | map(attribute='item') | list
+          + ['']) | first }}
+
+- name: Fail when no swarm manager answered
+  fail:
+    msg: "Host registration: none of {{ skp_reg_managers | join(', ') }} answered"
+  when: selected_manager | length == 0
 
 - name: Stage the systems-sync script on the selected manager
   copy:
