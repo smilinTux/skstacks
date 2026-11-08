@@ -1,0 +1,116 @@
+# Host registration (skpatch_hosts.API_TOKEN + API_CREDENTIAL_ID set): register
+# this run's target nodes as dashboard systems through a swarm manager.
+# Included by provision_skpatch_hosts_nodes.yml only when registration is
+# configured. It is a separate file, not a `when` on each task, because
+# ansible-core 2.19+ templates delegate_to before evaluating `when`: with
+# registration off, selected_manager is never set and every skipped task
+# that delegates to it failed ("'selected_manager' is undefined", the
+# v2.26.17 gate). A skipped include_tasks templates nothing inside it.
+# Pick a reachable swarm manager from the inventory group directly. The
+# shared select_manager_node.yml keeps only managers inside the play's own
+# hosts (-l), which is right for a deploy but never true here: this play's
+# hosts are the nodes being registered (workers, hypervisors, a NAS), so it
+# found no manager and failed (v2.26.17 gate, provision -l <worker>).
+# NOT SUPPORTED with the pinned dashboard (linux-update-dashboard 2026.10.9).
+# Its server refuses ANY API-token request to create or edit a system:
+# systems.post("/") and systems.put("/:id") both answer 403 "API tokens
+# cannot configure SSH connections" (dist/server/index.js), not only
+# POST /api/credentials as this feature assumed. Found by the v2.26.17 gate,
+# the first run that took registration end to end. Fail loudly instead of
+# half-working; the tasks below are kept for the redesign (a signed-in
+# dashboard session instead of a bearer token, card in the CHANGELOG entry).
+- name: Refuse host auto-registration (the dashboard rejects token writes to /api/systems)
+  fail:
+    msg: >-
+      skpatch-hosts automatic host registration does not work with the pinned
+      linux-update-dashboard (2026.10.9): its API rejects every API-token request to
+      create or edit a system (403 "API tokens cannot configure SSH connections").
+      Unset skpatch_hosts.API_TOKEN and skpatch_hosts.API_CREDENTIAL_ID and add the
+      nodes in the dashboard. Node provisioning itself does not need registration.
+
+- name: List the swarm managers that can reach the dashboard's overlay network
+  set_fact:
+    skp_reg_managers: "{{ groups[skpatch_hosts_register_manager_group | default('swarm_managers')] | default([]) }}"
+
+- name: Fail when the inventory has no swarm manager group
+  fail:
+    msg: >-
+      Host registration needs a swarm manager to reach the dashboard, but group
+      '{{ skpatch_hosts_register_manager_group | default('swarm_managers') }}' is empty or missing
+      from the inventory.
+  when: skp_reg_managers | length == 0
+
+# The play runs with connection: local, and a delegated task inherits the
+# play's connection unless the task names its own. Without the connection
+# lines below, every "manager" answered locally and the script was staged on
+# the controller, not the manager (v2.26.17 gate: "Destination directory
+# /var/data/config/skpatch-hosts-dev does not exist").
+- name: Check which swarm managers answer
+  wait_for_connection:
+    timeout: 10
+  delegate_to: "{{ item }}"
+  connection: "{{ hostvars[item].ansible_connection | default('ssh') }}"
+  loop: "{{ skp_reg_managers }}"
+  register: skp_reg_manager_check
+  ignore_errors: true  # keeps each result's failed flag, unlike failed_when: false
+
+- name: Use the first swarm manager that answered
+  set_fact:
+    selected_manager: >-
+      {{ (skp_reg_manager_check.results | selectattr('failed', 'false') | map(attribute='item') | list
+          + ['']) | first }}
+
+- name: Fail when no swarm manager answered
+  fail:
+    msg: "Host registration: none of {{ skp_reg_managers | join(', ') }} answered"
+  when: selected_manager | length == 0
+
+- name: Stage the systems-sync script on the selected manager
+  copy:
+    src: "{{ playbook_dir }}/src/skpatch-hosts/systems_sync.py"
+    dest: "/var/data/config/{{ app }}-{{ env }}/systems_sync.py"
+    owner: root
+    group: root
+    mode: '0644'
+  delegate_to: "{{ selected_manager }}"
+  connection: "{{ hostvars[selected_manager].ansible_connection | default('ssh') }}"
+  become: true  # root-owned /var/data/config and the docker socket, as in the deploy
+
+- name: Register this run's target nodes as dashboard systems (idempotent, never deletes)
+  command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - -i
+      - --network
+      - "{{ app }}-{{ env }}"
+      - -v
+      - "/var/data/config/{{ app }}-{{ env }}/systems_sync.py:/systems_sync.py:ro"
+      - "{{ skpatch_hosts.PROVISIONER_IMAGE | default('python:3.13.15-alpine@sha256:79e7a9b9ff1cbceff819f856fb374477792a5967759d94df266de7b7b4120e6f', true) }}"
+      - python
+      - /systems_sync.py
+    stdin: >-
+      {{ {'url': 'http://' ~ app ~ '-' ~ env ~ '_dashboard:3001',
+          'token': skp_reg_token,
+          'credential_id': skp_reg_credential_id,
+          'systems': skp_reg_systems | default([])} | to_json }}
+  delegate_to: "{{ selected_manager }}"
+  connection: "{{ hostvars[selected_manager].ansible_connection | default('ssh') }}"
+  become: true  # root-owned /var/data/config and the docker socket, as in the deploy
+  register: skp_reg_result
+  changed_when: "'created' in skp_reg_result.stdout or 'updated' in skp_reg_result.stdout"
+  failed_when: false
+  no_log: true
+
+# The script prints status lines only (never a secret), so its output
+# is safe to show; the task above is no_log because its stdin carries
+# the API token.
+- name: Show the registration result
+  debug:
+    msg: "{{ (skp_reg_result.stdout_lines | default([])) + (skp_reg_result.stderr_lines | default([])) }}"
+
+- name: Fail if host registration failed
+  fail:
+    msg: "skpatch-hosts host registration failed (rc={{ skp_reg_result.rc | default('?') }}), see the lines above"
+  when: (skp_reg_result.rc | default(1)) != 0

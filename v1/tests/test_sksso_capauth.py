@@ -570,3 +570,110 @@ def test_password_login_off_as_a_string_is_off(fake_authentik):
     out = _provision(_cfg(fake, password_login="False"))
     assert out.returncode == 0, out.stderr
     assert fake.ident[0]["password_stage"] is None and "password login: off" in out.stdout
+
+
+# Authentik 2026.8 made UserSourceConnection.user read-only in the API, so
+# POST /sources/user_connections/oauth/ answers HTTP 500 (NULL user_id) and
+# the v2.26.17 gate's CapAuth stage failed. On 2026.2+ the provisioner hands
+# the links to capauth_link_users.py, which the role runs under `ak shell`.
+def test_provisioner_defers_user_links_to_ak_shell_on_2026(fake_authentik):
+    fake = fake_authentik("2026.8.5")
+    out = _provision(_cfg(fake, users=[{"username": "alice", "fingerprint": FP}]))
+    assert out.returncode == 0, out.stderr
+    assert "user links: via ak shell" in out.stdout
+    assert fake.conns == []
+
+
+def test_linker_runs_on_the_worker_node_and_must_report_ok():
+    tasks = {t["name"]: t for t in _tasks("capauth_provision.yml")}
+    link = tasks["Link the CapAuth users to their PGP fingerprints (ak shell)"]
+    assert "sksso_capauth_worker_node.stdout_lines | first" in link["delegate_to"]
+    assert "'links: ok' not in" in link["failed_when"]
+    assert "user links: via ak shell" in link["when"]
+    assert "ak shell" in link["shell"] and "SKSSO_CAPAUTH_LINKS" in link["environment"]
+
+
+class _Q(list):
+    def first(self):
+        return self[0] if self else None
+
+    def exclude(self, user):
+        return _Q(c for c in self if c.user is not user)
+
+
+class _Conn:
+    def __init__(self, source, user, identifier):
+        self.source, self.user, self.identifier = source, user, identifier
+        self.user_id = user.pk
+
+    def save(self):
+        pass
+
+
+def _run_linker(users, conns, monkeypatch, existing_users=("alice", "bob")):
+    """Exec capauth_link_users.py against a tiny in-memory stand-in for the
+    three Authentik models it touches."""
+    import types
+    known = {c.user.username: c.user for c in conns}  # same user objects across calls
+    people = {n: known.get(n) or types.SimpleNamespace(pk=i, username=n) for i, n in enumerate(existing_users, 1)}
+    source = types.SimpleNamespace(slug="capauth")
+
+    class Users:
+        @staticmethod
+        def filter(username):
+            return _Q([people[username]] if username in people else [])
+
+    class Sources:
+        @staticmethod
+        def get(slug):
+            assert slug == "capauth"
+            return source
+
+    class Conns:
+        @staticmethod
+        def filter(source, user=None, identifier=None):
+            return _Q(c for c in conns if (user is None or c.user is user)
+                      and (identifier is None or c.identifier == identifier))
+
+        @staticmethod
+        def create(source, user, identifier):
+            conns.append(_Conn(source, user, identifier))
+
+    core = types.ModuleType("authentik.core.models")
+    core.User = types.SimpleNamespace(objects=Users)
+    oauth = types.ModuleType("authentik.sources.oauth.models")
+    oauth.OAuthSource = types.SimpleNamespace(objects=Sources)
+    oauth.UserOAuthSourceConnection = types.SimpleNamespace(objects=Conns)
+    for name in ("authentik", "authentik.core", "authentik.sources", "authentik.sources.oauth"):
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    monkeypatch.setitem(sys.modules, "authentik.core.models", core)
+    monkeypatch.setitem(sys.modules, "authentik.sources.oauth.models", oauth)
+    monkeypatch.setenv("SKSSO_CAPAUTH_LINKS", json.dumps({"source_slug": "capauth", "users": users}))
+    code = (SKSSO / "src/sksso/capauth_link_users.py").read_text()
+    exec(compile(code, "capauth_link_users.py", "exec"), {"__name__": "__main__"})
+    return people, source
+
+
+def test_linker_creates_then_is_idempotent_then_rotates(monkeypatch, capsys):
+    conns = []
+    _run_linker([{"username": "alice", "fingerprint": FP.lower()}], conns, monkeypatch)
+    assert [c.identifier for c in conns] == [FP]
+    _run_linker([{"username": "alice", "fingerprint": FP}], conns, monkeypatch)
+    rotated = "B" * 40
+    _run_linker([{"username": "alice", "fingerprint": rotated}], conns, monkeypatch)
+    out = capsys.readouterr().out
+    assert out.count(": created") == 1 and ": unchanged" in out and ": updated (identifier)" in out
+    assert [c.identifier for c in conns] == [rotated]
+    assert out.strip().endswith("links: ok")
+
+
+def test_linker_refuses_moving_a_key_and_unknown_users(monkeypatch):
+    conns = []
+    people, source = _run_linker([{"username": "alice", "fingerprint": FP}], conns, monkeypatch)
+    with pytest.raises(SystemExit, match="already linked to another"):
+        _run_linker([{"username": "bob", "fingerprint": FP}], conns, monkeypatch)
+    with pytest.raises(SystemExit, match="'mallory' does not exist"):
+        _run_linker([{"username": "mallory", "fingerprint": FP}], conns, monkeypatch)
+    with pytest.raises(SystemExit, match="fingerprint"):
+        _run_linker([{"username": "alice", "fingerprint": "nope"}], conns, monkeypatch)
+    assert len(conns) == 1

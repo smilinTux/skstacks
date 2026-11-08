@@ -101,7 +101,12 @@ def ensure(api, path, lookup, desired, label, key="pk", secret_fields=()):
 
 def same(have, want):
     if isinstance(want, list) and isinstance(have, list):
-        norm = lambda xs: sorted(json.dumps(x, sort_keys=True) for x in xs)  # noqa: E731
+        # Compare list-of-object entries on the keys we set only: Authentik
+        # 2026.8 adds redirect_uri_type to every redirect URI it returns, and
+        # a whole-object compare would PATCH redirect_uris on every deploy.
+        keys = set().union(*(x.keys() for x in want if isinstance(x, dict)))
+        trim = lambda x: {k: x.get(k) for k in keys} if isinstance(x, dict) and keys else x  # noqa: E731
+        norm = lambda xs: sorted(json.dumps(trim(x), sort_keys=True) for x in xs)  # noqa: E731
         return norm(have) == norm(want)
     if isinstance(want, str) and isinstance(have, str) and "\n" in want:
         return sorted(have.split()) == sorted(want.split())
@@ -154,6 +159,11 @@ def provision(api, cfg):
         "signing_key": signing_key(api, cfg["signing_key"]),
         "property_mappings": scope_mappings(api, modern),
     }
+    if version_tuple(version) >= (2026, 2):
+        # Authentik 2026.2+ gives a provider created without grant_types an
+        # empty list, and every authorize then fails with invalid_request.
+        # MeshCentral signs in with the code flow.
+        provider["grant_types"] = ["authorization_code", "refresh_token"]
     if modern:
         provider["redirect_uris"] = [{"matching_mode": "strict", "url": u} for u in cfg["redirect_uris"]]
     else:

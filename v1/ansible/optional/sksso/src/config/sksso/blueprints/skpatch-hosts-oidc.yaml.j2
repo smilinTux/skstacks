@@ -42,6 +42,9 @@ entries:
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
       sub_mode: hashed_user_id
       issuer_mode: per_provider
+      # Authentik 2026.2+: a new provider without grant_types gets none and
+      # every authorize fails with invalid_request. Sign-in is the code flow.
+      grant_types: [authorization_code, refresh_token]
       redirect_uris:
         - matching_mode: strict
           url: {{ ('https://' ~ sksso_skpatch_hosts_host ~ '/api/auth/oidc/callback') | to_json }}

@@ -7,6 +7,38 @@ Each entry says what an instance must do, if anything.
 
 ### Upgrade notes (instances)
 
+- **skhub: notify_push no longer installs an HTTP error page as its binary**: the manual
+  fallback fetched the binary with `curl -sL` and checked it with `test -f`, so a GitHub 504
+  saved a 92-byte HTML page as the executable and notify_push crash-looped on "exec format
+  error", on every later redeploy too. It now retries, fails on HTTP errors, writes to a `.part`
+  file, and checks the ELF header both before skipping the download and after it. Retries span
+  about 3 minutes, since GitHub release downloads 504ed on and off for an hour that day. An instance
+  already holding a bad file gets it replaced on the next deploy. Found by the v2.26.17 gate.
+- **skpatch-hosts: node provisioning no longer fails when host registration is off**: with
+  `skpatch_hosts.API_TOKEN` unset, every provision run failed with "'selected_manager' is
+  undefined" because ansible-core 2.19+ templates `delegate_to` before `when`. Registration now
+  lives in `tasks/register_systems.yml`, included only when it is configured, and picks the first
+  answering manager from `swarm_managers` itself: the shared manager selection only kept managers
+  inside the play's own hosts, and this play's hosts are the nodes being registered. Its delegated
+  tasks now use the manager's own connection (ssh by default): the play runs `connection: local`,
+  so they had been running on the controller instead of the manager.
+  **Host auto-registration itself is refused for now**: the pinned linux-update-dashboard
+  (2026.10.9) rejects every API-token request to create or edit a system (403 "API tokens cannot
+  configure SSH connections"), so with `API_TOKEN`/`API_CREDENTIAL_ID` set the provision play fails
+  with that explanation. Add nodes in the dashboard until a session-based redesign lands.
+  **Instance action**: none.
+- **Authentik 2026.2+: OAuth2 providers now set `grant_types`**: Authentik 2026.2 added the
+  field and gives a provider created without it an empty list, so every sign-in fails with
+  `invalid_request` ("Invalid grant_type for provider"). Providers that existed before the upgrade
+  were migrated to every grant type, so only fresh installs broke (caught by the v2.26.17 gate's
+  skmesh login). skmesh sets NetBird's code, refresh, client_credentials and device code grants;
+  skrac and the sksec-web, skpatch-hosts and skflow blueprints set the code flow. A redeploy narrows
+  a migrated provider from all seven grant types to the ones it uses. The skmesh and skrac
+  provisioners also stop re-PATCHing `redirect_uris` on every deploy (2026.8 returns each entry with
+  an added `redirect_uri_type`). CapAuth user links (`sksso.CAPAUTH_USERS`) are made with
+  `ak shell` on Authentik 2026.2+, in the worker container on its node: 2026.8 made the API's
+  source-connection `user` read-only, so creating a link over the API answered HTTP 500.
+  **Instance action**: none.
 - **skstream: cli_debrid pinned to v0.7.81, viewer watchlists as code**: the DUMB and
   cli_debrid configs are seeded once, so per-viewer watchlist sources and the cli_debrid version
   lived only on the media node (nor had six managed Plex Home sources, a friends RSS source and a
