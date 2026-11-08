@@ -7,6 +7,12 @@ Each entry says what an instance must do, if anything.
 
 ### Upgrade notes (instances)
 
+- **skhub: notify_push no longer installs an HTTP error page as its binary**: the manual
+  fallback fetched the binary with `curl -sL` and checked it with `test -f`, so a GitHub 504
+  saved a 92-byte HTML page as the executable and notify_push crash-looped on "exec format
+  error", on every later redeploy too. It now retries, fails on HTTP errors, writes to a `.part`
+  file, and checks the ELF header both before skipping the download and after it. An instance
+  already holding a bad file gets it replaced on the next deploy. Found by the v2.26.17 gate.
 - **skpatch-hosts: node provisioning no longer fails when host registration is off**: with
   `skpatch_hosts.API_TOKEN` unset, every provision run failed with "'selected_manager' is
   undefined" because ansible-core 2.19+ templates `delegate_to` before `when`. Registration now
