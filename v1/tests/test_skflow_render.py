@@ -21,8 +21,8 @@ pytestmark = pytest.mark.skipif(shutil.which("ansible-playbook") is None, reason
 ROLE = rp.ANSIBLE / "optional" / "skflow"
 BASE = yaml.safe_load((rp.VARS / "skflow.example.yml").read_text())["skflow"]
 SET = yaml.safe_load((rp.VARS / "skflow.set.yml").read_text())["skflow"]
-IMAGE = ("ghcr.io/windmill-labs/windmill:1.837.0@sha256:"
-         "661aa3e338be081812ef301a2be8defc50bd9d3c4dde89f8cd53a763e6452a74")
+IMAGE = ("ghcr.io/windmill-labs/windmill:1.847.0@sha256:"
+         "67ab003cfe395d7634d7fc0eada917fc894859bbc21fea487eee76760319d86f")
 PG_IMAGE = ("postgres:17.7-alpine@sha256:"
             "bb377b7239d2774ac8cc76f481596ce96c5a6b5e9d141f6d0a0ee371a6e7c0f2")
 PG_BACKUP_IMAGE = ("postgres:17.7@sha256:"
@@ -161,7 +161,7 @@ def test_dev_and_staging_hosts_routers_and_subnets(tmp_path, env, host, router, 
 
 def test_set_pass_external_database_drops_postgres_and_backup(set_out):
     svcs = compose(set_out)["services"]
-    assert sorted(svcs) == ["server", "worker", "worker-native"]
+    assert sorted(svcs) == ["server", "worker", "worker-catchup", "worker-native"]
     assert envfile(set_out)["DATABASE_URL"] == SET["DATABASE_URL"]
     assert svcs["server"]["image"] == SET["WINDMILL_IMAGE"]
 
@@ -269,7 +269,8 @@ def test_playbook_default_images_equal_the_compose_literals():
         assert re.search(r'sf_default_image: "([^"]+)"', pb).group(1) == IMAGE, env
         assert re.search(r'sf_default_pg_image: "([^"]+)"', pb).group(1) == PG_IMAGE, env
         assert re.search(r'sf_default_pg_backup_image: "([^"]+)"', pb).group(1) == PG_BACKUP_IMAGE, env
-    assert template.count(f"default('{IMAGE}', true)") == 3
+    # server, worker, worker-native, and the TAGGED_WORKERS pool.
+    assert template.count(f"default('{IMAGE}', true)") == 4
     assert template.count(f"default('{PG_IMAGE}', true)") == 1
     assert template.count(f"default('{PG_BACKUP_IMAGE}', true)") == 1
 
@@ -281,3 +282,48 @@ def test_env_playbooks_differ_only_in_env_and_subnets():
     prod = norm((ROLE / "deploy_skflow-prod.yml").read_text())
     for env in ("dev", "staging"):
         assert norm((ROLE / f"deploy_skflow-{env}.yml").read_text()) == prod, env
+
+
+# ---------------------------------------------------------------------------
+# TAGGED_WORKERS: a tag-scoped pool, so a slow or bursty script gets its own
+# workers instead of starving the shared ones.
+#
+# Added 2026-11-04 after comparing the live nam prod stack with this config.
+# The fwe talk_catchup pool existed only as a hand-made standalone service
+# (`docker service create skflow-catchup-worker`, no stack namespace label), so
+# it was invisible here: a rebuild from this config would simply not have it.
+# ---------------------------------------------------------------------------
+
+
+def test_tagged_workers_absent_by_default(base_out):
+    """Existing deployments must render exactly as before."""
+    svcs = compose(base_out)["services"]
+    assert not [n for n in svcs if n.startswith("worker-") and n != "worker-native"]
+
+
+def test_tagged_worker_renders_one_service_per_entry(set_out):
+    svcs = compose(set_out)["services"]
+    assert "worker-catchup" in svcs, sorted(svcs)
+    w = svcs["worker-catchup"]
+    assert w["environment"] == [
+        "MODE=worker",
+        "WORKER_GROUP=default",
+        "WORKER_TAGS=fwe-catchup",
+    ]
+    assert w["deploy"]["replicas"] == 2
+    assert w["image"] == SET["WINDMILL_IMAGE"]
+
+
+def test_tagged_worker_inherits_shared_worker_resources(set_out):
+    """An entry that names no limits follows the shared worker, not a new default."""
+    svcs = compose(set_out)["services"]
+    shared = svcs["worker"]["deploy"]["resources"]
+    tagged = svcs["worker-catchup"]["deploy"]["resources"]
+    assert tagged["limits"] == shared["limits"]
+    assert tagged["reservations"] == shared["reservations"]
+
+
+def test_tagged_worker_is_labelled_with_its_tags(set_out):
+    labels = compose(set_out)["services"]["worker-catchup"]["deploy"]["labels"]
+    assert "com.skt.worker-tags=fwe-catchup" in labels
+    assert "com.skt.app=skflow" in labels

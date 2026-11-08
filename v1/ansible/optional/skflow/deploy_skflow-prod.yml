@@ -43,12 +43,12 @@
     env: prod
     service_name: skflow
     service_type: optional
-    # Windmill 1.837.0, Postgres 17.7-alpine and (for the bash dump loop)
+    # Windmill 1.847.0, Postgres 17.7-alpine and (for the bash dump loop)
     # Postgres 17.7 Debian, multi-arch manifest-list
     # digests. The compose template writes the same literals so
     # v1/scripts/list_images.py sees the pins; test_skflow_render.py keeps
     # the two equal.
-    sf_default_image: "ghcr.io/windmill-labs/windmill:1.837.0@sha256:661aa3e338be081812ef301a2be8defc50bd9d3c4dde89f8cd53a763e6452a74"
+    sf_default_image: "ghcr.io/windmill-labs/windmill:1.847.0@sha256:67ab003cfe395d7634d7fc0eada917fc894859bbc21fea487eee76760319d86f"
     sf_default_pg_image: "postgres:17.7-alpine@sha256:bb377b7239d2774ac8cc76f481596ce96c5a6b5e9d141f6d0a0ee371a6e7c0f2"
     sf_default_pg_backup_image: "postgres:17.7@sha256:2006493727bd5277eece187319af1ef82b4cf82cf4fc1ed00da0775b646ac2a4"
   pre_tasks:
