@@ -38,7 +38,7 @@ jobs:
           # it: 98 findings in CI against 249 on a full clone.
           fetch-depth: 0
       - uses: actions/setup-python@v5
-        with: { python-version: '3.15' }
+        with: { python-version: '3.12' }
 
       - name: install scanners (gitleaks, trivy, semgrep)
         run: |
