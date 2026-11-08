@@ -837,7 +837,7 @@
         if ! is_elf; then
           echo "Binary missing or not an executable, downloading manually..." >&2
           docker exec "$CONTAINER_ID" mkdir -p "$(dirname "$BIN")"
-          docker exec "$CONTAINER_ID" sh -c "curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o '$BIN.part' https://github.com/nextcloud/notify_push/releases/latest/download/notify_push-x86_64-unknown-linux-musl" \
+          docker exec "$CONTAINER_ID" sh -c "curl -fsSL --retry 10 --retry-delay 15 --retry-all-errors -o '$BIN.part' https://github.com/nextcloud/notify_push/releases/latest/download/notify_push-x86_64-unknown-linux-musl" \
             || { docker exec "$CONTAINER_ID" rm -f "$BIN.part"; echo "notify_push binary download failed" >&2; exit 1; }
           docker exec "$CONTAINER_ID" mv -f "$BIN.part" "$BIN"
           docker exec "$CONTAINER_ID" chmod +x "$BIN"

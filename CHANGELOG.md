@@ -11,7 +11,8 @@ Each entry says what an instance must do, if anything.
   fallback fetched the binary with `curl -sL` and checked it with `test -f`, so a GitHub 504
   saved a 92-byte HTML page as the executable and notify_push crash-looped on "exec format
   error", on every later redeploy too. It now retries, fails on HTTP errors, writes to a `.part`
-  file, and checks the ELF header both before skipping the download and after it. An instance
+  file, and checks the ELF header both before skipping the download and after it. Retries span
+  about 3 minutes, since GitHub release downloads 504ed on and off for an hour that day. An instance
   already holding a bad file gets it replaced on the next deploy. Found by the v2.26.17 gate.
 - **skpatch-hosts: node provisioning no longer fails when host registration is off**: with
   `skpatch_hosts.API_TOKEN` unset, every provision run failed with "'selected_manager' is
