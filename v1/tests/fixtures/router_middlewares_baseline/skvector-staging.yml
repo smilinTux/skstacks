@@ -17,7 +17,7 @@ version: '3.8'
 
 services:
   qdrant:
-    image: qdrant/qdrant:v1.17.0@sha256:f1c7272cdac52b38c1a0e89313922d940ba50afd90d593a1605dbbc214e66ffb
+    image: qdrant/qdrant:v1.20.0@sha256:9bfc89f9914fc14876a88c05270685921a55b8877b254a98bcc1cc2f0a424cd2
     env_file: /var/data/config/skvector-staging/skvector.env
     logging:
       driver: json-file

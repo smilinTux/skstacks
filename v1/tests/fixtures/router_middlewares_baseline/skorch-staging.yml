@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   n8n:
-    image: "n8nio/n8n:2.40.7@sha256:ffeb52485f78b1b06c9a832205853cf75da72a07a514c9a27724df85979d6c34"
+    image: "n8nio/n8n:2.47.2@sha256:83ec9349e09a8efdb51f7e2729f1f83503c038475747a351772ff6b78838f02a"
     env_file: /var/data/config/skorch-staging/skorch.env
     logging:
       driver: json-file
@@ -58,7 +58,7 @@ services:
         - "traefik.http.services.skorch-staging.loadbalancer.sticky.cookie.sameSite=lax"
 
   postgres:
-    image: pgvector/pgvector:pg16@sha256:0a07c4114ba6d1d04effcce3385e9f5ce305eb02e56a3d35948a415a52f193ec
+    image: pgvector/pgvector:pg16@sha256:0dd3149a06e4579a0d70d8fef9945636cd514005e7237deb27f9b67886f8dc4f
     env_file: /var/data/config/skorch-staging/postgres.env
     environment:
       - PGTEMP=/var/lib/postgresql/data/tmp
@@ -80,7 +80,7 @@ services:
         delay: 5s
 
   redis:
-    image: redis:7.4.7-alpine
+    image: redis:7.4.12-alpine
     command: redis-server /usr/local/etc/redis/redis.conf
     networks:
       - skorch-staging
