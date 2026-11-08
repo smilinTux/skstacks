@@ -67,3 +67,13 @@ def test_older_authentik_is_not_sent_grant_types():
     api = FakeApi("2025.12.3")
     ap.provision(api, CFG)
     assert "grant_types" not in api.provider
+
+
+def test_redirect_uri_fields_added_by_authentik_are_not_drift(capsys):
+    api = FakeApi("2026.8.5")
+    ap.provision(api, CFG)
+    api.provider["redirect_uris"] = [dict(u, redirect_uri_type="authorization") for u in api.provider["redirect_uris"]]
+    capsys.readouterr()
+    ap.provision(api, CFG)
+    out = capsys.readouterr().out
+    assert "provider: updated (client_secret (secret))" in out  # secrets always resend; nothing else drifts

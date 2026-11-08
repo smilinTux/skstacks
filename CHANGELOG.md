@@ -13,7 +13,9 @@ Each entry says what an instance must do, if anything.
   were migrated to every grant type, so only fresh installs broke (caught by the v2.26.17 gate's
   skmesh login). skmesh sets NetBird's code, refresh, client_credentials and device code grants;
   skrac and the sksec-web, skpatch-hosts and skflow blueprints set the code flow. A redeploy narrows
-  a migrated provider from all seven grant types to the ones it uses. **Instance action**: none.
+  a migrated provider from all seven grant types to the ones it uses. The skmesh and skrac
+  provisioners also stop re-PATCHing `redirect_uris` on every deploy (2026.8 returns each entry with
+  an added `redirect_uri_type`). **Instance action**: none.
 - **skstream: cli_debrid pinned to v0.7.81, viewer watchlists as code**: the DUMB and
   cli_debrid configs are seeded once, so per-viewer watchlist sources and the cli_debrid version
   lived only on the media node (nor had six managed Plex Home sources, a friends RSS source and a

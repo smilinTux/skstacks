@@ -621,3 +621,14 @@ def test_provisioner_omits_grant_types_before_2026_2(fake_authentik):
     fake = fake_authentik("2025.12.3")
     assert _provision(_cfg(fake)).returncode == 0
     assert "grant_types" not in fake.objects["provider"][0]
+
+
+def test_provisioner_ignores_fields_authentik_adds_to_redirect_uris(fake_authentik):
+    # Authentik 2026.8 returns every redirect URI with redirect_uri_type;
+    # a second deploy must still report the provider unchanged.
+    fake = fake_authentik("2026.8.5")
+    assert _provision(_cfg(fake)).returncode == 0
+    for u in fake.objects["provider"][0]["redirect_uris"]:
+        u["redirect_uri_type"] = "authorization"
+    again = _provision(_cfg(fake))
+    assert again.returncode == 0 and "provider: unchanged" in again.stdout, again.stdout
