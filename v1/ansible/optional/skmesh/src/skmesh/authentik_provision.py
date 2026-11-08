@@ -93,6 +93,14 @@ def version_tuple(v):
     return tuple(parts)
 
 
+GRANT_TYPES = (
+    "authorization_code",
+    "refresh_token",
+    "client_credentials",
+    "urn:ietf:params:oauth:grant-type:device_code",
+)
+
+
 def ensure(api, path, lookup, desired, label, key="pk"):
     """Create `desired` at `path` if `lookup` finds nothing, else PATCH the
     fields that differ. Returns the object."""
@@ -177,6 +185,15 @@ def provision(api, cfg):
         "signing_key": signing_key(api, cfg["signing_key"]),
         "property_mappings": scope_mappings(api, modern),
     }
+    if version_tuple(version) >= (2026, 2):
+        # Authentik 2026.2 added OAuth2Provider.grant_types. Existing
+        # providers were migrated to every grant type, but one created
+        # through the API without the field gets an empty list and every
+        # authorize answers "invalid_request" ("Invalid grant_type for
+        # provider"). NetBird uses the code flow with refresh tokens
+        # (dashboard, CLI PKCE), client_credentials (the IdP manager's
+        # service account) and, with DEVICE_AUTH_FLOW, the device code flow.
+        provider["grant_types"] = list(GRANT_TYPES)
     if modern:
         provider["redirect_uris"] = [{"matching_mode": "strict", "url": u} for u in cfg["redirect_uris"]]
     else:

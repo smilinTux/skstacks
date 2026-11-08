@@ -154,6 +154,11 @@ def provision(api, cfg):
         "signing_key": signing_key(api, cfg["signing_key"]),
         "property_mappings": scope_mappings(api, modern),
     }
+    if version_tuple(version) >= (2026, 2):
+        # Authentik 2026.2+ gives a provider created without grant_types an
+        # empty list, and every authorize then fails with invalid_request.
+        # MeshCentral signs in with the code flow.
+        provider["grant_types"] = ["authorization_code", "refresh_token"]
     if modern:
         provider["redirect_uris"] = [{"matching_mode": "strict", "url": u} for u in cfg["redirect_uris"]]
     else:

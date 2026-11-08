@@ -7,6 +7,13 @@ Each entry says what an instance must do, if anything.
 
 ### Upgrade notes (instances)
 
+- **Authentik 2026.2+: OAuth2 providers now set `grant_types`**: Authentik 2026.2 added the
+  field and gives a provider created without it an empty list, so every sign-in fails with
+  `invalid_request` ("Invalid grant_type for provider"). Providers that existed before the upgrade
+  were migrated to every grant type, so only fresh installs broke (caught by the v2.26.17 gate's
+  skmesh login). skmesh sets NetBird's code, refresh, client_credentials and device code grants;
+  skrac and the sksec-web, skpatch-hosts and skflow blueprints set the code flow. A redeploy narrows
+  a migrated provider from all seven grant types to the ones it uses. **Instance action**: none.
 - **skstream: cli_debrid pinned to v0.7.81, viewer watchlists as code**: the DUMB and
   cli_debrid configs are seeded once, so per-viewer watchlist sources and the cli_debrid version
   lived only on the media node (nor had six managed Plex Home sources, a friends RSS source and a

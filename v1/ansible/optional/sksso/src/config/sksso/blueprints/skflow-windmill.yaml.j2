@@ -28,6 +28,9 @@ entries:
       invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
       sub_mode: hashed_user_id
+      # Authentik 2026.2+: a new provider without grant_types gets none and
+      # every authorize fails with invalid_request. Sign-in is the code flow.
+      grant_types: [authorization_code, refresh_token]
       redirect_uris:
         - matching_mode: strict
           url: {{ ('https://' ~ sksso_skflow_host ~ '/user/login_callback/authentik') | to_json }}
