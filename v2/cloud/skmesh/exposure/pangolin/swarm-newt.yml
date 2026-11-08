@@ -2,7 +2,7 @@
 # Gerbil node and forwards to the in-cluster Traefik Gateway. No inbound ports.
 services:
   newt:
-    image: fosrl/newt:1.0.0
+    image: fosrl/newt:1.20.0
     environment:
       - PANGOLIN_ENDPOINT=${PANGOLIN_ENDPOINT}     # public Pangolin/Gerbil URL
       - NEWT_ID=${NEWT_ID}                          # from secret backend
