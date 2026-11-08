@@ -4,7 +4,7 @@
 # Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
 # License: GNU AGPL v3
 
-FROM python:3.12-alpine
+FROM python:3.15-alpine
 
 # Install GPG and required system dependencies
 RUN apk add --no-cache \
