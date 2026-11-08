@@ -14,5 +14,9 @@ skstream:
   PLEX_TOKEN_IS_SERVER_TOKEN: false
   PLEX_ENDPOINT_MODE: vip
   DUMB_EXTRA_BINDS:
-    - {source: /var/lib/skstream/patches/plex_watchlist.py, target: /cli_debrid/content_checkers/plex_watchlist.py}
+    - {source: /var/lib/skstream/extra/settings.json, target: /cli_debrid/extra/settings.json}
     - {source: /srv/render/extra, target: /extra, read_only: false}
+  PLEX_FRIENDS_WATCHLIST: true
+  PLEX_OTHER_WATCHLISTS:
+    - {username: ExampleKid, token: example-home-profile-token-not-a-secret}
+    - {username: example-friend, token: example-friend-token-not-a-secret, display_name: Example friend}

@@ -131,6 +131,8 @@ FAKE_STDOUT = {
     "sksw_crowdsec_container": "render-container",
     "sksw_lapi_machines": "[]",
     "sksw_lapi_machines_after": "[]",
+    # skstream: the converge prints booleans only
+    "skstream_converge": '{"dumb_changed": false, "cli_changed": false}',
 }
 
 

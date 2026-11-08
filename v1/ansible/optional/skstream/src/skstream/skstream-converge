@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+"""Converge the parts of DUMB / cli_debrid state that skstream manages as code.
+
+Both config files are seeded once and then owned by the apps (UI edits, token
+refreshes), so a deploy must not re-render them. This script upserts only the
+keys skstream owns and leaves everything else byte-for-byte as parsed:
+
+  dumb_config.json   cli_debrid release pin (release_version_enabled/release_version)
+  cli_debrid config  "Other Plex Watchlist" sources (one per Plex Home profile, keyed
+                     by username), one "My Friends Plex RSS Watchlist" source, and
+                     their content_source_check_period
+
+Sources it did not create are never removed or edited. The desired state comes
+as JSON on stdin (it carries tokens, so never as argv):
+
+  {"cli_debrid_version": "v0.7.81" | "",
+   "other_watchlists": [{"username": "JD", "token": "...", "display_name": "..."}],
+   "friends_rss_url": "https://rss.plex.tv/..." | "",
+   "versions": ["1080p"], "cutoff_date": "", "check_minutes": 5}
+
+Prints {"dumb_changed": bool, "cli_changed": bool} and nothing secret.
+"""
+import argparse
+import fcntl
+import json
+import os
+import sys
+
+DATA = "/data/cli_debrid"  # the unit binds <LOCAL_ROOT>/dumb-data at /data
+OTHER = "Other Plex Watchlist"
+FRIENDS = "My Friends Plex RSS Watchlist"
+
+
+def _source(kind, display_name, versions, cutoff_date, **extra):
+    return {"enabled": True, **extra, "versions": list(versions), "media_type": "All",
+            "display_name": display_name, "allow_specials": False,
+            "custom_symlink_subfolder": "", "cutoff_date": cutoff_date,
+            "exclude_genres": [], "list_length_limit": 0, "type": kind}
+
+
+def _next_id(sources, kind):
+    nums = [int(k.rsplit("_", 1)[1]) for k in sources if k.rsplit("_", 1)[-1].isdigit()]
+    return f"{kind}_{max(nums, default=0) + 1}"
+
+
+def converge_dumb(cfg, version):
+    """Pin cli_debrid to `version` in a parsed dumb_config. '' leaves it alone.
+
+    cli_debrid v0.7.29 (ef4deb5b) folded CLI Battery into the main process and
+    dropped cli_battery/main.py, but DUMB (2.22.1 and 2.23.0 both bake 0.7.23)
+    still starts it as its own service. With a newer pin that service crashes and,
+    because DUMB makes cli_debrid depend on it, cli_debrid never starts. So a pin
+    also switches DUMB's standalone CLI Battery off.
+    """
+    if not version:
+        return False
+    changed = False
+    cd = cfg.setdefault("cli_debrid", {})
+    want = {"release_version_enabled": True, "release_version": version, "branch_enabled": False}
+    if not all(cd.get(k) == v for k, v in want.items()):
+        cd.update(want)
+        changed = True
+    battery = cfg.get("cli_battery")
+    if isinstance(battery, dict) and battery.get("enabled") is not False:
+        battery["enabled"] = False
+        changed = True
+    # DUMB points cli_debrid at /cli_debrid/data, a symlink to /data/cli_debrid made
+    # at container start. With a release pin DUMB reinstalls /cli_debrid on every
+    # start, and on nor the link was gone by the time cli_debrid ran (PermissionError
+    # on /cli_debrid/data, every start). Point cli_debrid at the real paths instead.
+    paths = {"config_file": f"{DATA}/config/config.json", "log_file": f"{DATA}/logs/debug.log"}
+    env = {"USER_CONFIG": f"{DATA}/config/", "USER_LOGS": f"{DATA}/logs/",
+           "USER_DB_CONTENT": f"{DATA}/db_content/"}
+    cur_env = cd.setdefault("env", {})
+    if any(cd.get(k) != v for k, v in paths.items()) or any(cur_env.get(k) != v for k, v in env.items()):
+        cd.update(paths)
+        cur_env.update(env)
+        changed = True
+    return changed
+
+
+def converge_cli(cfg, spec):
+    """Upsert managed content sources into a parsed cli_debrid config."""
+    sources = cfg.setdefault("Content Sources", {})
+    versions = spec.get("versions") or ["1080p"]
+    cutoff = str(spec.get("cutoff_date") or "")
+    managed, changed = [], False
+
+    for w in spec.get("other_watchlists") or []:
+        user, token = w["username"], w["token"]
+        sid = next((k for k, v in sources.items()
+                    if isinstance(v, dict) and v.get("type") == OTHER and v.get("username") == user), None)
+        if sid is None:
+            sid = _next_id(sources, OTHER)
+            sources[sid] = _source(OTHER, w.get("display_name") or f"Plex Watchlist - {user}",
+                                   versions, cutoff, username=user, token=token)
+            changed = True
+        elif sources[sid].get("token") != token or not sources[sid].get("enabled"):
+            sources[sid].update(token=token, enabled=True)
+            changed = True
+        managed.append(sid)
+
+    url = spec.get("friends_rss_url") or ""
+    if url:
+        sid = next((k for k, v in sources.items() if isinstance(v, dict) and v.get("type") == FRIENDS), None)
+        if sid is None:
+            sid = _next_id(sources, FRIENDS)
+            sources[sid] = _source(FRIENDS, "Plex Friends Watchlist", versions, cutoff, url=url)
+            changed = True
+        elif sources[sid].get("url") != url or not sources[sid].get("enabled"):
+            sources[sid].update(url=url, enabled=True)
+            changed = True
+        managed.append(sid)
+
+    minutes = spec.get("check_minutes")
+    if minutes and managed:
+        period = cfg.setdefault("Debug", {}).setdefault("content_source_check_period", {})
+        for sid in managed:
+            if period.get(sid) != int(minutes):
+                period[sid] = int(minutes)
+                changed = True
+    return changed
+
+
+def _rewrite(path, fn, arg):
+    """Load, apply fn, and atomically replace `path` (same owner and mode) under
+    the app's own lock file when it has one. Returns whether it changed."""
+    lock = os.path.join(os.path.dirname(path), "config.lock")
+    with open(lock if os.path.exists(lock) else path, "a") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        with open(path) as f:
+            cfg = json.load(f)
+        if not fn(cfg, arg):
+            return False
+        st = os.stat(path)
+        tmp = path + ".skstream-converge.tmp"
+        with open(tmp, "w") as f:
+            json.dump(cfg, f, indent=2)
+            f.write("\n")
+        os.chmod(tmp, st.st_mode & 0o7777)
+        os.chown(tmp, st.st_uid, st.st_gid)
+        os.replace(tmp, path)
+        return True
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p.add_argument("--dumb-config", required=True)
+    p.add_argument("--cli-config", required=True)
+    a = p.parse_args(argv)
+    spec = json.load(sys.stdin)
+    out = {"dumb_changed": _rewrite(a.dumb_config, converge_dumb, spec.get("cli_debrid_version") or ""),
+           "cli_changed": _rewrite(a.cli_config, converge_cli, spec)}
+    print(json.dumps(out))
+
+
+if __name__ == "__main__":
+    main()
