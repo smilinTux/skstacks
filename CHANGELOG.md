@@ -12,7 +12,9 @@ Each entry says what an instance must do, if anything.
   undefined" because ansible-core 2.19+ templates `delegate_to` before `when`. Registration now
   lives in `tasks/register_systems.yml`, included only when it is configured, and picks the first
   answering manager from `swarm_managers` itself: the shared manager selection only kept managers
-  inside the play's own hosts, and this play's hosts are the nodes being registered.
+  inside the play's own hosts, and this play's hosts are the nodes being registered. Its delegated
+  tasks now use the manager's own connection (ssh by default): the play runs `connection: local`,
+  so they had been running on the controller instead of the manager.
   **Instance action**: none.
 - **Authentik 2026.2+: OAuth2 providers now set `grant_types`**: Authentik 2026.2 added the
   field and gives a provider created without it an empty list, so every sign-in fails with

@@ -23,10 +23,16 @@
       from the inventory.
   when: skp_reg_managers | length == 0
 
+# The play runs with connection: local, and a delegated task inherits the
+# play's connection unless the task names its own. Without the connection
+# lines below, every "manager" answered locally and the script was staged on
+# the controller, not the manager (v2.26.17 gate: "Destination directory
+# /var/data/config/skpatch-hosts-dev does not exist").
 - name: Check which swarm managers answer
   wait_for_connection:
     timeout: 10
   delegate_to: "{{ item }}"
+  connection: "{{ hostvars[item].ansible_connection | default('ssh') }}"
   loop: "{{ skp_reg_managers }}"
   register: skp_reg_manager_check
   ignore_errors: true  # keeps each result's failed flag, unlike failed_when: false
@@ -50,6 +56,7 @@
     group: root
     mode: '0644'
   delegate_to: "{{ selected_manager }}"
+  connection: "{{ hostvars[selected_manager].ansible_connection | default('ssh') }}"
 
 - name: Register this run's target nodes as dashboard systems (idempotent, never deletes)
   command:
@@ -71,6 +78,7 @@
           'credential_id': skp_reg_credential_id,
           'systems': skp_reg_systems | default([])} | to_json }}
   delegate_to: "{{ selected_manager }}"
+  connection: "{{ hostvars[selected_manager].ansible_connection | default('ssh') }}"
   register: skp_reg_result
   changed_when: "'created' in skp_reg_result.stdout or 'updated' in skp_reg_result.stdout"
   failed_when: false

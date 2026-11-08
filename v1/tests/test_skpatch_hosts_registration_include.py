@@ -46,6 +46,7 @@ def test_included_file_selects_a_manager_then_registers_through_it():
     assert names.index("Use the first swarm manager that answered") < names.index(
         "Stage the systems-sync script on the selected manager")
     delegating = [t for t in tasks if t.get("delegate_to") == "{{ selected_manager }}"]
+    assert all("ansible_connection" in t.get("connection", "") for t in delegating)
     assert {t["name"] for t in delegating} >= {"Stage the systems-sync script on the selected manager",
                                                "Register this run's target nodes as dashboard systems (idempotent, never deletes)"}
 
@@ -64,10 +65,12 @@ def test_manager_selection_runs_under_real_ansible_with_a_limited_play(tmp_path)
     sel = tmp_path / "select.yml"
     sel.write_text(yaml.safe_dump(tasks[:stop]))
     inv = tmp_path / "inv.ini"
-    inv.write_text("[swarm_managers]\nmgr-down ansible_host=127.0.0.1 ansible_port=1 ansible_connection=ssh\n"
+    # mgr-down sets no ansible_connection: under the play's connection:
+    # local it would "answer" unless the task picks ssh for it itself
+    inv.write_text("[swarm_managers]\nmgr-down ansible_host=127.0.0.1 ansible_port=1\n"
                    "mgr-up ansible_connection=local\n[targets]\nnode-1 ansible_connection=local\n")
     play = tmp_path / "play.yml"
-    play.write_text(yaml.safe_dump([{"hosts": "targets", "gather_facts": False, "tasks": [
+    play.write_text(yaml.safe_dump([{"hosts": "targets", "connection": "local", "gather_facts": False, "tasks": [
         {"include_tasks": str(sel)},
         {"debug": {"msg": "SELECTED={{ selected_manager }}"}}]}]))
     proc = subprocess.run(["ansible-playbook", "-i", str(inv), str(play)], capture_output=True, text=True,
