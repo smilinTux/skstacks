@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.15-slim
 
 # Note: Docker CLI not needed - we mount /var/run/docker.sock and use subprocess
 # Docker socket is mounted at runtime for Docker API access
