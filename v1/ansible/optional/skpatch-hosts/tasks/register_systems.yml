@@ -57,6 +57,7 @@
     mode: '0644'
   delegate_to: "{{ selected_manager }}"
   connection: "{{ hostvars[selected_manager].ansible_connection | default('ssh') }}"
+  become: true  # root-owned /var/data/config and the docker socket, as in the deploy
 
 - name: Register this run's target nodes as dashboard systems (idempotent, never deletes)
   command:
@@ -79,6 +80,7 @@
           'systems': skp_reg_systems | default([])} | to_json }}
   delegate_to: "{{ selected_manager }}"
   connection: "{{ hostvars[selected_manager].ansible_connection | default('ssh') }}"
+  become: true  # root-owned /var/data/config and the docker socket, as in the deploy
   register: skp_reg_result
   changed_when: "'created' in skp_reg_result.stdout or 'updated' in skp_reg_result.stdout"
   failed_when: false

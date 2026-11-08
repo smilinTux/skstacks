@@ -47,6 +47,7 @@ def test_included_file_selects_a_manager_then_registers_through_it():
         "Stage the systems-sync script on the selected manager")
     delegating = [t for t in tasks if t.get("delegate_to") == "{{ selected_manager }}"]
     assert all("ansible_connection" in t.get("connection", "") for t in delegating)
+    assert all(t.get("become") is True for t in delegating)
     assert {t["name"] for t in delegating} >= {"Stage the systems-sync script on the selected manager",
                                                "Register this run's target nodes as dashboard systems (idempotent, never deletes)"}
 
