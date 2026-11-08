@@ -26,6 +26,7 @@ import json
 import os
 import sys
 
+DATA = "/data/cli_debrid"  # the unit binds <LOCAL_ROOT>/dumb-data at /data
 OTHER = "Other Plex Watchlist"
 FRIENDS = "My Friends Plex RSS Watchlist"
 
@@ -62,6 +63,18 @@ def converge_dumb(cfg, version):
     battery = cfg.get("cli_battery")
     if isinstance(battery, dict) and battery.get("enabled") is not False:
         battery["enabled"] = False
+        changed = True
+    # DUMB points cli_debrid at /cli_debrid/data, a symlink to /data/cli_debrid made
+    # at container start. With a release pin DUMB reinstalls /cli_debrid on every
+    # start, and on nor the link was gone by the time cli_debrid ran (PermissionError
+    # on /cli_debrid/data, every start). Point cli_debrid at the real paths instead.
+    paths = {"config_file": f"{DATA}/config/config.json", "log_file": f"{DATA}/logs/debug.log"}
+    env = {"USER_CONFIG": f"{DATA}/config/", "USER_LOGS": f"{DATA}/logs/",
+           "USER_DB_CONTENT": f"{DATA}/db_content/"}
+    cur_env = cd.setdefault("env", {})
+    if any(cd.get(k) != v for k, v in paths.items()) or any(cur_env.get(k) != v for k, v in env.items()):
+        cd.update(paths)
+        cur_env.update(env)
         changed = True
     return changed
 

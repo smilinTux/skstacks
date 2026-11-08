@@ -117,8 +117,23 @@ def test_empty_spec_changes_nothing():
 def test_pins_cli_debrid_and_turns_branch_off():
     cfg = {"cli_debrid": {"enabled": True, "branch_enabled": True, "release_version": "v0.6.07"}}
     assert sc.converge_dumb(cfg, "v0.7.81")
-    assert cfg["cli_debrid"] == {"enabled": True, "branch_enabled": False,
-                                 "release_version_enabled": True, "release_version": "v0.7.81"}
+    cd = cfg["cli_debrid"]
+    assert {k: cd[k] for k in ("enabled", "branch_enabled", "release_version_enabled", "release_version")} == {
+        "enabled": True, "branch_enabled": False, "release_version_enabled": True, "release_version": "v0.7.81"}
+    assert not sc.converge_dumb(cfg, "v0.7.81")
+
+
+def test_a_pin_points_cli_debrid_at_the_real_data_paths():
+    # A pinned release is reinstalled into /cli_debrid on every start and the
+    # /cli_debrid/data symlink did not survive it on nor (PermissionError).
+    cfg = {"cli_debrid": {"config_file": "/cli_debrid/data/config/config.json",
+                          "env": {"USER_CONFIG": "/cli_debrid/data/config/", "CLI_DEBRID_PORT": "5000"}}}
+    assert sc.converge_dumb(cfg, "v0.7.81")
+    cd = cfg["cli_debrid"]
+    assert cd["config_file"] == "/data/cli_debrid/config/config.json"
+    assert cd["log_file"] == "/data/cli_debrid/logs/debug.log"
+    assert cd["env"] == {"USER_CONFIG": "/data/cli_debrid/config/", "USER_LOGS": "/data/cli_debrid/logs/",
+                         "USER_DB_CONTENT": "/data/cli_debrid/db_content/", "CLI_DEBRID_PORT": "5000"}
     assert not sc.converge_dumb(cfg, "v0.7.81")
 
 
@@ -134,6 +149,8 @@ def test_a_pin_switches_off_the_standalone_battery():
     cfg = {"cli_debrid": {"enabled": True, "release_version_enabled": True,
                           "release_version": "v0.7.81", "branch_enabled": False},
            "cli_battery": {"enabled": True, "process_name": "CLI Battery"}}
+    sc.converge_dumb(cfg, "v0.7.81")
+    cfg["cli_battery"]["enabled"] = True
     assert sc.converge_dumb(cfg, "v0.7.81")
     assert cfg["cli_battery"] == {"enabled": False, "process_name": "CLI Battery"}
     assert not sc.converge_dumb(cfg, "v0.7.81")
