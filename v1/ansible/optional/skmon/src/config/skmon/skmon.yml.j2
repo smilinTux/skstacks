@@ -123,7 +123,7 @@ services:
           memory: {{ skmon.LOKI_MEMORY_RESERVATION | default("256M") }}
 
   promtail:
-    image: grafana/promtail:2.9.17
+    image: grafana/promtail:3.6.11
     command: -config.file=/etc/promtail/promtail-config.yaml
     volumes:
       - /var/data/config/skmon-{{ env }}/promtail:/etc/promtail
