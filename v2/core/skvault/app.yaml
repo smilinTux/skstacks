@@ -48,7 +48,7 @@ healthcheck:
 # service shape for descriptor→deploy parity. HA replicas spread one-per-node.
 deploy:
   container: openbao
-  image: "openbao/openbao:2.5.4"
+  image: "openbao/openbao:2.7.2"
   command: ["server", "-config=/openbao/config/openbao.hcl"]
   ports:
     - "8200:8200"
