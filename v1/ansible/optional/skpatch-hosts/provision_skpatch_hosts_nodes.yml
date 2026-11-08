@@ -180,12 +180,12 @@
 
 # Step 2 (present runs only): register this run's target nodes as systems
 # in the dashboard, so it is never empty after a deploy (see README.md
-# "Automatic host registration"). Opt-in: nothing calls the dashboard's
-# API unless skpatch_hosts.API_TOKEN and API_CREDENTIAL_ID are both set.
-# Runs once for the whole play, not per host, and reaches the dashboard
-# through a swarm manager (the target nodes themselves -- hypervisors,
-# NAS, anything else -- are not necessarily attached to its overlay
-# network).
+# "Automatic host registration"). Opt-in: nothing touches the dashboard
+# unless skpatch_hosts.REGISTER_AS names one of its admin accounts and an
+# SSH credential is given (CREDENTIAL_ID, or SSH_PRIVATE_KEY to create it).
+# Runs once for the whole play, not per host, inside the dashboard's own
+# container (tasks/register_systems.yml says why: the pinned dashboard
+# refuses API tokens for this, so it uses a short session it signs itself).
 - hosts: "{{ skpatch_hosts_provision_hosts | default('all') }}"
   connection: local
   gather_facts: false
@@ -207,25 +207,41 @@
 
     - name: Resolve host registration config
       set_fact:
-        skp_reg_token: "{{ skpatch_hosts.API_TOKEN | default('', true) | string }}"
-        skp_reg_credential_id: "{{ skpatch_hosts.API_CREDENTIAL_ID | default(0) | int }}"
+        skp_reg_as: "{{ skpatch_hosts.REGISTER_AS | default('', true) | string }}"
+        skp_reg_credential_id: "{{ (skpatch_hosts.CREDENTIAL_ID | default(0, true) | int) or (skpatch_hosts.API_CREDENTIAL_ID | default(0, true) | int) }}"
+        skp_reg_private_key: "{{ skpatch_hosts.SSH_PRIVATE_KEY | default('', true) | string }}"
+        skp_reg_on: >-
+          {{ (skpatch_hosts.REGISTER_AS | default('', true) | string | length > 0)
+             and ((skpatch_hosts.CREDENTIAL_ID | default(0, true) | int) > 0
+                  or (skpatch_hosts.API_CREDENTIAL_ID | default(0, true) | int) > 0
+                  or (skpatch_hosts.SSH_PRIVATE_KEY | default('', true) | string | length > 0)) }}
+      no_log: true  # carries the private key
       when: skpatch_state == 'present'
+
+    - name: Refuse the old API-token registration settings
+      fail:
+        msg: >-
+          skpatch_hosts.API_TOKEN is set, but the pinned dashboard (linux-update-dashboard
+          2026.10.9) refuses every API-token request that creates a system (403 "API tokens
+          cannot configure SSH connections"), so token registration can never work. Remove
+          API_TOKEN and set REGISTER_AS to a dashboard admin's username instead (README.md
+          "Automatic host registration"); API_CREDENTIAL_ID keeps working as CREDENTIAL_ID.
+      when: skpatch_state == 'present' and skpatch_hosts.API_TOKEN | default('', true) | string | length > 0
 
     - name: Report when host registration is not configured (nothing to do)
       debug:
         msg: >-
-          skpatch_hosts.API_TOKEN and/or API_CREDENTIAL_ID are not set:
-          skipping automatic host registration. See README.md "Automatic
-          host registration" to bootstrap it once per estate; nodes can
-          always be added by hand in the dashboard instead.
-      when: skpatch_state == 'present' and (skp_reg_token | default('') | length == 0 or skp_reg_credential_id | default(0) <= 0)
+          skpatch_hosts.REGISTER_AS and an SSH credential (CREDENTIAL_ID or SSH_PRIVATE_KEY)
+          are not both set: skipping automatic host registration. See README.md "Automatic
+          host registration"; nodes can always be added by hand in the dashboard instead.
+      when: skpatch_state == 'present' and not (skp_reg_on | bool)
 
     - name: Collect this run's target systems (name, hostname, port) from the play's own hosts
       set_fact:
         skp_reg_systems: "{{ skp_reg_systems | default([]) + [{'name': item, 'hostname': hostvars[item].ansible_host | default(item), 'port': hostvars[item].ansible_port | default(22) | int}] }}"
       loop: "{{ ansible_play_hosts_all | default(ansible_play_hosts) }}"
-      when: skpatch_state == 'present' and skp_reg_token | default('') | length > 0 and skp_reg_credential_id | default(0) > 0
+      when: skpatch_state == 'present' and skp_reg_on | bool
 
     - name: Register this run's target nodes as dashboard systems (only when registration is configured)
       include_tasks: tasks/register_systems.yml
-      when: skpatch_state == 'present' and skp_reg_token | default('') | length > 0 and skp_reg_credential_id | default(0) > 0
+      when: skpatch_state == 'present' and skp_reg_on | bool

@@ -89,8 +89,9 @@ python -m pytest v1/tests/test_skpatch_hosts_render.py -v
 # per-host actions-ceiling precedence rule)
 python -m pytest v1/tests/test_skpatch_hosts_provision.py -v
 
-# Host auto-registration provisioner (mocked dashboard API, no network)
-python -m pytest v1/tests/test_skpatch_hosts_systems_sync.py -v
+# Host auto-registration: the real registrar under node against a fake
+# dashboard that enforces the session signature and CSRF, plus the include
+python -m pytest v1/tests/test_skpatch_hosts_register_systems_js.py v1/tests/test_skpatch_hosts_registration_include.py -v
 
 # Repo-wide gate this role must also keep passing
 python -m pytest v1/tests/test_no_latest_images.py -v
@@ -105,10 +106,10 @@ this role bypasses it.
 script and the playbook's render-time wiring; what it cannot cover
 hermetically is the live dashboard API. The lab stage's own assertion
 (skstack06, per-estate) is: after `provision_skpatch_hosts_nodes.yml`
-runs with `API_TOKEN`/`API_CREDENTIAL_ID` set against the lab's node
+runs with `REGISTER_AS` and `SSH_PRIVATE_KEY` set against the lab's node
 group, `GET /api/systems` on the deployed dashboard lists every node in
 that group (by hostname/port), and a second run of the same playbook
-changes nothing (idempotent: every line prints `unchanged`).
+creates nothing (idempotent: every line prints `unchanged`).
 
 ## 5. Release / Deploy
 
@@ -263,10 +264,10 @@ skpatch-hosts:
   PROVISION_USER: skpatch-ro                # the low-privilege account's name
   PROVISION_UID: 5201                       # its fixed uid and gid; never a system uid (containers share the host's uid space)
   SSH_PUBLIC_KEY: ""                        # required by provision_skpatch_hosts_nodes.yml; one keypair per estate
-  # Host auto-registration (README.md "Automatic host registration"); both required, else skipped
-  API_TOKEN: ""                             # dashboard API token (systems:add, systems:edit), minted once by hand
-  API_CREDENTIAL_ID: 0                       # the SSH credential's numeric id, created once by hand
-  PROVISIONER_IMAGE: ""                      # default: the pinned python:3.13-alpine digest shared/src/authentik_portal_tile.py also uses
+  # Host auto-registration (README.md "Automatic host registration"); REGISTER_AS plus a credential, else skipped
+  REGISTER_AS: ""                           # an existing dashboard admin's username (local or OIDC)
+  SSH_PRIVATE_KEY: ""                       # private half of SSH_PUBLIC_KEY; the registrar creates the credential from it
+  CREDENTIAL_ID: 0                          # or an existing sshKey credential's id (takes precedence)
 ```
 
 **Per-host actions ceiling.** In the group_vars of any host that must
@@ -291,13 +292,14 @@ This role exposes no API of its own. It configures the upstream app's
 HTTP UI (`GET /`, health-checked by `probe.yml`), calls the upstream
 app's **own** API from `provision_skpatch_hosts_nodes.yml` to register
 hosts (opt-in, see README.md "Automatic host registration";
-`src/skpatch-hosts/systems_sync.py` is the provisioner, `GET/POST/PUT
-/api/systems`, Bearer token), and ships two playbooks:
+`src/skpatch-hosts/register_systems.js` runs inside the dashboard
+container, `GET/POST /api/systems` and `/api/credentials` over a
+self-signed five-minute session for `REGISTER_AS`), and ships two playbooks:
 
 | Playbook | Purpose | Key `-e` flags |
 |---|---|---|
 | `deploy_skpatch-hosts-<env>.yml` | Deploy/update the dashboard stack | `target_manager_group` |
-| `provision_skpatch_hosts_nodes.yml` | Grant/revoke SSH access and sudo rights on target nodes; on `present`, also upserts those nodes as dashboard systems (opt-in) | `-l <estate-group>`, `skpatch_hosts_provision_env`, `skpatch_hosts_provision_state` (`present` or `absent`), `skpatch_hosts_register_manager_group` (default `swarm_managers`) |
+| `provision_skpatch_hosts_nodes.yml` | Grant/revoke SSH access and sudo rights on target nodes; on `present`, also adds those nodes as dashboard systems when missing (opt-in) | `-l <estate-group>`, `skpatch_hosts_provision_env`, `skpatch_hosts_provision_state` (`present` or `absent`), `skpatch_hosts_register_manager_group` (default `swarm_managers`) |
 
 ## 8. Troubleshooting
 
@@ -310,9 +312,12 @@ hosts (opt-in, see README.md "Automatic host registration";
 | A node still can't be upgraded/rebooted with `ALLOW_ACTIONS: true` | Check that node's own `skpatch_hosts_allow_actions`. The vault's instance-wide flag never overrides a host-level `false`, by design. |
 | Health probe (`probe.yml`) sees a non-200 behind SSO | Expected: `AUTH_MODE: sso` means the probe sees Authentik's response, not the app directly. This still proves the router and TLS path are live. |
 | `provision_skpatch_hosts_nodes.yml` leaves an account on a node it shouldn't | Rerun with `-e skpatch_hosts_provision_state=absent` against that node's inventory group. It is reversible by design. |
-| Host registration fails: `POST /systems: HTTP 400 ... credential` | `API_CREDENTIAL_ID` does not exist, or its username does not match `PROVISION_USER`. Recheck the credential created in the one-time bootstrap (README "Automatic host registration"). |
-| Host registration fails: `HTTP 403` | `API_TOKEN` lacks `systems:add`/`systems:edit`, or its owner was disabled. Mint a new token with both permissions. |
-| A node is missing from the dashboard after a `present` run | `API_TOKEN`/`API_CREDENTIAL_ID` were unset at the time (registration silently skips, by design -- check the play's own debug output); add both and rerun. |
+| Host registration fails: `no dashboard user named ...` or `is read-only` | `REGISTER_AS` must be an existing ADMIN account. Sign in to the dashboard once (local or OIDC) so the account exists, or fix its role. |
+| Host registration fails: `GET /auth/me: HTTP 401` | The signed session was refused: the account's sessions were revoked mid-run, or the container's session key changed. Rerun; if it persists, check `LUDASH_SECRET_KEY` / `/data/.secret_key` in the container. |
+| Host registration fails: `no sshKey credential with id N` | `CREDENTIAL_ID` points at a credential that no longer exists. Unset it to let `SSH_PRIVATE_KEY` create one, or fix the id. |
+| `API_TOKEN is set, but the pinned dashboard ... refuses` | Expected: token registration never worked on 2026.10.9. Remove `API_TOKEN`, set `REGISTER_AS` (README "Automatic host registration"). |
+| A node is missing from the dashboard after a `present` run | `REGISTER_AS` or the credential were unset at the time (registration skips, by design; check the play's own debug output); set them and rerun. |
+| A node's dashboard name or settings were not updated by a run | Expected: registration creates missing systems only and never edits one. Change it in the dashboard. |
 | A retired node still shows in the dashboard | Expected: registration never deletes. Remove it by hand once its history is no longer needed. |
 
 ## 9. Maturity-tier + Version reference

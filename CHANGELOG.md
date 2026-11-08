@@ -3,6 +3,22 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased (v2.26.19)
+
+### Upgrade notes (instances)
+
+- **skpatch-hosts: host auto-registration works again, through a dashboard session instead of an
+  API token**: linux-update-dashboard 2026.10.9 refuses API tokens for creating systems and
+  credentials, so v2.26.17 refused registration outright. `provision_skpatch_hosts_nodes.yml` now
+  runs `register_systems.js` inside the dashboard's own container, which signs a five-minute
+  session for an existing dashboard admin with the app's own session key (works in `sso`, `local`
+  and `oidc` modes; revoked by that user's "sign out everywhere"). New vault keys:
+  `skpatch_hosts.REGISTER_AS` (the admin's username) plus `SSH_PRIVATE_KEY` (the registrar creates
+  the SSH credential from it) or `CREDENTIAL_ID` (an existing one; `API_CREDENTIAL_ID` is still
+  read). It creates missing systems and never edits or deletes one. **A vault that still sets
+  `API_TOKEN` now fails** with these steps; remove it. `PROVISIONER_IMAGE` is no longer used by
+  this role.
+
 ## Unreleased (v2.26.18)
 
 ### Upgrade notes (instances)

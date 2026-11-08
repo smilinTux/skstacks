@@ -1,5 +1,6 @@
 """provision_skpatch_hosts_nodes.yml: host registration lives in an
-include_tasks that is skipped as a whole when registration is not configured.
+include_tasks that is skipped as a whole when registration is not configured,
+and that runs the registrar inside the dashboard container on its own node.
 
 ansible-core 2.19+ templates delegate_to before it evaluates `when`, so a
 skipped task delegating to `selected_manager` (only set when registration
@@ -14,7 +15,7 @@ from pathlib import Path
 import yaml
 
 ROLE = Path(__file__).resolve().parents[1] / "ansible" / "optional" / "skpatch-hosts"
-COND = "skp_reg_token | default('') | length > 0"
+COND = "skp_reg_on | bool"
 
 
 def _tasks(play):
@@ -37,20 +38,24 @@ def test_nothing_in_the_playbook_delegates_to_selected_manager():
 
 
 def test_included_file_selects_a_manager_then_registers_through_it():
-    tasks = yaml.safe_load((ROLE / "tasks" / "register_systems.yml").read_text())[1:]
+    tasks = yaml.safe_load((ROLE / "tasks" / "register_systems.yml").read_text())
     names = [t["name"] for t in tasks]
     # never the shared select_manager_node.yml: it filters managers by the
     # play's -l hosts, and this play's hosts are the nodes being registered
     assert not any("select_manager_node" in str(t.get("import_tasks", "")) for t in tasks)
     assert "groups[skpatch_hosts_register_manager_group" in tasks[0]["set_fact"]["skp_reg_managers"]
-    assert names.index("Use the first swarm manager that answered") < names.index(
-        "Stage the systems-sync script on the selected manager")
-    delegating = [t for t in tasks if t.get("delegate_to") == "{{ selected_manager }}"]
-    assert all("ansible_connection" in t.get("connection", "") for t in delegating)
-    assert all(t.get("become") is True for t in delegating)
-    assert {t["name"] for t in delegating} >= {"Stage the systems-sync script on the selected manager",
-                                               "Register this run's target nodes as dashboard systems (idempotent, never deletes)"}
-
+    assert names.index("Use the first swarm manager that answered") < names.index("Find the node running the dashboard")
+    # the manager only asks swarm where the dashboard runs; the registrar is
+    # staged and run on THAT node, inside the dashboard's container
+    on_mgr = [t for t in tasks if t.get("delegate_to") == "{{ selected_manager }}"]
+    on_node = [t for t in tasks if t.get("delegate_to") == "{{ skp_reg_node }}"]
+    assert [t["name"] for t in on_mgr] == ["Find the node running the dashboard"]
+    assert {t["name"] for t in on_node} == {"Stage the registrar on the dashboard's node",
+                                            "Register this run's target nodes as dashboard systems (creates, never edits or deletes)"}
+    for t in on_mgr + on_node:
+        assert "ansible_connection" in t.get("connection", "") and t.get("become") is True
+    reg = next(t for t in on_node if t["name"].startswith("Register"))
+    assert reg["no_log"] is True and "docker exec -i" in reg["shell"] and "register_systems.js" in reg["shell"]
 
 def test_manager_selection_runs_under_real_ansible_with_a_limited_play(tmp_path):
     """The play's hosts are only the node being registered (as with -l); the
@@ -64,7 +69,7 @@ def test_manager_selection_runs_under_real_ansible_with_a_limited_play(tmp_path)
     tasks = yaml.safe_load((ROLE / "tasks" / "register_systems.yml").read_text())
     stop = [t["name"] for t in tasks].index("Fail when no swarm manager answered") + 1
     sel = tmp_path / "select.yml"
-    sel.write_text(yaml.safe_dump(tasks[1:stop]))  # past the refusal: the selection logic itself
+    sel.write_text(yaml.safe_dump(tasks[:stop]))  # the selection logic itself
     inv = tmp_path / "inv.ini"
     # mgr-down sets no ansible_connection: under the play's connection:
     # local it would "answer" unless the task picks ssh for it itself
@@ -80,10 +85,11 @@ def test_manager_selection_runs_under_real_ansible_with_a_limited_play(tmp_path)
     assert "SELECTED=mgr-up" in proc.stdout
 
 
-def test_registration_refuses_first_with_the_dashboard_reason():
-    """linux-update-dashboard 2026.10.9 rejects token writes to /api/systems;
-    the included file must refuse before it touches a manager."""
-    tasks = yaml.safe_load((ROLE / "tasks" / "register_systems.yml").read_text())
-    assert tasks[0]["name"].startswith("Refuse host auto-registration")
-    assert "API tokens cannot configure SSH connections" in tasks[0]["fail"]["msg"]
-    assert "when" not in tasks[0]  # unconditional: the include itself is the condition
+
+def test_old_api_token_settings_are_refused_with_the_migration_path():
+    """API_TOKEN can never work against the pinned dashboard; a vault still
+    carrying it must fail loudly and say what to set instead."""
+    plays = yaml.safe_load((ROLE / "provision_skpatch_hosts_nodes.yml").read_text())
+    refuse = next(t for p in plays for t in _tasks(p) if t.get("name") == "Refuse the old API-token registration settings")
+    assert "API_TOKEN" in refuse["when"]
+    assert "API tokens cannot configure SSH connections" in refuse["fail"]["msg"] and "REGISTER_AS" in refuse["fail"]["msg"]
