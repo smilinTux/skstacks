@@ -220,7 +220,7 @@ services:
     # of the framework default, e.g. a private branded fork it already
     # depends on (that image is not published here - see README). Default:
     # the upstream dashboard release paired with the management version
-    # (dashboard v2.94.0 for NetBird 0.80), tag plus digest.
+    # (dashboard v2.96.0 for NetBird 0.82), tag plus digest.
     image: {{ skmesh.DASHBOARD_IMAGE | default('netbirdio/dashboard:v2.96.0@sha256:340b13c00b84349572a2acc5605e907cb09250a9e6461c757097eabdb8e02f2c') }}
     container_name: skmesh-dashboard
     env_file: /var/data/config/skmesh-{{ env }}/skmesh.env

@@ -61,6 +61,9 @@
       host: "{{ skmesh_sso_host }}"
       token: "{{ skmesh_sksso_vault.sksso.api_token }}"
       client_id: "{{ skmesh.NETBIRD_AUTH_CLIENT_ID | default('skmesh') }}"
+      # NetBird keys users on the token's sub. Changing it on a live instance turns every
+      # existing user (owner included) into a new one, so keep what the instance started with.
+      sub_mode: "{{ skmesh.AUTHENTIK_SUB_MODE | default('user_id', true) }}"
       provider_name: "{{ skmesh.AUTHENTIK_APP_SLUG | default('skmesh') }}"
       app_name: "{{ skmesh.AUTHENTIK_APP_NAME | default('SKMesh') }}"
       app_slug: "{{ skmesh.AUTHENTIK_APP_SLUG | default('skmesh') }}"

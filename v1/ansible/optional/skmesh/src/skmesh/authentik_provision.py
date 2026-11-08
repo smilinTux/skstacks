@@ -174,7 +174,12 @@ def signing_key(api, name):
     return kp["pk"]
 
 
+SUB_MODES = ("hashed_user_id", "user_id", "user_uuid", "user_username", "user_email", "user_upn")
+
+
 def provision(api, cfg):
+    if (cfg.get("sub_mode") or "user_id") not in SUB_MODES:
+        raise ApiError(f"sub_mode {cfg.get('sub_mode')!r} is not one of {', '.join(SUB_MODES)}")
     version = api.get("/admin/version/")["version_current"]
     modern = version_tuple(version) >= (2024, 8)
     print(f"authentik: {version}")
@@ -184,7 +189,7 @@ def provision(api, cfg):
         "authorization_flow": flow_pk(api, cfg["authorization_flow"]),
         "client_type": "public",
         "client_id": cfg["client_id"],
-        "sub_mode": "user_id",
+        "sub_mode": cfg.get("sub_mode") or "user_id",
         "include_claims_in_id_token": True,
         "issuer_mode": "per_provider",
         "signing_key": signing_key(api, cfg["signing_key"]),
