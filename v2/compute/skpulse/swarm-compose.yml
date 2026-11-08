@@ -1,7 +1,7 @@
 # skpulse — Gatus on Docker Swarm (config-as-code uptime; feeds skops ITIL).
 services:
   gatus:
-    image: twinproduction/gatus:v5.13.1
+    image: twinproduction/gatus:v5.38.0
     environment:
       - GATUS_CONFIG_PATH=/config/gatus-config.yaml
     volumes:

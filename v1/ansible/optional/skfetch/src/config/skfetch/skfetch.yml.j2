@@ -33,7 +33,7 @@ name: {{ app }}-{{ env }}
 
 services:
   gluetun:
-    image: {{ skfetch.GLUETUN_IMAGE | default('qmcgaw/gluetun@sha256:2733bb22b27e3efa7a9f2cef9057ec12791b8b225793fcd3dbfd0508404dfc25') }}
+    image: {{ skfetch.GLUETUN_IMAGE | default('qmcgaw/gluetun@sha256:44a82caf5b866193bfdfe8ffffbb11b20ce8138a917466c2c9bff9a52861c1a5') }}
     restart: on-failure
     logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
     cap_add: [NET_ADMIN]
@@ -56,7 +56,7 @@ services:
     mem_limit: {{ skfetch.GLUETUN_MEM_LIMIT | default('256m') }}
 
   qbittorrent:
-    image: {{ skfetch.QBITTORRENT_IMAGE | default('lscr.io/linuxserver/qbittorrent@sha256:b522f9f4b769f8f36d49d22d5eb6a92e9aa18904c6a1830b1439df511ec21983') }}
+    image: {{ skfetch.QBITTORRENT_IMAGE | default('lscr.io/linuxserver/qbittorrent@sha256:05c1454f9a32967affc1f34f67f8cc0cc57dd805dca45489fe797095a6286556') }}
     restart: on-failure
     logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
     # Never published: only reachable inside the VPN namespace and the bridge.
@@ -79,13 +79,13 @@ services:
 
   {{ a[0] }}:
 {% if a[0] == 'prowlarr' %}
-    image: {{ skfetch.PROWLARR_IMAGE | default('lscr.io/linuxserver/prowlarr@sha256:f2b26429893d4c4cb71941b7ee50b1bdecd9d5f9f9e02d5410615e9f4f7c8d95') }}
+    image: {{ skfetch.PROWLARR_IMAGE | default('lscr.io/linuxserver/prowlarr@sha256:431d7efebcef466e56adaa40a7a2fa2b0e85159a037b8bf465eaadbf0cf5bedf') }}
 {% elif a[0] == 'sonarr' %}
-    image: {{ skfetch.SONARR_IMAGE | default('lscr.io/linuxserver/sonarr@sha256:f247545d23ba8b233d6604575347e48a623fe6ad75dda02348bf81917f3b5c06') }}
+    image: {{ skfetch.SONARR_IMAGE | default('lscr.io/linuxserver/sonarr@sha256:673dc4609a5672bc8e46069c86ffcea283a86b48d34a6c93d8da8c24a1b87571') }}
 {% elif a[0] == 'radarr' %}
-    image: {{ skfetch.RADARR_IMAGE | default('lscr.io/linuxserver/radarr@sha256:adb6c09d6b729ea5e642c99cea35af72702ef476bf4763f153299ac5db9f0b4f') }}
+    image: {{ skfetch.RADARR_IMAGE | default('lscr.io/linuxserver/radarr@sha256:ade5937813c6ae415b29db729386e53fea3ecf067a019849bafbe2d2a6ec02ba') }}
 {% elif a[0] == 'lidarr' %}
-    image: {{ skfetch.LIDARR_IMAGE | default('lscr.io/linuxserver/lidarr@sha256:044d616beb43c5e7810991242c6a9c42b93ff238c8c0850684939634ea751208') }}
+    image: {{ skfetch.LIDARR_IMAGE | default('lscr.io/linuxserver/lidarr@sha256:d5707cfe084da21a3864c7ef0edd9c0543b5e26c79c551f84dad5ef8683af8c7') }}
 {% endif %}
     restart: on-failure
     logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
@@ -124,7 +124,7 @@ services:
   # slskd (Soulseek) in the VPN namespace, like qBittorrent; Soularr feeds it
   # Lidarr's wanted albums. Secrets only in the slskd.yml / config.ini seeds.
   slskd:
-    image: {{ skfetch.SLSKD_IMAGE | default('slskd/slskd@sha256:ecd4026d4f8fb504e2cc55323efa2c1f5b56d20d3686b018249cc36b48ea17a6') }}
+    image: {{ skfetch.SLSKD_IMAGE | default('slskd/slskd@sha256:d0963a3e5b16facd295bf4f2156dad0182f246b1b21a032cae12f5494c694843') }}
     restart: on-failure
     logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
     user: "{{ skfetch.PUID | default(1000) }}:{{ skfetch.PGID | default(1000) }}"
@@ -140,7 +140,7 @@ services:
     mem_limit: {{ skfetch.SLSKD_MEM_LIMIT | default('512m') }}
 
   soularr:
-    image: {{ skfetch.SOULARR_IMAGE | default('mrusse08/soularr@sha256:9d17bdc35108afd747c4862dc32a0c1cba821638d170e1374188a977ce255c76') }}
+    image: {{ skfetch.SOULARR_IMAGE | default('mrusse08/soularr@sha256:61ee506de5fb1447f3abd4a5a47e2537fad152ddf8c7e0392a36ef00b4f1c3d9') }}
     restart: on-failure
     logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
     user: "{{ skfetch.PUID | default(1000) }}:{{ skfetch.PGID | default(1000) }}"

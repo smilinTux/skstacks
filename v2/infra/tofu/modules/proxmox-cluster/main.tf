@@ -22,7 +22,7 @@ terraform {
   required_providers {
     proxmox = {
       source  = "bpg/proxmox"
-      version = "~> 0.51"
+      version = "~> 0.120"
     }
     random = {
       source  = "opentofu/random"
