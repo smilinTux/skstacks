@@ -70,7 +70,7 @@ required_by:
 # (Structure only; secrets resolve from the backend at deploy time.)
 deploy:
   container: traefik
-  image: "traefik:v3.7"
+  image: "traefik:v3.3"
   command:
     - "--configFile=/etc/traefik/traefik.yml"
   ports:
