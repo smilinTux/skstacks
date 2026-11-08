@@ -7,6 +7,11 @@ Each entry says what an instance must do, if anything.
 
 ### Upgrade notes (instances)
 
+- **Portal tile skips cleanly when sksso is not deployed yet**: the default-on tile provisioner
+  joins `sksso-<env>`, so any role deployed before sksso (a fresh cluster, the release lab:
+  skvector in the v2.26.17 gate) failed with "network sksso-dev not found". The shared task now
+  checks the network first and skips the tile with a warning; the tile appears on the role's next
+  deploy after sksso. `portal_tile.require_sksso: true` fails instead. **Instance action**: none.
 - **Docs: one agent instructions file, `AGENTS.md`**: the root `CLAUDE.md` shim is removed and
   `AGENTS.md` is reshaped to the sk-standards AGENT_INSTRUCTIONS_STANDARD (commands copied from
   CI). `v2/CLAUDE.md` and `v3/CLAUDE.md` become nested `AGENTS.md` files. Claude Code reads
