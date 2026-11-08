@@ -25,7 +25,7 @@ networks:
    0644 file is never treated as carrying a secret value. #}
 services:
   postgres:
-    image: postgres:16.15
+    image: postgres:16.2
     env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}.env
     environment:
       - PGTEMP=/var/lib/postgresql/data/tmp
@@ -62,7 +62,7 @@ services:
       start_period: 40s
 
   postgres-db-backup:
-    image: postgres:16.15
+    image: postgres:16.2
     env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}-backup.env
     environment:
       - PGTEMP=/dump/tmp
@@ -118,7 +118,7 @@ services:
       - {{ app }}-{{ env }}
 
   redis:
-    image: docker.io/library/redis:7.4.12
+    image: docker.io/library/redis:7.2.4
     env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}.env
     command: redis-server --dir /data --save 60 1 --loglevel warning
     healthcheck:

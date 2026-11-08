@@ -15,7 +15,7 @@ services:
     deploy: { replicas: 1, restart_policy: { condition: any } }
 
   server:
-    image: ghcr.io/goauthentik/server:2026.8
+    image: ghcr.io/goauthentik/server:2026.2
     command: server
     environment:
       - AUTHENTIK_SECRET_KEY__FILE=/run/secrets/authentik_secret_key
@@ -34,7 +34,7 @@ services:
         - "traefik.enable=true"
 
   worker:
-    image: ghcr.io/goauthentik/server:2026.8
+    image: ghcr.io/goauthentik/server:2026.2
     command: worker
     environment:
       - AUTHENTIK_SECRET_KEY__FILE=/run/secrets/authentik_secret_key
