@@ -30,7 +30,7 @@ services:
     deploy: { replicas: 1, restart_policy: { condition: any } }
 
   grafana:
-    image: grafana/grafana:11.6.16
+    image: grafana/grafana:13.3.0
     environment:
       - GF_SECURITY_ADMIN_PASSWORD__FILE=/run/secrets/grafana_admin_password
     secrets: [grafana_admin_password]
