@@ -14,7 +14,9 @@ Each entry says what an instance must do, if anything.
   and upserts only what skstream owns: `CLI_DEBRID_VERSION` (default `v0.7.81`, which carries
   upstream's managed Plex Home fix de5c411f; `''` = no pin), `PLEX_OTHER_WATCHLISTS` (one source
   per viewer with their own token) and `PLEX_FRIENDS_WATCHLIST` (owner's friends RSS feed, Plex
-  Pass). Other sources and UI edits are never touched. A new pin restarts `skstream-dumb`; a
+  Pass). A pin also turns off DUMB's standalone CLI Battery: cli_debrid v0.7.29+ runs it
+  in-process and has no `cli_battery/main.py`, so with it on, cli_debrid never starts. Other
+  sources and UI edits are never touched. A new pin restarts `skstream-dumb`; a
   sources-only change restarts cli_debrid alone (the rclone mount stays up). The play now refuses
   a `DUMB_EXTRA_BINDS` entry over `plex_watchlist.py` while a release is pinned.
   **Instance action**: an instance with that patch bind must drop it from the vault in the same

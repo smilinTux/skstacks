@@ -123,9 +123,26 @@ def test_pins_cli_debrid_and_turns_branch_off():
 
 
 def test_empty_version_leaves_dumb_alone():
-    cfg = {"cli_debrid": {"enabled": True}}
+    cfg = {"cli_debrid": {"enabled": True}, "cli_battery": {"enabled": True}}
     assert not sc.converge_dumb(cfg, "")
-    assert cfg == {"cli_debrid": {"enabled": True}}
+    assert cfg == {"cli_debrid": {"enabled": True}, "cli_battery": {"enabled": True}}
+
+
+def test_a_pin_switches_off_the_standalone_battery():
+    # cli_debrid >= v0.7.29 has no cli_battery/main.py; DUMB's own battery service
+    # then crashes and holds cli_debrid back (seen on nor 2026-11-08).
+    cfg = {"cli_debrid": {"enabled": True, "release_version_enabled": True,
+                          "release_version": "v0.7.81", "branch_enabled": False},
+           "cli_battery": {"enabled": True, "process_name": "CLI Battery"}}
+    assert sc.converge_dumb(cfg, "v0.7.81")
+    assert cfg["cli_battery"] == {"enabled": False, "process_name": "CLI Battery"}
+    assert not sc.converge_dumb(cfg, "v0.7.81")
+
+
+def test_no_battery_section_is_not_invented():
+    cfg = {"cli_debrid": {}}
+    sc.converge_dumb(cfg, "v0.7.81")
+    assert "cli_battery" not in cfg
 
 
 # ---- main: files, ownership, output ---------------------------------------------

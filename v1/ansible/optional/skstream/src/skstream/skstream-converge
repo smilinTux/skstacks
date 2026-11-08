@@ -43,15 +43,27 @@ def _next_id(sources, kind):
 
 
 def converge_dumb(cfg, version):
-    """Pin cli_debrid to `version` in a parsed dumb_config. '' leaves it alone."""
+    """Pin cli_debrid to `version` in a parsed dumb_config. '' leaves it alone.
+
+    cli_debrid v0.7.29 (ef4deb5b) folded CLI Battery into the main process and
+    dropped cli_battery/main.py, but DUMB (2.22.1 and 2.23.0 both bake 0.7.23)
+    still starts it as its own service. With a newer pin that service crashes and,
+    because DUMB makes cli_debrid depend on it, cli_debrid never starts. So a pin
+    also switches DUMB's standalone CLI Battery off.
+    """
     if not version:
         return False
+    changed = False
     cd = cfg.setdefault("cli_debrid", {})
     want = {"release_version_enabled": True, "release_version": version, "branch_enabled": False}
-    if all(cd.get(k) == v for k, v in want.items()):
-        return False
-    cd.update(want)
-    return True
+    if not all(cd.get(k) == v for k, v in want.items()):
+        cd.update(want)
+        changed = True
+    battery = cfg.get("cli_battery")
+    if isinstance(battery, dict) and battery.get("enabled") is not False:
+        battery["enabled"] = False
+        changed = True
+    return changed
 
 
 def converge_cli(cfg, spec):
