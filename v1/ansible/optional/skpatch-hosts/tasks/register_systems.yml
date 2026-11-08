@@ -11,6 +11,23 @@
 # hosts (-l), which is right for a deploy but never true here: this play's
 # hosts are the nodes being registered (workers, hypervisors, a NAS), so it
 # found no manager and failed (v2.26.17 gate, provision -l <worker>).
+# NOT SUPPORTED with the pinned dashboard (linux-update-dashboard 2026.10.9).
+# Its server refuses ANY API-token request to create or edit a system:
+# systems.post("/") and systems.put("/:id") both answer 403 "API tokens
+# cannot configure SSH connections" (dist/server/index.js), not only
+# POST /api/credentials as this feature assumed. Found by the v2.26.17 gate,
+# the first run that took registration end to end. Fail loudly instead of
+# half-working; the tasks below are kept for the redesign (a signed-in
+# dashboard session instead of a bearer token, card in the CHANGELOG entry).
+- name: Refuse host auto-registration (the dashboard rejects token writes to /api/systems)
+  fail:
+    msg: >-
+      skpatch-hosts automatic host registration does not work with the pinned
+      linux-update-dashboard (2026.10.9): its API rejects every API-token request to
+      create or edit a system (403 "API tokens cannot configure SSH connections").
+      Unset skpatch_hosts.API_TOKEN and skpatch_hosts.API_CREDENTIAL_ID and add the
+      nodes in the dashboard. Node provisioning itself does not need registration.
+
 - name: List the swarm managers that can reach the dashboard's overlay network
   set_fact:
     skp_reg_managers: "{{ groups[skpatch_hosts_register_manager_group | default('swarm_managers')] | default([]) }}"

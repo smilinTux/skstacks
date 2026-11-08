@@ -219,6 +219,12 @@ rendered by **sksso**, not this role: see `../sksso/README.md`
 
 ## Automatic host registration
 
+> **Not supported with the pinned dashboard (2026.10.9).** Its API refuses every API-token request
+> to create or edit a system (`POST`/`PUT /api/systems` answer 403 "API tokens cannot configure SSH
+> connections"), so a token-based sync cannot work. With `API_TOKEN`/`API_CREDENTIAL_ID` set,
+> `provision_skpatch_hosts_nodes.yml` now fails with that explanation instead of half-registering.
+> Add nodes in the dashboard for now. A redesign on a signed-in dashboard session is tracked.
+
 `provision_skpatch_hosts_nodes.yml`, on every `present` run, upserts one
 dashboard system per node in its own target group, so the dashboard is
 never empty after a deploy. Opt-in: nothing calls the dashboard's API

@@ -15,6 +15,10 @@ Each entry says what an instance must do, if anything.
   inside the play's own hosts, and this play's hosts are the nodes being registered. Its delegated
   tasks now use the manager's own connection (ssh by default): the play runs `connection: local`,
   so they had been running on the controller instead of the manager.
+  **Host auto-registration itself is refused for now**: the pinned linux-update-dashboard
+  (2026.10.9) rejects every API-token request to create or edit a system (403 "API tokens cannot
+  configure SSH connections"), so with `API_TOKEN`/`API_CREDENTIAL_ID` set the provision play fails
+  with that explanation. Add nodes in the dashboard until a session-based redesign lands.
   **Instance action**: none.
 - **Authentik 2026.2+: OAuth2 providers now set `grant_types`**: Authentik 2026.2 added the
   field and gives a provider created without it an empty list, so every sign-in fails with

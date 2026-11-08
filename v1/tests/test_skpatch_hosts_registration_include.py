@@ -37,7 +37,7 @@ def test_nothing_in_the_playbook_delegates_to_selected_manager():
 
 
 def test_included_file_selects_a_manager_then_registers_through_it():
-    tasks = yaml.safe_load((ROLE / "tasks" / "register_systems.yml").read_text())
+    tasks = yaml.safe_load((ROLE / "tasks" / "register_systems.yml").read_text())[1:]
     names = [t["name"] for t in tasks]
     # never the shared select_manager_node.yml: it filters managers by the
     # play's -l hosts, and this play's hosts are the nodes being registered
@@ -64,7 +64,7 @@ def test_manager_selection_runs_under_real_ansible_with_a_limited_play(tmp_path)
     tasks = yaml.safe_load((ROLE / "tasks" / "register_systems.yml").read_text())
     stop = [t["name"] for t in tasks].index("Fail when no swarm manager answered") + 1
     sel = tmp_path / "select.yml"
-    sel.write_text(yaml.safe_dump(tasks[:stop]))
+    sel.write_text(yaml.safe_dump(tasks[1:stop]))  # past the refusal: the selection logic itself
     inv = tmp_path / "inv.ini"
     # mgr-down sets no ansible_connection: under the play's connection:
     # local it would "answer" unless the task picks ssh for it itself
@@ -78,3 +78,12 @@ def test_manager_selection_runs_under_real_ansible_with_a_limited_play(tmp_path)
                           timeout=180, env={**__import__("os").environ, "ANSIBLE_HOST_KEY_CHECKING": "false"})
     assert proc.returncode == 0, proc.stdout[-3000:]
     assert "SELECTED=mgr-up" in proc.stdout
+
+
+def test_registration_refuses_first_with_the_dashboard_reason():
+    """linux-update-dashboard 2026.10.9 rejects token writes to /api/systems;
+    the included file must refuse before it touches a manager."""
+    tasks = yaml.safe_load((ROLE / "tasks" / "register_systems.yml").read_text())
+    assert tasks[0]["name"].startswith("Refuse host auto-registration")
+    assert "API tokens cannot configure SSH connections" in tasks[0]["fail"]["msg"]
+    assert "when" not in tasks[0]  # unconditional: the include itself is the condition
