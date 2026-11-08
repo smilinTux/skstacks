@@ -145,7 +145,7 @@ services:
 {% endfor %}
 
   db:
-    image: {{ skhub.MARIADB_IMAGE | default('mariadb:10.11.19@sha256:d769e37960821dfdcf096954f6e7ac89f747e116c1bba98e48edd265dfc7deae') }}
+    image: {{ skhub.MARIADB_IMAGE | default('mariadb:10.11.19@sha256:7db29378d4fdab73f8123bbc2b48905c90d1a4b00cf848b028f1e81e623257f2') }}
     env_file: /var/data/config/skhub-{{ env }}/skhub.env
     command:
       - --wait_timeout=28800
@@ -178,7 +178,7 @@ services:
       start_period: 40s
 
   db-backup:
-    image: {{ skhub.MARIADB_IMAGE | default('mariadb:10.11.19@sha256:d769e37960821dfdcf096954f6e7ac89f747e116c1bba98e48edd265dfc7deae') }}
+    image: {{ skhub.MARIADB_IMAGE | default('mariadb:10.11.19@sha256:7db29378d4fdab73f8123bbc2b48905c90d1a4b00cf848b028f1e81e623257f2') }}
     env_file: /var/data/config/skhub-{{ env }}/skhub-db-backup.env
     deploy:
       placement:
@@ -251,7 +251,7 @@ services:
       - skhub-{{ env }}
 
   redis:
-    image: {{ skhub.REDIS_IMAGE | default('redis:8.10.3-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80') }}
+    image: {{ skhub.REDIS_IMAGE | default('redis:8.10.2-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0') }}
     # notify-keyspace-events Ex: required for Nextcloud file locking.
     # timeout 0 / tcp-keepalive 300: avoid "Redis went away" on long uploads.
     command: redis-server --notify-keyspace-events Ex --appendonly yes --timeout 0 --tcp-keepalive 300
@@ -281,7 +281,7 @@ services:
       retries: 5
 
   clamav:
-    image: {{ skhub.CLAMAV_IMAGE | default('clamav/clamav:latest@sha256:6d87c712e3391e13c1ba6e05dfb074d4b1ddb5a6834b23bb9da990d2a4ef042a') }}
+    image: {{ skhub.CLAMAV_IMAGE | default('clamav/clamav:latest@sha256:ebec5bc138401b36ae987caa1a3fa3c3b2a21ed3d51f0bfa5852825e663e67b0') }}
     networks:
       - skhub-{{ env }}
     volumes:
@@ -485,7 +485,7 @@ services:
         - "traefik.http.services.skhub-push-svc.loadbalancer.server.port=7867"
 
   whiteboard:
-    image: {{ skhub.WHITEBOARD_IMAGE | default('ghcr.io/nextcloud-releases/whiteboard:v2.1.2@sha256:fd714528ae29beb9e9ad56589c031f7c6c688979b5e0cfbba7bb546cf75a0e43') }}
+    image: {{ skhub.WHITEBOARD_IMAGE | default('ghcr.io/nextcloud-releases/whiteboard:v2.0.0@sha256:059596633333d009890c64858f89f133ccd973a2e0823ad960a0cc05cf8657f1') }}
     env_file: /var/data/config/skhub-{{ env }}/whiteboard.env
     networks:
       - skhub-{{ env }}
@@ -540,7 +540,7 @@ services:
     command: -concurrency 50 -enable-url-source -log-level info
 {% if skhub.enable_collabora | default(false) %}
   collabora:
-    image: {{ skhub.COLLABORA_IMAGE | default('collabora/code:26.04.6.1.1@sha256:95f29f1c0a1778999125f53f058d968fe0afb37c95e32ebfb9f3444140faebd2') }}
+    image: {{ skhub.COLLABORA_IMAGE | default('collabora/code:26.04.5.1.1@sha256:bb8f3c9c5c9016045f25fccb5f0649be94469ebc7c7cc379f3576e470cccf33d') }}
     env_file: /var/data/config/skhub-{{ env }}/collabora.env
     networks:
       - skhub-{{ env }}
@@ -606,7 +606,7 @@ services:
 {% set _talk_hpb_dinit = (not (skhub.TALK_HPB_IMAGE | default('', true))) or ('@sha256:831a08f9772d188e65aee2fb59ef3785d3567a1fe2fb65f0e6fd2c17a16ffc87' in (skhub.TALK_HPB_IMAGE | string)) %}
 {% set _talk_hpb_cmd = skhub.TALK_HPB_CMD | default((['dinit', '--system', '--container', 'nats-server', 'eturnal', 'janus', 'signaling'] if _talk_hpb_dinit else ['supervisord', '-c', '/supervisord.conf']), true) %}
   talk-hpb:
-    image: {{ skhub.TALK_HPB_IMAGE | default('ghcr.io/nextcloud-releases/aio-talk:latest@sha256:907ee720df0dd346c738bad2525945c4c408b2af0d21975a4c6cfb199edeed22') }}
+    image: {{ skhub.TALK_HPB_IMAGE | default('ghcr.io/nextcloud-releases/aio-talk:latest@sha256:831a08f9772d188e65aee2fb59ef3785d3567a1fe2fb65f0e6fd2c17a16ffc87') }}
     env_file: /var/data/config/skhub-{{ env }}/talk-hpb.env
 {% if _internal_ingress_ip %}
     extra_hosts:
