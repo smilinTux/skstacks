@@ -113,7 +113,7 @@ echo -e "${YELLOW}Updating services...${NC}"
 # restarts it exactly when its image or config changed. A forced restart on
 # every deploy only killed an in-flight postgres-db-backup dump and dropped
 # every Immich DB connection.
-for SERVICE in immich-server immich-machine-learning redis; do
+for SERVICE in immich-server immich-microservices immich-machine-learning redis; do
     SERVICE_FULL="${STACK_NAME}_${SERVICE}"
     if docker service ls --format "{{ '{{' }}.Name{{ '}}' }}" | grep -q "^${SERVICE_FULL}$"; then
         echo -e "${BLUE}  -> Updating ${SERVICE}...${NC}"
@@ -178,7 +178,7 @@ else
     echo -e "${YELLOW}Monitor with: docker service ls | grep ${STACK_NAME}${NC}"
 
     echo -e "\n${YELLOW}Recent logs for services with issues:${NC}"
-    for SERVICE in immich-server immich-machine-learning redis database; do
+    for SERVICE in immich-server immich-microservices immich-machine-learning redis database; do
         SERVICE_FULL="${STACK_NAME}_${SERVICE}"
         REPLICAS=$(docker service ls --filter "name=${SERVICE_FULL}" --format "{{ '{{' }}.Replicas{{ '}}' }}" 2>/dev/null || echo "0/0")
         if [[ ! "$REPLICAS" =~ ^[0-9]+/[0-9]+$ ]] || [[ "${REPLICAS%/*}" != "${REPLICAS#*/}" ]]; then
