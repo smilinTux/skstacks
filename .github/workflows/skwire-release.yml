@@ -98,7 +98,7 @@ jobs:
           find artifacts -type f -exec cp {} release/ \;
           cp v2/skwire/install.sh v2/skwire/install.ps1 release/
           ls -la release
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: release/*
           generate_release_notes: true
