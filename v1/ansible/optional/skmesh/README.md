@@ -81,6 +81,12 @@ characters means `hashed_user_id`, set `AUTHENTIK_SUB_MODE: hashed_user_id`.
 With hashed ids the IdP manager logs `user ... not found in IDP` (it looks
 users up by numeric id); logins and roles are unaffected.
 
+**`AUTHENTIK_EXTRA_REDIRECT_URIS` (custom dashboard builds).** The provider
+gets `/nb-auth`, `/nb-silent-auth` and `http://localhost:53000`, strict. A
+dashboard image that returns to the site root (NAM's `ghcr.io/smilintux/skmesh`)
+needs `AUTHENTIK_EXTRA_REDIRECT_URIS: ["https://<host>/"]`, otherwise every
+redeploy drops it and login stops with "Redirect URI Error".
+
 **Application bindings.** If the `skmesh` application has policy bindings
 (for example an admin group), bind the `IDP_MANAGER_USERNAME` group too.
 Otherwise Authentik answers the IdP manager's client_credentials login with
