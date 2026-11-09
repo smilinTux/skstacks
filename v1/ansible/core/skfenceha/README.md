@@ -23,7 +23,8 @@ gate, chosen in this order:
    `src/skfenceha/create_user_password.sh`): basic auth, realm
    `DASHBOARD_AUTH_REALM`.
 3. Neither: LAN only. An ipAllowList admits `DASHBOARD_FALLBACK_ALLOW_CIDRS`
-   (default loopback, RFC 1918 ranges and 100.64.0.0/10 for a tailnet) and
+   (default loopback and the RFC 1918 ranges; add a tailnet or VPN range here
+   to reach the dashboard over it) and
    answers 403 to everyone else. Until 2026-11-09 this case rendered an empty
    chain, so an estate that never set the hash served its dashboard and API
    to the internet.
