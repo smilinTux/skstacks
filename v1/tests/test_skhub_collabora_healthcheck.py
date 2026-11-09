@@ -29,6 +29,8 @@ import pathlib
 import jinja2
 import yaml
 
+from image_pins import is_pinned
+
 SKHUB = pathlib.Path(__file__).resolve().parents[1] / "ansible/optional/skhub"
 COMPOSE = SKHUB / "src/config/skhub/skhub.yml.j2"
 BASE = {"CLUSTERNAME": "cluster1", "DOMAIN": "example.com", "enable_collabora": True}
@@ -53,7 +55,7 @@ def test_default_healthcheck_is_the_26_04_native_probe_not_curl():
     """Default COLLABORA_IMAGE is 26.04 (#137); the default healthcheck must match
     what that image can actually run (it has no shell, no curl)."""
     svc = collabora()
-    assert svc["image"] == COLLABORA_26_04
+    assert is_pinned(svc["image"], "collabora/code", "26.04.")
     assert svc["healthcheck"]["test"] == NATIVE_PROBE_TEST
 
 

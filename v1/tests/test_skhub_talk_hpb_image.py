@@ -14,6 +14,7 @@ TALK_HPB_IMAGE keeps the old supervisord default (byte-identical for pinned inst
 an image pinned to that same new digest, which gets dinit: the CMD follows the image.
 """
 import pathlib
+import re
 
 import jinja2
 import pytest
@@ -23,8 +24,7 @@ SKHUB = pathlib.Path(__file__).resolve().parents[1] / "ansible/optional/skhub"
 COMPOSE = SKHUB / "src/config/skhub/skhub.yml.j2"
 README = SKHUB / "README.md"
 BASE = {"CLUSTERNAME": "cluster1", "DOMAIN": "example.com", "enable_talk_hpb": True}
-DEFAULT = ("ghcr.io/nextcloud-releases/aio-talk:latest"
-           "@sha256:831a08f9772d188e65aee2fb59ef3785d3567a1fe2fb65f0e6fd2c17a16ffc87")
+DEFAULT = re.search(r"_talk_hpb_default_line %\}image: (\S+)\{%", COMPOSE.read_text()).group(1)
 # The default image's own Config.Cmd (docker image inspect), what the relay wrapper must exec.
 DEFAULT_CMD = ["dinit", "--system", "--container", "nats-server", "eturnal", "janus", "signaling"]
 SUPERVISORD = ["supervisord", "-c", "/supervisord.conf"]
@@ -133,8 +133,10 @@ def test_no_hardcoded_aio_talk_image_left():
     # "aio-talk:" (with the colon), not "aio-talk-recording:" (talk-recording's
     # own image, its own knob TALK_RECORDING_IMAGE -- see test_skhub_recording_ai.py).
     lines = [l.strip() for l in COMPOSE.read_text().splitlines() if l.strip().startswith("image:")]
-    talk = [l for l in lines if "aio-talk:" in l]
-    assert talk and all("skhub.TALK_HPB_IMAGE" in l for l in talk), talk
+    # The literal default lives only in the _talk_hpb_default_line set block; the
+    # service's image line goes through the knob.
+    assert not [l for l in lines if "aio-talk:" in l], lines
+    assert [l for l in lines if "skhub.TALK_HPB_IMAGE" in l], lines
 
 
 def test_readme_documents_the_knob():

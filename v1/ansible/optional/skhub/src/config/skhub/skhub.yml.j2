@@ -603,10 +603,14 @@ services:
 {#- The relay wrapper execs TALK_HPB_CMD, else the image's own CMD, chosen by
     WHICH image runs: dinit for the default digest (unset, or pinned to it),
     supervisord for any other pinned image (the pre-v2.26.3 default). -#}
-{% set _talk_hpb_dinit = (not (skhub.TALK_HPB_IMAGE | default('', true))) or ('@sha256:831a08f9772d188e65aee2fb59ef3785d3567a1fe2fb65f0e6fd2c17a16ffc87' in (skhub.TALK_HPB_IMAGE | string)) %}
+{#- The default is captured once, on an `image:` line so Renovate's regex manager
+    rewrites it; the image line and the dinit check both read it from here. -#}
+{% set _talk_hpb_default_line %}image: ghcr.io/nextcloud-releases/aio-talk:latest@sha256:831a08f9772d188e65aee2fb59ef3785d3567a1fe2fb65f0e6fd2c17a16ffc87{% endset %}
+{% set _talk_hpb_default = _talk_hpb_default_line | trim | replace('image: ', '') %}
+{% set _talk_hpb_dinit = (not (skhub.TALK_HPB_IMAGE | default('', true))) or (('@' ~ (_talk_hpb_default.split('@') | last)) in (skhub.TALK_HPB_IMAGE | string)) %}
 {% set _talk_hpb_cmd = skhub.TALK_HPB_CMD | default((['dinit', '--system', '--container', 'nats-server', 'eturnal', 'janus', 'signaling'] if _talk_hpb_dinit else ['supervisord', '-c', '/supervisord.conf']), true) %}
   talk-hpb:
-    image: {{ skhub.TALK_HPB_IMAGE | default('ghcr.io/nextcloud-releases/aio-talk:latest@sha256:831a08f9772d188e65aee2fb59ef3785d3567a1fe2fb65f0e6fd2c17a16ffc87') }}
+    image: {{ skhub.TALK_HPB_IMAGE | default(_talk_hpb_default, true) }}
     env_file: /var/data/config/skhub-{{ env }}/talk-hpb.env
 {% if _internal_ingress_ip %}
     extra_hosts:

@@ -20,6 +20,8 @@ import jinja2
 import pytest
 import yaml
 
+from image_pins import normalize_images
+
 HERE = pathlib.Path(__file__).resolve().parent
 APP = HERE.parents[0] / "ansible/optional/sksso"
 T = APP / "src/config/sksso/sksso.yml.j2"
@@ -50,7 +52,7 @@ def healthcheck(text):
 
 @pytest.mark.parametrize("env", ENVS)
 def test_unset_knobs_render_byte_identical_to_v2263(env):
-    assert render(env) == (BASELINE / f"sksso-{env}.yml").read_text()
+    assert normalize_images(render(env)) == normalize_images((BASELINE / f"sksso-{env}.yml").read_text())
 
 
 @pytest.mark.parametrize("env", ENVS)
@@ -60,7 +62,7 @@ def test_empty_knobs_render_byte_identical_to_unset(env):
 
 @pytest.mark.parametrize("env", ENVS)
 def test_other_db_user_changes_only_the_healthcheck_line(env):
-    old = (BASELINE / f"sksso-{env}.yml").read_text().splitlines()
+    old = render(env).splitlines()
     new = render(env, postgres_user="authentik").splitlines()
     assert len(old) == len(new)
     diff = [(a, b) for a, b in zip(old, new) if a != b]
