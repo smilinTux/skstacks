@@ -118,7 +118,7 @@ services:
       - {{ app }}-{{ env }}
 
   redis:
-    image: docker.io/library/redis:7.4.12
+    image: docker.io/library/redis:8.10.3
     env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}.env
     command: redis-server --dir /data --save 60 1 --loglevel warning
     healthcheck:
