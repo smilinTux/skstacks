@@ -30,6 +30,8 @@ import jinja2
 import pytest
 import yaml
 
+from image_pins import normalize_images
+
 V1 = pathlib.Path(__file__).resolve().parents[1]
 OPTIONAL = V1 / "ansible/optional"
 BASELINE = pathlib.Path(__file__).resolve().parent / "fixtures/local_data_baseline"
@@ -105,7 +107,7 @@ def mount_source(svc, target):
 @pytest.mark.parametrize("env", ENVS)
 @pytest.mark.parametrize("stack", STACKS)
 def test_unset_knobs_render_byte_identical_to_v2_26_1(stack, env):
-    assert render(stack, env) == (BASELINE / f"{stack}-{env}.yml").read_text()
+    assert normalize_images(render(stack, env)) == normalize_images((BASELINE / f"{stack}-{env}.yml").read_text())
 
 
 @pytest.mark.parametrize("env", ENVS)

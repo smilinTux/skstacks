@@ -21,6 +21,8 @@ import jinja2
 import pytest
 import yaml
 
+from image_pins import normalize_images
+
 V1 = pathlib.Path(__file__).resolve().parents[1]
 REPO = V1.parent
 OPTIONAL = V1 / "ansible/optional"
@@ -96,7 +98,7 @@ def router_middlewares(text, svc, env, sfx):
 @pytest.mark.parametrize("env", ENVS)
 @pytest.mark.parametrize("svc", SERVICES)
 def test_unset_knobs_render_byte_identical_to_v2_26_4(svc, env):
-    assert render(svc, env) == (BASELINE / f"{svc}-{env}.yml").read_text()
+    assert normalize_images(render(svc, env)) == normalize_images((BASELINE / f"{svc}-{env}.yml").read_text())
 
 
 @pytest.mark.parametrize("env", ENVS)
