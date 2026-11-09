@@ -3,6 +3,27 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased
+
+### Upgrade notes (instances)
+
+- **skgallery: optional split of Immich's background jobs out of the API
+  (`skgallery.SPLIT_WORKERS`)**: Immich runs its API and its job workers (video
+  transcoding, thumbnails, metadata) in one container under one CPU limit. With software
+  transcoding the encode takes the whole limit, so the API stops reading upload bodies: large
+  phone video uploads stall until the client gives up, and Traefik's 10 s health check marks
+  the backend down (503s for every client). Seen on an instance on 2026-11-09 with a 9 GB
+  iPhone video. With `SPLIT_WORKERS: true` immich-server runs only the API
+  (`IMMICH_WORKERS_INCLUDE=api`) and a new `immich-microservices` service runs every other
+  worker (`IMMICH_WORKERS_EXCLUDE=api`) under its own limits
+  (`MICROSERVICES_CPU_LIMIT`/`_MEMORY_LIMIT`, defaults 4.0 / 4G;
+  `MICROSERVICES_CPU_RESERVATION`/`_MEMORY_RESERVATION`, `MICROSERVICES_REPLICAS`). It shares
+  the media mounts and the env file, has no router, and has the image's API healthcheck
+  disabled. Unset, the stack renders exactly as before. **Instance action**: recommended for
+  any instance that takes large video uploads: set `SPLIT_WORKERS: true` and redeploy (the
+  API restarts once; do it when no large upload is in flight). Tests:
+  `v1/tests/test_skgallery_split_workers.py`.
+
 ## skstacks-v2.26.17 - 2026-11-08
 
 ### Upgrade notes (instances)
