@@ -36,7 +36,7 @@ jobs:
       - uses: actions/setup-python@v7
         with: { python-version: '3.12' }
       - run: bash v2/skwire/build_pyz.sh "$GITHUB_WORKSPACE/skwire.pyz"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: skwire.pyz, path: skwire.pyz }
 
   binary:
@@ -77,7 +77,7 @@ jobs:
         env:
           PYTHONUTF8: '1'          # insurance; the binary also self-forces UTF-8 stdio
         run: "dist/${{ matrix.asset }} scan"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset }}
           path: v2/dist/${{ matrix.asset }}
@@ -90,7 +90,7 @@ jobs:
     permissions: { contents: write }
     steps:
       - uses: actions/checkout@v7               # for the installer scripts
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { path: artifacts }
       - name: collect artifacts + installers
         run: |
