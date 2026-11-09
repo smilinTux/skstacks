@@ -19,7 +19,7 @@ services:
   # Provides an isolated Docker daemon for runner job containers.
   # =============================================================================
   dind:
-    image: docker:27.3.1-dind
+    image: docker:27.5.1-dind
     container_name: skgit-{{ env }}-dind
     hostname: skgit-{{ env }}-dind
     privileged: true
@@ -60,7 +60,7 @@ services:
   # Executes CI/CD workflows from SKGit
   # =============================================================================
   forgejo-runner:
-    image: code.forgejo.org/forgejo/runner:{{ skgit.RUNNER_VERSION | default('11.1.2') }}
+    image: code.forgejo.org/forgejo/runner:{{ skgit.RUNNER_VERSION | default('11.3.1') }}
     container_name: skgit-{{ env }}-runner
     hostname: skgit-{{ env }}-runner
     restart: unless-stopped
@@ -135,7 +135,7 @@ services:
   # Runs periodic cleanup to prevent the root FS from filling up with images.
   # =============================================================================
   dind-cleanup:
-    image: docker:27.3.1-cli
+    image: docker:27.5.1-cli
     container_name: skgit-{{ env }}-dind-cleanup
     restart: unless-stopped
     depends_on:
