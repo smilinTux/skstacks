@@ -32,7 +32,7 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # gitleaks scans git history. The default shallow clone hid most of
           # it: 98 findings in CI against 249 on a full clone.
