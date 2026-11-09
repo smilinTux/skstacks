@@ -50,7 +50,7 @@ services:
       start_period: 30s
 
   postgres-db-backup:
-    image: {{ skmesh.POSTGRES_BACKUP_IMAGE | default('postgres:16.14@sha256:ff23cdce56cac62ada6f66013e1a50864c0abbe79d132d40b6e05bd80f378a70') }}
+    image: {{ skmesh.POSTGRES_BACKUP_IMAGE | default('postgres:16.15@sha256:f9a7b9ebf6f56201f949db745e47bc423c0f0f8294bafe991cc10bf74b029657') }}
     env_file: /var/data/config/skmesh-{{ env }}/postgres-backup.env
     environment:
       - PGTEMP=/dump/tmp
@@ -99,7 +99,7 @@ services:
     logging: *logging
 
   management:
-    image: {{ skmesh.MANAGEMENT_IMAGE | default('netbirdio/management:0.80.0@sha256:8bb1b26f3c8de72420c6a0dd40b979e619f8d05c6b3154e74efc0f471f4967fc') }}
+    image: {{ skmesh.MANAGEMENT_IMAGE | default('netbirdio/management:0.82.0@sha256:07c8f979fcc980678cc64e584cf6b7b27204ceb4c871531b29e2dce39592e9ff') }}
     container_name: skmesh-management
     env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
 {% if _mode == 'authentik' %}
@@ -161,7 +161,7 @@ services:
       - postgres
 
   signal:
-    image: {{ skmesh.SIGNAL_IMAGE | default('netbirdio/signal:0.80.0@sha256:d0fe9d51cdbac2542dffabc85066d897f628cca57f1aa08328639777b496d5b4') }}
+    image: {{ skmesh.SIGNAL_IMAGE | default('netbirdio/signal:0.82.0@sha256:0c0c38bbef7dcdfa1822b6d59844615db55dc7303b664e7aed498151edc0dbfb') }}
     container_name: skmesh-signal
     env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
     networks:
@@ -188,7 +188,7 @@ services:
       - management
 
   relay:
-    image: {{ skmesh.RELAY_IMAGE | default('netbirdio/relay:0.80.0@sha256:1aff236dc73fde48857d6619816f442daa1035758f4d38a208c7b46752836484') }}
+    image: {{ skmesh.RELAY_IMAGE | default('netbirdio/relay:0.82.0@sha256:8f6b9e4193653ede89e83dd4aa4e2cf2562579b3e2481dcf259a7ab28bcd5fa1') }}
     env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
     # Peers dial wss://<NB_EXPOSED_ADDRESS host>/relay; Traefik terminates
     # TLS on :443 and forwards the WebSocket here in plain HTTP.
@@ -221,7 +221,7 @@ services:
     # depends on (that image is not published here - see README). Default:
     # the upstream dashboard release paired with the management version
     # (dashboard v2.94.0 for NetBird 0.80), tag plus digest.
-    image: {{ skmesh.DASHBOARD_IMAGE | default('netbirdio/dashboard:v2.94.0@sha256:70e0fc6dd3b7758148d182fb55ecd8d4f9ce01e9bba56c9389224e0b8354009d') }}
+    image: {{ skmesh.DASHBOARD_IMAGE | default('netbirdio/dashboard:v2.96.0@sha256:340b13c00b84349572a2acc5605e907cb09250a9e6461c757097eabdb8e02f2c') }}
     container_name: skmesh-dashboard
     env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
     networks:

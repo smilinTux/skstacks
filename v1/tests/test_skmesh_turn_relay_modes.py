@@ -173,7 +173,7 @@ def test_image_defaults():
     tags = {svcs[s]["image"].split(":")[1].split("@")[0] for s in ("management", "signal", "relay")}
     assert len(tags) == 1, tags
     assert svcs["postgres"]["image"].startswith("postgres:16.")
-    assert svcs["postgres-db-backup"]["image"].startswith("postgres:16.14@sha256:")
+    assert is_pinned(svcs["postgres-db-backup"]["image"], "postgres", "16.")
 
 
 @pytest.mark.parametrize("svc,var", sorted(IMAGE_VARS.items()))

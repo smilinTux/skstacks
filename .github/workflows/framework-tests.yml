@@ -19,8 +19,8 @@ jobs:
   ansible:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: '3.12' }
       - run: pip install pytest pyyaml ansible jsonschema
       # skbackup's engine tests drive a real local restic repository; shellcheck
@@ -39,8 +39,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: '3.12' }
       - run: pip install 'ansible-core==2.21.3' pyyaml jsonschema pytest
       - run: python v1/tests/render/render_playbooks.py
@@ -48,8 +48,8 @@ jobs:
   tofu:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: opentofu/setup-opentofu@v1
+      - uses: actions/checkout@v7
+      - uses: opentofu/setup-opentofu@v2
       - working-directory: v2/infra/tofu/modules/libvirt-cluster
         run: tofu init -backend=false && tofu test
       - run: tofu fmt -check -recursive v2/infra/tofu/modules/libvirt-cluster v2/infra/tofu/examples/libvirt-swarm
@@ -60,8 +60,8 @@ jobs:
     # loopback http.server the tests start themselves.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: '3.12' }
       - run: pip install pytest pyyaml
       - run: python -m pytest -q tools
