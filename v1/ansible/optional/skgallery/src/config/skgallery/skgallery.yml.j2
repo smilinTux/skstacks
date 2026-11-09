@@ -166,7 +166,7 @@ services:
   # Redis - In-memory Cache and Message Queue
   # ===========================================================================
   redis:
-    image: redis:{{ skgallery.REDIS_VERSION | default('7.4.12-alpine') }}
+    image: redis:{{ skgallery.REDIS_VERSION | default('8.10.3-alpine') }}
     command: redis-server --appendonly yes --maxmemory {{ skgallery.REDIS_MAXMEMORY | default('128mb') }} --maxmemory-policy noeviction
     volumes:
       - /var/data/skgallery-{{ env }}/redis-data:/data
