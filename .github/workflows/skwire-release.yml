@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with: { python-version: '3.12' }
       - run: pip install pytest pyyaml
       - name: pytest
@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with: { python-version: '3.12' }
       - run: bash v2/skwire/build_pyz.sh "$GITHUB_WORKSPACE/skwire.pyz"
       - uses: actions/upload-artifact@v4
@@ -55,7 +55,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with: { python-version: '3.12' }
       - run: pip install pyinstaller
       - name: build native binary
