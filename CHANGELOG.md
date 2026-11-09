@@ -23,6 +23,16 @@ Each entry says what an instance must do, if anything.
   any instance that takes large video uploads: set `SPLIT_WORKERS: true` and redeploy (the
   API restarts once; do it when no large upload is in flight). Tests:
   `v1/tests/test_skgallery_split_workers.py`.
+- **skgallery: the Traefik load-balancer health check can be turned off
+  (`skgallery.TRAEFIK_HEALTHCHECK: false`)**: with a single immich-server replica the probe
+  has nothing to fail over to. When the API stalled for 30 to 60 s on slow NFS writes
+  (2026-11-09), every probe timeout marked the only backend down and Traefik answered every
+  phone upload with an instant 503 (358 of them in two bursts), so the iOS app retried
+  hundreds of files. Without the probe those requests wait out the stall. Swarm's container
+  healthcheck still restarts a dead task; raise `HEALTH_CHECK_RETRIES` if stalls can run past
+  its window. Unset keeps the probe, so the stack renders as before. **Instance action**:
+  optional; recommended with one immich-server replica and shared storage. Tests:
+  `v1/tests/test_skgallery_split_workers.py`.
 
 ## skstacks-v2.26.17 - 2026-11-08
 
