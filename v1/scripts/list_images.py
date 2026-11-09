@@ -26,6 +26,10 @@ import jinja2
 
 # Matches the value of a compose "image:" line, e.g. "  image: foo/bar:1.2"
 IMAGE_LINE_RE = re.compile(r"^\s*image:\s*(.+?)\s*$", re.MULTILINE)
+# A default captured once in a set block, `{% set _x_line %}image: <ref>{% endset %}`,
+# so Renovate rewrites it and the template can reuse it (as `_x`, the name without
+# `_line`) in both its image line and other logic. Reported, and passed as context.
+SET_IMAGE_RE = re.compile(r"\{%-?\s*set\s+(\w+)\s*-?%\}\s*image:\s*(\S+?)\s*\{%-?\s*endset")
 
 # Any real image tag/digest containing NUL bytes would already be invalid,
 # so this is safe to use as an out-of-band marker for "still undefined".
@@ -68,11 +72,12 @@ def _unquote(expr):
     return expr
 
 
-def resolve_image_ref(raw_expr):
-    """Render one image: value through Jinja using only its own defaults."""
+def resolve_image_ref(raw_expr, context=None):
+    """Render one image: value through Jinja using only its own defaults
+    (plus any set-block defaults the template captured, see SET_IMAGE_RE)."""
     raw_expr = _unquote(raw_expr)
     try:
-        rendered = _JINJA_ENV.from_string(raw_expr).render()
+        rendered = _JINJA_ENV.from_string(raw_expr).render(**(context or {}))
     except jinja2.TemplateError:
         # Not valid standalone Jinja (shouldn't happen for a real image
         # line) - fall back to the literal text rather than crashing.
@@ -114,8 +119,12 @@ def list_images(root):
     for template_path in find_template_files(root):
         service = service_name_for(template_path, root)
         text = template_path.read_text()
+        captured = {}
+        for name, ref in SET_IMAGE_RE.findall(text):
+            captured[name] = captured[name.removesuffix("_line")] = ref
+            images_to_services.setdefault(ref, set()).add(service)
         for raw_expr in IMAGE_LINE_RE.findall(text):
-            image = resolve_image_ref(raw_expr)
+            image = resolve_image_ref(raw_expr, captured)
             images_to_services.setdefault(image, set()).add(service)
     return sorted(
         (",".join(sorted(services)), image)
