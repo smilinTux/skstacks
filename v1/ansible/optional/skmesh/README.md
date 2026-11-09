@@ -54,7 +54,8 @@ idempotent and drift-correcting:
 - OAuth2/OpenID provider `<AUTHENTIK_APP_SLUG>`: public client
   `NETBIRD_AUTH_CLIENT_ID` (default `skmesh`), PKCE, `sub` = the user's
   numeric id (NetBird's Authentik IdP manager looks users up by it),
-  redirect URIs `https://<skmesh host>/nb-auth`, `/nb-silent-auth` and
+  redirect URIs `https://<skmesh host>/nb-auth`, `/nb-silent-auth`, the
+  site root `https://<skmesh host>/` (the dashboard's main login sends it) and
   `http://localhost:53000`, scopes openid, email, profile, offline_access
   and goauthentik.io/api, the default self-signed signing key;
 - application `<AUTHENTIK_APP_SLUG>` with that provider;
