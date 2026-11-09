@@ -41,9 +41,16 @@ def test_whitelist_renders_source_range_when_set():
     assert "ipwhitelist@file" in mw["default"]["chain"]["middlewares"]
 
 
-def test_dashboard_auth_stub_when_hash_empty():
-    mw = render()
-    assert mw["traefikAuth"] == {"chain": {"middlewares": []}}
+def test_dashboard_auth_without_hash_is_lan_only_not_open():
+    """No hash: the dashboard must not be public (was an empty chain until
+    2026-11-09, which left one estate's dashboard and API open)."""
+    src = render()["traefikAuth"]["ipAllowList"]["sourceRange"]
+    assert "10.0.0.0/8" in src and "192.168.0.0/16" in src and "127.0.0.1/32" in src
+    assert not any(c.startswith("0.0.0.0") or c == "::/0" for c in src)
+
+
+def test_dashboard_fallback_cidrs_override():
+    assert render(DASHBOARD_FALLBACK_ALLOW_CIDRS=["10.9.0.0/16"])["traefikAuth"]["ipAllowList"]["sourceRange"] == ["10.9.0.0/16"]
 
 
 def test_dashboard_auth_basic_auth_when_hash_set():

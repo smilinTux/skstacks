@@ -10,6 +10,28 @@ Vault vars, TLS modes, the dashboard host override and access-log header
 redaction are documented in `v1/ansible/core/skfence/README.md`; the
 published-service catalog entry is in `docs/v1-service-catalog.md`.
 
+**Dashboard protection (`DASHBOARD_SSO_MIDDLEWARE`, `DASHBOARD_AUTH_HASH`)**:
+the Traefik dashboard and API (`/dashboard/`, `/api`) always carry exactly one
+gate, chosen in this order:
+
+1. `DASHBOARD_SSO_MIDDLEWARE` set (for example `authentik@file`): SSO, no
+   basic auth on top. The SSO side needs a forward-auth provider and
+   application for the dashboard host (in Authentik: a Proxy provider,
+   forward auth single application, on the embedded outpost, bound to the
+   admin group).
+2. `DASHBOARD_AUTH_HASH` set (`htpasswd -nbB user password`, or
+   `src/skfenceha/create_user_password.sh`): basic auth, realm
+   `DASHBOARD_AUTH_REALM`.
+3. Neither: LAN only. An ipAllowList admits `DASHBOARD_FALLBACK_ALLOW_CIDRS`
+   (default loopback and the RFC 1918 ranges; add a tailnet or VPN range here
+   to reach the dashboard over it) and
+   answers 403 to everyone else. Until 2026-11-09 this case rendered an empty
+   chain, so an estate that never set the hash served its dashboard and API
+   to the internet.
+
+These are dynamic configuration: a redeploy re-renders them and the workers
+reload the files without a restart.
+
 **Behind a tunnel or CDN (`TRUSTED_PROXIES` + `DROP_FORWARDED_HEADERS`)**:
 `TRUSTED_PROXIES` (list) renders `forwardedHeaders.trustedIPs` on the
 worker's `web` and `websecure` entrypoints, so Traefik keeps the
