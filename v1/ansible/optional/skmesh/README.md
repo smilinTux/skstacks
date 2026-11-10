@@ -104,6 +104,10 @@ If `sksso` enforces CSRF-trusted origins, add this stack's `skmesh.*`
 hostname to `sksso.csrf_extra_origins` in sksso's vault so login redirects
 are not rejected.
 
+`DISABLE_PROMPT_LOGIN` (default `true`): NetBird otherwise sends `prompt=login` on the
+SSO flow, and Authentik then asks for the password twice (seen on the iOS app: a login,
+a second login, then the authorize). Set `false` to force a fresh login every time.
+
 ## TURN / STUN
 
 Set `skmesh.DEPLOY_COTURN: true` to run coturn as part of this stack;
