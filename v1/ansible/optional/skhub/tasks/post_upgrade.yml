@@ -1,0 +1,83 @@
+---
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Finish a Nextcloud major upgrade. The image entrypoint rsyncs the new code
+# and runs "occ upgrade" itself, so on a healthy start nothing is pending and
+# every step here is a no-op. This file is the safety net and the cleanup:
+#
+#   1. "occ upgrade" only when occ status still reports needsDbUpgrade (an
+#      entrypoint upgrade that was interrupted or timed out). Idempotent: with
+#      nothing pending the task prints "no upgrade pending" and reports
+#      unchanged. A failure here is fatal: the database is half-migrated.
+#   2. "occ app:update --all" only on a run that crossed a major
+#      (skhub_nc_upgrade_pending, set by tasks/major_upgrade_guard.yml). A
+#      major upgrade disables apps that had no compatible release and the
+#      shared custom_apps keeps their old code, so update them in place.
+#      Best-effort.
+#   3. "occ db:add-missing-columns" and "db:add-missing-primary-keys", the
+#      siblings of the db:add-missing-indices step further down, which a major
+#      upgrade regularly needs and the admin overview warns about. Idempotent
+#      (they print nothing to do on a converged schema). Best-effort.
+#
+# Expects: app, env, skhub, nextcloud_container, nextcloud_node (set before
+# this file is imported) and skhub_nc_upgrade_pending (major_upgrade_guard.yml).
+
+- name: Run occ upgrade if the entrypoint left a database upgrade pending
+  shell: |
+    CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+    if docker exec "$CONTAINER_ID" php occ status --output=json 2>/dev/null | grep -q '"needsDbUpgrade":true'; then
+      docker exec "$CONTAINER_ID" php occ upgrade 2>&1
+      echo "SKHUB_OCC_UPGRADE_RAN"
+    else
+      echo "no upgrade pending"
+    fi
+  delegate_to: "{{ nextcloud_node.stdout | trim }}"
+  register: skhub_occ_upgrade
+  changed_when: "'SKHUB_OCC_UPGRADE_RAN' in skhub_occ_upgrade.stdout"
+  when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+  tags:
+    - post-deploy
+    - nextcloud-upgrade
+
+- name: Update apps after a Nextcloud major upgrade
+  shell: |
+    CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+    docker exec "$CONTAINER_ID" php occ app:update --all 2>&1 || true
+  delegate_to: "{{ nextcloud_node.stdout | trim }}"
+  register: skhub_app_update
+  changed_when: "'updated' in skhub_app_update.stdout"
+  when:
+    - skhub_nc_upgrade_pending | default(false) | bool
+    - nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+  ignore_errors: yes
+  tags:
+    - post-deploy
+    - nextcloud-upgrade
+
+- name: Add database columns and primary keys a Nextcloud upgrade may need
+  shell: |
+    CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+    docker exec "$CONTAINER_ID" php occ db:add-missing-columns 2>&1 || true
+    docker exec "$CONTAINER_ID" php occ db:add-missing-primary-keys 2>&1 || true
+  delegate_to: "{{ nextcloud_node.stdout | trim }}"
+  register: skhub_db_schema_fix
+  changed_when: "'Adding' in skhub_db_schema_fix.stdout"
+  when: nextcloud_container is defined and nextcloud_container.stdout is defined and (nextcloud_container.stdout | trim | length > 0)
+  ignore_errors: yes
+  tags:
+    - post-deploy
+    - nextcloud-upgrade
+    - maintenance

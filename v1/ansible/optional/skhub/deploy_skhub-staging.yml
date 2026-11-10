@@ -666,6 +666,9 @@
       tags:
         - networks
 
+    - name: Refuse a Nextcloud downgrade or skipped major version before deploying
+      import_tasks: tasks/major_upgrade_guard.yml
+
     - name: Deploy {{ app }} stack
       shell: |
         cd /var/data/{{ app }}-{{ env }}
@@ -761,6 +764,9 @@
       changed_when: false
       tags:
         - post-deploy
+
+    - name: Finish a Nextcloud major upgrade (occ upgrade safety net, app and schema updates)
+      import_tasks: tasks/post_upgrade.yml
 
     - name: Configure Redis in Nextcloud config.php (must be before memcache.local is set)
       shell: |

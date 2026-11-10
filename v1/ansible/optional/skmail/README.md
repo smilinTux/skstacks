@@ -44,7 +44,7 @@ skmail:
 
 ```yaml
 skmail:
-  DMS_VERSION: "16.0.1"                  # default: 16.0.1 - see "Upgrading" below
+  DMS_VERSION: "17.0.0"                  # default: 17.0.0 - see "Upgrading" below
   HOSTNAME: "mail.example.com"          # default: mail.<DOMAIN>
   INSTANCE: "primary"                    # default: primary
   APP_ENV: "prod"                        # default: prod
@@ -103,7 +103,7 @@ mailboxes, should raise it; time a restart
 (`docker service logs skmail-<env>_skmail` from "Welcome to
 docker-mailserver" to "is up and running") and leave generous headroom.
 
-DMS 16.0.1 has no environment option that skips or limits this ownership
+DMS 17.0.0 (and 16.0.1 before it) has no environment option that skips or limits this ownership
 fix: the per-mailbox `chown -R` in `_create_accounts` is unconditional for
 the default FILE account provisioner, and `_chown_var_mail` runs on every
 start. So there is no knob here to turn it off; the durable fixes are
@@ -141,7 +141,7 @@ password is read from stdin (prompted on a terminal).
 ## Upgrading `docker-mailserver`
 
 `skmail.DMS_VERSION` pins the exact image tag; the framework's default
-(`16.0.1`) is only what a brand-new instance gets if it never sets this key
+(`17.0.0`) is only what a brand-new instance gets if it never sets this key
 - it is **not** a signal that every running instance should be on it. An
 existing instance keeps whatever `DMS_VERSION` its own vault already has (or
 inherits the framework default the first time it's added, which may be a
@@ -154,6 +154,66 @@ relying on the framework default. Read the
 for every major version between what you run and what you're moving to
 before bumping across a major boundary; see `docs/runbooks/skmail.md` in an
 instance repo (or your own change log) for a per-instance upgrade record.
+
+### Upgrading to docker-mailserver 17 (from 15 or 16)
+
+Checked against the upstream changelog (v15.1.0, v16.0.0, v16.0.1, v17.0.0) and
+the 17.0.0 image itself. What matters for a skmail instance:
+
+- **No intermediate version is required.** DMS does not gate on sequential
+  majors. A 15.x instance can go straight to 17.0.0, and that is the better
+  path for Rspamd state (see Valkey below). Only the order of reading matters:
+  16.0.0 is the big one (Debian 12 to 13, Dovecot 2.3 to 2.4), 17.0.0 is
+  smaller.
+- **Dovecot 2.3 to 2.4 (16.0.0).** A custom `dovecot.cf` or `dovecot-*.cf`
+  override in the config volume written for 2.3 will not load. The framework
+  templates set none. Mailbox data (maildir) is unchanged; Dovecot rebuilds
+  its indexes on first access, so the first IMAP logins after the upgrade are
+  slower.
+- **`SA_SPAM_SUBJECT` removed (16.0.0).** Use `SPAM_SUBJECT`. The skmail env
+  template sets neither.
+- **DH parameters removed (16.0.0).** `/tmp/docker-mailserver/dhparams.pem` is
+  ignored and DHE ciphers are no longer offered on 587/465/143/993/110/995.
+  Modern clients use ECDHE, so this is only visible to very old clients.
+- **Redis replaced by Valkey (17.0.0).** `ENABLE_RSPAMD_REDIS` is now
+  `ENABLE_RSPAMD_VALKEY` (default on with Rspamd, the framework does not set
+  either). State from DMS 15 or older (`/var/mail-state/lib-redis`) moves to
+  `lib-valkey` automatically. State written by DMS 16 (Redis 8) cannot be
+  loaded: it is left untouched in `lib-redis`, Valkey starts empty, and Rspamd
+  data such as Bayes must be relearned. If you are on 16.x, expect that reset.
+- **Xapian removed (17.0.0).** Only matters with a custom FTS config. The
+  skmail templates do not enable one.
+- **LDAP rework (17.0.0).** `LDAP_QUERY_FILTER_*` became
+  `POSTFIX_<KIND>_QUERY_FILTER` and there are no default filters. skmail uses
+  the FILE account provisioner, so this does not apply.
+- **`setup config dkim` key layout (17.0.0)** only changes Rspamd-managed
+  DKIM. With the skmail env as shipped (`ENABLE_RSPAMD=1` and `ENABLE_OPENDKIM`
+  left at its default 1) DMS logs "OpenDKIM will manage DKIM keys", so the
+  keys stay in `config/opendkim/keys/` and the playbook's DKIM read and DNS
+  update tasks are unaffected (verified against the 17.0.0 image).
+- **Amavis, Postgrey, SpamAssassin:** 16.0.0 swapped Postfix
+  `disable_dns_lookups` for `smtp_dns_support_level` in the Amavis config
+  (internal) and dropped Pyzor and Razor. Neither needs operator action.
+- **Fail2Ban 1.1.1 (16.0.0)** pins the Postfix and Dovecot jails to the file
+  backend. The `postfix-sasl` jail went away in 15.1.0 (covered by the
+  `postfix[mode=extra]` jail).
+- **Dovecot stats writer re-enabled (17.0.0).** Only a `user-patches.sh` that
+  deletes `60-stats.conf` is affected (use `rm -f`). The skmail one does not.
+- **`user-patches.sh` with `SSL_TYPE=manual`** still carries two `sed` lines
+  that rewrite the Dovecot 2.3 keys `ssl_cert =` and `ssl_key =`. Dovecot 2.4
+  uses `ssl_server_cert_file` / `ssl_server_key_file`, so those lines match
+  nothing and DMS's own manual-TLS handling applies. They are harmless and are
+  left alone here.
+
+Operator steps: back up `docker-data/dms/{config,mailstate}` (and take an NFS
+snapshot of `maildata` if your storage supports it), set
+`DMS_VERSION: "17.0.0"` in the instance vault, redeploy, and allow the
+healthcheck window (the per-mailbox ownership fix still runs at start).
+Rollback: set `DMS_VERSION` back to the previous tag and redeploy. Maildir
+data is forward and backward compatible; restore `config` and `mailstate` from
+the backup if you had moved to 17 and Rspamd or Dovecot state was rewritten.
+Expect a few minutes of SMTP/IMAP downtime (single replica, stop-first).
+Senders retry for days, so inbound mail queues at the sender.
 
 ## DNS records an instance must create
 

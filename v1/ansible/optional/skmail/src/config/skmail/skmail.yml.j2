@@ -105,7 +105,7 @@ services:
 {% endif %}
 
   skmail:
-    image: "ghcr.io/docker-mailserver/docker-mailserver:{{ skmail.DMS_VERSION | default('16.0.1') }}"
+    image: "ghcr.io/docker-mailserver/docker-mailserver:{{ skmail.DMS_VERSION | default('17.0.0') }}"
     hostname: "{{ skmail.HOSTNAME | default('mail.' + skmail.DOMAIN) }}"
     # Note: domainname is not supported in Docker Swarm Compose v3.9
     # Domain is set via environment variables in skmail.env
