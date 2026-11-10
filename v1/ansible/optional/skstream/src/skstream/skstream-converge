@@ -8,7 +8,8 @@ keys skstream owns and leaves everything else byte-for-byte as parsed:
   dumb_config.json   cli_debrid release pin (release_version_enabled/release_version)
   cli_debrid config  "Other Plex Watchlist" sources (one per Plex Home profile, keyed
                      by username), one "My Friends Plex RSS Watchlist" source, and
-                     their content_source_check_period
+                     their content_source_check_period, and hard filter_out
+                     patterns on each managed scraping version (append only)
 
 Sources it did not create are never removed or edited. The desired state comes
 as JSON on stdin (it carries tokens, so never as argv):
@@ -16,7 +17,11 @@ as JSON on stdin (it carries tokens, so never as argv):
   {"cli_debrid_version": "v0.7.81" | "",
    "other_watchlists": [{"username": "JD", "token": "...", "display_name": "..."}],
    "friends_rss_url": "https://rss.plex.tv/..." | "",
-   "versions": ["1080p"], "cutoff_date": "", "check_minutes": 5}
+   "versions": ["1080p"], "cutoff_date": "", "check_minutes": 5,
+   "filter_out": ["<regex>", ...] | null}
+
+filter_out null means DEFAULT_FILTER_OUT (the play sends null when
+CLI_DEBRID_FILTER_OUT is unset); absent or [] adds nothing.
 
 Prints {"dumb_changed": bool, "cli_changed": bool} and nothing secret.
 """
@@ -29,6 +34,19 @@ import sys
 DATA = "/data/cli_debrid"  # the unit binds <LOCAL_ROOT>/dumb-data at /data
 OTHER = "Other Plex Watchlist"
 FRIENDS = "My Friends Plex RSS Watchlist"
+
+# Hard-reject foreign-dub releases. cli_debrid's language_code "en" plus
+# foreign_language_penalty only lowers a score, so on nor a cached Russian
+# season pack (The.Rainmaker.S02.1080p.Ru.Ultradox) still won S02E02/E03 over
+# plenty of English releases (2026-11-10), and a library scan found more
+# Russian-only audio (ViruseProject, ColdFilm, LostFilm, MegaPeer). Matches the
+# language tags and the Russian dub/tracker groups as whole words, and any
+# Cyrillic letter (titles like "Благодетель / The Rainmaker"). cli_debrid
+# treats a pattern with regex metacharacters as a case-insensitive regex.
+DEFAULT_FILTER_OUT = [
+    r"(?i)\b(rus|ru|rudub|ukr|ultradox|lostfilm|newstudio|hdrezka|alexfilm|jaskier|baibako"
+    r"|coldfilm|ideafilm|dublyazh|viruseproject|megapeer|rutor|rutracker)\b|[А-Яа-яЁё]",
+]
 
 
 def _source(kind, display_name, versions, cutoff_date, **extra):
@@ -111,6 +129,19 @@ def converge_cli(cfg, spec):
             sources[sid].update(url=url, enabled=True)
             changed = True
         managed.append(sid)
+
+    patterns = spec.get("filter_out", [])
+    if patterns is None:
+        patterns = DEFAULT_FILTER_OUT
+    if patterns:
+        scraping = cfg.setdefault("Scraping", {}).setdefault("versions", {})
+        for v in versions:
+            fo = scraping.setdefault(v, {}).setdefault("filter_out", [])
+            have = {x.get("pattern") if isinstance(x, dict) else x for x in fo}
+            for pat in patterns:
+                if pat not in have:
+                    fo.append(pat)
+                    changed = True
 
     minutes = spec.get("check_minutes")
     if minutes and managed:

@@ -257,6 +257,7 @@
             'friends_rss_url': (((skstream_friends_rss.json | default({})).RSSInfo | default([{}]))[0].url | default('')
                                 if (skstream.PLEX_FRIENDS_WATCHLIST | default(false) | bool) else ''),
             'versions': ['1080p'],
+            'filter_out': skstream.CLI_DEBRID_FILTER_OUT | default(None),
             'cutoff_date': skstream.CUTOFF_DATE | default('') | string,
             'check_minutes': skstream.WATCHLIST_CHECK_MINUTES | default(5) | int
           } | to_json }}
