@@ -7,6 +7,18 @@ Each entry says what an instance must do, if anything.
 
 ### Upgrade notes (instances)
 
+- **skfenceha: traefik-worker rolling restarts drain instead of dropping traffic**: the
+  worker publishes host-mode ports, so start-first is impossible, and it stopped with Docker's
+  default 10 s grace, the same as Traefik's own default drain: every restart SIGKILLed the
+  worker (exit 137) mid-drain and the next node went down 10 s later. On an instance
+  (2026-11-09) two restarts refused connections for about 4.5 minutes and failed a Windmill
+  flow. Now `stop_grace_period` defaults to 45 s (`TRAEFIK_WORKER_STOP_GRACE`), the delay
+  between nodes to 30 s (`TRAEFIK_WORKER_UPDATE_DELAY`, update and rollback), the deploy waits
+  up to 900 s for the rolling restart (`WORKER_UPDATE_TIMEOUT`), and the new
+  `WORKER_LIFECYCLE` map renders `entryPoints.websecure.transport.lifeCycle` (unset: nothing,
+  as before). **Instance action**: recommended: set `WORKER_LIFECYCLE: {graceTimeOut: 30s}`
+  (keep it below the stop grace) and redeploy skfenceha. Tests:
+  `test_skfenceha_worker_timeouts.py`, `test_skfenceha_worker_resources.py`.
 - **skgallery: optional split of Immich's background jobs out of the API
   (`skgallery.SPLIT_WORKERS`)**: Immich runs its API and its job workers (video
   transcoding, thumbnails, metadata) in one container under one CPU limit. With software

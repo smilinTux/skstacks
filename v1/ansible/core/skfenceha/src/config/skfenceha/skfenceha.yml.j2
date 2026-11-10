@@ -113,17 +113,23 @@ services:
         published: 8082
         protocol: tcp
         mode: host
+    # Ports are host-mode, so start-first cannot work (the new task cannot
+    # bind 80/443 until the old one exits). Instead: a stop grace longer than
+    # Traefik's lifeCycle.graceTimeOut (skfenceha.WORKER_LIFECYCLE) so in-flight
+    # requests drain rather than being SIGKILLed at 10s, and a delay between
+    # nodes long enough for keepalived (skha) to move the VIP back.
+    stop_grace_period: {{ skfenceha.TRAEFIK_WORKER_STOP_GRACE | default('45s', true) }}
     deploy:
       mode: global
       update_config:
         parallelism: 1
-        delay: 10s
+        delay: {{ skfenceha.TRAEFIK_WORKER_UPDATE_DELAY | default('30s', true) }}
         failure_action: rollback
         monitor: 30s
         max_failure_ratio: 0.2
       rollback_config:
         parallelism: 1
-        delay: 10s
+        delay: {{ skfenceha.TRAEFIK_WORKER_UPDATE_DELAY | default('30s', true) }}
         failure_action: pause
         monitor: 30s
         max_failure_ratio: 0.2
