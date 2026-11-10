@@ -950,20 +950,34 @@
 
     - name: Configure Talk signaling and TURN servers in Nextcloud
       shell: |
+        set -e
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
-        docker exec "$CONTAINER_ID" php occ config:app:set spreed signaling_servers --value='{"servers":[{"server":"https://{{ skhub_public_host }}/standalone-signaling/","verify":true}],"secret":"{{ skhub.signaling_secret }}"}' 2>&1 || true
-        docker exec "$CONTAINER_ID" php occ config:app:set spreed turn_servers --value='[{"schemes":"turn","server":"{{ skhub.TURN_DOMAIN | default(skhub.CLUSTERNAME ~ "." ~ skhub.DOMAIN, true) }}:3478","secret":"{{ skhub.turn_secret }}","protocols":"udp,tcp"}{% if (skhub.TALK_TURN_TLS_443 | default(false) | string | lower) in ['true', 'yes', 'on', '1'] %},{"schemes":"turns","server":"{{ skhub.TURN_DOMAIN }}:443","secret":"{{ skhub.turn_secret }}","protocols":"tcp"}{% endif %}]' 2>&1 || true
+        # Nextcloud 29 and later: the Talk app declares its STUN and TURN server lists
+        # as sensitive arrays in its config lexicon, and occ refuses an untyped write
+        # to them ("Config value were not updated", exit 0). Use the typed form when
+        # this occ has it; occ before 29 has no such options and takes a plain write.
+        # --no-interaction answers the type-change confirmation, there is no tty here.
+        TYPED=""
+        if docker exec "$CONTAINER_ID" php occ config:app:set --help | grep -q -- '--sensitive'; then TYPED="--no-interaction --type=array --sensitive"; fi
+        docker exec "$CONTAINER_ID" php occ config:app:set spreed signaling_servers --value='{"servers":[{"server":"https://{{ skhub_public_host }}/standalone-signaling/","verify":true}],"secret":"{{ skhub.signaling_secret }}"}' 2>&1
+        docker exec "$CONTAINER_ID" php occ config:app:set spreed turn_servers $TYPED --value='[{"schemes":"turn","server":"{{ skhub.TURN_DOMAIN | default(skhub.CLUSTERNAME ~ "." ~ skhub.DOMAIN, true) }}:3478","secret":"{{ skhub.turn_secret }}","protocols":"udp,tcp"}{% if (skhub.TALK_TURN_TLS_443 | default(false) | string | lower) in ['true', 'yes', 'on', '1'] %},{"schemes":"turns","server":"{{ skhub.TURN_DOMAIN }}:443","secret":"{{ skhub.turn_secret }}","protocols":"tcp"}{% endif %}]' 2>&1
+        docker exec "$CONTAINER_ID" php occ config:app:get spreed signaling_servers >/dev/null
+        docker exec "$CONTAINER_ID" php occ config:app:get spreed turn_servers >/dev/null
         {% if (skhub.TALK_STUN_SERVERS | default([], true) | length) > 0 %}
-        docker exec "$CONTAINER_ID" php occ config:app:set spreed stun_servers --value='{{ skhub.TALK_STUN_SERVERS | map('string') | list | to_json }}' 2>&1 || true
+        docker exec "$CONTAINER_ID" php occ config:app:set spreed stun_servers $TYPED --value='{{ skhub.TALK_STUN_SERVERS | map('string') | list | to_json }}' 2>&1
+        docker exec "$CONTAINER_ID" php occ config:app:get spreed stun_servers >/dev/null
         {% endif %}
       delegate_to: "{{ nextcloud_node.stdout | trim }}"
       when: >-
         (skhub.enable_talk_hpb | default(false))
         and nextcloud_container is defined and nextcloud_container.stdout is defined
         and (nextcloud_container.stdout | trim | length > 0)
-      # Best-effort: optional app/tuning step; a failure here must not block
-      # the deploy. Container lookup, Redis and notify_push are fatal above.
-      ignore_errors: yes
+      # NOT best-effort: without these Talk has no signaling, TURN or STUN and
+      # calls fail behind NAT, so a refused write fails the deploy. The read-back
+      # lines catch an occ that exits 0 without storing the value (it prints
+      # "Config value were not updated" for a refused write and for an unchanged
+      # one alike, so that text cannot be the failure signal). no_log stays: the
+      # values carry the signaling and TURN secrets.
       no_log: true
       tags:
         - post-deploy
