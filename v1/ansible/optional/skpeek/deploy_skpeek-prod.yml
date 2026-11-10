@@ -244,7 +244,7 @@
           slug: "{{ skpeek.AUTHENTIK_TILE_SLUG | default(app, true) }}"
           name: "{{ skpeek.AUTHENTIK_TILE_NAME | default('SKPeek (SearXNG)', true) }}"
           launch_url: "https://skpeek{{ '' if env == 'prod' else '-' + env }}.{{ skpeek.CLUSTERNAME | default(cluster_name) }}.{{ skpeek.DOMAIN | default(domain) }}"
-          group: "{{ skpeek.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          group: "{{ skpeek.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
           icon: "{{ skpeek.AUTHENTIK_TILE_ICON | default('fa://fa-magnifying-glass', true) }}"
           icon_file: "{{ skpeek.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
           icon_name: "{{ skpeek.AUTHENTIK_TILE_ICON_NAME | default('searxng', true) }}"

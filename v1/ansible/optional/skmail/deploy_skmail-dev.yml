@@ -601,7 +601,7 @@
           slug: "{{ skmail.AUTHENTIK_TILE_SLUG | default(app, true) }}"
           name: "{{ skmail.AUTHENTIK_TILE_NAME | default('SKMail', true) }}"
           launch_url: "https://{{ skmail_HOSTNAME }}"
-          group: "{{ skmail.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          group: "{{ skmail.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
           icon: "{{ skmail.AUTHENTIK_TILE_ICON | default('fa://fa-envelope', true) }}"
           open_in_new_tab: "{{ skmail.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
           description: "{{ skmail.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"

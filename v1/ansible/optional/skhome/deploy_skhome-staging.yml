@@ -350,7 +350,7 @@
           slug: "{{ skhome.AUTHENTIK_TILE_SLUG | default(app, true) }}"
           name: "{{ skhome.AUTHENTIK_TILE_NAME | default('SKHome', true) }}"
           launch_url: "https://{{ skh_host }}"
-          group: "{{ skhome.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          group: "{{ skhome.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
           icon: "{{ skhome.AUTHENTIK_TILE_ICON | default('fa://fa-house', true) }}"
           open_in_new_tab: "{{ skhome.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
           description: "{{ skhome.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"

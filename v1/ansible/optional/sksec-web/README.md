@@ -147,7 +147,7 @@ itself still refuses the delete.
     same slug the portal tile below defaults to -- keep them matched (see
     "Portal tile" below for why).
   - `OIDC_SCOPE` (default `openid profile email groups`), `OIDC_GROUPS_CLAIM`
-    (default `groups`), `OIDC_ADMIN_GROUPS` (default `authentik Admins`,
+    (default `groups`), `OIDC_ADMIN_GROUPS` (default `skadmin`,
     CSV of Authentik group names), `OIDC_READ_ONLY_GROUPS` (CSV, default
     none), `OIDC_UNMATCHED_ROLE` (`deny` default, or `admin`/`read-only`
     for a group that matched neither list).
@@ -256,7 +256,7 @@ sksec_web:
   # OIDC_CLIENT_SECRET: ""                    # oidc mode: required, >= 32 chars, same value as sksso's SKSEC_WEB_OIDC_CLIENT_SECRET
   # OIDC_SCOPE: "openid profile email groups"
   # OIDC_GROUPS_CLAIM: groups
-  # OIDC_ADMIN_GROUPS: "authentik Admins"     # CSV of Authentik group names
+  # OIDC_ADMIN_GROUPS: "skadmin"     # CSV of Authentik group names
   # OIDC_READ_ONLY_GROUPS: ""                 # CSV, default none
   # OIDC_UNMATCHED_ROLE: deny                 # deny | admin | read-only
   # OIDC_END_SESSION: true
@@ -305,7 +305,7 @@ On by default (`sksec_web.AUTHENTIK_TILE`, default `true`; set to `false` to opt
 or updates an Authentik `core.Application` named `AUTHENTIK_TILE_NAME`
 (default `SKSec Web (CrowdSec)`), launch URL `https://<the public host above>`, icon
 `AUTHENTIK_TILE_ICON` (default `fa://fa-shield-halved`), bound to the group
-`AUTHENTIK_TILE_GROUP` (default `authentik Admins`, which must already exist).
+`AUTHENTIK_TILE_GROUP` (default `skadmin`, which must already exist).
 **`AUTH_MODE: sso`/`local`:** this adds a provider-less dashboard bookmark only;
 it creates no provider and changes nothing about
 `AUTH_MODE`/forward auth above. **`AUTH_MODE: oidc`:** this role's own

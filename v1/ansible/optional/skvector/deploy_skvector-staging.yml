@@ -224,7 +224,7 @@
           slug: "{{ skvector.AUTHENTIK_TILE_SLUG | default(app, true) }}"
           name: "{{ skvector.AUTHENTIK_TILE_NAME | default('SKVector (Qdrant)', true) }}"
           launch_url: "https://skvector{{ '' if env == 'prod' else '-' + env }}.{{ skvector.DOMAIN if (skvector.CLOUDFLARED | default(false)) else (skvector.CLUSTERNAME ~ '.' ~ skvector.DOMAIN) }}"
-          group: "{{ skvector.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          group: "{{ skvector.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
           icon: "{{ skvector.AUTHENTIK_TILE_ICON | default('fa://fa-database', true) }}"
           icon_file: "{{ skvector.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
           icon_name: "{{ skvector.AUTHENTIK_TILE_ICON_NAME | default('qdrant', true) }}"

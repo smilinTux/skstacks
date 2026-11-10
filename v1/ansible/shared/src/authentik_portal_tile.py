@@ -25,7 +25,7 @@ command line or in a process environment):
   url, host, token      - reach Authentik's API (see tasks/authentik_portal_tile.yml)
   slug, name             - the Application's slug and display name
   launch_url             - where the tile links to
-  group                  - group name the tile is visible to (e.g. "authentik Admins")
+  group                  - group name the tile is visible to (e.g. "skadmin")
   icon                   - optional meta_icon ("fa://fa-..." or "application-icons/...")
   open_in_new_tab         - optional bool, default true
   description             - optional meta_description

@@ -174,7 +174,7 @@ def test_auth_mode_oidc_renders_the_auth_env(tmp_path):
     assert env["LUDASH_OIDC_CLIENT_SECRET"] == OIDC_VAULT["OIDC_CLIENT_SECRET"]
     assert env["LUDASH_OIDC_SCOPE"] == "openid profile email groups"
     assert env["LUDASH_OIDC_GROUPS_CLAIM"] == "groups"
-    assert env["LUDASH_OIDC_ADMIN_GROUPS"] == "authentik Admins"
+    assert env["LUDASH_OIDC_ADMIN_GROUPS"] == "skadmin"
     assert "LUDASH_OIDC_READ_ONLY_GROUPS" not in env
     assert env["LUDASH_OIDC_UNMATCHED_ROLE"] == "deny"
     assert env["LUDASH_OIDC_END_SESSION"] == "true"
