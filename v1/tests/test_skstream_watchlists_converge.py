@@ -272,7 +272,8 @@ def test_other_watchlists_are_validated(env):
 
 def test_readme_documents_the_knobs():
     text = README.read_text()
-    for knob in ("CLI_DEBRID_VERSION", "PLEX_OTHER_WATCHLISTS", "PLEX_FRIENDS_WATCHLIST", "CLI_DEBRID_FILTER_OUT"):
+    for knob in ("CLI_DEBRID_VERSION", "PLEX_OTHER_WATCHLISTS", "PLEX_FRIENDS_WATCHLIST", "CLI_DEBRID_FILTER_OUT",
+                 "CLI_DEBRID_FOREIGN_LANGUAGE_PENALTY", "CLI_DEBRID_MINIMUM_SCRAPE_SCORE"):
         assert knob in text, knob
 
 
@@ -326,3 +327,47 @@ def test_default_filter_matches_russian_releases_only(title, hit):
 @pytest.mark.parametrize("env", ["dev", "staging", "prod"])
 def test_playbooks_pass_the_filter_knob(env):
     assert "'filter_out': skstream.CLI_DEBRID_FILTER_OUT | default(None)" in PLAYBOOKS[env].read_text()
+
+
+# ---- foreign_language_penalty + minimum_scrape_score (drop, not rank down) --------
+
+def test_null_score_knobs_set_the_defaults_and_rerun_is_a_no_op():
+    cfg = seed_cli()
+    spec = {"versions": ["1080p"], "foreign_language_penalty": None, "minimum_scrape_score": None}
+    assert sc.converge_cli(cfg, spec)
+    assert cfg["Scraping"]["versions"]["1080p"]["foreign_language_penalty"] == sc.DEFAULT_FOREIGN_LANGUAGE_PENALTY
+    assert cfg["Scraping"]["minimum_scrape_score"] == sc.DEFAULT_MINIMUM_SCRAPE_SCORE
+    assert not sc.converge_cli(cfg, spec)
+
+
+def test_explicit_score_knobs_win_and_leave_other_version_keys_alone():
+    cfg = seed_cli()
+    cfg["Scraping"] = {"minimum_scrape_score": 0.0,
+                       "versions": {"1080p": {"foreign_language_penalty": 30, "language_code": "en"}}}
+    assert sc.converge_cli(cfg, {"versions": ["1080p"], "foreign_language_penalty": 500,
+                                 "minimum_scrape_score": 0.0})
+    v = cfg["Scraping"]["versions"]["1080p"]
+    assert v == {"foreign_language_penalty": 500, "language_code": "en"}
+    assert cfg["Scraping"]["minimum_scrape_score"] == 0.0
+
+
+def test_absent_score_knobs_change_nothing():
+    cfg = seed_cli()
+    cfg["Scraping"] = {"minimum_scrape_score": 0.0, "versions": {"1080p": {"foreign_language_penalty": 30}}}
+    assert not sc.converge_cli(cfg, {"versions": ["1080p"]})
+    assert cfg["Scraping"] == {"minimum_scrape_score": 0.0, "versions": {"1080p": {"foreign_language_penalty": 30}}}
+
+
+def test_an_equal_int_and_float_is_not_a_change():
+    # nor's live config carries 1000 (int) and 1.0; a deploy must not rewrite it.
+    cfg = seed_cli()
+    cfg["Scraping"] = {"minimum_scrape_score": 1, "versions": {"1080p": {"foreign_language_penalty": 1000}}}
+    assert not sc.converge_cli(cfg, {"versions": ["1080p"], "foreign_language_penalty": None,
+                                     "minimum_scrape_score": None})
+
+
+@pytest.mark.parametrize("env", ["dev", "staging", "prod"])
+def test_playbooks_pass_the_score_knobs(env):
+    text = PLAYBOOKS[env].read_text()
+    assert "'foreign_language_penalty': skstream.CLI_DEBRID_FOREIGN_LANGUAGE_PENALTY | default(None)" in text
+    assert "'minimum_scrape_score': skstream.CLI_DEBRID_MINIMUM_SCRAPE_SCORE | default(None)" in text
