@@ -17,7 +17,7 @@ terraform {
   required_providers {
     cloudflare = {
       source  = "cloudflare/cloudflare"
-      version = "~> 4.36"
+      version = "~> 5.0"
     }
   }
   required_version = ">= 1.6.0"
@@ -46,23 +46,23 @@ locals {
 
 # ── Cluster A record (points to VIP / floating IP) ───────────────────────────
 
-resource "cloudflare_record" "cluster_root" {
+resource "cloudflare_dns_record" "cluster_root" {
   zone_id = var.zone_id
   name    = var.cluster_name
-  value   = var.public_ip
+  content = var.public_ip
   type    = "A"
   ttl     = var.ttl
-  proxied = false   # NOT proxied — Traefik handles TLS termination
+  proxied = false # NOT proxied — Traefik handles TLS termination
 
   comment = "SKStacks ${var.cluster_name} VIP — managed by OpenTofu"
 }
 
 # ── Wildcard record (*.skstack01.domain.com → cluster A record) ──────────────
 
-resource "cloudflare_record" "cluster_wildcard" {
+resource "cloudflare_dns_record" "cluster_wildcard" {
   zone_id = var.zone_id
   name    = "*.${var.cluster_name}"
-  value   = "${var.cluster_name}.${var.domain}"
+  content = "${var.cluster_name}.${var.domain}"
   type    = "CNAME"
   ttl     = var.ttl
   proxied = false
@@ -72,21 +72,21 @@ resource "cloudflare_record" "cluster_wildcard" {
 
 # ── Explicit records for services that need non-wildcard behavior ─────────────
 
-resource "cloudflare_record" "apex" {
+resource "cloudflare_dns_record" "apex" {
   count   = var.create_apex_record ? 1 : 0
   zone_id = var.zone_id
   name    = "@"
-  value   = var.public_ip
+  content = var.public_ip
   type    = "A"
   ttl     = var.ttl
   proxied = var.proxy_apex
 }
 
-resource "cloudflare_record" "www" {
+resource "cloudflare_dns_record" "www" {
   count   = var.create_www_record ? 1 : 0
   zone_id = var.zone_id
   name    = "www"
-  value   = var.domain
+  content = var.domain
   type    = "CNAME"
   ttl     = var.ttl
   proxied = var.proxy_apex
@@ -94,26 +94,26 @@ resource "cloudflare_record" "www" {
 
 # ── TURN server record ────────────────────────────────────────────────────────
 
-resource "cloudflare_record" "turn" {
+resource "cloudflare_dns_record" "turn" {
   count   = var.create_turn_record ? 1 : 0
   zone_id = var.zone_id
   name    = "turn"
-  value   = var.turn_ip != "" ? var.turn_ip : var.public_ip
+  content = var.turn_ip != "" ? var.turn_ip : var.public_ip
   type    = "A"
   ttl     = var.ttl
-  proxied = false   # STUN/TURN cannot be proxied through Cloudflare
+  proxied = false # STUN/TURN cannot be proxied through Cloudflare
 
   comment = "coturn STUN/TURN server — managed by OpenTofu"
 }
 
 # ── Additional custom records ─────────────────────────────────────────────────
 
-resource "cloudflare_record" "extra" {
+resource "cloudflare_dns_record" "extra" {
   for_each = { for r in var.extra_records : r.name => r }
 
   zone_id = var.zone_id
   name    = each.value.name
-  value   = each.value.value
+  content = each.value.value
   type    = each.value.type
   ttl     = lookup(each.value, "ttl", var.ttl)
   proxied = lookup(each.value, "proxied", false)
@@ -130,16 +130,16 @@ resource "cloudflare_ruleset" "cluster_protection" {
   kind        = "zone"
   phase       = "http_ratelimit"
 
-  rules {
+  rules = [{
     description = "Rate limit API endpoints"
     expression  = "(http.request.uri.path matches \"^/api/\")"
     action      = "block"
-    ratelimit {
-      characteristics      = ["ip.src", "cf.colo.id"]
-      period               = 60
-      requests_per_period  = 100
-      mitigation_timeout   = 300
+    ratelimit = {
+      characteristics     = ["ip.src", "cf.colo.id"]
+      period              = 60
+      requests_per_period = 100
+      mitigation_timeout  = 300
     }
     enabled = true
-  }
+  }]
 }
