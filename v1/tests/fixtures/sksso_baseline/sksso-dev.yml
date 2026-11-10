@@ -39,7 +39,7 @@ services:
         condition: any
         delay: 10s
     volumes:
-      - /var/data/runtime/sksso-dev/postgres:/var/lib/postgresql/data
+      - /var/data/runtime/sksso-dev/postgres:/var/lib/postgresql
       - /etc/localtime:/etc/localtime:ro
     networks:
       - sksso-dev

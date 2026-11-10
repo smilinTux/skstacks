@@ -57,15 +57,21 @@ services:
         - "traefik.http.services.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie.httpOnly=true"
         - "traefik.http.services.skorch{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.sticky.cookie.sameSite=lax"
 
+{# Postgres 18+ images moved PGDATA to /var/lib/postgresql/<major>/docker and declare VOLUME
+   /var/lib/postgresql, so the data bind mount targets the PARENT for major 18 and up. A pinned
+   older image keeps the old target. Mounting /var/lib/postgresql/data under an 18 image would
+   leave the real data dir on an anonymous volume. The default here must stay in step with the
+   image default below (test_postgres18_guard.py). #}
+{% set _pg_data_mount = '/var/lib/postgresql' if ((skorch_cfg.POSTGRES_IMAGE | default('pgvector/pgvector:pg18')).split('@')[0].split('/')[-1].split(':')[-1].lstrip('pg').split('.')[0].split('-')[0] | int(0)) >= 18 else '/var/lib/postgresql/data' %}
   postgres:
-    image: pgvector/pgvector:pg16@sha256:0dd3149a06e4579a0d70d8fef9945636cd514005e7237deb27f9b67886f8dc4f
+    image: {{ skorch_cfg.POSTGRES_IMAGE | default('pgvector/pgvector:pg18@sha256:c29f30688a9ad961691bdf0ec1650717cc132a5814619d80f80463d6e4c42e47') }}
     env_file: /var/data/config/skorch-{{ env }}/postgres.env
     environment:
       - PGTEMP=/var/lib/postgresql/data/tmp
     networks:
       - skorch-{{ env }}
     volumes:
-      - /var/data/runtime/skorch-{{ env }}/postgres:/var/lib/postgresql/data
+      - /var/data/runtime/skorch-{{ env }}/postgres:{{ _pg_data_mount }}
       - /var/data/skorch-{{ env }}/postgres-init:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
@@ -95,7 +101,7 @@ services:
         delay: 5s
 
   postgres-backup:
-    image: prodrigestivill/postgres-backup-local:16-debian-d257e5d
+    image: {{ skorch_cfg.POSTGRES_BACKUP_IMAGE | default('prodrigestivill/postgres-backup-local:18-debian-d257e5d@sha256:f70742ebe42b2277689b028d1fd15aa80f77cffa01da163cc9f85a6ff1866e7f') }}
     env_file: /var/data/config/skorch-{{ env }}/postgres-backup.env
     environment:
       POSTGRES_HOST: postgres

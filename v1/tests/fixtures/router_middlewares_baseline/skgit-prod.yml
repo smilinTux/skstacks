@@ -113,7 +113,7 @@ services:
       - skgit-prod
     volumes:
       # === NFS DATA - DIRECT BIND (NO NAMED VOLUME) ===
-      - /var/data/runtime/skgit-prod/postgres:/var/lib/postgresql/data
+      - /var/data/runtime/skgit-prod/postgres:/var/lib/postgresql
     deploy:
       mode: replicated
       replicas: 1

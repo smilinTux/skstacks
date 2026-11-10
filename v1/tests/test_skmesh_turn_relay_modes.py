@@ -172,8 +172,8 @@ def test_image_defaults():
     # management, signal and relay ship as one release: same tag on all three.
     tags = {svcs[s]["image"].split(":")[1].split("@")[0] for s in ("management", "signal", "relay")}
     assert len(tags) == 1, tags
-    assert svcs["postgres"]["image"].startswith("postgres:16.")
-    assert is_pinned(svcs["postgres-db-backup"]["image"], "postgres", "16.")
+    assert svcs["postgres"]["image"].startswith("postgres:18.")
+    assert is_pinned(svcs["postgres-db-backup"]["image"], "postgres", "18.")
 
 
 @pytest.mark.parametrize("svc,var", sorted(IMAGE_VARS.items()))

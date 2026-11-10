@@ -3,8 +3,14 @@
 # Secrets (secret key, DB + bootstrap passwords) come from the secret backend.
 services:
   postgresql:
-    image: postgres:16-alpine
+    # Postgres 18+ images default PGDATA to /var/lib/postgresql/<major>/docker and declare
+    # VOLUME /var/lib/postgresql. PGDATA is pinned to the mounted path instead so the existing
+    # volume layout is kept and a volume holding another major's data fails closed in Postgres
+    # itself ("database files are incompatible with server") rather than starting an empty
+    # database beside it. Moving a live instance from 16 needs a dump and restore first.
+    image: postgres:18-alpine
     environment:
+      - PGDATA=/var/lib/postgresql/data
       - POSTGRES_DB=authentik
       - POSTGRES_USER=authentik
       - POSTGRES_PASSWORD__FILE=/run/secrets/authentik_pg_password

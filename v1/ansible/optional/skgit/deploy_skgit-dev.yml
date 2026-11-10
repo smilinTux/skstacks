@@ -253,6 +253,22 @@
       import_tasks: tasks/install_global_hooks.yml
       tags: [hooks]
 
+    - name: Refuse a Postgres data directory from another major (fail closed, before the deploy)
+      include_tasks:
+        file: ../../shared/tasks/postgres_major_guard.yml
+        apply:
+          tags:
+            - deploy
+            - postgres-major
+      vars:
+        pg_guard_app: skgit
+        pg_guard_image: "{{ skgit.POSTGRES_IMAGE | default('postgres:18') }}"
+        pg_guard_data_path: "/var/data/runtime/{{ app }}-{{ env }}/postgres"
+        pg_guard_pin_var: skgit.POSTGRES_IMAGE
+      tags:
+        - deploy
+        - postgres-major
+
     - name: Deploy {{ app }} stack
       shell: |
         cd /var/data/{{ app }}-{{ env }}
