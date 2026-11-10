@@ -8,8 +8,10 @@ keys skstream owns and leaves everything else byte-for-byte as parsed:
   dumb_config.json   cli_debrid release pin (release_version_enabled/release_version)
   cli_debrid config  "Other Plex Watchlist" sources (one per Plex Home profile, keyed
                      by username), one "My Friends Plex RSS Watchlist" source, and
-                     their content_source_check_period, and hard filter_out
-                     patterns on each managed scraping version (append only)
+                     their content_source_check_period, hard filter_out
+                     patterns on each managed scraping version (append only),
+                     each managed version's foreign_language_penalty and the
+                     global Scraping.minimum_scrape_score
 
 Sources it did not create are never removed or edited. The desired state comes
 as JSON on stdin (it carries tokens, so never as argv):
@@ -18,10 +20,13 @@ as JSON on stdin (it carries tokens, so never as argv):
    "other_watchlists": [{"username": "JD", "token": "...", "display_name": "..."}],
    "friends_rss_url": "https://rss.plex.tv/..." | "",
    "versions": ["1080p"], "cutoff_date": "", "check_minutes": 5,
-   "filter_out": ["<regex>", ...] | null}
+   "filter_out": ["<regex>", ...] | null,
+   "foreign_language_penalty": 1000 | null, "minimum_scrape_score": 1.0 | null}
 
 filter_out null means DEFAULT_FILTER_OUT (the play sends null when
 CLI_DEBRID_FILTER_OUT is unset); absent or [] adds nothing.
+foreign_language_penalty / minimum_scrape_score null mean the DEFAULT_* values
+below (the play sends null when the knob is unset); absent leaves the key alone.
 
 Prints {"dumb_changed": bool, "cli_changed": bool} and nothing secret.
 """
@@ -47,6 +52,18 @@ DEFAULT_FILTER_OUT = [
     r"(?i)\b(rus|ru|rudub|ukr|ultradox|lostfilm|newstudio|hdrezka|alexfilm|jaskier|baibako"
     r"|coldfilm|ideafilm|dublyazh|viruseproject|megapeer|rutor|rutracker)\b|[А-Яа-яЁё]",
 ]
+
+# Drop, not just rank down, a release whose name tags an audio language other
+# than the version's (cli_debrid's own detection: subtitle tags, MULTi/DUAL/DL
+# and the title's original language are exempt). The Adding queue takes any
+# cached release before any uncached one whatever its score, so the stock
+# penalty (30) let a cached Russian pack beat uncached English releases on nor.
+# The penalty is multiplied by language_weight (default 3): 1000 puts a tagged
+# release near -2350, while real releases scored 483-953 on nor, so a minimum
+# score of 1 drops exactly those. This is cli_debrid's documented way to drop
+# releases (see audio_description_penalty); minimum_scrape_score is global.
+DEFAULT_FOREIGN_LANGUAGE_PENALTY = 1000
+DEFAULT_MINIMUM_SCRAPE_SCORE = 1.0
 
 
 def _source(kind, display_name, versions, cutoff_date, **extra):
@@ -142,6 +159,23 @@ def converge_cli(cfg, spec):
                 if pat not in have:
                     fo.append(pat)
                     changed = True
+
+    if "foreign_language_penalty" in spec:
+        penalty = spec["foreign_language_penalty"]
+        penalty = DEFAULT_FOREIGN_LANGUAGE_PENALTY if penalty is None else float(penalty)
+        scraping = cfg.setdefault("Scraping", {}).setdefault("versions", {})
+        for v in versions:
+            ver = scraping.setdefault(v, {})
+            if ver.get("foreign_language_penalty") != penalty:
+                ver["foreign_language_penalty"] = int(penalty) if penalty.is_integer() else penalty
+                changed = True
+    if "minimum_scrape_score" in spec:
+        score = spec["minimum_scrape_score"]
+        score = DEFAULT_MINIMUM_SCRAPE_SCORE if score is None else float(score)
+        sc = cfg.setdefault("Scraping", {})
+        if sc.get("minimum_scrape_score") != score:
+            sc["minimum_scrape_score"] = score
+            changed = True
 
     minutes = spec.get("check_minutes")
     if minutes and managed:

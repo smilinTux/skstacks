@@ -258,6 +258,8 @@
                                 if (skstream.PLEX_FRIENDS_WATCHLIST | default(false) | bool) else ''),
             'versions': ['1080p'],
             'filter_out': skstream.CLI_DEBRID_FILTER_OUT | default(None),
+            'foreign_language_penalty': skstream.CLI_DEBRID_FOREIGN_LANGUAGE_PENALTY | default(None),
+            'minimum_scrape_score': skstream.CLI_DEBRID_MINIMUM_SCRAPE_SCORE | default(None),
             'cutoff_date': skstream.CUTOFF_DATE | default('') | string,
             'check_minutes': skstream.WATCHLIST_CHECK_MINUTES | default(5) | int
           } | to_json }}
