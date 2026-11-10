@@ -129,7 +129,7 @@ def test_is_pinned_accepts_full_version_tags():
     for image in (
         "postgres:16.2",
         "postgres:16.14",
-        "vikunja/vikunja:0.24.6",
+        "vikunja/vikunja:2.8.0",
         "redis:7.4.9-alpine",
         "traefik:v3.7.16",
     ):
