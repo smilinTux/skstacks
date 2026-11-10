@@ -94,10 +94,12 @@ fi
 echo -e "${YELLOW}Restarting traefik-worker (global mode: force update, no scale)...${NC}"
 if docker service inspect "$WORKER_SVC" >/dev/null 2>&1; then
     # One node at a time: up to stop grace + start + 30s monitor + update delay
-    # each, so 300s is too short for three managers (subshell: the longer
-    # bound applies to this update only).
-    ( SERVICE_UPDATE_TIMEOUT="${WORKER_UPDATE_TIMEOUT:-900}"
-      preexisted "$WORKER_SVC" && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false "$WORKER_SVC" ) || true
+    # each, so 300s is too short for three managers. The longer bound applies
+    # to this update only: the previous value is restored right after.
+    _saved_update_timeout="${SERVICE_UPDATE_TIMEOUT:-}"
+    SERVICE_UPDATE_TIMEOUT="${WORKER_UPDATE_TIMEOUT:-900}"
+    preexisted "$WORKER_SVC" && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false "$WORKER_SVC" || true
+    SERVICE_UPDATE_TIMEOUT="$_saved_update_timeout"
 else
     echo "Warning: $WORKER_SVC not found, skipping restart"
 fi
