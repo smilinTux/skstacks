@@ -3,6 +3,54 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased (v2.26.19)
+
+### Upgrade notes (instances)
+
+- **Renovate majors, wave 1 (internet-facing stacks)**: back up each stack before deploying it.
+  - **skhub: Nextcloud default 31.0.14 to 35.0.2.** Nextcloud only upgrades one major at a time, so a new
+    pre-deploy guard (`tasks/major_upgrade_guard.yml`) fails the play on a skipped major or a downgrade,
+    and leaves the running stack untouched. An instance on 34 can take 35 directly. An instance on an
+    older major pins `NEXTCLOUD_IMAGE` to the next major and steps up one deploy at a time (the README
+    lists the 32, 33 and 34 digests). New `tasks/post_upgrade.yml` runs `occ upgrade` only when the DB
+    still needs it, `app:update --all` after a major, and adds missing columns and primary keys. Each step
+    is several minutes of maintenance mode. Rollback means restoring the backup and pinning the previous
+    image.
+  - **skhub: Talk TURN and STUN servers are written as typed, sensitive config again.** Talk on
+    Nextcloud 29+ declares `turn_servers` and `stun_servers` as sensitive arrays, and occ silently
+    refused the old untyped write ("Config value were not updated", exit 0). The task hid that error,
+    so Talk ran without our TURN/STUN. The write now uses `--type=array --sensitive -n` when occ supports
+    it, reads each key back, and fails the deploy on a refused write. After deploying, check that Talk
+    calls connect behind NAT.
+  - **skmail: docker-mailserver default to 17.0.0.** No template change was needed, and a test keeps the
+    renamed 16 and 17 settings out. Coming from 16.x, the Rspamd Bayes data starts empty (state moves to
+    Valkey). Back up `config` and `mailstate`. The restart can take up to the 1800s healthcheck window
+    because of the per-mailbox ownership `chown`.
+  - **skgit: Forgejo 15.0.9 to 17.0.1, runner 11.3.1 to 13.2.1, dind 27.5.1 to 29.9.3.** A direct 15 to
+    17 jump is supported, and migrations run in order. Before deploying, back up and run
+    `forgejo manager flush-queues`. After deploying, run `forgejo doctor check --all`. Runner 13 drops the
+    old workflow commands (`set-output`, `set-env`, `add-path`) and `${{ gitea.* }}`. An existing dind
+    volume keeps its image store.
+  - **skorch: n8n stays on 2.x.** n8n 3.x is still an upstream pre-release, so its breaking-change notes
+    are parked on #352 for later. The pinned-digest test no longer hardcodes the major version.
+  - **Undeployed descriptors (v2 tree, skboard)**: authentik 2026.8, valkey 9, tempo 3, grafana 13,
+    gitlab 19, garage 2, vikunja 2.8, terraform cloudflare 5 (resources migrated to
+    `cloudflare_dns_record`) and vault 5. Nothing that deploys today uses these files. The upgrade path
+    for each is in `v2/infra/tofu/README.md` and in PR #351. FalkorDB 6 was declined because skgraph is
+    retired.
+
+- **skpatch-hosts: host auto-registration works again, through a dashboard session instead of an
+  API token**: linux-update-dashboard 2026.10.9 refuses API tokens for creating systems and
+  credentials, so v2.26.17 refused registration outright. `provision_skpatch_hosts_nodes.yml` now
+  runs `register_systems.js` inside the dashboard's own container, which signs a five-minute
+  session for an existing dashboard admin with the app's own session key (works in `sso`, `local`
+  and `oidc` modes; revoked by that user's "sign out everywhere"). New vault keys:
+  `skpatch_hosts.REGISTER_AS` (the admin's username) plus `SSH_PRIVATE_KEY` (the registrar creates
+  the SSH credential from it) or `CREDENTIAL_ID` (an existing one; `API_CREDENTIAL_ID` is still
+  read). It creates missing systems and never edits or deletes one. **A vault that still sets
+  `API_TOKEN` now fails** with these steps; remove it. `PROVISIONER_IMAGE` is no longer used by
+  this role.
+
 ## skstacks-v2.26.18 - 2026-11-10
 
 ### Upgrade notes (instances)

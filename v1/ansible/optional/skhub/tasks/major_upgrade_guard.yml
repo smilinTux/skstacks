@@ -1,0 +1,82 @@
+---
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Refuse a Nextcloud major jump the image cannot do, BEFORE the stack deploy.
+# The official image entrypoint only upgrades one major at a time (N to N+1)
+# and refuses a downgrade; either way the nextcloud, cron, webhook-worker and
+# notify_push services crash-loop and the instance is down. Failing here
+# leaves the running stack untouched.
+#
+# The installed major is read from the shared code tree's version.php (the
+# local code tree on APP_NODE when skhub.WEBROOT_LOCAL_PATH is set). No
+# version.php means a fresh install: nothing to guard. The target major comes
+# from the image tag (skhub.NEXTCLOUD_IMAGE, else the framework default); a tag
+# without a leading major (latest, fpm) is not checked.
+#
+# Sets skhub_nc_upgrade_pending (true when the target major is the next one up)
+# for tasks/post_upgrade.yml.
+#
+# Expects: app, env, skhub.
+
+- name: Read the installed Nextcloud major from version.php
+  shell: |
+    F="{{ (skhub.WEBROOT_LOCAL_PATH ~ '/html') if (skhub.WEBROOT_LOCAL_PATH | default('', true) | string | length > 0) else ('/var/data/' ~ app ~ '-' ~ env ~ '/html') }}/version.php"
+    [ -f "$F" ] || exit 0
+    sed -n 's/.*OC_Version *= *array(\([0-9][0-9]*\),.*/\1/p' "$F" | head -1
+  delegate_to: "{{ (skhub.APP_NODE | default(inventory_hostname, true)) if (skhub.WEBROOT_LOCAL_PATH | default('', true) | string | length > 0) else inventory_hostname }}"
+  register: skhub_nc_installed_major
+  changed_when: false
+  check_mode: false
+  tags:
+    - deploy
+    - nextcloud-upgrade
+
+- name: Work out the target Nextcloud major
+  set_fact:
+    skhub_nc_installed: "{{ (skhub_nc_installed_major.stdout | default('') | trim) }}"
+    skhub_nc_target: "{{ (skhub.NEXTCLOUD_IMAGE | default('nextcloud:35.0.2', true)) | regex_search('^nextcloud:([0-9]+)', '\\1') | default([''], true) | first }}"
+  tags:
+    - deploy
+    - nextcloud-upgrade
+
+- name: Refuse a Nextcloud downgrade or a skipped major version
+  assert:
+    that:
+      - (skhub_nc_target | int) >= (skhub_nc_installed | int)
+      - (skhub_nc_target | int) <= (skhub_nc_installed | int) + 1
+    fail_msg: >-
+      This instance runs Nextcloud {{ skhub_nc_installed }} but the image to
+      deploy is Nextcloud {{ skhub_nc_target }} ({{ skhub.NEXTCLOUD_IMAGE | default('framework default', true) }}).
+      Nextcloud upgrades one major at a time and never downgrades, so the
+      services would crash-loop. To move up, set skhub.NEXTCLOUD_IMAGE in the
+      vault to the latest build of major {{ (skhub_nc_installed | int) + 1 }},
+      deploy, and repeat one major at a time (README "Upgrading Nextcloud").
+      To stay where you are, pin skhub.NEXTCLOUD_IMAGE to a build of major
+      {{ skhub_nc_installed }}.
+    quiet: true
+  when:
+    - skhub_nc_installed | length > 0
+    - skhub_nc_target | length > 0
+  tags:
+    - deploy
+    - nextcloud-upgrade
+
+- name: Note a pending Nextcloud major upgrade
+  set_fact:
+    skhub_nc_upgrade_pending: "{{ skhub_nc_installed | length > 0 and skhub_nc_target | length > 0 and (skhub_nc_target | int) > (skhub_nc_installed | int) }}"
+  tags:
+    - deploy
+    - nextcloud-upgrade

@@ -150,10 +150,10 @@ skpatch-hosts:
   PROVISION_USER: skpatch-ro                # the low-privilege account's name
   PROVISION_UID: 5201                       # its fixed uid and gid; never a system uid (containers share the host's uid space)
   SSH_PUBLIC_KEY: ""                        # required by provision_skpatch_hosts_nodes.yml; one keypair per estate
-  # Host auto-registration (see "Automatic host registration" below); both required, else skipped
-  API_TOKEN: ""                             # dashboard API token (systems:add, systems:edit), minted once by hand
-  API_CREDENTIAL_ID: 0                       # the SSH credential's numeric id, created once by hand
-  PROVISIONER_IMAGE: ""                      # default: the pinned python:3.13-alpine digest
+  # Host auto-registration (see "Automatic host registration" below); REGISTER_AS plus a credential, else skipped
+  REGISTER_AS: ""                           # an existing dashboard admin's username (local or OIDC)
+  SSH_PRIVATE_KEY: ""                       # private half of SSH_PUBLIC_KEY; the registrar creates the credential from it
+  CREDENTIAL_ID: 0                          # or an existing sshKey credential's id (takes precedence)
 ```
 
 **Per-host actions ceiling:** set `skpatch_hosts_allow_actions: false` in the
@@ -219,75 +219,60 @@ rendered by **sksso**, not this role: see `../sksso/README.md`
 
 ## Automatic host registration
 
-> **Not supported with the pinned dashboard (2026.10.9).** Its API refuses every API-token request
-> to create or edit a system (`POST`/`PUT /api/systems` answer 403 "API tokens cannot configure SSH
-> connections"), so a token-based sync cannot work. With `API_TOKEN`/`API_CREDENTIAL_ID` set,
-> `provision_skpatch_hosts_nodes.yml` now fails with that explanation instead of half-registering.
-> Add nodes in the dashboard for now. A redesign on a signed-in dashboard session is tracked.
-
-`provision_skpatch_hosts_nodes.yml`, on every `present` run, upserts one
-dashboard system per node in its own target group, so the dashboard is
-never empty after a deploy. Opt-in: nothing calls the dashboard's API
-unless both `API_TOKEN` and `API_CREDENTIAL_ID` are set; unset, the
-playbook reports that it is skipping registration and nodes can be added
-by hand instead, exactly as before this feature existed.
-
-**Why a one-time bootstrap is unavoidable.** Researched against the
-pinned upstream source (`API.md`, `server/routes/api-tokens.ts`,
-`server/routes/credentials.ts`): the dashboard's API tokens are a real,
-separate auth path from session-cookie login (`AUTH_MODE: oidc` and
-`LUDASH_PASSWORD_LOGIN_ENABLED: false` do not block a Bearer token call),
-so a token minted once covers every later deploy regardless of sign-in
-mode -- **no local-admin-password bootstrap is needed.** But every token,
-with or without permissions, is explicitly barred from `/api/credentials`
-(the upstream token-scope list), and `POST /api/systems` requires an
-existing `credentialId`. Nothing upstream lets a token create that
-credential; only a signed-in human can, through the UI. That one
-human step is the entire bootstrap, done once per estate:
-
-1. Sign in to the dashboard (as the first-run local admin before `oidc`
-   is turned on, or, once it is, via OIDC through sksso -- either works,
-   this step does not care which).
-2. **Settings → API Tokens:** create a token named for this purpose,
-   expiry `never`, permissions `systems:add` and `systems:edit`. Copy the
-   token (shown once) into the vault as `API_TOKEN`.
-3. **Add one credential** (Systems → add a system → new credential, or
-   Settings → Credentials if the version running exposes it there): kind
-   SSH key, username `skpatch_hosts.PROVISION_USER` (default `skpatch-ro`),
-   private key the **same estate keypair** whose public half is already
-   in `SSH_PUBLIC_KEY` and installed on every node by
-   `provision_skpatch_hosts_nodes.yml`. Note its numeric credential id
-   (visible in the UI, or in the id the dashboard assigns when you add
-   the very first system by hand with it) and put it in the vault as
-   `API_CREDENTIAL_ID`.
-
-Redeploy or rerun `provision_skpatch_hosts_nodes.yml` after both are set;
-every subsequent `present` run keeps the dashboard's system list in sync
-with that run's target group with no further manual step.
-
-**Identity and idempotency.** The upstream app's own uniqueness
-constraint is `(hostname, port, username)`, confirmed from the pinned
-source (`system-service.ts`, `DuplicateSystemConnectionError`); every
-system this registers shares the one `API_CREDENTIAL_ID`, so hostname and
-port are this role's own match key. A name-only change updates the
-existing system in place. **Hosts removed from the target inventory are
-reported, never deleted** -- their history and settings stay in the
-dashboard until an operator removes them by hand.
-
-**Host-key verification is off** for every system this creates
-(`hostKeyVerificationEnabled: false`): these are the operator's own
-already-provisioned fleet nodes, reached with the same keypair
-`provision_skpatch_hosts_nodes.yml` just installed, not an arbitrary host
-a human is adding one at a time through the UI (where strict pinning
-belongs). Turn it on by hand per system afterward if a given estate wants
-it.
+`provision_skpatch_hosts_nodes.yml`, on every `present` run, adds one
+dashboard system per node in its own target group that the dashboard does
+not have yet, so the dashboard is never empty after a deploy. Opt-in:
+nothing touches the dashboard unless `REGISTER_AS` and an SSH credential
+(`SSH_PRIVATE_KEY` or `CREDENTIAL_ID`) are set; unset, the playbook says it
+is skipping registration and nodes are added by hand, as before.
 
 ```yaml
 skpatch_hosts:
-  API_TOKEN: ""                             # dashboard API token (systems:add, systems:edit); unset skips registration
-  API_CREDENTIAL_ID: 0                       # the SSH credential's numeric id (see bootstrap above); unset skips registration
-  PROVISIONER_IMAGE: ""                      # default: the pinned python:3.13-alpine digest shared/src/authentik_portal_tile.py also uses
+  REGISTER_AS: ""         # username of an existing dashboard ADMIN (local or OIDC); unset skips registration
+  SSH_PRIVATE_KEY: ""     # private half of SSH_PUBLIC_KEY; creates the credential "skpatch-hosts <PROVISION_USER>"
+  CREDENTIAL_ID: 0        # or: an sshKey credential already in the dashboard (takes precedence)
 ```
+
+**How it signs in.** The pinned dashboard (2026.10.9) refuses every
+API-token request that creates a system or a credential (403 "API tokens
+cannot configure SSH connections"), password login is off in `AUTH_MODE:
+oidc`, and Authentik forward auth fronts it in `sso` mode. So the
+registrar (`src/skpatch-hosts/register_systems.js`) runs **inside the
+dashboard's own container**, on whichever node swarm placed it, and talks to
+the app on `127.0.0.1` with a five-minute `ludash_session` it signs with the
+app's own session key (`LUDASH_SECRET_KEY`, else the `.secret_key` file next
+to the database) for the `REGISTER_AS` account. It carries that user's
+current `session_version`, so "sign out everywhere" in the dashboard still
+revokes it, and it is refused for a read-only or unknown account. This
+grants nothing new: whoever can `docker exec` into that container can
+already read the key, the database and the encryption key. Every system it
+creates shows up in the dashboard as added by that account.
+
+**One-time setup per estate.** Sign in to the dashboard once (first-run
+local admin, or OIDC through sksso) so the account exists, then put its
+username in `REGISTER_AS` and the estate key's private half in
+`SSH_PRIVATE_KEY`. The next `present` run creates the credential and the
+systems. Rotating the key: replace the credential in the dashboard (or
+delete it and let the next run recreate it); the registrar never rewrites
+an existing credential.
+
+**Creates, never edits, never deletes.** The match key is hostname and
+port (the app's own uniqueness rule is hostname, port and username, and
+every system here shares the one credential). A node already registered is
+left exactly as an operator configured it, because `PUT /api/systems/:id`
+replaces the whole connection config. Hosts removed from the target
+inventory are reported, never deleted.
+
+**Host-key verification is off** for every system this creates
+(`hostKeyVerificationEnabled: false`): these are the operator's own
+already-provisioned fleet nodes, reached with the keypair
+`provision_skpatch_hosts_nodes.yml` just installed. Turn it on by hand per
+system if an estate wants it.
+
+**Migrating from `API_TOKEN`.** Token registration never worked against
+this dashboard version. A vault that still sets `API_TOKEN` makes the
+playbook fail with what to set instead; remove it and set `REGISTER_AS`.
+`API_CREDENTIAL_ID` is still read, as `CREDENTIAL_ID`.
 
 ## Related projects / See also
 

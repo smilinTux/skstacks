@@ -18,7 +18,7 @@ version: '3.8'
 services:
   vikunja:
     # Pinned: see README.md "Upgrading Vikunja" before ever bumping this.
-    image: vikunja/vikunja:0.24.6
+    image: vikunja/vikunja:2.8.0
     env_file: /var/data/config/skboard-prod/skboard.env
 
     logging:

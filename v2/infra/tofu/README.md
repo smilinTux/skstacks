@@ -51,6 +51,14 @@ flowchart LR
 | **Tailscale** | Mesh network ACLs, subnet routing | `modules/tailscale-mesh/` |
 | **Generic / local** | Pre-existing bare-metal nodes | `modules/bare-metal/` |
 
+> **Provider majors.** `modules/cloudflare-dns` targets the Cloudflare provider v5
+> (`cloudflare_record` became `cloudflare_dns_record`, `value` became `content`, the
+> ruleset `rules` and `ratelimit` blocks became attributes). State created by v4 does
+> not carry over by itself: before the first apply, run `tofu state rm` on the old
+> `cloudflare_record.*` addresses and `tofu import` them as `cloudflare_dns_record.*`
+> (`<zone_id>/<record_id>`), or use Cloudflare's `cf-terraform-migrate` tool, and
+> check `tofu plan` shows no DNS changes. `secrets/` targets the Vault provider v5.
+
 ```mermaid
 flowchart LR
     subgraph EXAMPLES["examples/  (end-to-end)"]

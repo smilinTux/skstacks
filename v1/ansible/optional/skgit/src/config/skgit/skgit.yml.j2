@@ -9,7 +9,7 @@ networks:
 
 services:
   forgejo:
-    image: codeberg.org/forgejo/forgejo:{{ skgit.FORGEJO_VERSION | default('15.0.9') }}
+    image: codeberg.org/forgejo/forgejo:{{ skgit.FORGEJO_VERSION | default('17.0.1') }}
     user: "1000:1000"
     working_dir: /data
     entrypoint: /usr/local/bin/forgejo

@@ -1,32 +1,26 @@
-# Host registration (skpatch_hosts.API_TOKEN + API_CREDENTIAL_ID set): register
-# this run's target nodes as dashboard systems through a swarm manager.
-# Included by provision_skpatch_hosts_nodes.yml only when registration is
-# configured. It is a separate file, not a `when` on each task, because
-# ansible-core 2.19+ templates delegate_to before evaluating `when`: with
-# registration off, selected_manager is never set and every skipped task
-# that delegates to it failed ("'selected_manager' is undefined", the
+# Host registration (skpatch_hosts.REGISTER_AS + CREDENTIAL_ID or
+# SSH_PRIVATE_KEY set): register this run's target nodes as dashboard
+# systems. Included by provision_skpatch_hosts_nodes.yml only when
+# registration is configured. It is a separate file, not a `when` on each
+# task, because ansible-core 2.19+ templates delegate_to before evaluating
+# `when`: with registration off, every skipped task that delegates to a
+# node it never found failed ("'selected_manager' is undefined", the
 # v2.26.17 gate). A skipped include_tasks templates nothing inside it.
+#
+# How: register_systems.js runs inside the dashboard's own container and
+# uses a five-minute session it signs with the app's own session key for
+# the REGISTER_AS admin. The pinned linux-update-dashboard (2026.10.9)
+# refuses API tokens for this (403 "API tokens cannot configure SSH
+# connections", the v2.26.17 gate), password login is off in AUTH_MODE
+# oidc, and forward auth sits in front in sso mode; inside the container
+# none of that is in the way, and anyone who can docker exec there can
+# already read the key. See register_systems.js for the details.
+#
 # Pick a reachable swarm manager from the inventory group directly. The
 # shared select_manager_node.yml keeps only managers inside the play's own
 # hosts (-l), which is right for a deploy but never true here: this play's
 # hosts are the nodes being registered (workers, hypervisors, a NAS), so it
 # found no manager and failed (v2.26.17 gate, provision -l <worker>).
-# NOT SUPPORTED with the pinned dashboard (linux-update-dashboard 2026.10.9).
-# Its server refuses ANY API-token request to create or edit a system:
-# systems.post("/") and systems.put("/:id") both answer 403 "API tokens
-# cannot configure SSH connections" (dist/server/index.js), not only
-# POST /api/credentials as this feature assumed. Found by the v2.26.17 gate,
-# the first run that took registration end to end. Fail loudly instead of
-# half-working; the tasks below are kept for the redesign (a signed-in
-# dashboard session instead of a bearer token, card in the CHANGELOG entry).
-- name: Refuse host auto-registration (the dashboard rejects token writes to /api/systems)
-  fail:
-    msg: >-
-      skpatch-hosts automatic host registration does not work with the pinned
-      linux-update-dashboard (2026.10.9): its API rejects every API-token request to
-      create or edit a system (403 "API tokens cannot configure SSH connections").
-      Unset skpatch_hosts.API_TOKEN and skpatch_hosts.API_CREDENTIAL_ID and add the
-      nodes in the dashboard. Node provisioning itself does not need registration.
 
 - name: List the swarm managers that can reach the dashboard's overlay network
   set_fact:
@@ -65,47 +59,66 @@
     msg: "Host registration: none of {{ skp_reg_managers | join(', ') }} answered"
   when: selected_manager | length == 0
 
-- name: Stage the systems-sync script on the selected manager
+# Inventory hostnames are swarm node names (the same assumption core/skha
+# and sksso's CapAuth linker make), so the node swarm reports is the host to
+# delegate to.
+- name: Find the node running the dashboard
+  command:
+    argv: [docker, service, ps, --filter, desired-state=running, --format, "{{ '{{' }}.Node{{ '}}' }}", "{{ app }}-{{ env }}_dashboard"]
+  delegate_to: "{{ selected_manager }}"
+  connection: "{{ hostvars[selected_manager].ansible_connection | default('ssh') }}"
+  become: true
+  register: skp_reg_dashboard_node
+  changed_when: false
+
+- name: Use the dashboard's node
+  set_fact:
+    skp_reg_node: "{{ (skp_reg_dashboard_node.stdout_lines | default([]) + ['']) | first }}"
+
+- name: Fail when the dashboard is not running, or runs on a node this inventory does not know
+  fail:
+    msg: >-
+      Host registration: {{ app }}-{{ env }}_dashboard has
+      {{ ('no running task' if skp_reg_node | length == 0 else 'its task on node ' ~ skp_reg_node ~ ', which is not an inventory host') }}.
+      Deploy skpatch-hosts first, and name inventory hosts after their swarm nodes.
+  when: skp_reg_node | length == 0 or skp_reg_node not in hostvars
+
+- name: Stage the registrar on the dashboard's node
   copy:
-    src: "{{ playbook_dir }}/src/skpatch-hosts/systems_sync.py"
-    dest: "/var/data/config/{{ app }}-{{ env }}/systems_sync.py"
+    src: "{{ playbook_dir }}/src/skpatch-hosts/register_systems.js"
+    dest: "/var/data/config/{{ app }}-{{ env }}/register_systems.js"
     owner: root
     group: root
     mode: '0644'
-  delegate_to: "{{ selected_manager }}"
-  connection: "{{ hostvars[selected_manager].ansible_connection | default('ssh') }}"
+  delegate_to: "{{ skp_reg_node }}"
+  connection: "{{ hostvars[skp_reg_node].ansible_connection | default('ssh') }}"
   become: true  # root-owned /var/data/config and the docker socket, as in the deploy
 
-- name: Register this run's target nodes as dashboard systems (idempotent, never deletes)
-  command:
-    argv:
-      - docker
-      - run
-      - --rm
-      - -i
-      - --network
-      - "{{ app }}-{{ env }}"
-      - -v
-      - "/var/data/config/{{ app }}-{{ env }}/systems_sync.py:/systems_sync.py:ro"
-      - "{{ skpatch_hosts.PROVISIONER_IMAGE | default('python:3.13.15-alpine@sha256:79e7a9b9ff1cbceff819f856fb374477792a5967759d94df266de7b7b4120e6f', true) }}"
-      - python
-      - /systems_sync.py
+- name: Register this run's target nodes as dashboard systems (creates, never edits or deletes)
+  shell: |
+    set -euo pipefail
+    c=$(docker ps -q --filter "name={{ app }}-{{ env }}_dashboard." | head -n1)
+    [ -n "$c" ] || { echo "registration failed: no {{ app }}-{{ env }}_dashboard container on this node" >&2; exit 2; }
+    docker exec -i "$c" node --no-warnings -e "$(cat /var/data/config/{{ app }}-{{ env }}/register_systems.js)"
+  args:
+    executable: /bin/bash
     stdin: >-
-      {{ {'url': 'http://' ~ app ~ '-' ~ env ~ '_dashboard:3001',
-          'token': skp_reg_token,
-          'credential_id': skp_reg_credential_id,
+      {{ {'register_as': skp_reg_as,
+          'credential_id': skp_reg_credential_id | int,
+          'credential': {'name': 'skpatch-hosts ' ~ (skpatch_hosts.PROVISION_USER | default('skpatch-ro', true)),
+                         'username': skpatch_hosts.PROVISION_USER | default('skpatch-ro', true),
+                         'private_key': skp_reg_private_key},
           'systems': skp_reg_systems | default([])} | to_json }}
-  delegate_to: "{{ selected_manager }}"
-  connection: "{{ hostvars[selected_manager].ansible_connection | default('ssh') }}"
-  become: true  # root-owned /var/data/config and the docker socket, as in the deploy
+  delegate_to: "{{ skp_reg_node }}"
+  connection: "{{ hostvars[skp_reg_node].ansible_connection | default('ssh') }}"
+  become: true
   register: skp_reg_result
-  changed_when: "'created' in skp_reg_result.stdout or 'updated' in skp_reg_result.stdout"
+  changed_when: "': created' in skp_reg_result.stdout"
   failed_when: false
-  no_log: true
+  no_log: true  # stdin carries the private key
 
-# The script prints status lines only (never a secret), so its output
-# is safe to show; the task above is no_log because its stdin carries
-# the API token.
+# The registrar prints status lines only (never a secret), so its output is
+# safe to show; the task above is no_log because its stdin carries the key.
 - name: Show the registration result
   debug:
     msg: "{{ (skp_reg_result.stdout_lines | default([])) + (skp_reg_result.stderr_lines | default([])) }}"
@@ -113,4 +126,6 @@
 - name: Fail if host registration failed
   fail:
     msg: "skpatch-hosts host registration failed (rc={{ skp_reg_result.rc | default('?') }}), see the lines above"
-  when: (skp_reg_result.rc | default(1)) != 0
+  when: >-
+    (skp_reg_result.rc | default(1)) != 0
+    or 'registration: ok' not in (skp_reg_result.stdout | default(''))

@@ -32,7 +32,7 @@ version: "3.7"
 
 services:
   nextcloud:
-    image: {{ skhub.NEXTCLOUD_IMAGE | default('nextcloud:31.0.14') }}
+    image: {{ skhub.NEXTCLOUD_IMAGE | default('nextcloud:35.0.2@sha256:786c102155d2717ba0f53a62b3fdd7a1354edc48e800b94dbe32294d9a5752a2') }}
     env_file: /var/data/config/skhub-{{ env }}/skhub.env
 {% if _internal_ingress_ip %}
     extra_hosts:
@@ -313,7 +313,7 @@ services:
       start_period: 120s
 
   cron:
-    image: {{ skhub.NEXTCLOUD_IMAGE | default('nextcloud:31.0.14') }}
+    image: {{ skhub.NEXTCLOUD_IMAGE | default('nextcloud:35.0.2@sha256:786c102155d2717ba0f53a62b3fdd7a1354edc48e800b94dbe32294d9a5752a2') }}
 {% if _internal_ingress_ip %}
     extra_hosts:
 {% for _h in _internal_hosts %}
@@ -382,7 +382,7 @@ services:
   # up within about a second (Nextcloud admin manual, Background jobs, "Webhook
   # workers"). cron.php keeps running every 5 minutes for everything else.
   webhook-worker:
-    image: {{ skhub.NEXTCLOUD_IMAGE | default('nextcloud:31.0.14') }}
+    image: {{ skhub.NEXTCLOUD_IMAGE | default('nextcloud:35.0.2@sha256:786c102155d2717ba0f53a62b3fdd7a1354edc48e800b94dbe32294d9a5752a2') }}
 {% if _internal_ingress_ip %}
     extra_hosts:
 {% for _h in _internal_hosts %}
@@ -443,7 +443,7 @@ services:
       - redis
 
   notify_push:
-    image: {{ skhub.NEXTCLOUD_IMAGE | default('nextcloud:31.0.14') }}
+    image: {{ skhub.NEXTCLOUD_IMAGE | default('nextcloud:35.0.2@sha256:786c102155d2717ba0f53a62b3fdd7a1354edc48e800b94dbe32294d9a5752a2') }}
     user: www-data
     entrypoint: /var/www/html/custom_apps/notify_push/bin/x86_64/notify_push /var/www/html/config/config.php
     env_file: /var/data/config/skhub-{{ env }}/notify_push.env

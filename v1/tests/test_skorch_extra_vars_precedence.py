@@ -123,12 +123,13 @@ def test_env_file_reference_was_not_accidentally_renamed():
     assert "/skorch_cfg.env" not in yml
 
 def test_n8n_version_defaults_to_the_pinned_digest_when_unset():
-    # No instance sets N8N_VERSION, so the template must keep the pinned
-    # digest it ships today rather than silently drifting to a moving tag.
+    # No instance sets N8N_VERSION, so the template must keep a pinned
+    # tag@digest rather than silently drifting to a moving tag. The major
+    # is deliberately not asserted, so a version bump does not need a test edit.
     skorch_cfg = combine(SKORCH_DEFAULTS, dict(REQUIRED_SECRETS))
     rendered = render_all(skorch_cfg)
     stack = rendered["src/config/skorch/skorch.yml.j2"]
-    assert re.search(r'image: "n8nio/n8n:2\.[\w.-]+@sha256:[0-9a-f]{64}"', stack)
+    assert re.search(r'image: "n8nio/n8n:\d+\.\d+\.\d+[\w.-]*@sha256:[0-9a-f]{64}"', stack)
 
 
 def test_instance_can_pin_a_different_n8n_version():

@@ -66,9 +66,9 @@ def test_nextcloud_and_talk_hpb_are_untouched():
     """Both already have their own override knob and are already current; this PR
     must not touch either default."""
     svc = services()
-    assert svc["nextcloud"]["image"] == "nextcloud:31.0.14"
-    assert svc["cron"]["image"] == "nextcloud:31.0.14"
-    assert svc["notify_push"]["image"] == "nextcloud:31.0.14"
+    assert svc["nextcloud"]["image"] == "nextcloud:35.0.2@sha256:786c102155d2717ba0f53a62b3fdd7a1354edc48e800b94dbe32294d9a5752a2"
+    assert svc["cron"]["image"] == "nextcloud:35.0.2@sha256:786c102155d2717ba0f53a62b3fdd7a1354edc48e800b94dbe32294d9a5752a2"
+    assert svc["notify_push"]["image"] == "nextcloud:35.0.2@sha256:786c102155d2717ba0f53a62b3fdd7a1354edc48e800b94dbe32294d9a5752a2"
 
 
 def test_no_floating_tag_left_on_any_bumped_image():

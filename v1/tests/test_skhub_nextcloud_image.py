@@ -16,7 +16,7 @@ import yaml
 SKHUB = pathlib.Path(__file__).resolve().parents[1] / "ansible/optional/skhub/src/config/skhub"
 COMPOSE = SKHUB / "skhub.yml.j2"
 BASE = {"CLUSTERNAME": "cluster1", "DOMAIN": "example.com"}
-DEFAULT = "nextcloud:31.0.14"
+DEFAULT = "nextcloud:35.0.2@sha256:786c102155d2717ba0f53a62b3fdd7a1354edc48e800b94dbe32294d9a5752a2"
 NC_SERVICES = ("nextcloud", "cron", "webhook-worker", "notify_push")
 
 
