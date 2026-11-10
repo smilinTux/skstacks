@@ -91,6 +91,7 @@ Namespace `skstream`. Required: `RD_API_KEY`, `PLEX_TOKEN`, `MEDIA_NODE`.
 | `CUTOFF_DATE` | `''` | watchlist cutoff: `YYYY-MM-DD` or days (e.g. `7`); `''` takes whole back catalogs of watchlisted shows |
 | `WATCHLIST_CHECK_MINUTES` | `5` | |
 | `CLI_DEBRID_HYBRID_MODE` | `true` | cli_debrid `Scraping.hybrid_mode`: take a cached release if any, else the best uncached one |
+| `CLI_DEBRID_FILTER_OUT` | Russian-release filter | list of cli_debrid `filter_out` patterns added to each managed scraping version on every deploy (append only: patterns added in the UI stay, and removing one here does not remove it there). Unset uses `DEFAULT_FILTER_OUT` in `skstream-converge`, which rejects `Rus`/`Ru`/`Ukr` tags, Russian dub and tracker groups (LostFilm, ColdFilm, ViruseProject, Ultradox and others) and any Cyrillic letter in a release name. `language_code: en` alone only lowers a foreign release's score, so a cached Russian pack can still win. `[]` adds nothing |
 | `RCLONE_MOUNT_NAME` | `rclone_RD` | directory under the mount; Plex libraries live below `/mnt/debrid/<name>/` |
 | `PLEX_MOVIE_LIBRARIES`, `PLEX_SHOW_LIBRARIES` | `Movies`, `TV Shows` | comma lists, for cli_debrid |
 | `KOMETA_ENABLED` | `false` | `KOMETA_TIME` (`03:00`) |

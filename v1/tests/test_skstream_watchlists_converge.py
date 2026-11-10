@@ -272,5 +272,57 @@ def test_other_watchlists_are_validated(env):
 
 def test_readme_documents_the_knobs():
     text = README.read_text()
-    for knob in ("CLI_DEBRID_VERSION", "PLEX_OTHER_WATCHLISTS", "PLEX_FRIENDS_WATCHLIST"):
+    for knob in ("CLI_DEBRID_VERSION", "PLEX_OTHER_WATCHLISTS", "PLEX_FRIENDS_WATCHLIST", "CLI_DEBRID_FILTER_OUT"):
         assert knob in text, knob
+
+
+# ---- filter_out (foreign-dub releases) --------------------------------------------
+
+def _fo(cfg, v="1080p"):
+    return cfg["Scraping"]["versions"][v]["filter_out"]
+
+
+def test_null_filter_out_adds_the_default_russian_filter():
+    cfg = seed_cli()
+    assert sc.converge_cli(cfg, {"versions": ["1080p"], "filter_out": None})
+    assert _fo(cfg) == sc.DEFAULT_FILTER_OUT
+    assert not sc.converge_cli(cfg, {"versions": ["1080p"], "filter_out": None})
+
+
+def test_filter_out_is_append_only_and_keeps_ui_patterns():
+    cfg = seed_cli()
+    cfg["Scraping"] = {"versions": {"1080p": {"filter_out": ["CAM", {"pattern": "x", "source": "nzb"}],
+                                             "language_code": "en"}}}
+    assert sc.converge_cli(cfg, {"versions": ["1080p"], "filter_out": ["x", "TS"]})
+    assert _fo(cfg) == ["CAM", {"pattern": "x", "source": "nzb"}, "TS"]
+    assert cfg["Scraping"]["versions"]["1080p"]["language_code"] == "en"
+
+
+def test_empty_filter_out_list_adds_nothing():
+    cfg = seed_cli()
+    assert not sc.converge_cli(cfg, {"versions": ["1080p"], "filter_out": []})
+    assert "Scraping" not in cfg
+
+
+@pytest.mark.parametrize("title,hit", [
+    ("The.Rainmaker.S02.1080p.Ru.Ultradox", True),
+    ("Благодетель / The Rainmaker [02x01-02 из 10] (2026) WEB-DL 1080p", True),
+    ("The.Rainmaker.S02E01-E02.HD1080p.WEBRip.Rus", True),
+    ("The.Umbrella.Academy.LF_[rutor]", True),
+    ("Will.Trent.S01.1080p.ViruseProject", True),
+    ("Kill.2023.2160p.MegaPeer.mkv", True),
+    ("The Rainmaker S02E02 Cards Up 1080p AMZN WEB-DL DDP5 1 H 264-NTb", False),
+    ("RuPauls Drag Race S17E01 1080p", False),
+    ("Rush 2013 1080p BluRay", False),
+    ("True Detective S01 1080p", False),
+    ("Peru Travel Doc 1080p", False),
+])
+def test_default_filter_matches_russian_releases_only(title, hit):
+    import re
+    # cli_debrid smart_search: re.search(pattern, text, re.IGNORECASE)
+    assert bool(re.search(sc.DEFAULT_FILTER_OUT[0], title, re.IGNORECASE)) is hit
+
+
+@pytest.mark.parametrize("env", ["dev", "staging", "prod"])
+def test_playbooks_pass_the_filter_knob(env):
+    assert "'filter_out': skstream.CLI_DEBRID_FILTER_OUT | default(None)" in PLAYBOOKS[env].read_text()
