@@ -55,3 +55,20 @@ def test_other_services_are_not_affected_by_the_worker_knobs():
     for name in base:
         if name != "traefik-worker":
             assert base[name] == tuned[name]
+
+
+def test_rolling_restart_drains_by_default():
+    """Host-mode ports rule out start-first; drain instead (2026-11-09: a
+    rolling restart SIGKILLed every worker at Docker's 10s default and the
+    next node went down 10s later, refusing connections for minutes)."""
+    w = render()["traefik-worker"]
+    assert w["stop_grace_period"] == "45s"
+    assert w["deploy"]["update_config"]["delay"] == "30s"
+    assert w["deploy"]["rollback_config"]["delay"] == "30s"
+    assert w["deploy"]["update_config"].get("order", "stop-first") == "stop-first"
+
+
+def test_rolling_restart_knobs_override():
+    w = render(TRAEFIK_WORKER_STOP_GRACE="90s", TRAEFIK_WORKER_UPDATE_DELAY="60s")["traefik-worker"]
+    assert w["stop_grace_period"] == "90s"
+    assert w["deploy"]["update_config"]["delay"] == "60s"

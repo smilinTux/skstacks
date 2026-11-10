@@ -105,3 +105,25 @@ def test_gzip_empty_map_renders_traefik_defaults_like_live():
 def test_gzip_custom_options_rendered():
     opts = {"excludedContentTypes": ["text/event-stream"], "minResponseBodyBytes": 2048}
     assert render_middlewares(GZIP_COMPRESS=opts)["gzip"]["compress"] == opts
+
+
+# --- entrypoint lifeCycle (drain on rolling restart) ------------------------
+
+def test_lifecycle_unset_renders_nothing():
+    eps = render_worker(WORKER_RESPONDING_TIMEOUTS=LIVE_RESPONDING)["entryPoints"]
+    assert "lifeCycle" not in eps["websecure"]["transport"]
+
+
+def test_lifecycle_rendered_alone():
+    eps = render_worker(WORKER_LIFECYCLE={"graceTimeOut": "30s"})["entryPoints"]
+    assert eps["websecure"]["transport"] == {"lifeCycle": {"graceTimeOut": "30s"}}
+    assert "transport" not in eps["web"]
+
+
+def test_lifecycle_rendered_with_timeouts():
+    eps = render_worker(WORKER_RESPONDING_TIMEOUTS=LIVE_RESPONDING,
+                        WORKER_LIFECYCLE={"graceTimeOut": "30s"})["entryPoints"]
+    assert eps["websecure"]["transport"] == {
+        "respondingTimeouts": LIVE_RESPONDING,
+        "lifeCycle": {"graceTimeOut": "30s"},
+    }
