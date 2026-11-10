@@ -16,6 +16,12 @@ Each entry says what an instance must do, if anything.
     still needs it, `app:update --all` after a major, and adds missing columns and primary keys. Each step
     is several minutes of maintenance mode. Rollback means restoring the backup and pinning the previous
     image.
+  - **skhub: Talk TURN and STUN servers are written as typed, sensitive config again.** Talk on
+    Nextcloud 29+ declares `turn_servers` and `stun_servers` as sensitive arrays, and occ silently
+    refused the old untyped write ("Config value were not updated", exit 0). The task hid that error,
+    so Talk ran without our TURN/STUN. The write now uses `--type=array --sensitive -n` when occ supports
+    it, reads each key back, and fails the deploy on a refused write. After deploying, check that Talk
+    calls connect behind NAT.
   - **skmail: docker-mailserver default to 17.0.0.** No template change was needed, and a test keeps the
     renamed 16 and 17 settings out. Coming from 16.x, the Rspamd Bayes data starts empty (state moves to
     Valkey). Back up `config` and `mailstate`. The restart can take up to the 1800s healthcheck window
