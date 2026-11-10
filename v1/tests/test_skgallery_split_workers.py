@@ -58,3 +58,20 @@ def test_split_accepts_string_booleans():
     """Vault values often arrive as strings."""
     assert "immich-microservices" in _services(SPLIT_WORKERS="true")
     assert "immich-microservices" not in _services(SPLIT_WORKERS="false")
+
+
+def _hc_labels(**over):
+    labels = _services(**over)["immich-server"]["deploy"]["labels"]
+    return [l for l in labels if "loadbalancer.healthcheck" in l]
+
+
+def test_lb_healthcheck_kept_by_default():
+    assert len(_hc_labels()) == 3
+
+
+def test_lb_healthcheck_can_be_turned_off():
+    assert _hc_labels(TRAEFIK_HEALTHCHECK=False) == []
+    assert _hc_labels(TRAEFIK_HEALTHCHECK="false") == []
+    # The router itself and the server port stay.
+    labels = _services(TRAEFIK_HEALTHCHECK=False)["immich-server"]["deploy"]["labels"]
+    assert any(l.endswith("loadbalancer.server.port=2283") for l in labels)

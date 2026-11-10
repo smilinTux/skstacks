@@ -15,6 +15,7 @@
 
 {%- set _base_domain = (skgallery.CLUSTERNAME | default(cluster_name)) ~ '.' ~ (skgallery.DOMAIN | default(domain)) -%}
 {%- set _split = (skgallery.SPLIT_WORKERS | default(false) | string | lower) in ['true', 'yes', '1', 'on'] -%}
+{%- set _lb_hc = (skgallery.TRAEFIK_HEALTHCHECK | default(true) | string | lower) not in ['false', 'no', '0', 'off'] -%}
 version: '3.8'
 
 # =============================================================================
@@ -115,12 +116,19 @@ services:
         - "traefik.http.services.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=2283"
 
         # === TRAEFIK: Health Check ===
+        # TRAEFIK_HEALTHCHECK: false drops it. With one immich-server replica a failed
+        # probe has no other backend to fail over to: a short stall of the API (slow
+        # storage, a long GC) turns into instant 503s for every client instead of
+        # requests that wait it out. Swarm's container healthcheck still restarts a
+        # dead task.
+{% if _lb_hc %}
         - "traefik.http.services.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.healthcheck.path=/api/server/ping"
         - "traefik.http.services.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.healthcheck.interval=30s"
         - "traefik.http.services.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.healthcheck.timeout=10s"
     depends_on:
       - redis
       - database
+{% endif %}
 
 {% if _split %}
   # ===========================================================================
