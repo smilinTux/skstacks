@@ -1,5 +1,5 @@
 """Live-parity check: prod runs Forgejo on the floating codeberg.org/forgejo:12
-tag while the framework pins 15.0.9. skgit.FORGEJO_VERSION already exists as
+tag while the framework pins 17.0.1. skgit.FORGEJO_VERSION already exists as
 an instance-settable var (f69f146) - this locks in that an instance can pin
 its own tag (or digest) without a framework change, so the parity vault PR
 only needs to set the var, not patch the template."""
@@ -18,7 +18,7 @@ def render(**skgit):
 
 
 def test_forgejo_version_defaults_to_pinned_release():
-    assert render() == "codeberg.org/forgejo/forgejo:15.0.9"
+    assert render() == "codeberg.org/forgejo/forgejo:17.0.1"
 
 
 def test_instance_can_pin_the_live_floating_major_as_an_exact_tag():
