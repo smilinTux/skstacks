@@ -118,7 +118,7 @@ services:
       - {{ app }}-{{ env }}
 
   redis:
-    image: docker.io/library/redis:7.4.12
+    image: {{ sksso.REDIS_IMAGE | default('docker.io/library/redis:8.10.3@sha256:1f88291b4c57bdf249f02eb085a8669889b2d2954e91d4de5118a5da6b78dd53') }}
     env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}.env
     command: redis-server --dir /data --save 60 1 --loglevel warning
     healthcheck:
