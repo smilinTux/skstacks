@@ -66,6 +66,20 @@
       debug:
         msg: "Running SKStacks deploy {{ app }} (Immich Photo/Video Management) - DEVELOPMENT..."
 
+    - name: Fail closed on local database paths without a pinned data node
+      # A path outside /var/data is local disk on one node. Without DATA_NODE
+      # swarm may reschedule database or redis elsewhere and start them on an
+      # empty directory (data loss).
+      assert:
+        that:
+          - >-
+            (skgallery.DATA_NODE | default('', true) | string | length > 0) or
+            (((skgallery.DB_DATA_PATH | default('/var/data/', true) | string).startswith('/var/data/')) and
+             ((skgallery.REDIS_DATA_PATH | default('/var/data/', true) | string).startswith('/var/data/')))
+        fail_msg: >-
+          skgallery.DB_DATA_PATH / REDIS_DATA_PATH point at local disk but
+          skgallery.DATA_NODE is empty. Set DATA_NODE to the node holding the data.
+
     - name: Ensure python3-pip is installed
       apt:
         name: python3-pip
@@ -127,6 +141,22 @@
         owner: "999"
         group: "999"
         mode: '0755'
+
+    - name: Create the {{ app }} local database directories on the data node (not recursive)
+      # Only for paths off /var/data. The NFS dirs above stay: they are the
+      # rollback copy once the data moved. Ansible templates delegate_to before
+      # it evaluates when, so it must render with DATA_NODE unset too.
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "999"
+        group: "999"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "{{ skgallery.DB_DATA_PATH | default('/var/data/', true) }}", mode: '0700' }
+        - { path: "{{ skgallery.REDIS_DATA_PATH | default('/var/data/', true) }}", mode: '0755' }
+      when: not (item.path | string).startswith('/var/data/')
+      delegate_to: "{{ skgallery.DATA_NODE | default(inventory_hostname, true) }}"
 
     - name: Set PostgreSQL backup directory ownership
       file:

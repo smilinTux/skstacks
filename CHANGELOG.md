@@ -7,6 +7,17 @@ Each entry says what an instance must do, if anything.
 
 ### Upgrade notes (instances)
 
+- **skgallery: Postgres and Redis can live on local disk on one pinned node
+  (`skgallery.DATA_NODE`, `DB_DATA_PATH`, `REDIS_DATA_PATH`)**: both were hardcoded under
+  `/var/data/skgallery-<env>/` (NFS on a typical instance). On an instance (2026-11-09) NFS
+  write stalls of 30 to 120 s froze the database and the bullmq job queue with it, so the
+  worker lost its job locks and the API stopped answering. With a path outside `/var/data`
+  the playbook creates it on `DATA_NODE` (owner 999; 0700 for the database) and pins
+  `database` and `redis` there, and refuses to run without `DATA_NODE`. The NFS directories
+  are left in place as the rollback copy. Unset renders exactly as before. **Instance action**:
+  optional. To move: stop the stack's `database`, `redis` and Immich services, copy both
+  directories to the new paths on `DATA_NODE` with ownership and modes kept, set the three
+  keys, redeploy, verify, then rename the NFS copies. Tests: `v1/tests/test_skgallery_local_db.py`.
 - **skfenceha: traefik-worker rolling restarts drain instead of dropping traffic**: the
   worker publishes host-mode ports, so start-first is impossible, and it stopped with Docker's
   default 10 s grace, the same as Traefik's own default drain: every restart SIGKILLed the

@@ -16,6 +16,12 @@
 {%- set _base_domain = (skgallery.CLUSTERNAME | default(cluster_name)) ~ '.' ~ (skgallery.DOMAIN | default(domain)) -%}
 {%- set _split = (skgallery.SPLIT_WORKERS | default(false) | string | lower) in ['true', 'yes', '1', 'on'] -%}
 {%- set _lb_hc = (skgallery.TRAEFIK_HEALTHCHECK | default(true) | string | lower) not in ['false', 'no', '0', 'off'] -%}
+{#- Postgres + redis on local disk on DATA_NODE (see the playbook guard): an NFS
+    write stall on the shared /var/data froze the database and the job queue
+    with it. Unset: the previous NFS paths, no node pin. -#}
+{%- set _data_node = skgallery.DATA_NODE | default('', true) | string -%}
+{%- set _db_path = skgallery.DB_DATA_PATH | default('/var/data/skgallery-' ~ env ~ '/db-data', true) | string -%}
+{%- set _redis_path = skgallery.REDIS_DATA_PATH | default('/var/data/skgallery-' ~ env ~ '/redis-data', true) | string -%}
 version: '3.8'
 
 # =============================================================================
@@ -242,7 +248,7 @@ services:
     image: redis:{{ skgallery.REDIS_VERSION | default('7.4.12-alpine') }}
     command: redis-server --appendonly yes --maxmemory {{ skgallery.REDIS_MAXMEMORY | default('128mb') }} --maxmemory-policy noeviction
     volumes:
-      - /var/data/skgallery-{{ env }}/redis-data:/data
+      - {{ _redis_path }}:/data
     logging:
       driver: json-file
       options:
@@ -269,6 +275,9 @@ services:
       placement:
         constraints:
           - node.role == worker
+{% if _data_node %}
+          - node.hostname == {{ _data_node }}
+{% endif %}
       resources:
         limits:
           cpus: '{{ skgallery.REDIS_CPU_LIMIT | default("0.5") }}'
@@ -289,7 +298,7 @@ services:
     shm_size: {{ skgallery.DB_SHM_SIZE | default('128mb') }}
     volumes:
       # === DIRECT BIND MOUNT ===
-      - /var/data/skgallery-{{ env }}/db-data:/var/lib/postgresql/data
+      - {{ _db_path }}:/var/lib/postgresql/data
       - /etc/localtime:/etc/localtime:ro
     logging:
       driver: json-file
@@ -317,6 +326,9 @@ services:
       placement:
         constraints:
           - node.role == worker
+{% if _data_node %}
+          - node.hostname == {{ _data_node }}
+{% endif %}
       resources:
         limits:
           cpus: '{{ skgallery.DB_CPU_LIMIT | default("2.0") }}'
