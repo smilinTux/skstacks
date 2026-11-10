@@ -45,7 +45,7 @@ Each entry says what an instance must do, if anything.
   `API_TOKEN` now fails** with these steps; remove it. `PROVISIONER_IMAGE` is no longer used by
   this role.
 
-## Unreleased (v2.26.18)
+## skstacks-v2.26.18 - 2026-11-10
 
 ### Upgrade notes (instances)
 
