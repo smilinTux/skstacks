@@ -42,7 +42,7 @@ survive a redeploy.
 
 ```yaml
 skboard:
-  VIKUNJA_VERSION: "0.24.6"        # default: 0.24.6 - see "Upgrading Vikunja" below
+  VIKUNJA_VERSION: "2.8.0"         # default: 2.8.0 - see "Upgrading Vikunja" below
   INSTANCE: "primary"               # default: primary
   FILES_MAXSIZE: "20MB"             # default: 20MB
   LOG_LEVEL: "INFO"                 # default: INFO
@@ -93,15 +93,35 @@ delete them.
 ## Upgrading Vikunja
 
 `skboard.VIKUNJA_VERSION` pins the exact image tag; the framework default
-(`0.24.6`) is only what a brand-new instance gets if it never sets this key,
+(`2.8.0`) is only what a brand-new instance gets if it never sets this key,
 not a signal that a running instance should move to it. Vikunja has shipped
-newer `0.24.x` point releases and a `1.x` line upstream; this role does not
-track either automatically. Before bumping `VIKUNJA_VERSION`, check the
-currently running image (`docker service inspect --format
-'{{.Spec.TaskTemplate.ContainerSpec.Image}}' <stack>_vikunja`) and read the
-[Vikunja release notes](https://github.com/vikunja/vikunja/releases) between
-what you run and what you're moving to, especially across the `0.24` to
-`1.x` boundary.
+newer releases; this role does not track them automatically. Before bumping
+`VIKUNJA_VERSION`, check the currently running image (`docker service inspect
+--format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' <stack>_vikunja`) and read the
+[Vikunja release notes](https://github.com/go-vikunja/vikunja/releases) between
+what you run and what you're moving to.
+
+The framework default moved from `0.24.6` to `2.8.0` (crossing 1.0 and 2.0).
+Back up `/var/data/skboard-<env>/data` first (SQLite and `files/`): migrations
+are one-way, and rolling the image back needs that backup restored. Upstream
+breaking changes and how this role is affected:
+
+- 1.0: CORS is on by default and needs `service.publicurl`. The role already
+  sets `VIKUNJA_SERVICE_PUBLICURL`, so no change.
+- 1.0: SQLite paths are relative to `service.rootpath` unless absolute. The role
+  uses absolute paths (`/db/vikunja.db`), so no change.
+- 1.0: `service.enablemetrics` removed, `log.standard`/`log.events` `false`
+  becomes `off`, OpenID providers array becomes a map. The role sets none of
+  these. If you add them through extra env, use the new forms.
+- 1.0: API route renames (`/tasks/all` to `/tasks`, `/tokenTest` to
+  `/token/test`) and `right` renamed `permission`: update any API integrations.
+- 2.0: new session management. Web users are unaffected, desktop and API
+  clients must be upgraded. Typesense support is removed. The `repair-*` CLI
+  commands moved under `vikunja repair`.
+- After upgrading, run `vikunja repair file-mime-types` once (the image has no
+  shell, so run it as a one-off container against the same data volume).
+- Pin step: if you want a smaller step, set `VIKUNJA_VERSION` to a `1.x` tag
+  first. Upstream does not require an intermediate version.
 
 ## Networking
 
