@@ -18,7 +18,7 @@ SKHUB = pathlib.Path(__file__).resolve().parents[1] / "ansible/optional/skhub"
 COMPOSE = SKHUB / "src/config/skhub/skhub.yml.j2"
 BASE = {"CLUSTERNAME": "cluster1", "DOMAIN": "example.com", "enable_collabora": True}
 
-MARIADB = ("mariadb", "10.11.")
+MARIADB = ("mariadb", "12.3.")
 REDIS = ("redis", "8.")
 CLAMAV = ("clamav/clamav", "latest")
 COLLABORA = ("collabora/code", "26.04.")
@@ -36,7 +36,7 @@ def services(**over):
     return yaml.safe_load(render(**over))["services"]
 
 
-def test_mariadb_bumped_to_10_11_19_both_services():
+def test_mariadb_on_12_3_lts_both_services():
     svc = services()
     assert is_pinned(svc["db"]["image"], *MARIADB)
     assert is_pinned(svc["db-backup"]["image"], *MARIADB)

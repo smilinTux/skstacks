@@ -145,7 +145,7 @@ services:
 {% endfor %}
 
   db:
-    image: {{ skhub.MARIADB_IMAGE | default('mariadb:10.11.19@sha256:d769e37960821dfdcf096954f6e7ac89f747e116c1bba98e48edd265dfc7deae') }}
+    image: {{ skhub.MARIADB_IMAGE | default('mariadb:12.3.3@sha256:d46e102fa8b9b72bfcdeb56f9dd538742092119dc8b11f31fe662605cd234cd9') }}
     env_file: /var/data/config/skhub-{{ env }}/skhub.env
     command:
       - --wait_timeout=28800
@@ -171,14 +171,14 @@ services:
           memory: 2G
           cpus: '1.0'
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p\"$$MYSQL_ROOT_PASSWORD\""]
+      test: ["CMD-SHELL", "mariadb-admin ping -h localhost -u root -p\"$$MYSQL_ROOT_PASSWORD\""]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 40s
 
   db-backup:
-    image: {{ skhub.MARIADB_IMAGE | default('mariadb:10.11.19@sha256:d769e37960821dfdcf096954f6e7ac89f747e116c1bba98e48edd265dfc7deae') }}
+    image: {{ skhub.MARIADB_IMAGE | default('mariadb:12.3.3@sha256:d46e102fa8b9b72bfcdeb56f9dd538742092119dc8b11f31fe662605cd234cd9') }}
     env_file: /var/data/config/skhub-{{ env }}/skhub-db-backup.env
     deploy:
       placement:

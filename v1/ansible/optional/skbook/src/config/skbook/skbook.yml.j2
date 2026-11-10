@@ -98,7 +98,7 @@ services:
 {% endif %}
 
   db:
-    image: mariadb:10.11
+    image: {{ skbook.MARIADB_IMAGE | default('mariadb:12.3.3@sha256:d46e102fa8b9b72bfcdeb56f9dd538742092119dc8b11f31fe662605cd234cd9') }}
     env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}.env
     # --tmpdir points MariaDB's scratch/sort space at a local (non-NFS) path
     # inside the container's own overlay filesystem, not the NFS-backed
@@ -117,7 +117,7 @@ services:
     networks:
       - skbook-{{ env }}
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p\"$$MYSQL_ROOT_PASSWORD\""]
+      test: ["CMD-SHELL", "mariadb-admin ping -h localhost -u root -p\"$$MYSQL_ROOT_PASSWORD\""]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -139,7 +139,7 @@ services:
           memory: {{ skbook.DB_RESOURCES_RESERVATIONS_MEMORY | default("256M") }}
 
   db-backup:
-    image: mariadb:10.11
+    image: {{ skbook.MARIADB_IMAGE | default('mariadb:12.3.3@sha256:d46e102fa8b9b72bfcdeb56f9dd538742092119dc8b11f31fe662605cd234cd9') }}
     env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}-db-backup.env
     volumes:
       - /var/data/{{ app }}-{{ env }}/database-dump:/dump
