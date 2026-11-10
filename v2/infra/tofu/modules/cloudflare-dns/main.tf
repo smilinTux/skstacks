@@ -52,7 +52,7 @@ resource "cloudflare_dns_record" "cluster_root" {
   content = var.public_ip
   type    = "A"
   ttl     = var.ttl
-  proxied = false # NOT proxied — Traefik handles TLS termination
+  proxied = false # NOT proxied, Traefik handles TLS termination
 
   comment = "SKStacks ${var.cluster_name} VIP — managed by OpenTofu"
 }
