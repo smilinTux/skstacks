@@ -31,6 +31,10 @@ Each entry says what an instance must do, if anything.
     the datadir in place (the image saves a system-tables backup first). Healthchecks use
     `mariadb-admin`. There is no downgrade: take a dump first. To stay, pin `skhub.MARIADB_IMAGE` or
     the new `skbook.MARIADB_IMAGE`.
+    The `db` services now get `stop_grace_period: 120s` (knob `DB_STOP_GRACE_PERIOD`): 12.x keeps a
+    `tc.log`, and a SIGKILL after swarm's default 10 s grace during a slow shutdown left it garbled, so
+    every later start aborted with "Bad magic header in tc log" (found by the v2.26.20 gate on an NFS
+    datadir). If an instance ever hits that, stop the db, move `tc.log` out of the datadir and start it.
   - **Redis 8.10.3 for skgallery, skorch and sksso; valkey 9.1.3 for skpeek; registry 3.1.2 for
     skreg.** In place, no step: a newer server reads the older RDB/AOF, but the old major cannot read
     what the new one saves. New pin knobs `skorch.REDIS_IMAGE`, `sksso.REDIS_IMAGE`, `skreg_image`

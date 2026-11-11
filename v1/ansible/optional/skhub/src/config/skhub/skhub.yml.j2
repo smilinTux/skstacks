@@ -145,6 +145,11 @@ services:
 {% endfor %}
 
   db:
+    # MariaDB 12.x keeps tc.log open while it runs and garbles its first byte on a
+    # clean shutdown just before deleting it. Swarm's default 10s stop grace can
+    # SIGKILL a slow (NFS) shutdown in that window, and the next start then aborts
+    # with "Bad magic header in tc log". Give the shutdown time to finish.
+    stop_grace_period: {{ skhub.DB_STOP_GRACE_PERIOD | default('120s', true) }}
     image: {{ skhub.MARIADB_IMAGE | default('mariadb:12.3.3@sha256:d46e102fa8b9b72bfcdeb56f9dd538742092119dc8b11f31fe662605cd234cd9') }}
     env_file: /var/data/config/skhub-{{ env }}/skhub.env
     command:

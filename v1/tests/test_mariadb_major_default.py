@@ -47,3 +47,26 @@ def test_env_files_enable_auto_upgrade():
     assert "MARIADB_AUTO_UPGRADE=1" in _render(SKBOOK / "skbook.env.j2", app="skbook", env="prod", skbook=skbook)
     skhub = {"mysql_root_password": "r", "mysql_user": "u", "mysql_password": "p", "DOMAIN": "e.com"}
     assert "MARIADB_AUTO_UPGRADE=1" in _render(SKHUB / "skhub.env.j2", app="skhub", env="prod", skhub=skhub)
+
+
+def _skhub_services(**skhub):
+    base = {"CLUSTERNAME": "c", "DOMAIN": "e.com"}
+    out = _render(SKHUB / "skhub.yml.j2", app="skhub", env="prod", skhub=dict(base, **skhub), fence_service_name="x")
+    return yaml.safe_load(out)["services"]
+
+
+def test_db_stop_grace_period_defaults_to_120s():
+    # MariaDB 12.x garbles tc.log on a clean shutdown just before deleting it; a
+    # SIGKILL after swarm's default 10s grace in that window leaves a "Bad magic
+    # header in tc log" that stops every later start (v2.26.20 gate, 2026-11-11).
+    assert _skbook_services()["db"]["stop_grace_period"] == "120s"
+    assert _skhub_services()["db"]["stop_grace_period"] == "120s"
+
+
+def test_db_stop_grace_period_is_a_knob():
+    assert _skbook_services(DB_STOP_GRACE_PERIOD="300s")["db"]["stop_grace_period"] == "300s"
+    assert _skhub_services(DB_STOP_GRACE_PERIOD="5m")["db"]["stop_grace_period"] == "5m"
+
+
+def test_db_stop_grace_period_empty_falls_back():
+    assert _skhub_services(DB_STOP_GRACE_PERIOD="")["db"]["stop_grace_period"] == "120s"
