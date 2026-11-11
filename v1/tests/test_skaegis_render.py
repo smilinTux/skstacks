@@ -128,3 +128,18 @@ def test_product_name_is_lowercase():
     paths = [p for p in ROLE.rglob("*") if p.is_file() and p.suffix != ".png"] + [BLUEPRINT]
     hits = [str(p) for p in paths if "Ae" "gis" in p.read_text()]
     assert not hits, f"write skaegis, all lowercase: {hits}"
+
+
+def test_compose_has_no_bare_dollar():
+    """docker stack deploy interpolates $VAR in the compose file: a literal
+    dollar (a regex anchor in a healthcheck) must be written $$, or the
+    deploy fails with "invalid interpolation format" (release gate, lane 2)."""
+    env = make_environment()
+    text = env.from_string(COMPOSE.read_text()).render(
+        env="prod", skaegis={}, ska_router="skaegis", ska_host="skaegis.example.test",
+        ska_middlewares="default@file", ska_sso_middleware="", ska_tls_options="", ska_agent_publish=True,
+        ska_agent_publish_mode="ingress", ska_agent_port=1514, ska_enrol_port=1515,
+        ska_indexer_path="/a", ska_manager_path="/b", ska_certs_path="/c", ska_backup_path="/d",
+        ska_auth_mode="oidc", ska_extra_ca="", ska_sso_host_ip="")
+    bare = [line.strip() for line in text.splitlines() if "$" in line.replace("$$", "")]
+    assert not bare, f"escape these dollars as $$: {bare}"

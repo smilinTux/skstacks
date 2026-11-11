@@ -65,7 +65,7 @@ services:
     # Any HTTP answer from 9200 (401 without credentials) means the node is
     # serving; no credential is needed in the probe.
     healthcheck:
-      test: ["CMD-SHELL", "curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:9200/ | grep -qE '^(200|401)$'"]
+      test: ["CMD-SHELL", "curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:9200/ | grep -qE '^(200|401)$$'"]
       interval: {{ hc_interval }}
       timeout: {{ hc_timeout }}
       retries: {{ hc_retries }}
@@ -144,7 +144,7 @@ services:
         mode: {{ ska_agent_publish_mode }}
 {% endif %}
     healthcheck:
-      test: ["CMD-SHELL", "curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:55000/ | grep -qE '^(200|401)$'"]
+      test: ["CMD-SHELL", "curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:55000/ | grep -qE '^(200|401)$$'"]
       interval: {{ hc_interval }}
       timeout: {{ hc_timeout }}
       retries: {{ hc_retries }}
