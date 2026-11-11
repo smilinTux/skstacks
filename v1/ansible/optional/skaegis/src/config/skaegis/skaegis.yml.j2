@@ -18,7 +18,7 @@ version: '3.8'
 {% set hc_interval = skaegis.HEALTH_CHECK_INTERVAL | default('30s', true) %}
 {% set hc_timeout = skaegis.HEALTH_CHECK_TIMEOUT | default('10s', true) %}
 {% set hc_retries = skaegis.HEALTH_CHECK_RETRIES | default(5, true) | int %}
-{% set data_constraints = ska_placement + (['node.hostname == ' + ska_data_node] if ska_data_node else []) %}
+{% set data_constraints = (ska_placement | default(['node.role == worker', 'node.labels.skaegis == true'], true)) + (['node.hostname == ' ~ ska_data_node] if (ska_data_node | default('', true)) else []) %}
 {% set certs = ska_certs_path %}
 
 networks:
@@ -216,7 +216,7 @@ services:
       mode: replicated
       replicas: 1
       placement:
-        constraints: {{ ska_dashboard_placement | tojson }}
+        constraints: {{ ska_dashboard_placement | default(['node.role == worker', 'node.labels.skaegis == true'], true) | tojson }}
       resources:
         limits:
           cpus: '{{ skaegis.DASHBOARD_CPUS | default("1.00", true) }}'
