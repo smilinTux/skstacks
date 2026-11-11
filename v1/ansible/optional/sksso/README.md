@@ -508,6 +508,11 @@ Read this section for what is true today, and the design for where it is going.
   applications still bound to `authentik Admins`; a gate harness would prove the `sktest-user` account
   (`skuser` only) is denied non-baseline and admin tools and the `sktest-admin` account (`skadmin` only) is
   allowed.
+- Any app that is not `admin-only` gets its own provider; the catch-all serves `admin-only` apps only.
+  `skhub-users` and `skflow-operators` are renamed in place to `app-skhub-users` and `app-skflow-users`.
+- Test identities (`sktest-admin`, `sktest-user`, `sktest-nogroup`, `sktest-appadmin`, `sktest-appuser`, and the
+  service account `sksvc-test`) skip interactive MFA only as members of the `sktest` group, and still pass
+  through the application access policy. Credentials are per-estate `sksso.TEST_*` vault keys.
 - Existing instances migrate in additive steps first, and only later prune `authentik Admins` bindings.
 
 ## SSO for skhub and skflow

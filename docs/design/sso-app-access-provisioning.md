@@ -171,7 +171,7 @@ example `skpulse:`), all optional. It is the SKStacks spelling of the standard's
 skpulse:
   SSO_ACCESS: admin-only      # admin-only | app-groups | any-account | public   (default admin-only)
   SSO_BASELINE: false         # the standard's in_baseline: true also binds skuser (app-groups only)
-  SSO_PROVIDER: catch-all     # catch-all | own   (default catch-all; app-groups needs own)
+  SSO_PROVIDER: own           # catch-all | own. Default: catch-all for admin-only, own for every other mode
   SSO_ADMINS_GROUP: ""        # default "app-<slug>-admins"
   SSO_USERS_GROUP: ""         # default "app-<slug>-users"
   SSO_EXEMPTION:              # required for any-account and public
@@ -190,7 +190,7 @@ Modes and the binding set each one produces, always with policy engine mode `any
 
 | `SSO_ACCESS` | `SSO_BASELINE` | Bound | Meaning |
 |---|---|---|---|
-| `admin-only` (default) | must be false | `G` | Only estate administrators. Anything on the catch-all. |
+| `admin-only` (default) | must be false | `G` | Only estate administrators. The only mode the catch-all serves. |
 | `app-groups` | false (default) | `G`, `A`, `U` | Admins, app admins, app users. |
 | `app-groups` | true | `G`, `A`, `U`, `S` | Same, plus the baseline bundle. Admin role is still mapped only from `G` and `A`. |
 | `any-account` | n/a | the named policy `sso-allow-any-account` | Any authenticated account. Reviewed opt-out, needs an exemption record. |
@@ -207,7 +207,7 @@ ineffective grant (check C9).
 Compatibility: an explicit `AUTHENTIK_TILE_GROUP` keeps working for one release. It is bound additively and
 logs a deprecation line, so an instance that pins `authentik Admins` today loses nothing, but the standard
 treats that binding as a defect (check C2), so the conformance check reports it until migration step 4.
-The roles' defaults for it become empty, and the standard's rule applies: the tile is bound to the same
+`SSO_PROVIDER: catch-all` on any mode other than `admin-only` is rejected at render. The roles' defaults for `AUTHENTIK_TILE_GROUP` become empty, and the standard's rule applies: the tile is bound to the same
 groups as the gate, so `AUTHENTIK_TILE_GROUP` is no longer a value for every mode.
 
 ### 4.3 The estate baseline list
@@ -281,7 +281,7 @@ New behaviour, in this order. Any error stops before the next step:
    override-named group is allowed; a typo therefore yields an empty group, which is fail-closed (only
    `skadmin` gets in) rather than the old hard failure. The script prints `group: created <name>` so a
    typo is visible in the deploy log, and the conformance check lists empty `sk-managed` groups.
-3. **Ensure application**: as today. When the role declares `provider: proxy`, ensure a forward-auth
+3. **Ensure application**: as today. When the resolved provider is `own` (any mode except `admin-only`), ensure a forward-auth
    single-application provider (see 4.7) and attach it to the embedded outpost, keeping the existing
    "keep a provider that already exists" behaviour for blueprint-owned OIDC providers.
 4. **Add bindings** for every desired group (create when absent, `order` in a reserved band 10 to 19 so
@@ -301,9 +301,8 @@ migration section moves them to `authoritative`.
 Blueprint-owned applications (skflow, and skhub's OIDC application) keep their own binding. Their roles
 declare `bindings: additive` permanently and an `adopt` list naming the blueprint's group, so the two
 writers never fight; the tile script adds only the global admin group and, if configured, the baseline
-group on top. (The standard lists role groups such as `skflow-operators` as application roles, not gates;
-the skflow gate moves to the `app-skflow-*` groups in phase 3 and the old group is retired per the
-standard's migration step 5.)
+group on top. Their blueprint group names move to the per-app names (`app-skflow-users`,
+`app-skhub-users`) in phase 3, by the rename migration in section 5.1; there is no legacy exception.
 
 ### 4.6 The `any-account` and `public` modes
 
@@ -333,14 +332,15 @@ For a forward-auth app the enforcement layer needs the right provider:
 
 - `admin-only`: the catch-all is sufficient once its application is bound to the global admin group
   alone. The tile and the catch-all agree.
-- `app-groups` (baseline or not): the catch-all would deny those users (it admits admins only) and
-  therefore the tile would promise access the gate refuses. The role must declare `provider: proxy`; the
-  script then ensures a per-host forward-auth single-application provider on the embedded outpost whose
-  application carries the same bindings as the tile (one Application, both jobs). A render-time assertion
-  fails the deploy if `SSO_ACCESS` is not `admin-only` for a role that routes through `authentik@file` and
-  does not declare `SSO_PROVIDER: own` (standard check C7). Phase 0 must confirm, against the pinned Authentik version, that the
-  embedded outpost prefers a host-specific single-application provider over the domain provider for the
-  same host; if it does not, the catch-all must be narrowed to the hosts it should serve instead.
+- Every other mode (`app-groups` baseline or not, `any-account`, `public`): the catch-all admits admins only,
+  so a tile would promise access the gate refuses. Decision: any app that is not `admin-only` gets its own
+  provider by default (`SSO_PROVIDER: own`); the catch-all serves `admin-only` apps only. The script
+  ensures a per-host forward-auth single-application provider on the embedded outpost whose application
+  carries the same bindings as the tile (one Application, both jobs). A render-time assertion fails the
+  deploy if a role routes through `authentik@file` with a mode other than `admin-only` and
+  `SSO_PROVIDER: catch-all` (standard check C7). Phase 0 must still confirm, against the pinned Authentik
+  version, that the embedded outpost prefers a host-specific single-application provider over the domain
+  provider for the same host; if it does not, the catch-all must be narrowed to the hosts it serves.
 - Native OIDC apps (skhub, skflow, skpatch-hosts and sksec-web in `oidc` mode, skrac, skmesh): the
   application behind the OIDC provider is the gate. The role (or its blueprint) must write at least the
   global admin binding; the tile script then reconciles the rest. This closes the gap in skrac and skmesh,
@@ -381,25 +381,99 @@ default:
 | `OIDC_READ_ONLY_GROUPS` (sksec-web, skpatch-hosts) | `app-<app>-users`, plus `skuser` when the app is baseline; empty in `admin-only` mode |
 | `OIDC_ADMIN_GROUP` (skrac, accepts a list in its template) | the same admin list as above |
 | `OIDC_UNMATCHED_ROLE` | stays `deny` and is not overridable to a permissive value |
-| skflow `skflow-operators` | a role group, not a gate under the standard. Kept as `SSO_USERS_GROUP` only until phase 3 moves the gate to `app-skflow-users` |
-| skhub `skhub-users` | a legacy spelling under the standard (section 3.2). Set `SSO_USERS_GROUP: skhub-users` while it exists, then rename to `app-skhub-users` with the standard's dual-name steps (create, copy members, repoint, probe, delete); never keep both |
+| skflow `skflow-operators` | renamed to `app-skflow-users` (Windmill's regular operators; admins map from `skadmin` and `app-skflow-admins`). The blueprint's group name changes with it. Windmill's 10 SSO user limit is unchanged. |
+| skhub `skhub-users` | renamed to `app-skhub-users` (admins from `skadmin` and `app-skhub-admins`). Nextcloud-side handling is in section 5.1. |
 
 Admin mapping never includes `skuser` and never `authentik Admins` (check C2); because `skadmin` is bound directly, it is listed in the admin mapping explicitly or an estate administrator would be a plain user inside the app; a read-only role is never granted to someone the Authentik
 binding would have refused (the derived lists are subsets of the bound groups, and a render-time
 assertion enforces `oidc groups subset of bound groups` unless the operator overrides both).
 
-### 4.10 Test identities
+### 4.10 Test identities: a closed loop for per-stack testing
 
-Two accounts, named per the standard (section 8.5). They already exist on the reference instance; the
-script below adopts them rather than recreating them, and the names are variables that default to these:
+Decision: test identities bypass interactive MFA, scoped to members of one dedicated group, `sktest`, and
+nothing else. They still go through the application access policy, so a probe tests the real gate. A fixed
+set per estate (account names are variables, defaults shown; the standard's section 8.5 defines the first two):
 
-- `sktest-user` (`sksso.TEST_USER_NAME`): member of `skuser` only. Never in `skadmin`, `authentik Admins` or
-  any `app-*` group.
-- `sktest-admin` (`sksso.TEST_ADMIN_NAME`): member of `skadmin` only, not `authentik Admins`.
+| Account | Variable | Standing groups | Role in the loop |
+|---|---|---|---|
+| `sktest-admin` | `sksso.TEST_ADMIN_NAME` | `skadmin` | Proves allowance everywhere the admin group is meant to reach. |
+| `sktest-user` | `sksso.TEST_USER_NAME` | `skuser` | Proves the baseline: allowed on baseline apps, refused elsewhere and on admin UIs. |
+| `sktest-nogroup` | `sksso.TEST_NOGROUP_NAME` | none | Proves nobody-by-default: refused on every app that is not `any-account` or `public`. |
+| `sktest-appadmin` | `sksso.TEST_APPADMIN_NAME` | none (temporary `app-<app>-admins` only) | Proves the per-app admin path and its isolation from other apps. |
+| `sktest-appuser` | `sksso.TEST_APPUSER_NAME` | none (temporary `app-<app>-users` only) | Proves the per-app user path. |
+| `sksvc-test` | `sksso.TEST_SVC_NAME` | none | Service account with an API token: the machine-client identity. Proves a token holder with no group is refused by gates and has no admin API rights. |
 
-`ensure-test-identities.sh` (same pattern as `ensure-api-token.sh`, secrets on stdin, idempotent) asserts
-exactly those memberships and fails if either account holds any other group. Credentials stay in the
-estate vault. The admin-level account is what makes a refusal of the user-level one meaningful.
+All six are members of the `sktest` group and of nothing that grants access. `sktest` itself is bound to no
+application, is never a gate and is never an admin mapping input.
+
+**Credentials.** Per-estate vault keys in sksso's vault (the same file that holds `sksso.api_token`):
+`sksso.TEST_ADMIN_PASSWORD`, `sksso.TEST_USER_PASSWORD`, `sksso.TEST_NOGROUP_PASSWORD`,
+`sksso.TEST_APPADMIN_PASSWORD`, `sksso.TEST_APPUSER_PASSWORD` and `sksso.TEST_SVC_API_TOKEN` (32+ chars each),
+each generated per estate and rotated on the schedule of other privileged credentials. Nothing goes in a
+repository, a unit file or an echoed CI variable.
+
+**Scoped MFA bypass (sksso baseline blueprint plan).** `sksso-access-baseline.yaml.j2` grows, besides the
+global groups and the two named policies:
+
+1. the group `sktest` (existence only, no members written by the blueprint);
+2. a policy binding on the authenticator-validation stage binding of the estate's authentication flow, group
+   `sktest`, `negate: true`, so for a member the stage binding fails its policy and the stage is skipped and
+   for everyone else it runs unchanged. It touches only that one stage binding. It is not a flow-wide
+   exemption, it does not alter any application binding, and the account still needs a valid password and
+   must pass the target application's bindings.
+
+The blueprint is applied only when the adopting estate opts in (`sksso.TEST_IDENTITIES_ENABLED: true`), so an
+estate without a probe has no bypass. The conformance check gets one extra rule, X1: `sktest` has members
+other than the six fixed accounts, a fixed account holds a standing group other than its table row, or
+`sktest` is bound to any application.
+
+**Provisioning script.** `ensure-test-identities.sh` (same pattern as `ensure-api-token.sh`, secrets on
+stdin, idempotent) creates or adopts the six accounts, sets or rotates their credentials, places them in
+`sktest` and asserts the standing memberships in the table. It fails if an account holds any other group
+(except a temporary `app-*` membership, which the next script manages).
+
+**Membership tooling (temporary app membership).** `sktest-appadmin` and `sktest-appuser` hold no standing
+group. For one test run, a wrapper adds them to the target stack's groups and always removes them:
+
+- `optional/sksso/src/sksso/test-membership.py` (phase 2). A library function `with_test_membership(app)`,
+  a context manager that adds `sktest-appadmin` to `app-<app>-admins` and `sktest-appuser` to
+  `app-<app>-users`, yields, and removes both in `finally` (also on SIGINT and SIGTERM). A CLI form,
+  `test-membership.py --app <slug> -- <command>`, runs the command inside the same guarantee; its exit code
+  is the command's, and a failed removal exits non-zero and loud.
+- `optional/sksso/tasks/test_membership.yml` (phase 2), the Ansible form for deploy-time probes: a `block`
+  that adds the memberships, runs the probe tasks, and an `always` section that removes them, so an
+  interrupted or failed play still cleans up.
+- A leak sweep, `test-membership.py --sweep`, removes both accounts from every `app-*` group, and exits 1 if
+  it found any (a leak). It runs at harness start, nightly and as check X1's data source. Because an app
+  in `admin-only` mode with members is an ineffective grant (C9), a leaked test membership also surfaces
+  there.
+- Membership changes use the sksso automation token (as `ensure-api-token.sh` provisions). `sksvc-test` has
+  no groups and therefore no such rights by design.
+
+**Headless login.** The harness logs in through the flow executor with the vault credentials, as a browser
+would: `GET /api/v3/flows/executor/<authentication flow slug>/`, then `POST` the identification stage
+(username), then the password stage, following `component` hints until the flow answers with a redirect.
+The resulting session cookie is then used against the app host (forward-auth apps: the outpost start and
+callback redirects are followed; OIDC apps: the authorization code flow is followed headless). Because the
+MFA stage is skipped only for `sktest` members, the same code path is the one a real user takes minus the
+second factor. `sksvc-test` authenticates with its token as a bearer credential instead.
+
+**Per-stack probe recipe.** For a target stack `<app>`, run inside `with_test_membership(<app>)`. The
+expectations that depend on the declared mode are in section 7; the four always-on assertions are:
+
+| # | Account | Request | Expected |
+|---|---|---|---|
+| 1 | `sktest-admin` | the app, and its admin UI | reaches both (the control that makes every refusal below meaningful) |
+| 2 | `sktest-appuser` | the app | reaches it as a user (2xx), and for OIDC apps holds no admin role |
+| 3 | `sktest-nogroup` | the app | refused (no 2xx content from the app) |
+| 4 | `sktest-appuser` | the app's admin UI | refused |
+
+Extra assertions run in the same loop: `sktest-appadmin` reaches the app's admin UI and is refused on a
+different app's admin UI (isolation); `sktest-user` is allowed on baseline apps and refused on non-baseline
+ones; `sksvc-test` with a bearer token is refused by the gates and its API token gets 403 on the group and
+application admin endpoints. A refusal only counts when assertion 1 passed on the same app in the same run.
+Because this loop needs only the stack under test plus sksso, it runs per stack in CI, in a RAD or dev
+cycle on a laptop-sized instance, and on every deploy.
 
 ## 5. Migration for existing instances
 
@@ -430,7 +504,44 @@ Step 3, authoritative (release N+1 or later, per instance, one app at a time fir
 only legacy groups. `authentik Admins` remains Authentik's administration group and the automation
 service account stays in it.
 
-Rollback: re-add a binding in the admin UI or set `bindings: additive` and redeploy; removing the
+### 5.1 Renaming `skhub-users` and `skflow-operators` (fail forward)
+
+Decision: no legacy exception and no long-lived dual naming. Rename in place, per app, in a maintenance
+window, and carry on forward. Authentik bindings reference a group by id, so renaming the group keeps the
+application bindings (and the blueprint-created binding) intact.
+
+For `skhub-users` to `app-skhub-users`:
+
+1. **Rename the IdP group in place** (admin UI or `ak shell`: change `Group.name`; do not create a new group
+   and copy members). Bindings follow by id. Also create `app-skhub-admins` if it does not exist.
+2. **Update the role vars and blueprint** that name it: `SSO_USERS_GROUP` (drop any override so the derived
+   default `app-skhub-users` applies), the skhub vault, and the documentation text. Redeploy skhub so the
+   tile and bindings reconcile.
+3. **Update Nextcloud's OIDC group mapping.** Authentik's `nextcloud` scope mapping emits only `nc-*` groups
+   as `nextcloud_groups`, so a pure gate group is not synced and nothing in Nextcloud changes. If an estate
+   has widened the mapping or `user_oidc` group provisioning to include the gate group, then Nextcloud holds
+   a group literally named `skhub-users` (a Nextcloud group id cannot be renamed, shares and group folders
+   reference it). Two ways, pick one per estate:
+   - **Alias (no share work):** keep the Nextcloud-side group id and have the scope mapping translate
+     `app-skhub-users` to `skhub-users` for Nextcloud only. The IdP name is clean; the legacy id stays inside
+     Nextcloud. Recorded as an explicit Nextcloud-side name, not an IdP exception.
+   - **Migrate:** let provisioning create `app-skhub-users` in Nextcloud, re-share each share and group folder
+     from `skhub-users` to the new group (`occ` and the sharing API), verify, then remove the old Nextcloud
+     group.
+   Then check `occ user_oidc:provider` for the group claim and mapping settings, and confirm a real login
+   keeps exactly one account and the expected groups.
+4. **Probe** (section 4.10 recipe) and run the conformance check: no binding or role var names the old group.
+
+For `skflow-operators` to `app-skflow-users`: rename the group in place; change the blueprint
+(`sksso_skflow_group`) and its role var to the new name so the blueprint's `!Find`/identifier matches the
+renamed group instead of creating a second one, and redeploy sksso then skflow. Windmill maps operators by
+group in its `oauths` setting, so update the group name there if it is listed (the skflow play writes it).
+Re-run the probe. Members need no change.
+
+Rollback: rename the group back and revert the role vars; nothing is deleted. Do the blueprint and the
+rename in the same window, because a blueprint that still names the old group will recreate it.
+
+Rollback of the earlier steps: re-add a binding in the admin UI or set `bindings: additive` and redeploy; removing the
 catch-all binding restores the old open behaviour (not recommended). Nothing in step 1 deletes anything.
 
 ## 6. Conformance check (spec)
@@ -506,7 +617,7 @@ application never ends with zero bindings, including when group creation fails; 
 adminless result; `skuser` is never bound on a non-baseline app and never appears in an admin mapping;
 `SSO_BASELINE: true` on `admin-only` is rejected; `any-account`/`public` without an exemption, or with a review date over 12 months out, fail the render; `AUTHENTIK_TILE_GROUP` stays additive; a render test
 asserts `OIDC_*_GROUPS` defaults are a subset of the bound groups and that forward-auth plus a non-admin
-mode without `provider: proxy` fails the render. A lint test (extending `test_portal_tile_lint.py`) fails
+mode with `SSO_PROVIDER: catch-all` fails the render. A lint test (extending `test_portal_tile_lint.py`) fails
 a role that has a tile but no `SSO_ACCESS` handling.
 
 ## 8. Implementation plan
@@ -517,10 +628,10 @@ Phases are independent PRs. Sizes are rough (S under a day, M a day or two, L se
 |---|---|---|---|
 | 0 | Verify on the pinned Authentik: (a) group parent inheritance direction (the standard already forbids parents carrying access; this only confirms why), (b) host-specific single provider beats the domain provider on the embedded outpost, (c) `check_access` with `for_user`. Write results into this doc. | this document only | S |
 | 1 | Resolver and tile script: `sso_access_resolve.yml`, `ensure_group`, multi-binding, `sso-allow-public`, postcondition assert, additive default, tests. Roles unchanged except through shared code and a compatibility shim for `AUTHENTIK_TILE_GROUP`. | `shared/tasks/authentik_portal_tile.yml`, `shared/tasks/sso_access_resolve.yml`, `shared/src/authentik_portal_tile.py`, `v1/tests/test_authentik_portal_tile.py`, `v1/tests/test_portal_tile_lint.py` | M |
-| 2 | sksso baseline: global groups blueprint, catch-all ensure step, `BASELINE_APPS`, test identities script, `ensure-api-token.sh` untouched. | `optional/sksso/src/config/sksso/blueprints/sksso-access-baseline.yaml.j2`, `optional/sksso/tasks/`, `optional/sksso/src/sksso/ensure-access-baseline.py`, `.../ensure-test-identities.sh`, sksso deploy files and README | M |
-| 3 | Roles adopt the block: 29 tile roles x 3 envs pass `access:` instead of `group:`; OIDC defaults in sksec-web, skpatch-hosts, skrac; `skrac` and `skmesh` provisioners write bindings; blueprints stop owning bindings that the tile script now manages (skflow keeps `adopt`). Mostly mechanical, generated edit. | `optional/*/deploy_*-{dev,staging,prod}.yml`, `core/skfence*/deploy_*`, `optional/skrac/src/skrac/authentik_provision.py`, `optional/skmesh/src/skmesh/authentik_provision.py`, role READMEs and SOPs, `docs/ROLE_AUTHORING_CHECKLIST.md` | L |
+| 2 | sksso baseline: global groups blueprint, catch-all ensure step, `BASELINE_APPS`, `sktest` group and scoped MFA bypass in the blueprint, test identities and membership tooling, `ensure-api-token.sh` untouched. | `optional/sksso/src/config/sksso/blueprints/sksso-access-baseline.yaml.j2`, `optional/sksso/tasks/test_membership.yml`, `optional/sksso/src/sksso/ensure-access-baseline.py`, `.../ensure-test-identities.sh`, `.../test-membership.py` (context manager, CLI, sweep), sksso deploy files and README | M |
+| 3 | Roles adopt the block: 29 tile roles x 3 envs pass `access:` instead of `group:`; OIDC defaults in sksec-web, skpatch-hosts, skrac; `skrac` and `skmesh` provisioners write bindings; blueprints stop owning bindings that the tile script now manages (skflow keeps `adopt`); `skhub-users` and `skflow-operators` are renamed per 5.1. Mostly mechanical, generated edit. | `optional/*/deploy_*-{dev,staging,prod}.yml`, `core/skfence*/deploy_*`, `optional/skrac/src/skrac/authentik_provision.py`, `optional/skmesh/src/skmesh/authentik_provision.py`, role READMEs and SOPs, `docs/ROLE_AUTHORING_CHECKLIST.md` | L |
 | 4 | Conformance check script and its unit tests, wired into the sksso deploy as a non-fatal report. | `optional/sksso/src/sksso/check-access.py`, `v1/tests/test_sksso_check_access.py` | M |
-| 5 | Gate harness layers A and B and the CI job against a throwaway Authentik. | `v1/tests/gate/` (new), CI workflow | M |
+| 5 | Gate harness: headless flow-executor login, per-stack probe recipe (4.10), layers A and B, `with_test_membership` wiring, CI job against a throwaway Authentik. | `v1/tests/gate/` (new, including `login.py` and `probe_stack.py`), CI workflow | M |
 | 6 | Authoritative mode and pruning, default flipped in a later release with upgrade notes; optional adoption of the catch-all provider into a blueprint. | tile script, sksso blueprint, CHANGELOG | M |
 
 Docs to update in phase 3: `v1/docs/sso-estate-plan.md` ("Groups and roles" already proposes
@@ -544,11 +655,12 @@ skpulse READMEs.
   silent. The deploy log line and `EMPTY-GROUP` mitigate; a stricter `SSO_GROUPS_CREATE: false` mode can
   restore the old hard failure.
 - **Test identities in production.** They are low-privilege but real accounts. Keep credentials in the
-  vault, disable them between runs where the estate prefers, and exclude them from user-facing lists. MFA
-  handling for the harness login flow needs a decision (dedicated flow or a policy exemption).
+  vault, disable them between runs where the estate prefers, and exclude them from user-facing lists. The MFA bypass is
+  scoped to the `sktest` group on one stage binding and is opt-in per estate; the risk is a real person being
+  added to `sktest`, which check X1 reports. Leaked temporary memberships are caught by the sweep.
 - **Standard alignment.** Names and modes follow `standards/APPLICATION_ACCESS_SSO_STANDARD.md`, which is still
   PROPOSED (sk-standards PR #70). If it changes before merge, the names here are variables, so the change is
-  data, not code. Legacy `skhub-users` and `skflow-operators` need the standard's dual-name rename.
+  data, not code. `skhub-users` and `skflow-operators` are renamed in place (section 5.1), with no legacy exception.
 - **Scope of "fail-closed" for apps with their own login.** For an app whose router has no forward auth,
   `SSO_ACCESS` governs portal visibility only; the app's own login still decides entry. The design does not
   claim more.
