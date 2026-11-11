@@ -88,7 +88,7 @@ kept. `[-env]` is empty on prod and `-dev`/`-staging` otherwise.
 |---|---|---|
 | `skboard.TRAEFIK_MIDDLEWARES` | `skboard[-env]` | `default-no-crowdsec@file` |
 | `skflow.TRAEFIK_MIDDLEWARES` | `skflow[-env]` (and `-api`, `-outpost` with SSO) | `default-no-crowdsec@file` |
-| `skgit.TRAEFIK_MIDDLEWARES` | `skgit[-env]` | `default-no-crowdsec@file` |
+| `skgit.TRAEFIK_MIDDLEWARES` | `skgit[-env]` (and `-direct` with the crawler gate on) | `default-no-crowdsec@file` |
 | `skorch.TRAEFIK_MIDDLEWARES` | `skorch[-env]` | `default-no-crowdsec@file` |
 | `skpdf.TRAEFIK_MIDDLEWARES` | `skpdf[-env]` | `default-no-crowdsec@file,skpdf[-env]-upload` |
 | `skpeek.TRAEFIK_MIDDLEWARES` | `skpeek[-env]` | `default-no-crowdsec@file` |
@@ -546,6 +546,14 @@ runners, `docker exec skgit-<env>-dind docker info`.
 DIND + runners; leaving it unset is a deliberate fail-safe skip, not a bug. A
 `dind-cleanup` sidecar prunes every 2h to keep DIND's node-local root
 filesystem from filling.
+
+**Crawler gate**: an Anubis proof-of-work gate fronts the web UI by default
+(`skgit.ANUBIS_ENABLED: false` turns it off); git, LFS, `/api/`, `/v2`,
+login and OAuth/OIDC go straight to Forgejo through a direct router.
+`app.ini.j2` is the only Forgejo configuration (the service bypasses
+`environment-to-ini`, so `FORGEJO__*` variables never apply). Knobs, the
+git pack limits and robots.txt: `v1/ansible/optional/skgit/README.md`;
+procedures: `SOP.md` next to it.
 
 ### skgraph
 

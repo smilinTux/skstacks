@@ -1,6 +1,11 @@
 {%- set _base_domain = skgit.CLUSTERNAME ~ '.' ~ skgit.DOMAIN %}
 {%- set _metrics_token = skgit.METRICS_TOKEN | default('') %}
 {%- set _metrics_enabled = (skgit.METRICS_ENABLED if skgit.METRICS_ENABLED is defined else (_metrics_token | length > 0)) | bool %}
+{%- set _push_create_user = (skgit.ENABLE_PUSH_CREATE_USER | default(true) | bool) | lower %}
+{%- set _push_create_org = (skgit.ENABLE_PUSH_CREATE_ORG | default(true) | bool) | lower %}
+# This file is the ONLY Forgejo configuration: the service runs `forgejo web`
+# directly, so FORGEJO__* environment variables never reach it. Every deploy
+# re-renders it; change settings through the skgit.* vault knobs below.
 # Forgejo reads WORK_PATH only from the root section (before any [section]);
 # under [server] it is ignored and Forgejo writes it back here at startup.
 WORK_PATH = /data/gitea
@@ -17,8 +22,8 @@ APP_DATA_PATH = /data/forgejo
 # "correct" this to [repository] ROOT without physically moving the repositories
 # first - doing so points Forgejo at an empty directory and every repo disappears.
 REPOSITORY_ROOT = /data/git/repositories
-ENABLE_PUSH_CREATE_USER = true
-ENABLE_PUSH_CREATE_ORG = true
+ENABLE_PUSH_CREATE_USER = {{ _push_create_user }}
+ENABLE_PUSH_CREATE_ORG = {{ _push_create_org }}
 # Both of these default to FALSE in Forgejo. They were present in a live app.ini but
 # absent from an earlier version of this template, so a run of this playbook would
 # have silently turned off the built-in SSH server (killing git+ssh on :222, which the
@@ -30,8 +35,8 @@ LFS_JWT_SECRET = {{ skgit.LFS_JWT_SECRET }}
 {% endif %}
 
 [repository]
-ENABLE_PUSH_CREATE_USER = true
-ENABLE_PUSH_CREATE_ORG = true
+ENABLE_PUSH_CREATE_USER = {{ _push_create_user }}
+ENABLE_PUSH_CREATE_ORG = {{ _push_create_org }}
 MAX_CREATION_LIMIT = -1
 DEFAULT_PUSH_CREATE_PRIVATE = true
 
@@ -41,6 +46,20 @@ MAX_FILES = 100
 
 [git]
 MAX_GIT_DIFF_LINES = 1000000
+
+[git.config]
+# Global git config for every git process Forgejo spawns (repack, gc, upload
+# pack). Bounded so concurrent repacks of big repositories cannot take the 4g
+# container past its memory limit (they did: OOM kill on a slow-IO node), and
+# gc.auto off because Forgejo's own cron gc runs housekeeping. Override or add
+# keys with skgit.GIT_CONFIG (a dict of git config key: value).
+{% set _git_config_over = skgit.GIT_CONFIG | default({}, true) %}
+{% for k, v in {'pack.threads': '1', 'pack.windowMemory': '256m', 'pack.deltaCacheSize': '64m', 'gc.auto': '0'}.items() if k not in _git_config_over %}
+{{ k }} = {{ v }}
+{% endfor %}
+{% for k, v in _git_config_over.items() %}
+{{ k }} = {{ v }}
+{% endfor %}
 
 [git.timeout]
 DEFAULT = 3600
@@ -68,19 +87,40 @@ INSTALL_LOCK = true
 # ship every un-configured instance with the same secret key / internal token.
 SECRET_KEY = {{ skgit.SECRET_KEY }}
 INTERNAL_TOKEN = {{ skgit.INTERNAL_TOKEN }}
+# Forgejo's peer is always Traefik or the Anubis crawler gate on a swarm
+# overlay network; trust their X-Forwarded-For (one hop) so the access log,
+# rate limits and fail2ban-style tooling see the real client IP instead of
+# the overlay address. Narrow it with skgit.REVERSE_PROXY_TRUSTED_PROXIES.
+REVERSE_PROXY_LIMIT = 1
+REVERSE_PROXY_TRUSTED_PROXIES = {{ skgit.REVERSE_PROXY_TRUSTED_PROXIES | default('10.0.0.0/8,172.16.0.0/12,192.168.0.0/16', true) }}
+
+[session]
+# File sessions on the bind-mounted sessions dir survive a restart (the
+# default, memory, logs everyone out on every deploy).
+PROVIDER = file
+PROVIDER_CONFIG = /data/gitea/sessions
+COOKIE_SECURE = true
+
+[service]
+# Closed signup: Forgejo defaults DISABLE_REGISTRATION to false, and an open
+# instance collected hundreds of spam accounts (SEO links on their profiles).
+# Admins create accounts (Site Administration or `forgejo admin user create`).
+# skgit.DISABLE_REGISTRATION: false reopens self-registration.
+DISABLE_REGISTRATION = {{ (skgit.DISABLE_REGISTRATION | default(true) | bool) | lower }}
+SHOW_REGISTRATION_BUTTON = {{ (not (skgit.DISABLE_REGISTRATION | default(true) | bool)) | lower }}
 
 [lfs]
-ENABLED = true
+ENABLED = {{ (skgit.LFS_ENABLED | default(true) | bool) | lower }}
 PATH = /data/lfs
 MAX_FILE_SIZE = 5368709120
 MAX_BATCH_SIZE = 20
 
 [actions]
-ENABLED = true
+ENABLED = {{ (skgit.ACTIONS_ENABLED | default(true) | bool) | lower }}
 DEFAULT_ACTIONS_URL = https://code.forgejo.org
 
 [packages]
-ENABLED = true
+ENABLED = {{ (skgit.PACKAGES_ENABLED | default(true) | bool) | lower }}
 {% if skgit.email_enabled | default(false) | bool %}
 
 [mailer]
