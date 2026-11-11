@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Disable Nextcloud accounts whose Authentik person is gone, inactive or no longer in skhub-users.
+"""Disable Nextcloud accounts whose Authentik person is gone, inactive or no longer in the Nextcloud access group (app-skhub-users).
 
 Authentik is the source of truth for people. Nextcloud accounts are matched to Authentik users
 through the user attribute `nextcloud_uid`. Accounts with NO Authentik counterpart (the local
@@ -21,7 +21,7 @@ As a Windmill script: the same file works; `main(apply)` reads the f/ops/* varia
 """
 import argparse, base64, json, os, shlex, subprocess, sys, urllib.request
 
-GROUP = "skhub-users"
+GROUP = os.environ.get("SKHUB_ACCESS_GROUP", "app-skhub-users")
 
 
 def authentik_users(path=None, url=None, token=None):
