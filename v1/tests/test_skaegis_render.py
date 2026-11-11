@@ -126,5 +126,5 @@ def test_agent_version_is_one_value_everywhere():
 
 def test_product_name_is_lowercase():
     paths = [p for p in ROLE.rglob("*") if p.is_file() and p.suffix != ".png"] + [BLUEPRINT]
-    hits = [str(p) for p in paths if "Aegis" in p.read_text()]
+    hits = [str(p) for p in paths if "Ae" "gis" in p.read_text()]
     assert not hits, f"write skaegis, all lowercase: {hits}"
