@@ -477,7 +477,7 @@ neither sits behind forward auth. Operator procedures are in
 |---|---|---|
 | Authentik application / provider | `skhub` / `skhub-nextcloud` (confidential, RS256, subject mode `user_id`) | `skflow-windmill` / `skflow-windmill` (this role's blueprint) |
 | Strict redirect URI | `https://<skhub host>/apps/user_oidc/code` | `https://<skflow host>/user/login_callback/authentik` |
-| Who may sign in | group `skhub-users` | group `skflow-operators` |
+| Who may sign in | group `app-skhub-users` | group `skflow-operators` |
 | Scopes | `openid email profile nextcloud` | `openid offline_access email profile` |
 | Client side config | Nextcloud app `user_oidc` provider (`occ user_oidc:provider`) | Windmill global setting `oauths` (written by the skflow play) |
 | Shipped as code today | blueprint documented, not yet rendered by this role | yes, `skflow-windmill.yaml.j2` |
@@ -500,7 +500,7 @@ Authentik gets it back.
 
 | Group | Meaning |
 |---|---|
-| `skhub-users` | may sign in to Nextcloud (bound to the `skhub` application) |
+| `app-skhub-users` | may sign in to Nextcloud (bound to the `skhub` application) |
 | `skflow-operators` | may sign in to Windmill (bound by the blueprint; Windmill CE limit: 10 SSO users) |
 | `nc-<name>` | provisioning group: members get Nextcloud group `<name>` (only names matching the provider's whitelist regex are synced, for example `^(ops-team|hh-.+)$`) |
 | `skadmin`, `skeditor`, `skreadonly` | portal tiers; independent of SSO |
