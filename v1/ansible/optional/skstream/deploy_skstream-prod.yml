@@ -315,7 +315,7 @@
           slug: "{{ skstream.AUTHENTIK_TILE_SLUG | default(app, true) }}"
           name: "{{ skstream.AUTHENTIK_TILE_NAME | default('SKStream (Plex)', true) }}"
           launch_url: "https://skstream{{ '' if env == 'prod' else '-' + env }}.{{ skstream.CLUSTERNAME }}.{{ skstream.DOMAIN }}"
-          group: "{{ skstream.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          group: "{{ skstream.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
           icon: "{{ skstream.AUTHENTIK_TILE_ICON | default('fa://fa-film', true) }}"
           icon_file: "{{ skstream.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
           icon_name: "{{ skstream.AUTHENTIK_TILE_ICON_NAME | default('plex', true) }}"

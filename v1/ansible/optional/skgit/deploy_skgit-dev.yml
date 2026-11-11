@@ -481,7 +481,7 @@
           slug: "{{ skgit.AUTHENTIK_TILE_SLUG | default(app, true) }}"
           name: "{{ skgit.AUTHENTIK_TILE_NAME | default('SKGit (Forgejo)', true) }}"
           launch_url: "https://{{ skgit.SUBDOMAIN_PREFIX | default('skgit') }}{{ '' if env == 'prod' else '-' + env }}.{{ skgit.CLUSTERNAME }}.{{ skgit.DOMAIN }}"
-          group: "{{ skgit.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          group: "{{ skgit.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
           icon: "{{ skgit.AUTHENTIK_TILE_ICON | default('fa://fa-code-branch', true) }}"
           icon_file: "{{ skgit.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
           icon_name: "{{ skgit.AUTHENTIK_TILE_ICON_NAME | default('forgejo', true) }}"

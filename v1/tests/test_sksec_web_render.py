@@ -160,7 +160,7 @@ def test_auth_mode_oidc_renders_the_auth_env(tmp_path):
     assert env["AUTH_OIDC_CLIENT_SECRET"] == OIDC_VAULT["OIDC_CLIENT_SECRET"]
     assert env["AUTH_OIDC_SCOPE"] == "openid profile email groups"
     assert env["AUTH_OIDC_GROUPS_CLAIM"] == "groups"
-    assert env["AUTH_OIDC_ADMIN_GROUPS"] == "authentik Admins"
+    assert env["AUTH_OIDC_ADMIN_GROUPS"] == "skadmin"
     assert "AUTH_OIDC_READ_ONLY_GROUPS" not in env
     assert env["AUTH_OIDC_UNMATCHED_ROLE"] == "deny"
     assert env["AUTH_OIDC_END_SESSION"] == "true"

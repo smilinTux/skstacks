@@ -201,7 +201,7 @@
           slug: "{{ skdash.AUTHENTIK_TILE_SLUG | default(app, true) }}"
           name: "{{ skdash.AUTHENTIK_TILE_NAME | default('SKDash', true) }}"
           launch_url: "https://{{ app }}{{ '' if env == 'prod' else '-' + env }}.{{ skdash.CLUSTERNAME | default(cluster_name) }}.{{ skdash.DOMAIN | default(domain) }}"
-          group: "{{ skdash.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          group: "{{ skdash.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
           icon: "{{ skdash.AUTHENTIK_TILE_ICON | default('fa://fa-gauge', true) }}"
           open_in_new_tab: "{{ skdash.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
           description: "{{ skdash.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"

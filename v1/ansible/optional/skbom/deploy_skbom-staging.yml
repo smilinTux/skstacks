@@ -300,7 +300,7 @@
           slug: "{{ skbom.AUTHENTIK_TILE_SLUG | default(skb_router, true) }}"
           name: "{{ skbom.AUTHENTIK_TILE_NAME | default('SKBom (Dependency-Track)', true) }}"
           launch_url: "https://{{ skb_host }}"
-          group: "{{ skbom.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          group: "{{ skbom.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
           icon: "{{ skbom.AUTHENTIK_TILE_ICON | default('fa://fa-shield-halved', true) }}"
           icon_file: "{{ skbom.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
           icon_name: "{{ skbom.AUTHENTIK_TILE_ICON_NAME | default('skbom', true) }}"

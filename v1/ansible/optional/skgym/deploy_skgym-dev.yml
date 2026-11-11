@@ -399,7 +399,7 @@
           slug: "{{ skgym.AUTHENTIK_TILE_SLUG | default(app, true) }}"
           name: "{{ skgym.AUTHENTIK_TILE_NAME | default('SKGym', true) }}"
           launch_url: "https://{{ skg_host }}"
-          group: "{{ skgym.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          group: "{{ skgym.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
           icon: "{{ skgym.AUTHENTIK_TILE_ICON | default('fa://fa-dumbbell', true) }}"
           open_in_new_tab: "{{ skgym.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
           description: "{{ skgym.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
