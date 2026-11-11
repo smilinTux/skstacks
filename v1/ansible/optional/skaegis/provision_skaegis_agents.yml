@@ -53,7 +53,7 @@
     ska_agent_state: "{{ skaegis_agents_provision_state | default('present') }}"
     # Wazuh's package signing key (packages.wazuh.com/key/GPG-KEY-WAZUH),
     # checked by fingerprint before apt trusts it.
-    ska_wazuh_key_fpr: "0DCFCA5547B19D2A6099506096B3EE5F29111145"
+    ska_wazuh_signer_fpr: "0DCFCA5547B19D2A6099506096B3EE5F29111145"
     ska_wazuh_key_url: "https://packages.wazuh.com/key/GPG-KEY-WAZUH"
     ska_wazuh_apt: "https://packages.wazuh.com/4.x/apt/"
   pre_tasks:
@@ -137,10 +137,10 @@
         - name: Refuse a key that is not Wazuh's
           assert:
             that:
-              - ska_wazuh_key_fpr in ska_key_info.stdout
+              - ska_wazuh_signer_fpr in ska_key_info.stdout
             fail_msg: >-
               ERROR: /usr/share/keyrings/wazuh.asc does not carry the Wazuh
-              signing key {{ ska_wazuh_key_fpr }}; refusing to add the apt
+              signing key {{ ska_wazuh_signer_fpr }}; refusing to add the apt
               source. Remove the file and investigate before rerunning.
             quiet: true
 
