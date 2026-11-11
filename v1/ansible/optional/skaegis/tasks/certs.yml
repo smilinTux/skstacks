@@ -67,7 +67,9 @@
 
 - name: Record that a new certificate set was issued
   set_fact:
-    skaegis_certs_issued: "{{ ska_certs_run is changed }}"
+    # default: a run that never reached the generator (render-only, a tag or
+    # --start-at-task run) has no ska_certs_run at all
+    skaegis_certs_issued: "{{ (ska_certs_run | default({})) is changed }}"
 
 - name: Check every certificate the stack mounts is present
   stat:
@@ -89,7 +91,7 @@
     quiet: true
   # Only meaningful once a set exists or was just issued (a render-only run
   # has neither).
-  when: ska_root_ca.stat.exists or (ska_certs_run is changed)
+  when: ska_root_ca.stat.exists or skaegis_certs_issued | bool
 
 - name: Own the certificates by uid 1000, read-only (indexer and dashboard run as 1000)
   # Explicit per file, never recursive. The manager and the backup sidecar
