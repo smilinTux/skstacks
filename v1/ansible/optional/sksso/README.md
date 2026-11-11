@@ -488,22 +488,26 @@ Read this section for what is true today, and the design for where it is going.
 - `OIDC_ADMIN_GROUPS` (sksec-web, skpatch-hosts) and `OIDC_ADMIN_GROUP` (skrac) are independent strings and
   are not derived from the Authentik binding.
 
-**Target model (design).**
+**Target model (design).** Follows `standards/APPLICATION_ACCESS_SSO_STANDARD.md` in the sk-standards repo
+(PROPOSED, sk-standards PR #70).
 
-- Global groups `skadmin` (reaches every app) and `skuser` (an optional baseline bundle; never grants
-  admin). Per-app groups `<app>-admins` and `<app>-users` (working names; the standards repo decides the
-  final form).
-- One block per app: `SSO_ACCESS: admin-only | app-groups | all-users | public` (default `admin-only`,
-  fail-closed), `SSO_BASELINE: true | false` (default false), optional group name overrides. An estate list
+- Global groups `skadmin` (reaches every app) and `skuser` (an optional baseline bundle; never grants admin).
+  Per-app groups `app-<app>-admins` and `app-<app>-users`. `authentik Admins` is reserved for administering
+  Authentik itself and is never bound to an application.
+- One block per app: `SSO_ACCESS: admin-only | app-groups | any-account | public` (default `admin-only`,
+  fail-closed) and `SSO_BASELINE: true | false` (the standard's `in_baseline`, `app-groups` only, default
+  false). `any-account` and `public` are reviewed opt-outs that need an exemption record. An estate list
   `sksso.BASELINE_APPS` overrides the per-role baseline flags.
-- `skuser` is bound directly on baseline apps; it is not made a parent group, because Authentik allows one
-  parent per group and group inheritance (direction to be verified) could hand the bundle to
-  every `<app>-users` member.
+- Two first-class ways to provision a person: add them to `skuser` for the baseline apps, or to individual
+  `app-<app>-users` groups. Neither implies the other.
+- `skuser` and `skadmin` are bound directly on each app; groups are never parents of one another for access,
+  because Authentik allows one parent per group and inheritance direction is release dependent.
 - The tile script would create the groups idempotently, bind them, and refuse to leave an application with
   zero bindings; the catch-all would be bound to `skadmin` only; OIDC role mapping defaults would derive
-  from the per-app groups; a conformance check would list unbound applications and applications still
-  bound to `authentik Admins`; a gate harness would prove a `skuser`-only test account is denied admin
-  tools and an admin test account is allowed.
+  from the per-app groups; a conformance check (the standard's C1 to C10) would list unbound applications and
+  applications still bound to `authentik Admins`; a gate harness would prove the `sktest-user` account
+  (`skuser` only) is denied non-baseline and admin tools and the `sktest-admin` account (`skadmin` only) is
+  allowed.
 - Existing instances migrate in additive steps first, and only later prune `authentik Admins` bindings.
 
 ## SSO for skhub and skflow

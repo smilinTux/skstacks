@@ -25,7 +25,8 @@ dynamic router), it needs one of:
    make per-instance).
    Note: `skadmin` replaces `authentik Admins` as the default once PR #360
    lands, and a per-app access model (`SSO_ACCESS`, per-app admin and user
-   groups, fail-closed bindings) is designed in
+   groups, fail-closed bindings, per `standards/APPLICATION_ACCESS_SSO_STANDARD.md`
+   in sk-standards) is designed in
    `docs/design/sso-app-access-provisioning.md`. Until it ships, keep using
    the single group knob, and never leave a tile or provider without a
    binding.
