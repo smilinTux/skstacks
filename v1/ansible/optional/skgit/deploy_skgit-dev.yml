@@ -193,6 +193,32 @@
       tags:
         - config
 
+    - name: Create Forgejo's custom public dir (robots.txt)
+      file:
+        path: "/var/data/{{ app }}-{{ env }}/data/gitea/public"
+        state: directory
+        owner: "1000"
+        group: "1000"
+        mode: "0750"
+      when: skgit.ROBOTS_TXT | default(true) | bool
+      tags:
+        - config
+
+    - name: Install the crawler robots.txt (Forgejo serves custom/public/robots.txt)
+      # Forgejo's custom dir is /data/gitea in the container, so this is
+      # served at /robots.txt. It keeps polite crawlers off the history views
+      # (blame, commits, raw, archive); the Anubis gate handles the rest.
+      # skgit.ROBOTS_TXT: false leaves the file alone (and Forgejo's default).
+      copy:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/robots.txt"
+        dest: "/var/data/{{ app }}-{{ env }}/data/gitea/public/robots.txt"
+        owner: "1000"
+        group: "1000"
+        mode: "0644"
+      when: skgit.ROBOTS_TXT | default(true) | bool
+      tags:
+        - config
+
     - name: Process deploy script template
       template:
         src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"

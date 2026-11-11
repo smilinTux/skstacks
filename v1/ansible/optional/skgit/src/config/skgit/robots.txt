@@ -1,0 +1,22 @@
+# skgit robots.txt (shipped by the SKStacks skgit role, skgit.ROBOTS_TXT).
+# Keeps crawlers off Forgejo's expensive history views: each of these pages
+# runs git over the full history. Browsers that ignore this file still meet
+# the Anubis crawler gate.
+User-agent: *
+Disallow: /api/
+Disallow: /*/*/blame/
+Disallow: /*/*/commits/
+Disallow: /*/*/commit/
+Disallow: /*/*/archive/
+Disallow: /*/*/compare/
+Disallow: /*/*/graph
+Disallow: /*/*/activity
+Disallow: /*/*/raw/
+Disallow: /*/*/src/commit/
+Disallow: /*/*/src/tag/
+Disallow: /*/*/rss/
+Disallow: /*/*/atom/
+Disallow: /*/*/search
+Disallow: /*/*/actions
+Disallow: /explore/
+Crawl-delay: 10

@@ -1,4 +1,9 @@
 {%- set _base_domain = skgit.CLUSTERNAME ~ '.' ~ skgit.DOMAIN -%}
+{%- set _r = 'skgit' ~ ('' if env == 'prod' else '-' ~ env) -%}
+{%- set _host = (skgit.SUBDOMAIN_PREFIX | default('skgit')) ~ ('' if env == 'prod' else '-' ~ env) ~ '.' ~ _base_domain -%}
+{%- set _web_mw = skgit.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file', true) -%}
+{#- Crawler gate (Anubis): on unless skgit.ANUBIS_ENABLED is false. See README "Crawler gate". -#}
+{%- set _anubis = skgit.ANUBIS_ENABLED | default(true) | bool -%}
 version: '3.8'
 
 networks:
@@ -15,23 +20,13 @@ services:
     entrypoint: /usr/local/bin/forgejo
     command: web
     env_file: /var/data/config/skgit-{{ env }}/skgit.env
-    environment:
-      # === SERVER CONFIGURATION ===
-      - FORGEJO__server__ROOT_URL=https://{{ skgit.SUBDOMAIN_PREFIX | default('git') }}{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}/
-      - FORGEJO__server__PROTOCOL=http
-
-      # === SECURITY & PROXY ===
-      # Trust headers from Traefik so Forgejo knows it's HTTPS
-      # 10.0.0.0/8 is the internal Swarm network range
-      - FORGEJO__security__REVERSE_PROXY_LIMIT=1
-      - FORGEJO__security__REVERSE_PROXY_TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
-
-      # === SESSION CONFIGURATION ===
-      # Use file-based sessions for persistence across restarts (prevents ERR_NETWORK_CHANGED)
-      # File sessions survive container restarts, unlike memory sessions
-      - FORGEJO__session__PROVIDER=file
-      - FORGEJO__session__COOKIE_SECURE=true
-      - FORGEJO__session__COOKIE_SAMESITE=lax
+    # No FORGEJO__* environment here. This service runs `forgejo web` directly
+    # (not the image's s6 setup), so nothing turns FORGEJO__* variables into
+    # app.ini: they were silently ignored. app.ini.j2, re-rendered by every
+    # deploy, is the only Forgejo configuration (reverse proxy trust, session,
+    # git.config, ...). Do not add environment-to-ini: skgit.env still carries
+    # keys such as FORGEJO__security__INSTALL_LOCK=false that would reopen the
+    # installer if they were ever applied.
     networks:
       - skgit-{{ env }}
       - cloud-public-{{ env }}
@@ -68,7 +63,7 @@ services:
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares={{ skgit.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file', true) }}"
-        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.service=skgit{% if env != 'prod' %}-{{ env }}{% endif %}"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.service={{ _r ~ '-anubis' if _anubis else _r }}"
         # === CONTAINER REGISTRY ROUTER (no middleware interference) ===
         # Dedicated route for /v2/ container registry API - higher priority to match before main router
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-registry.rule=Host(`{{ skgit.SUBDOMAIN_PREFIX | default('skgit') }}{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && PathPrefix(`/v2`)"
@@ -78,6 +73,29 @@ services:
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-registry.tls.options=intermediate@file"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-registry.priority=100"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-registry.service=skgit{% if env != 'prod' %}-{{ env }}{% endif %}"
+{#  === DIRECT ROUTER (crawler gate on: everything that is not a browser page) ===
+    With Anubis in front of the web UI, these paths still go straight to
+    Forgejo so no git, API, registry, runner, OAuth or asset client ever sees a
+    challenge, and an Anubis outage cannot break them: git smart HTTP and LFS
+    (/<owner>/<repo>[.git]/info/refs, git-upload-pack, git-receive-pack,
+    info/lfs/), the whole /api/ tree (REST, packages, runner RPC, which keeps its
+    own priority 200 router when CrowdSec is on), the login page and the OAuth2 /
+    OIDC flows (/user/login, /user/oauth2/<source>/callback, /login/oauth/*,
+    /.well-known/*), static assets, avatars, robots.txt, favicon and /metrics
+    (token protected). /v2 keeps its own registry router. Priority 150 sits
+    above the main router (implicit, the rule length) and the registry (100),
+    below runner RPC (200). Same middleware chain as the main router. #}
+{% if _anubis %}
+        # === DIRECT ROUTER: non-browser paths skip the Anubis crawler gate ===
+        - "traefik.http.routers.{{ _r }}-direct.rule=Host(`{{ _host }}`) && (PathPrefix(`/api/`) || PathPrefix(`/assets/`) || PathPrefix(`/avatars/`) || PathPrefix(`/repo-avatars/`) || PathPrefix(`/user/login`) || PathPrefix(`/user/oauth2/`) || PathPrefix(`/login/oauth/`) || PathPrefix(`/.well-known/`) || Path(`/robots.txt`) || Path(`/favicon.ico`) || Path(`/favicon.svg`) || Path(`/metrics`) || PathRegexp(`^/[^/]+/[^/]+/(info/refs|git-upload-pack|git-receive-pack|info/lfs/)`))"
+        - "traefik.http.routers.{{ _r }}-direct.entrypoints=websecure"
+        - "traefik.http.routers.{{ _r }}-direct.tls=true"
+        - "traefik.http.routers.{{ _r }}-direct.tls.certresolver=main"
+        - "traefik.http.routers.{{ _r }}-direct.tls.options=intermediate@file"
+        - "traefik.http.routers.{{ _r }}-direct.priority=150"
+        - "traefik.http.routers.{{ _r }}-direct.middlewares={{ _web_mw }}"
+        - "traefik.http.routers.{{ _r }}-direct.service={{ _r }}"
+{% endif %}
 {# Runner RPC router: skips the CrowdSec forward-auth.
     === RUNNER RPC ROUTER (skip the CrowdSec forward-auth) ===
     Rendered only when the main router runs crowdsec-bouncer (the only case it is
@@ -118,11 +136,67 @@ services:
       interval: 60s   # Longer interval to reduce load
       timeout: 30s    # More generous timeout for Git operations
       retries: 2      # Fewer retries to prevent premature restarts
-      start_period: 300s  # Longer start period for Forgejo initialization
-      # Git operations can be slow, so the health check needs to be patient.
+      # skgit.HEALTH_START_PERIOD (default 60m): a major Forgejo upgrade runs
+      # its DB and repository migrations before the first answer, which on
+      # slow or NFS storage takes far longer than 300s; with 300s and 2
+      # retries Swarm killed the task mid-migration (15 -> 17). A healthy
+      # Forgejo turns healthy as soon as it answers, so a long period costs
+      # nothing on a normal start.
+      start_period: {{ skgit.HEALTH_START_PERIOD | default('60m', true) }}
     # Note: depends_on doesn't work in Docker Swarm mode.
     # Forgejo retries the database connection instead (configured in app.ini).
     # start_period gives postgres time to become ready.
+{% if _anubis %}
+
+  # === CRAWLER GATE (Anubis, proof-of-work) ===
+  # Browser page views (anything claiming Mozilla/Opera) get a short
+  # proof-of-work challenge once per week per client, then a signed cookie;
+  # known good crawlers are allowed by IP, non-browser clients (git, curl,
+  # Go, Docker, CI) pass untouched. Scrapers that rotate Chrome user agents
+  # over many IPs no longer reach Forgejo's expensive history pages (blame,
+  # commits, raw, archive) that each spawn git processes. Policy: Anubis's
+  # built-in default. git, API, registry, OAuth and assets never come here
+  # (see the direct router on the forgejo service).
+  # skgit.ANUBIS_ENABLED: false removes this service and routes the web UI
+  # straight to Forgejo again.
+  anubis:
+    image: {{ skgit.ANUBIS_IMAGE | default('ghcr.io/techarohq/anubis:v1.28.2@sha256:5fcbce70ee6168be5b226d19bec90111d0acd0daf13028fa06b044cf3ebbbd5f') }}
+    environment:
+      - BIND=:8923
+      - METRICS_BIND=:9090
+      - TARGET=http://skgit-{{ env }}_forgejo:3000
+      # Only ever redirect back to this host after a challenge (no open redirect).
+      - REDIRECT_DOMAINS={{ _host }}
+      # Forgejo serves the role's robots.txt (it reaches Forgejo directly).
+      - SERVE_ROBOTS_TXT=false
+      - SLOG_LEVEL={{ skgit.ANUBIS_LOG_LEVEL | default('INFO', true) }}
+    networks:
+      - skgit-{{ env }}
+      - cloud-public-{{ env }}
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: {{ (skgit.placement_constraints | default([])) | tojson }}
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        # The main web router (labels on the forgejo service) points here.
+        - "traefik.http.services.{{ _r }}-anubis.loadbalancer.server.port=8923"
+    healthcheck:
+      test: ["CMD", "/ko-app/anubis", "--healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+{% endif %}
 
   postgres:
     image: postgres:16.15@sha256:f9a7b9ebf6f56201f949db745e47bc423c0f0f8294bafe991cc10bf74b029657

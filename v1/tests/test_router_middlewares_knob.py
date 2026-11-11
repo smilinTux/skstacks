@@ -38,7 +38,6 @@ def _sfx(env):
 
 # service -> {router name suffix after "<svc><-env>": (knob, default chain(env))}
 SERVICES = {
-    "skgit": {"": ("TRAEFIK_MIDDLEWARES", lambda e: "default-no-crowdsec@file")},
     "skorch": {"": ("TRAEFIK_MIDDLEWARES", lambda e: "default-no-crowdsec@file")},
     "skpdf": {"": ("TRAEFIK_MIDDLEWARES", lambda e: f"default-no-crowdsec@file,skpdf{_sfx(e)}-upload")},
     "skpeek": {"": ("TRAEFIK_MIDDLEWARES", lambda e: "default-no-crowdsec@file")},
@@ -51,6 +50,9 @@ SERVICES = {
     },
     "skboard": {"": ("TRAEFIK_MIDDLEWARES", lambda e: "default-no-crowdsec@file")},
 }
+# skgit moved to test_skgit_crawler_gate.py (the Anubis crawler gate, on by
+# default, adds a service and a direct router, so its default render no longer
+# matches v2.26.4; its runner RPC test below still renders it).
 # skpulse moved to test_skpulse_render.py (AUTH_MODE sso/local changed its
 # default rendering: it no longer renders byte-identical to v2.26.4), the
 # same way skgym/skrac never joined this generic dict.
@@ -125,10 +127,8 @@ def test_override_replaces_only_that_routers_chain(svc, sfx, env):
         if other != sfx:
             assert router_middlewares(text, svc, env, other) == [default(env)]
     # nothing else in the stack moves: only that one label line differs.
-    # Exception: putting crowdsec-bouncer on skgit's main router also renders the
-    # skgit runner RPC router (test_skgit_runner_rpc_router_follows_the_crowdsec_knob).
     old = render(svc, env).splitlines()
-    new = [l for l in text.splitlines() if not (svc == "skgit" and "-runner-rpc." in l)]
+    new = text.splitlines()
     assert len(old) == len(new)
     diff = [(a, b) for a, b in zip(old, new) if a != b]
     assert len(diff) == 1 and diff[0][1].rstrip().endswith(f'.middlewares={OVERRIDE}"'), diff
