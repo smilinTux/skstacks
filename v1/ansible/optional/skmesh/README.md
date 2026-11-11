@@ -55,7 +55,8 @@ idempotent and drift-correcting:
   `NETBIRD_AUTH_CLIENT_ID` (default `skmesh`), PKCE, `sub` = the user's
   numeric id (NetBird's Authentik IdP manager looks users up by it;
   `AUTHENTIK_SUB_MODE` overrides it, see below),
-  redirect URIs `https://<skmesh host>/nb-auth`, `/nb-silent-auth` and
+  redirect URIs `https://<skmesh host>/nb-auth`, `/nb-silent-auth`, the
+  site root `https://<skmesh host>/` (the dashboard's main login sends it) and
   `http://localhost:53000`, scopes openid, email, profile, offline_access
   and goauthentik.io/api, the default self-signed signing key;
 - application `<AUTHENTIK_APP_SLUG>` with that provider;
@@ -82,9 +83,9 @@ With hashed ids the IdP manager logs `user ... not found in IDP` (it looks
 users up by numeric id); logins and roles are unaffected.
 
 **`AUTHENTIK_EXTRA_REDIRECT_URIS` (custom dashboard builds).** The provider
-gets `/nb-auth`, `/nb-silent-auth` and `http://localhost:53000`, strict. A
-dashboard image that returns to the site root (NAM's `ghcr.io/smilintux/skmesh`)
-needs `AUTHENTIK_EXTRA_REDIRECT_URIS: ["https://<host>/"]`, otherwise every
+gets `/nb-auth`, `/nb-silent-auth`, the site root `https://<host>/` and
+`http://localhost:53000`, strict. A custom dashboard build that returns to
+another path lists it in `AUTHENTIK_EXTRA_REDIRECT_URIS`, otherwise every
 redeploy drops it and login stops with "Redirect URI Error".
 
 **Application bindings.** If the `skmesh` application has policy bindings
