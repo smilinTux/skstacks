@@ -110,6 +110,20 @@
         "major"
       ],
       "dependencyDashboardApproval": true
+    },
+    {
+      "description": "ghcr.io/immich-app/postgres is pinned to exactly what the pinned Immich release's docker-compose.yml names (Immich supports only that image and tag, and the PG major must never change silently); it moves only with an IMMICH_VERSION bump",
+      "matchPackageNames": [
+        "ghcr.io/immich-app/postgres"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "mariadb tracks the newest LTS that Nextcloud supports (12.3, patch builds only); rolling majors such as 13.x are not supported by Nextcloud and are short-lived",
+      "matchPackageNames": [
+        "mariadb"
+      ],
+      "allowedVersions": "/^12\\.3\\./"
     }
   ],
   "rebaseWhen": "conflicted"
