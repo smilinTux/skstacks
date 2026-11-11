@@ -187,6 +187,15 @@ container named `skmon-<env>-alloy` running with:
 - Listens on the node's private address only (`AGENT_LISTEN_ADDR`, default the inventory
   address), port `AGENT_PORT` (default 12345). It is never published through Traefik.
 
+**Two install modes, one config** [design, from the builder check]. Hosts that already run
+Docker (every swarm node) get the container. Hosts where installing Docker is wrong (a
+hypervisor, where Docker's iptables rules fight the host's own, or a storage appliance) get the
+same pinned Alloy release as a binary under a systemd unit, with the same config, mounts
+replaced by native paths, and the same parking behaviour. `skmon_extra_hosts` entries choose
+with `agent_mode: container|systemd` (default `systemd` for extra hosts, `container` for swarm
+nodes). F5 covers both pins. An extra host must be an Ansible-managed inventory host the play can
+`become` on; read-only SSH in the skhealth style is not enough to install an agent.
+
 The cost: a node added to the swarm later gets an agent on the next skmon deploy, not
 automatically. The `AgentMissing` alert (section 8) catches the gap, because the scrape list
 comes from the inventory and the swarm-exporter knows every node the swarm knows.
@@ -282,6 +291,12 @@ stalled), named with a content hash so a change rolls the service. Dashboards ar
 large, so Grafana's provisioning directory is rendered into `DATA_PATH/grafana-provisioning`
 instead. Grafana is not on the alert path, so a slower route is acceptable for it.
 
+**The backing store of `DATA_NODE`'s local disk matters.** When the swarm nodes are VMs, their
+"local" disks may sit on the same hypervisor pool that backs the shared export. A pool
+suspension then freezes the monitor's disk too. Put `DATA_PATH` on a disk backed by a different
+pool where one exists. Where none exists (a single-host estate), the outside view in 9.5 is the
+only guaranteed signal for a whole-host failure, and the estate's runbook must say so.
+
 Backups: Alertmanager silences and the Grafana database are small and worth keeping.
 VictoriaMetrics and Loki data can be lost without breaking anything. Whether skbackup covers
 `DATA_PATH` is left to the builder (B7).
@@ -294,9 +309,11 @@ Every rule carries labels `severity` (`critical` or `warning`), `class` (`node`,
 
 | Alert | Signal (sketch) | for | Severity |
 |---|---|---|---|
-| `NodeDown` | `up{job="alloy"} == 0` | 30s | critical |
+| `NodeDown` | `up{job="alloy-unix"} == 0` (the unix exporter job only; the cadvisor job is separate, so a wedged Docker daemon shows as `CadvisorScrapeFailing`, a warning, not as a node down that would mute the storage alerts through inhibition rule 1) | 30s | critical |
+| `StorageHostStalled` | on hosts labelled `role=storage`: `node_processes_state{state="D"} > D_STATE_THRESHOLD`, or nfsd threads all busy (`nfsd` collector) | 30s | critical |
+| `AuthentikDown` | probe of Authentik's own health endpoint fails | 1m | critical |
 | `SwarmNodeNotReady` | `skswarm_node_info{state!="ready"}` or `availability="drain"` unexpectedly | 30s | critical |
-| `AgentMissing` | a swarm node in `skswarm_node_info` with no `up{job="alloy"}` series | 5m | warning |
+| `AgentMissing` | a swarm node in `skswarm_node_info` with no `up{job="alloy-unix"}` series | 5m | warning |
 | `ZfsPoolNotOnline` | `node_zfs_zpool_state{state!="online"} == 1` | 15s | critical |
 | `NfsMountUnresponsive` | `node_filesystem_device_error{fstype=~"nfs4?"} == 1` (stat timed out after `mount_timeout` 5 s) | 15s | critical |
 | `NfsMajorTimeouts` | `increase(node_mountstats_nfs_operations_major_timeouts_total[1m]) > 0` | 0s | critical |
@@ -314,6 +331,20 @@ Every rule carries labels `severity` (`critical` or `warning`), `class` (`node`,
 | `Watchdog` | `vector(1)` | | none (dead-man's switch, section 9.5) |
 | `AlertDeliveryFailing` | bridge `skmon_bridge_delivery_failures_total` increasing | 5m | critical (delivered by Kuma, see 9.5) |
 | `MonitorDiskFilling` | `DATA_PATH` filesystem above 85 % | 10m | warning |
+
+**Pool state alone is not enough.** In one real incident on an estate in scope, `zpool status`
+stayed healthy while nfsd was blocked inside the ZFS intent log for days, and the kernel's
+hung-task warnings had been rate-limited into silence. So the client-side signals
+(`NfsMountUnresponsive`, `NfsMajorTimeouts`, `DStatePileUp`) and `StorageHostStalled` are the
+primary storage alerts, and `ZfsPoolNotOnline` is one more. The storage host's agent enables the
+`nfsd` collector in addition to the list in 7.1.
+
+**What `HttpEndpointDown` proves** [design, from the builder check]. Probes hit the public URL
+and accept 2xx or 3xx, so for a router behind forward auth the probe proves DNS, TLS, Traefik and
+the route, and stops at Authentik's redirect. Backend health is covered by Docker healthchecks
+(an unhealthy task is replaced and counted by `ContainerCrashloop`) and by `ServiceBelowReplicas`.
+Probes never carry credentials. A route listed in `PROBES` with `expect: 200` and a public health
+path is the way to probe a backend directly.
 
 Two log-based rules run in Loki's ruler as a second, independent signal for the same class:
 kernel lines matching `nfs: server .* not responding` and ZFS lines matching
@@ -336,7 +367,8 @@ Ordered from widest to narrowest:
    `NfsMajorTimeouts`, `DStatePileUp`) mutes `ServiceBelowReplicas`, `TasksStuckPreparing`,
    `ContainerCrashloop`, `HttpEndpointDown` and `IoPressureHigh` estate-wide, because those are
    the consequences, not the cause. In the incident above this turns the storm into one thread.
-3. `critical` mutes `warning` for the same `alertname` and target.
+3. `AuthentikDown` mutes `HttpEndpointDown` for every target behind forward auth.
+4. `critical` mutes `warning` for the same `alertname` and target.
 
 ## 9. Routing to sk-alert
 
@@ -363,8 +395,23 @@ runs a vendored copy of `sk-alert` once per notification:
 
 - `-g` (thread, no de-dup) is used, not `-k`: Alertmanager already does de-dup and repeat
   timing, and `-g` makes every repeat and the resolve land in one chat thread per incident.
-- `sk-alert` is vendored from the skcapstone repository at a pinned commit, recorded in the
-  role, so a change upstream cannot change alert behaviour without a framework change.
+- The bridge always passes `--talk` when a Talk room is configured, so skmon alerts do not depend
+  on the estate's `SKALERT_TALK_DEFAULT` [design, from the builder check]. Telegram is used when
+  configured, as `sk-alert` does by default.
+- **At least one channel outside the monitored failure domain is required.** If the estate's
+  chat server (skhub) runs on the same swarm and shared storage that skmon watches, a storage
+  stall takes the chat server down with it, and the critical alert is delivered nowhere. The
+  play fails unless the vault declares at least one channel that does not depend on that swarm
+  (`ALERT_OUT_OF_DOMAIN_CHANNEL: telegram`, or a Talk server hosted elsewhere inside the same
+  estate), or sets `ALERT_ACCEPT_IN_DOMAIN_ONLY: true` with a reason. S7 proves delivery to that
+  channel while NFS is blocked.
+- **`sk-alert` is not vendored into the public framework** [design, from the builder check]. The
+  upstream script names estates and hosts in its comments. The role instead takes
+  `SKALERT_SCRIPT_SRC`, a path on the Ansible controller to the estate's own pinned copy (its
+  skcapstone checkout), plus `SKALERT_SCRIPT_SHA256` in the vault. It delivers the script as a
+  Swarm config and fails the deploy when the hash does not match, so an upstream change still
+  cannot change alert behaviour without a deliberate vault change. The lab uses a stub with the
+  same command-line interface, checked by F6.
 - Routing and credentials are rendered from the skmon vault into the bridge as Docker secrets
   mounted where `sk-alert` looks for `config/alert.env` (routing only) and `config/alert.secret`
   (chat credentials). The vault is per estate, so routing is per estate by construction.
@@ -399,8 +446,15 @@ the last Watchdog arrived less than 3 minutes ago and the last delivery did not 
 Kuma (skpulse) probes `/healthz` with a keyword monitor, so if VictoriaMetrics, vmalert,
 Alertmanager or the bridge dies, or `DATA_NODE` goes down, Kuma raises it through its own
 notification channel. For this to mean anything, the Kuma instance doing the probing must not
-share the monitored swarm's failure domain (shared storage, network). Where it runs is a
-per-estate placement choice recorded in the estate note.
+share the monitored swarm's failure domain (shared storage, network, hypervisor). Where it runs
+is a per-estate placement choice recorded in the estate note.
+
+How the probe reaches `/healthz` [design, from the builder check]: the bridge publishes one port
+in `mode: host` on `DATA_NODE`, serving only `/healthz`, restricted to the probing host's address
+by the same mechanism as B4. No Traefik router, so the edge is not on the dead-man path. The
+monitor itself is created by hand per estate (a runbook step in 15.2), because the probing Kuma
+is by definition not one this deployment manages. An estate does not count as done until that
+outside probe is green.
 
 ### 9.6 skhealth stays
 
@@ -421,7 +475,14 @@ one that still works if Docker itself is wedged on the node.
   enabled. The Prometheus tile is replaced by the vmui one. The Jaeger tile is removed by the
   play (the shared tile task only creates, so the role needs one delete call for the retired
   slugs `jaeger` and `prometheus`).
-- Loki has no UI and no router. The agent, VictoriaMetrics and the bridge have no router.
+- Loki has no UI and no router. The agent and the bridge have no router.
+- **Who creates the Authentik objects** [design, from the builder check]. The shared SSO
+  provisioning in `docs/design/sso-app-access-provisioning.md` is not built yet, and skmon does
+  not wait for it. skmon ships its own idempotent provisioning task, following the pattern of the
+  roles that already create their own providers (skrac): one OAuth2/OIDC provider and application
+  for Grafana, one proxy (forward-auth) provider and application per other UI, each bound to
+  `skadmin` only, using the group and mode names of the SSO standard so the shared code can take
+  them over later without renaming. Client secrets are generated into the vault, never printed.
 
 ## 11. Dashboards
 
@@ -555,7 +616,7 @@ Lab harness (extend the existing `skmon` stage and its v2.22 checks, which today
 
 - **S1** Converge: the new service list reaches 1/1 (or 0/0 for optional ones off), and an agent
   container runs on every node (count equals node count).
-- **S2** Data present: `up{job="alloy"} == 1` for every node; host, container, swarm, Traefik and
+- **S2** Data present: `up{job="alloy-unix"} == 1` for every node; host, container, swarm, Traefik and
   probe series present; a log line written by a test container is found in Loki within 30 s.
 - **S3** Auth: `sktest-admin` reaches Grafana as Admin through Authentik; `sktest-user` is refused
   on Grafana, vmui and Alertmanager; tiles exist with icons, verified through the Authentik API
@@ -573,8 +634,8 @@ Lab harness (extend the existing `skmon` stage and its v2.22 checks, which today
 - **S6** Dead-man: stop Alertmanager; the bridge's `/healthz` goes non-200 within 3 minutes and a
   lab Kuma monitor (or the harness standing in for one) sees it.
 - **S7** NFS independence: with the worker's NFS still blocked, restart vmalert and Alertmanager;
-  both come back (they hold no `/var/data` mount), proving the alert path survives the failure it
-  reports.
+  both come back (they hold no `/var/data` mount), and the storage alert reaches the mock
+  out-of-domain channel, proving the alert path survives and delivers during the failure it reports.
 - **S8** Park and unpark: `replicas: 0` gives 0/0 everywhere, no agent container on any node, no
   task desired running, and the deploy finishes without the force-update stall; unpark brings
   back the same VictoriaMetrics history (a sample written before parking is still queryable).
@@ -611,8 +672,29 @@ Lab harness (extend the existing `skmon` stage and its v2.22 checks, which today
 
 ## 18. Open questions for the owner
 
-Filled in from the builder check (section 19).
+These change what gets built and only the owner can answer them. They are framework-level
+questions; the per-estate versions live in each estate's note.
+
+- **Q1 Recipients and the out-of-domain channel.** Which room and people receive skmon alerts on
+  each estate, and which channel outside the monitored failure domain carries the critical ones
+  (9.2)? On a client estate, this includes whether the client's own operator receives them.
+- **Q2 Agent on the storage or hypervisor host.** May the play install the agent (systemd mode) on
+  a host outside the swarm that the client owns? Without it there is no storage-host signal
+  (`ZfsPoolNotOnline`, `StorageHostStalled`), only the client-side ones.
 
 ## 19. Builder check
 
-Filled in after the builder check runs.
+A fresh builder read the design and raised six questions (2026-11-11). How each was handled:
+
+| # | Question | Handling |
+|---|---|---|
+| 1 | Where alerts land while shared storage is stalled; Talk is opt-in in `sk-alert` | Answered in 9.2: `--talk` forced, an out-of-domain channel is required by the play and proved by S7. Who receives it is Q1. |
+| 2 | Docker on non-swarm storage or hypervisor hosts | Answered in 7.2: a systemd install mode. Permission to install it on a client-owned host is Q2. |
+| 3 | Who builds the Authentik objects before the SSO provisioning work lands | Settled in 10 [design]: skmon ships its own provisioning, named to the SSO standard. |
+| 4 | Vendoring `sk-alert` would put estate names in the public repo | Settled in 9.2 [design]: not vendored; estate-supplied path plus pinned hash. |
+| 5 | How the outside Kuma reaches `/healthz`, and who makes the monitor | Settled in 9.5 [design]: host-mode port on `DATA_NODE`, allowlisted, monitor made by hand, required for done. |
+| 6 | What `HttpEndpointDown` proves behind forward auth; Authentik outage storm | Settled in 8 [design]: edge-level probe, backend via healthchecks, `AuthentikDown` with an inhibition rule. |
+
+The builder also flagged that a cadvisor scrape that hangs on a wedged Docker daemon must not read
+as `NodeDown` (which would mute storage alerts). Settled in 8: separate unix and cadvisor jobs,
+and `NodeDown` uses the unix one only.
