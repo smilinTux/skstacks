@@ -1,0 +1,475 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# skaegis: continuous CVE detection (the Detect in Defend sksec / Detect
+# skaegis / Remediate skpatch) on unmodified upstream Wazuh 4.14
+# (github.com/wazuh/wazuh-docker, GPL-2.0), every image pinned by digest:
+# `indexer` (wazuh-indexer, OpenSearch), `manager` (wazuh-manager, agent
+# enrolment and the vulnerability detector), `dashboard` (wazuh-dashboard, the
+# only service on the edge) and a `backup` sidecar. Internal TLS comes from
+# the upstream wazuh-certs-generator, run once (tasks/certs.yml). Sign-in is
+# the dashboard's own OpenID login against sksso (AUTH_MODE oidc, the
+# default; the provider is sksso's skaegis blueprint), admin-only: the gate
+# and the in-app admin role are the group skadmin
+# (APPLICATION_ACCESS_SSO_STANDARD). Opt-in: nothing renders unless this
+# playbook runs. Placement: every stateful service needs a node labelled
+# `skaegis=true` (or DATA_NODE). See README.md and SOP.md.
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+# Step 1: Select manager node with failover
+# Run on all hosts to ensure it executes even with -l limit
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+# Step 2: Deploy to selected manager
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skaegis
+    env: dev
+    service_name: skaegis
+    service_type: optional
+    # Wazuh 4.14.10 (upstream release 2026-11-05, current stable 4.x),
+    # multi-arch amd64/arm64, pinned by the manifest-LIST digest (checked with
+    # `docker buildx imagetools inspect`). The compose template writes the same
+    # literals so v1/scripts/list_images.py sees the pins;
+    # test_skaegis_render.py keeps the two equal.
+    ska_default_indexer_image: "wazuh/wazuh-indexer:4.14.10@sha256:e56f85ed9e79f113c0f2d2a7965171cd8e063262ec88e110086acdb1f69f2240"
+    ska_default_manager_image: "wazuh/wazuh-manager:4.14.10@sha256:dcda4869e2f792e92f03bce93f85b4bdf103756ea61cfca8ba9f3eabeb05365b"
+    ska_default_dashboard_image: "wazuh/wazuh-dashboard:4.14.10@sha256:0eebab19802342b841a258f56d6fa0fb085cdae08ab5eb2e45f9455c906d719a"
+    # The upstream certificate tool image wazuh-docker 4.14.10 itself uses.
+    ska_default_certs_image: "wazuh/wazuh-certs-generator:0.0.5@sha256:1be9f9abfb6a37ac7bd3d6d707e1b43589c2b81b23c01a46992e93832795abf9"
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Fail loudly when the skaegis vault block is missing
+      assert:
+        that:
+          - skaegis is defined and skaegis is mapping
+        fail_msg: >-
+          ERROR: no `skaegis:` block in the instance vault. See README.md
+          "Vault contract".
+        quiet: true
+      tags: [config]
+
+    - name: Resolve the skaegis settings
+      set_fact:
+        ska_base_domain: "{{ skaegis.DOMAIN | default(domain) if skaegis.CLOUDFLARED | default(false) | bool else (skaegis.CLUSTERNAME | default(cluster_name)) ~ '.' ~ (skaegis.DOMAIN | default(domain)) }}"
+        ska_indexer_image: "{{ skaegis.INDEXER_IMAGE | default(ska_default_indexer_image, true) }}"
+        ska_manager_image: "{{ skaegis.MANAGER_IMAGE | default(ska_default_manager_image, true) }}"
+        ska_dashboard_image: "{{ skaegis.DASHBOARD_IMAGE | default(ska_default_dashboard_image, true) }}"
+        ska_certs_image: "{{ skaegis.CERTS_GENERATOR_IMAGE | default(ska_default_certs_image, true) }}"
+        ska_data_path: "{{ skaegis.DATA_PATH | default('/var/data/' + app + '-' + env + '/data', true) }}"
+        ska_backup_path: "{{ skaegis.BACKUP_PATH | default('/var/data/' + app + '-' + env + '/backup', true) }}"
+        ska_data_node: "{{ skaegis.DATA_NODE | default('', true) | string }}"
+        # The default chain WITH the CrowdSec bouncer (default@file): the
+        # dashboard is a browser UI, nothing machine-to-machine goes through
+        # this router.
+        ska_middlewares: "{{ skaegis.TRAEFIK_MIDDLEWARES | default('default@file', true) }}"
+        # Optional extra forward-auth layer on top of the dashboard's own
+        # OpenID login. Off by default: the dashboard's login is the gate.
+        ska_sso_middleware: "{{ skaegis.SSO_MIDDLEWARE | default('', true) | string }}"
+        ska_sso_host_ip: "{{ skaegis.SSO_HOST_IP | default('', true) | string }}"
+        ska_extra_ca: "{{ skaegis.EXTRA_CA_CERT | default('', true) | string }}"
+        ska_tls_options: "{{ skaegis.TLS_OPTIONS | default('intermediate@file', true) }}"
+        ska_auth_mode: "{{ skaegis.AUTH_MODE | default('oidc', true) | string | lower }}"
+        # APPLICATION_ACCESS_SSO_STANDARD: one declared mode. skaegis sees
+        # every host's weaknesses, so it is admin-only; the other modes are
+        # refused below until the Wazuh API RBAC mapping for non-admins exists.
+        ska_access_mode: "{{ skaegis.ACCESS_MODE | default('admin-only', true) | string | lower }}"
+        ska_router: "skaegis{{ '' if env == 'prod' else '-' + env }}"
+        ska_indexer_heap: "{{ skaegis.INDEXER_HEAP | default('2g', true) | string }}"
+        ska_apply_security: "{{ skaegis.APPLY_SECURITY_CONFIG | default(true) | bool }}"
+        ska_feed_interval: "{{ skaegis.FEED_UPDATE_INTERVAL | default('60m', true) | string }}"
+        ska_session_ttl_ms: "{{ skaegis.SESSION_TTL_MS | default(3600000, true) | int }}"
+        ska_agent_publish: "{{ skaegis.AGENT_PUBLISH | default(true) | bool }}"
+        ska_agent_publish_mode: "{{ skaegis.AGENT_PUBLISH_MODE | default('ingress', true) | string }}"
+        ska_agent_port: "{{ skaegis.AGENT_PORT | default(1514, true) | int }}"
+        ska_enrol_port: "{{ skaegis.ENROLMENT_PORT | default(1515, true) | int }}"
+        ska_placement: "{{ skaegis.PLACEMENT_CONSTRAINTS | default(['node.role == worker', 'node.labels.skaegis == true'], true) }}"
+        ska_dashboard_placement: "{{ skaegis.DASHBOARD_PLACEMENT_CONSTRAINTS | default(skaegis.PLACEMENT_CONSTRAINTS | default(['node.role == worker', 'node.labels.skaegis == true'], true), true) }}"
+      tags: [config]
+
+    - name: Resolve the derived paths, host and access groups
+      set_fact:
+        ska_indexer_path: "{{ skaegis.INDEXER_DATA_PATH | default(ska_data_path + '/indexer', true) }}"
+        ska_manager_path: "{{ ska_data_path }}/manager"
+        ska_certs_path: "{{ ska_data_path }}/certs"
+        ska_host: "{{ skaegis.HOSTNAME | default('skaegis' + ('' if env == 'prod' else '-' + env) + '.' + ska_base_domain, true) }}"
+        # Derived from ACCESS_MODE, never typed by hand (standard section 7):
+        # admin-only maps only skadmin to the admin roles.
+        ska_admin_groups: "{{ ['skadmin'] }}"
+      tags: [config]
+
+    - name: Resolve the OIDC settings
+      set_fact:
+        ska_oidc_client_id: "{{ skaegis.OIDC_CLIENT_ID | default(ska_router, true) }}"
+        ska_oidc_issuer: "{{ skaegis.OIDC_ISSUER | default('', true) | string }}"
+        ska_oidc_scope: "{{ skaegis.OIDC_SCOPE | default('openid profile email groups', true) }}"
+        ska_oidc_groups_claim: "{{ skaegis.OIDC_GROUPS_CLAIM | default('groups', true) }}"
+        ska_oidc_subject_claim: "{{ skaegis.OIDC_SUBJECT_CLAIM | default('preferred_username', true) }}"
+      tags: [config]
+
+    - name: Resolve the OIDC discovery, logout and issuer host
+      set_fact:
+        ska_oidc_discovery_url: "{{ ska_oidc_issuer.rstrip('/') ~ '/.well-known/openid-configuration' }}"
+        ska_oidc_logout_url: "{{ skaegis.OIDC_LOGOUT_URL | default(ska_oidc_issuer.rstrip('/') ~ '/end-session/', true) }}"
+        ska_oidc_issuer_host: "{{ ska_oidc_issuer | urlsplit('hostname') if ska_oidc_issuer else '' }}"
+      tags: [config]
+
+    - name: Fail loudly on a vault that does not satisfy the skaegis contract
+      # Every secret is checked by length or shape only; no message prints a
+      # value. API_PASSWORD follows the Wazuh API's own password policy (8 to
+      # 64 characters with upper, lower, digit and symbol), or the manager
+      # refuses to create the wazuh-wui user and stops.
+      assert:
+        that:
+          - ska_auth_mode in ['oidc', 'local']
+          - ska_access_mode == 'admin-only'
+          - (skaegis.INDEXER_PASSWORD | default('', true) | string | length) >= 16
+          - (skaegis.DASHBOARD_PASSWORD | default('', true) | string | length) >= 16
+          - (skaegis.ENROLMENT_PASSWORD | default('', true) | string | length) >= 16
+          - skaegis.API_PASSWORD | default('', true) | string is match('^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{12,64}$')
+          - skaegis.CLUSTER_KEY | default('', true) | string is match('^[A-Za-z0-9]{32}$')
+          - skaegis.INDEXER_PASSWORD | default('', true) | string is match('^[^\\s\"\\\\$`]+$')
+          - skaegis.DASHBOARD_PASSWORD | default('', true) | string is match('^[^\\s\"\\\\$`]+$')
+          - skaegis.API_PASSWORD | default('', true) | string is match('^[^\\s\"\\\\$`]+$')
+          - ska_auth_mode != 'oidc' or ska_oidc_issuer is match('^https://[A-Za-z0-9.-]+(:[0-9]+)?/')
+          - ska_auth_mode != 'oidc' or (skaegis.OIDC_CLIENT_SECRET | default('', true) | string | length) >= 32
+          - ska_auth_mode != 'oidc' or skaegis.OIDC_CLIENT_SECRET | default('', true) | string is match('^[A-Za-z0-9._~-]+$')
+        fail_msg: >-
+          ERROR: the skaegis vault block does not satisfy the contract.
+          AUTH_MODE must be oidc or local and ACCESS_MODE admin-only;
+          INDEXER_PASSWORD, DASHBOARD_PASSWORD and ENROLMENT_PASSWORD need 16+
+          characters and no whitespace, quote, backslash, dollar or backtick;
+          API_PASSWORD 12 to 64 characters with upper, lower, digit and symbol
+          (no whitespace, quote, backslash, dollar or backtick); CLUSTER_KEY
+          exactly 32 letters/digits (openssl rand -hex 16); in oidc mode
+          OIDC_ISSUER an https issuer URL and OIDC_CLIENT_SECRET 32+ URL-safe
+          characters (openssl rand -hex 32, the same value as
+          sksso.SKAEGIS_OIDC_CLIENT_SECRET). See README.md "Vault contract".
+        quiet: true
+      tags: [config]
+
+    - name: Refuse a local-mode vault that also configures OIDC
+      assert:
+        that:
+          - ska_auth_mode != 'local' or not ska_oidc_issuer
+          - ska_auth_mode != 'local' or not (skaegis.OIDC_CLIENT_SECRET | default('', true))
+          - ska_auth_mode != 'local' or not ska_sso_host_ip
+        fail_msg: >-
+          ERROR: skaegis.AUTH_MODE is 'local' (internal users only) but the
+          vault also sets OIDC_ISSUER, OIDC_CLIENT_SECRET or SSO_HOST_IP, which
+          only apply to AUTH_MODE oidc. Set AUTH_MODE: oidc or remove them.
+        quiet: true
+      tags: [config]
+
+    - name: Validate the image pins, the public host and the placement
+      assert:
+        that:
+          - "'@sha256:' in ska_indexer_image"
+          - "'@sha256:' in ska_manager_image"
+          - "'@sha256:' in ska_dashboard_image"
+          - "'@sha256:' in ska_certs_image"
+          - ska_host is match('^[A-Za-z0-9][A-Za-z0-9.-]*$')
+          - (not ska_sso_host_ip) or (ska_sso_host_ip is match('^[0-9A-Fa-f.:]+$'))
+          - ska_agent_publish_mode in ['ingress', 'host']
+          - ska_indexer_heap is match('^[0-9]+[mg]$')
+          - ska_placement | length > 0
+        fail_msg: >-
+          ERROR: every skaegis image must be pinned by digest (@sha256:),
+          HOSTNAME (or CLUSTERNAME/DOMAIN) must be a plain host name, SSO_HOST_IP
+          a plain IP address, AGENT_PUBLISH_MODE ingress or host, INDEXER_HEAP
+          like 2g or 1536m, and PLACEMENT_CONSTRAINTS a non-empty list.
+          Host is {{ ska_host }}.
+        quiet: true
+      tags: [config]
+
+    - name: Fail closed on a local data path without a pinned data node
+      # A path outside /var/data is local disk on one node: without DATA_NODE
+      # swarm may reschedule the indexer or manager onto an empty directory
+      # (every alert, the CVE state and client.keys gone, so every agent must
+      # re-enrol). Same rule as skrac/sksso/skhub.
+      assert:
+        that:
+          - (ska_data_node | length > 0) or (ska_data_path.startswith('/var/data/') and ska_indexer_path.startswith('/var/data/') and ska_backup_path.startswith('/var/data/'))
+        fail_msg: >-
+          skaegis.DATA_PATH / INDEXER_DATA_PATH / BACKUP_PATH point at local disk
+          ({{ ska_data_path }}, {{ ska_indexer_path }}, {{ ska_backup_path }})
+          but skaegis.DATA_NODE is empty. Set DATA_NODE to the node holding the
+          data.
+        quiet: true
+      tags: [config]
+
+    - name: Define network variables from vault (idempotent network creation)
+      # Subnets: skaegis-prod 172.16.157.0/24, -staging .158, -dev .159
+      # (reserved for skaegis); cloud-public-<env> is shared. Override with the
+      # flat per-env skaegis_<env>_networks (catalog naming convention).
+      set_fact:
+        app_networks: "{{ skaegis_dev_networks | default([
+          { 'name': 'skaegis-dev', 'subnet': '172.16.159.0/24', 'driver': 'overlay', 'attachable': true },
+          { 'name': 'cloud-public-dev', 'subnet': '172.16.202.0/24', 'driver': 'overlay', 'attachable': true }
+        ]) }}"
+      tags: [networks, config]
+
+  tasks:
+    - name: Deploying {{ app }}
+      debug:
+        msg: Running SKStacks deploy {{ app }} scripts...
+
+    - name: Report the access posture
+      debug:
+        msg: >-
+          skaegis at https://{{ ska_host }}/: sign-in {{ 'OpenID against sksso (' ~ ska_oidc_client_id ~ '), basic login kept for break-glass' if ska_auth_mode == 'oidc' else 'internal users only (local)' }};
+          access {{ ska_access_mode }} (admin role from {{ ska_admin_groups | join(', ') }});
+          agents {{ ('on ports ' ~ ska_agent_port ~ '/' ~ ska_enrol_port ~ ' (' ~ ska_agent_publish_mode ~ ' mode), enrolment password required') if ska_agent_publish else 'not published' }}.
+      tags: [config]
+
+    - name: Create the {{ app }} directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - /var/data/{{ app }}-{{ env }}
+        - /var/data/{{ app }}-{{ env }}/bin
+        - /var/data/config/{{ app }}-{{ env }}
+        - /var/data/config/{{ app }}-{{ env }}/indexer
+        - /var/data/config/{{ app }}-{{ env }}/dashboard
+
+    - name: Create the {{ app }} manager config directory (root only, holds ossec.conf and authd.pass)
+      file:
+        path: /var/data/config/{{ app }}-{{ env }}/manager
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Create the {{ app }} data directories (not recursive)
+      # data root and backup: root only. indexer data, snapshots and certs:
+      # owned by uid 1000, the user wazuh-indexer and wazuh-dashboard run as
+      # (the manager and the backup sidecar run as root and read anything).
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: root
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "{{ ska_data_path }}", owner: root, mode: '0711' }
+        - { path: "{{ ska_manager_path }}", owner: root, mode: '0700' }
+        - { path: "{{ ska_indexer_path }}", owner: '1000', mode: '0700' }
+        - { path: "{{ ska_certs_path }}", owner: '1000', mode: '0500' }
+        - { path: "{{ ska_backup_path }}", owner: root, mode: '0711' }
+        - { path: "{{ ska_backup_path }}/snapshots", owner: '1000', mode: '0700' }
+      delegate_to: "{{ skaegis.DATA_NODE | default(inventory_hostname, true) if not ska_data_path.startswith('/var/data/') else inventory_hostname }}"
+
+    - name: Create the {{ app }} manager state directories (seeded by the image on first start)
+      file:
+        path: "{{ ska_manager_path }}/{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0750'
+      loop: [api-configuration, etc, logs, queue, multigroups, integrations, active-response, agentless, wodles, filebeat-etc, filebeat-var]
+      delegate_to: "{{ skaegis.DATA_NODE | default(inventory_hostname, true) if not ska_data_path.startswith('/var/data/') else inventory_hostname }}"
+
+    - name: Raise vm.max_map_count on the indexer node (OpenSearch needs 262144)
+      # Only reachable when the node is known (DATA_NODE); with label-only
+      # placement the operator sets it on the labelled node (README
+      # "Placement"). A single-node indexer starts without it, with a warning.
+      sysctl:
+        name: vm.max_map_count
+        value: "262144"
+        sysctl_file: /etc/sysctl.d/90-skaegis.conf
+        state: present
+        reload: true
+      delegate_to: "{{ skaegis.DATA_NODE | default(inventory_hostname, true) }}"
+      when: ska_data_node | length > 0
+      tags: [sysctl]
+
+    - name: Issue the internal TLS certificates (wazuh-certs-generator, once)
+      include_tasks: ../../optional/skaegis/tasks/certs.yml
+      tags: [config, certs]
+
+    - name: Write the manager ossec.conf (root only, carries the cluster key)
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/manager/ossec.conf.j2"
+        dest: /var/data/config/{{ app }}-{{ env }}/manager/ossec.conf
+        owner: root
+        group: root
+        mode: '0600'
+      register: skaegis_ossec_conf
+      tags: [templates, config]
+
+    - name: Write the agent enrolment password (root only)
+      copy:
+        content: "{{ skaegis.ENROLMENT_PASSWORD }}\n"
+        dest: /var/data/config/{{ app }}-{{ env }}/manager/authd.pass
+        owner: root
+        group: root
+        mode: '0600'
+      no_log: true
+      register: skaegis_authd_pass
+      tags: [templates, config]
+
+    - name: Write the service env files (root only, carry the passwords)
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item }}.env.j2"
+        dest: /var/data/config/{{ app }}-{{ env }}/{{ item }}.env
+        owner: root
+        group: root
+        mode: '0600'
+      loop: [indexer, manager, dashboard]
+      no_log: true
+      register: skaegis_env_files
+      tags: [templates, config]
+
+    - name: Write the indexer and dashboard config (no secrets inside)
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item }}.j2"
+        dest: /var/data/config/{{ app }}-{{ env }}/{{ item }}
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - indexer/opensearch.yml
+        - indexer/config.yml
+        - indexer/roles_mapping.yml
+        - dashboard/opensearch_dashboards.yml
+      register: skaegis_service_config
+      tags: [templates, config]
+
+    - name: Write the CA the stack trusts for HTTPS to the IdP (skaegis.EXTRA_CA_CERT)
+      # A private CA in front of sksso (lab/test edges). A public cert, not a
+      # secret.
+      copy:
+        content: "{{ ska_extra_ca }}"
+        dest: "/var/data/config/{{ app }}-{{ env }}/extra-ca.pem"
+        owner: root
+        group: root
+        mode: '0644'
+      register: skaegis_extra_ca
+      when: ska_extra_ca | length > 0
+      tags: [templates, config]
+
+    - name: Install the indexer entrypoint and the backup script
+      # Copied verbatim (bash and sh): no Jinja in them.
+      copy:
+        src: "{{ playbook_dir }}/src/{{ app }}/{{ item }}"
+        dest: "/var/data/{{ app }}-{{ env }}/bin/{{ item }}"
+        owner: root
+        group: root
+        mode: '0755'
+      loop: [indexer-entrypoint, skaegis-backup]
+      register: skaegis_scripts
+      tags: [templates]
+
+    - name: Process {{ app }} Docker Compose template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags: [compose]
+
+    - name: Create docker-compose.yml symlink
+      file:
+        src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags: [compose]
+
+    - name: Process deploy script template
+      template:
+        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/deploy"
+        owner: root
+        group: root
+        mode: '0755'
+      tags: [deploy-script]
+
+    - name: Create {{ app }} control script symlink
+      file:
+        src: "/var/data/{{ app }}-{{ env }}/deploy"
+        dest: "/var/data/deploy_{{ app }}-{{ env }}"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags: [deploy-script]
+
+    - name: Ensure overlay networks exist from app_networks variable
+      include_tasks: ../../shared/tasks/create_networks.yml
+      tags: [networks]
+
+    - name: Deploy {{ app }} stack
+      # Config files, env files and scripts are bind mounts or read at start:
+      # a changed file alone does not change the service spec, so the deploy
+      # script restarts exactly the services that read what the play changed.
+      shell: |
+        cd /var/data/{{ app }}-{{ env }}
+        RESTART_INDEXER={{ '1' if (skaegis_env_files.results[0] is changed or skaegis_service_config.results[0] is changed or skaegis_service_config.results[1] is changed or skaegis_service_config.results[2] is changed or skaegis_scripts.results[0] is changed or skaegis_extra_ca is changed or skaegis_certs_issued | default(false) | bool) else '0' }} RESTART_MANAGER={{ '1' if (skaegis_ossec_conf is changed or skaegis_authd_pass is changed or skaegis_env_files.results[1] is changed or skaegis_certs_issued | default(false) | bool) else '0' }} RESTART_DASHBOARD={{ '1' if (skaegis_env_files.results[2] is changed or skaegis_service_config.results[3] is changed or skaegis_extra_ca is changed or skaegis_certs_issued | default(false) | bool) else '0' }} RESTART_BACKUP={{ '1' if skaegis_scripts.results[1] is changed else '0' }} ./deploy
+      register: deploy_output
+      tags: [deploy]
+
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags: [deploy]
+
+    - name: Create or update the skaegis portal tile in Authentik
+      # On by default (AUTHENTIK_TILE: true). In AUTH_MODE oidc the slug is the
+      # SAME one sksso's skaegis blueprint gives the real OAuth2 application,
+      # so this updates that one Application's tile fields instead of creating
+      # a second, provider-less one (shared/src/authentik_portal_tile.py
+      # "keeping its existing provider"). The group is the admin-only gate,
+      # skadmin, which the blueprint also binds (fail closed even with the
+      # tile off). Never "authentik Admins".
+      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
+      vars:
+        portal_tile:
+          enabled: "{{ skaegis.AUTHENTIK_TILE | default(true) | bool }}"
+          slug: "{{ skaegis.AUTHENTIK_TILE_SLUG | default(ska_oidc_client_id, true) }}"
+          name: "{{ skaegis.AUTHENTIK_TILE_NAME | default('skaegis', true) }}"
+          launch_url: "https://{{ ska_host }}"
+          group: "{{ skaegis.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
+          icon: "{{ skaegis.AUTHENTIK_TILE_ICON | default('fa://fa-shield-halved', true) }}"
+          icon_file: "icon.png"
+          icon_name: "skaegis"
+          open_in_new_tab: "{{ skaegis.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
+          description: "{{ skaegis.AUTHENTIK_TILE_DESCRIPTION | default('Continuous CVE detection for every host', true) }}"
+          category: "{{ skaegis.AUTHENTIK_TILE_CATEGORY | default('Security', true) }}"
+      tags:
+        - config
+        - authentik

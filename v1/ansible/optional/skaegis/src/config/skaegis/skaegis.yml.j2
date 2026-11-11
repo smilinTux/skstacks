@@ -1,0 +1,290 @@
+version: '3.8'
+
+# skaegis: continuous CVE detection (Detect, in Defend / Detect / Remediate),
+# built on unmodified upstream Wazuh 4.14, every image pinned by digest
+# (README.md). Four services:
+#   indexer    wazuh-indexer (OpenSearch): alerts, the vulnerability state,
+#              dashboards. The RAM driver. Exactly one replica, one data dir.
+#   manager    wazuh-manager: agent enrolment (1515) and events (1514), the
+#              vulnerability detector, rules, the API (55000, internal only).
+#   dashboard  wazuh-dashboard: the web UI, the only service on the edge,
+#              behind Traefik with sksso OpenID login (AUTH_MODE oidc).
+#   backup     a sidecar (the manager image, no extra pull) that archives the
+#              manager state and snapshots the indexer on a schedule.
+# Internal TLS between the three is the stack's own CA from
+# wazuh-certs-generator (tasks/certs.yml); every service reaches the others by
+# the upstream names (wazuh.indexer, wazuh.manager, wazuh.dashboard), which are
+# network aliases on skaegis-<env> and the names in those certificates.
+{% set hc_interval = skaegis.HEALTH_CHECK_INTERVAL | default('30s', true) %}
+{% set hc_timeout = skaegis.HEALTH_CHECK_TIMEOUT | default('10s', true) %}
+{% set hc_retries = skaegis.HEALTH_CHECK_RETRIES | default(5, true) | int %}
+{% set data_constraints = ska_placement + (['node.hostname == ' + ska_data_node] if ska_data_node else []) %}
+{% set certs = ska_certs_path %}
+
+networks:
+  cloud-public-{{ env }}:
+    external: true
+  skaegis-{{ env }}:
+    external: true
+
+services:
+  indexer:
+    # Default = ska_default_indexer_image in the playbook (a test keeps them equal).
+    image: {{ skaegis.INDEXER_IMAGE | default('wazuh/wazuh-indexer:4.14.10@sha256:e56f85ed9e79f113c0f2d2a7965171cd8e063262ec88e110086acdb1f69f2240', true) }}
+    hostname: wazuh.indexer
+    # bin/indexer-entrypoint stages the security config (internal users hashed
+    # from the vault, OIDC, the admin group mapping), then execs the image's
+    # own /entrypoint.sh with the upstream command.
+    entrypoint: ["/bin/bash", "/skaegis-bin/indexer-entrypoint"]
+    command: ["opensearchwrapper"]
+    env_file: /var/data/config/skaegis-{{ env }}/indexer.env
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - {{ ska_indexer_path }}:/var/lib/wazuh-indexer
+      - {{ ska_backup_path }}/snapshots:/var/lib/wazuh-indexer-snapshots
+      - {{ certs }}/root-ca.pem:/usr/share/wazuh-indexer/config/certs/root-ca.pem:ro
+      - {{ certs }}/wazuh.indexer.pem:/usr/share/wazuh-indexer/config/certs/wazuh.indexer.pem:ro
+      - {{ certs }}/wazuh.indexer-key.pem:/usr/share/wazuh-indexer/config/certs/wazuh.indexer.key:ro
+      - {{ certs }}/admin.pem:/usr/share/wazuh-indexer/config/certs/admin.pem:ro
+      - {{ certs }}/admin-key.pem:/usr/share/wazuh-indexer/config/certs/admin-key.pem:ro
+      - /var/data/config/skaegis-{{ env }}/indexer/opensearch.yml:/usr/share/wazuh-indexer/config/opensearch.yml:ro
+      - /var/data/config/skaegis-{{ env }}/indexer/config.yml:/skaegis-config/config.yml:ro
+      - /var/data/config/skaegis-{{ env }}/indexer/roles_mapping.yml:/skaegis-config/roles_mapping.yml:ro
+      - /var/data/skaegis-{{ env }}/bin/indexer-entrypoint:/skaegis-bin/indexer-entrypoint:ro
+{% if ska_extra_ca %}
+      - /var/data/config/skaegis-{{ env }}/extra-ca.pem:/usr/share/wazuh-indexer/config/certs/extra-ca.pem:ro
+{% endif %}
+{% if ska_auth_mode == 'oidc' and ska_sso_host_ip %}
+    # The indexer fetches the issuer's discovery document and JWKS itself.
+    extra_hosts:
+      - "{{ ska_oidc_issuer_host }}:{{ ska_sso_host_ip }}"
+{% endif %}
+    # Any HTTP answer from 9200 (401 without credentials) means the node is
+    # serving; no credential is needed in the probe.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:9200/ | grep -qE '^(200|401)$'"]
+      interval: {{ hc_interval }}
+      timeout: {{ hc_timeout }}
+      retries: {{ hc_retries }}
+      start_period: {{ skaegis.INDEXER_START_PERIOD | default('180s', true) }}
+    networks:
+      skaegis-{{ env }}:
+        aliases:
+          - wazuh.indexer
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    deploy:
+      mode: replicated
+      # Exactly one: a single-node OpenSearch cluster with one data dir.
+      replicas: 1
+      placement:
+        constraints: {{ data_constraints | tojson }}
+      resources:
+        limits:
+          cpus: '{{ skaegis.INDEXER_CPUS | default("2.00", true) }}'
+          memory: {{ skaegis.INDEXER_MEMORY_LIMIT | default("4G", true) }}
+        reservations:
+          memory: {{ skaegis.INDEXER_MEMORY_RESERVATION | default("3G", true) }}
+      update_config:
+        order: stop-first
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skaegis"
+        - "com.skt.env={{ env }}"
+        - "traefik.enable=false"
+
+  manager:
+    image: {{ skaegis.MANAGER_IMAGE | default('wazuh/wazuh-manager:4.14.10@sha256:dcda4869e2f792e92f03bce93f85b4bdf103756ea61cfca8ba9f3eabeb05365b', true) }}
+    hostname: wazuh.manager
+    env_file: /var/data/config/skaegis-{{ env }}/manager.env
+    ulimits:
+      nofile:
+        soft: 655360
+        hard: 655360
+    # The image seeds every empty directory below from its own defaults on the
+    # first start, then keeps what is there (upstream permanent_data.sh).
+    volumes:
+      - {{ ska_manager_path }}/api-configuration:/var/ossec/api/configuration
+      - {{ ska_manager_path }}/etc:/var/ossec/etc
+      - {{ ska_manager_path }}/logs:/var/ossec/logs
+      - {{ ska_manager_path }}/queue:/var/ossec/queue
+      - {{ ska_manager_path }}/multigroups:/var/ossec/var/multigroups
+      - {{ ska_manager_path }}/integrations:/var/ossec/integrations
+      - {{ ska_manager_path }}/active-response:/var/ossec/active-response/bin
+      - {{ ska_manager_path }}/agentless:/var/ossec/agentless
+      - {{ ska_manager_path }}/wodles:/var/ossec/wodles
+      - {{ ska_manager_path }}/filebeat-etc:/etc/filebeat
+      - {{ ska_manager_path }}/filebeat-var:/var/lib/filebeat
+      - {{ certs }}/root-ca-manager.pem:/etc/ssl/root-ca.pem:ro
+      - {{ certs }}/wazuh.manager.pem:/etc/ssl/filebeat.pem:ro
+      - {{ certs }}/wazuh.manager-key.pem:/etc/ssl/filebeat.key:ro
+      # Copied over /var/ossec/etc at every start (/wazuh-config-mount).
+      - /var/data/config/skaegis-{{ env }}/manager/ossec.conf:/wazuh-config-mount/etc/ossec.conf:ro
+      - /var/data/config/skaegis-{{ env }}/manager/authd.pass:/wazuh-config-mount/etc/authd.pass:ro
+{% if ska_agent_publish %}
+    # Agent events (1514) and enrolment (1515, password-protected). Published
+    # on the swarm nodes' own addresses for the hosts the agents run on; never
+    # forward these from the internet edge. The API (55000) is not published.
+    ports:
+      - target: 1514
+        published: {{ ska_agent_port }}
+        protocol: tcp
+        mode: {{ ska_agent_publish_mode }}
+      - target: 1515
+        published: {{ ska_enrol_port }}
+        protocol: tcp
+        mode: {{ ska_agent_publish_mode }}
+{% endif %}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:55000/ | grep -qE '^(200|401)$'"]
+      interval: {{ hc_interval }}
+      timeout: {{ hc_timeout }}
+      retries: {{ hc_retries }}
+      start_period: {{ skaegis.MANAGER_START_PERIOD | default('300s', true) }}
+    networks:
+      skaegis-{{ env }}:
+        aliases:
+          - wazuh.manager
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    deploy:
+      mode: replicated
+      # Exactly one: client.keys (every enrolled agent) lives in one etc dir.
+      replicas: 1
+      placement:
+        constraints: {{ data_constraints | tojson }}
+      resources:
+        limits:
+          cpus: '{{ skaegis.MANAGER_CPUS | default("2.00", true) }}'
+          memory: {{ skaegis.MANAGER_MEMORY_LIMIT | default("2G", true) }}
+        reservations:
+          memory: {{ skaegis.MANAGER_MEMORY_RESERVATION | default("1G", true) }}
+      update_config:
+        order: stop-first
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skaegis"
+        - "com.skt.env={{ env }}"
+        - "traefik.enable=false"
+
+  dashboard:
+    image: {{ skaegis.DASHBOARD_IMAGE | default('wazuh/wazuh-dashboard:4.14.10@sha256:0eebab19802342b841a258f56d6fa0fb085cdae08ab5eb2e45f9455c906d719a', true) }}
+    hostname: wazuh.dashboard
+    env_file: /var/data/config/skaegis-{{ env }}/dashboard.env
+    volumes:
+      - {{ certs }}/root-ca.pem:/usr/share/wazuh-dashboard/certs/root-ca.pem:ro
+      - /var/data/config/skaegis-{{ env }}/dashboard/opensearch_dashboards.yml:/usr/share/wazuh-dashboard/config/opensearch_dashboards.yml:ro
+{% if ska_extra_ca %}
+      - /var/data/config/skaegis-{{ env }}/extra-ca.pem:/usr/share/wazuh-dashboard/certs/extra-ca.pem:ro
+{% endif %}
+{% if ska_auth_mode == 'oidc' and ska_sso_host_ip %}
+    # The dashboard fetches the issuer's discovery document and exchanges the
+    # code at the token endpoint itself.
+    extra_hosts:
+      - "{{ ska_oidc_issuer_host }}:{{ ska_sso_host_ip }}"
+{% endif %}
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/share/wazuh-dashboard/node/bin/node -e \"require('http').get({host:'127.0.0.1',port:5601,path:'/api/status',timeout:5000},r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1)).on('timeout',()=>process.exit(1))\""]
+      interval: {{ hc_interval }}
+      timeout: {{ hc_timeout }}
+      retries: {{ hc_retries }}
+      start_period: {{ skaegis.DASHBOARD_START_PERIOD | default('180s', true) }}
+    networks:
+      skaegis-{{ env }}:
+        aliases:
+          - wazuh.dashboard
+      cloud-public-{{ env }}: {}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: {{ ska_dashboard_placement | tojson }}
+      resources:
+        limits:
+          cpus: '{{ skaegis.DASHBOARD_CPUS | default("1.00", true) }}'
+          memory: {{ skaegis.DASHBOARD_MEMORY_LIMIT | default("1G", true) }}
+        reservations:
+          memory: {{ skaegis.DASHBOARD_MEMORY_RESERVATION | default("512M", true) }}
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skaegis"
+        - "com.skt.env={{ env }}"
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.routers.{{ ska_router }}.rule=Host(`{{ ska_host }}`)"
+        - "traefik.http.routers.{{ ska_router }}.entrypoints=websecure"
+        - "traefik.http.routers.{{ ska_router }}.tls=true"
+        - "traefik.http.routers.{{ ska_router }}.tls.certresolver=main"
+{% if ska_tls_options != 'none' %}
+        - "traefik.http.routers.{{ ska_router }}.tls.options={{ ska_tls_options }}"
+{% endif %}
+        # 5: above skfenceha's per-domain catch-alls (priority 1, error pages).
+        - "traefik.http.routers.{{ ska_router }}.priority=5"
+        - "traefik.http.routers.{{ ska_router }}.middlewares={{ ska_middlewares }}{{ ',' + ska_sso_middleware if ska_sso_middleware else '' }}"
+        - "traefik.http.routers.{{ ska_router }}.service={{ ska_router }}"
+        - "traefik.http.services.{{ ska_router }}.loadbalancer.server.port=5601"
+        - "traefik.http.services.{{ ska_router }}.loadbalancer.server.scheme=http"
+
+{% if skaegis.BACKUP_ENABLED | default(true) | bool %}
+  backup:
+    image: {{ skaegis.MANAGER_IMAGE | default('wazuh/wazuh-manager:4.14.10@sha256:dcda4869e2f792e92f03bce93f85b4bdf103756ea61cfca8ba9f3eabeb05365b', true) }}
+    entrypoint: ["/bin/sh", "/usr/local/bin/skaegis-backup"]
+    command: ["loop"]
+    environment:
+      BACKUP_FREQUENCY: "{{ skaegis.BACKUP_FREQUENCY | default(86400, true) | int }}"
+      BACKUP_KEEP_DAYS: "{{ skaegis.BACKUP_KEEP_DAYS | default(7, true) | int }}"
+      BACKUP_START_DELAY: "{{ skaegis.BACKUP_START_DELAY | default(300) | int }}"
+      SKAEGIS_BACKUP_SNAPSHOTS: "{{ '1' if skaegis.BACKUP_SNAPSHOTS | default(true) | bool else '0' }}"
+    volumes:
+      - {{ ska_manager_path }}/etc:/src/manager-etc:ro
+      - {{ ska_manager_path }}/api-configuration:/src/manager-api:ro
+      - {{ certs }}:/src/certs:ro
+      - {{ certs }}:/skaegis-certs:ro
+      - {{ ska_backup_path }}:/backup
+      - /var/data/skaegis-{{ env }}/bin/skaegis-backup:/usr/local/bin/skaegis-backup:ro
+    networks:
+      - skaegis-{{ env }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 4m
+        max-file: "2"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: {{ data_constraints | tojson }}
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          memory: 16M
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skaegis"
+        - "com.skt.env={{ env }}"
+        - "traefik.enable=false"
+{% endif %}
