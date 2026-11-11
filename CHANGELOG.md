@@ -15,6 +15,18 @@ Each entry says what an instance must do, if anything.
   `skadmin` must already exist in Authentik. Tiles already bound to `authentik Admins` are not moved
   automatically, so move them once in the admin UI or with `ak shell`.
 
+### New
+
+- **`optional/skaegis`: continuous CVE detection for every host (upstream Wazuh 4.14.10).** Opt in. The
+  indexer, manager and dashboard run pinned by digest on a node labelled `skaegis=true` (plus `DATA_NODE`
+  for local disk); only the dashboard is on the edge (`traefik.swarm.*`, crowdsec via `default@file`). Login
+  is OIDC against sksso, admin-only on `skadmin`, with the internal `admin` kept for break-glass. Needs a
+  `skaegis-<env>-<domain>_vault.yml` (README "Vault contract") and, for OIDC,
+  `sksso.SKAEGIS_OIDC_CLIENT_SECRET` plus a sksso redeploy (the blueprint makes the provider, the
+  application and its `skadmin` binding). Agents: `provision_skaegis_agents.yml` (Debian and Ubuntu,
+  pinned and held, `state=absent` to remove) and a Windows script delivered through skrac. It does not
+  replace skpatch-hosts: skaegis detects, skpatch remediates.
+
 ## skstacks-v2.26.19 - 2026-11-10
 
 ### Upgrade notes (instances)
