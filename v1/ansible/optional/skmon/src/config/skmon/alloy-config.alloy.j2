@@ -1,0 +1,39 @@
+// Grafana Alloy log shipping for skmon (replaces Promtail, EOL upstream).
+//
+// A direct translation of the old promtail-config.yml: the same two file
+// jobs, the same labels (job, plus the filename label both tools add), and
+// the same Loki push endpoint. Alloy keeps read positions under
+// --storage.path, which is container-local just like Promtail's
+// /tmp/positions.yaml was.
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
+
+// job=varlogs: host logs under /var/log
+local.file_match "system" {
+  path_targets = [{
+    "__path__" = "/var/log/**/*.log",
+    "job"      = "varlogs",
+  }]
+}
+
+loki.source.file "system" {
+  targets    = local.file_match.system.targets
+  forward_to = [loki.write.default.receiver]
+}
+
+// job=docker: container json-file logs
+local.file_match "docker" {
+  path_targets = [{
+    "__path__" = "/var/lib/docker/containers/*/*.log",
+    "job"      = "docker",
+  }]
+}
+
+loki.source.file "docker" {
+  targets    = local.file_match.docker.targets
+  forward_to = [loki.write.default.receiver]
+}

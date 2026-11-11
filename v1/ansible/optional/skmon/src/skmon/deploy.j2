@@ -51,7 +51,7 @@ fi
 
 # Deploy stack with prune and registry auth
 echo -e "${YELLOW}📝 Deploying stack configuration...${NC}"
-record_preexisting "${STACK_NAME}_prometheus" "${STACK_NAME}_grafana" "${STACK_NAME}_loki" "${STACK_NAME}_promtail" "${STACK_NAME}_node-exporter" "${STACK_NAME}_cadvisor" "${STACK_NAME}_alertmanager" "${STACK_NAME}_jaeger"
+record_preexisting "${STACK_NAME}_prometheus" "${STACK_NAME}_grafana" "${STACK_NAME}_loki" "${STACK_NAME}_alloy" "${STACK_NAME}_node-exporter" "${STACK_NAME}_cadvisor" "${STACK_NAME}_alertmanager"
 docker stack deploy \
     -c "${COMPOSE_FILE}" \
     --prune \
@@ -66,11 +66,10 @@ echo -e "${YELLOW}🔄 Forcing service updates to pull latest images...${NC}"
 preexisted ${STACK_NAME}_prometheus && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_prometheus || true
 preexisted ${STACK_NAME}_grafana && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_grafana || true
 preexisted ${STACK_NAME}_loki && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_loki || true
-preexisted ${STACK_NAME}_promtail && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_promtail || true
+preexisted ${STACK_NAME}_alloy && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_alloy || true
 preexisted ${STACK_NAME}_node-exporter && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_node-exporter || true
 preexisted ${STACK_NAME}_cadvisor && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_cadvisor || true
 preexisted ${STACK_NAME}_alertmanager && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_alertmanager || true
-preexisted ${STACK_NAME}_jaeger && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_jaeger || true
 
 # Wait for services to stabilize
 echo -e "${YELLOW}⏳ Waiting for services to stabilize...${NC}"
@@ -140,20 +139,6 @@ else
     docker service logs --tail 20 ${STACK_NAME}_alertmanager
 fi
 
-# Check Jaeger
-for _ in $(seq 1 36); do
-    JAEGER_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_jaeger" --format "{{ '{{.Replicas}}' }}")
-    [[ "$JAEGER_REPLICAS" == "1/1" ]] && break
-    sleep 5
-done
-if [[ "$JAEGER_REPLICAS" == "1/1" ]]; then
-    echo -e "${GREEN}✅ Jaeger is healthy and running!${NC}"
-else
-    echo -e "${RED}⚠️  Jaeger health check: ${JAEGER_REPLICAS}${NC}"
-    echo -e "${YELLOW}📋 Recent logs:${NC}"
-    docker service logs --tail 20 ${STACK_NAME}_jaeger
-fi
-
 {% else %}
 echo -e "${YELLOW}skmon.replicas is 0: stack deployed scaled to 0, skipping health waits${NC}"
 {% endif %}
@@ -162,7 +147,6 @@ echo -e "${GREEN}🌐 Access URLs:${NC}"
 echo -e "${GREEN}   - Grafana: https://skmon{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}${NC}"
 echo -e "${GREEN}   - Prometheus: https://prometheus{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}${NC}"
 echo -e "${GREEN}   - Alertmanager: https://alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}${NC}"
-echo -e "${GREEN}   - Jaeger: https://jaeger{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}${NC}"
 echo -e "${YELLOW}📋 Useful commands:${NC}"
 echo -e "  - View Loki health: curl http://localhost:3100/ready"
 echo -e "  - View service logs: docker service logs ${STACK_NAME}_<service>"

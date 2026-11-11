@@ -3,6 +3,29 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased (v2.26.21)
+
+### Upgrade notes (instances)
+
+- **skmon: Jaeger removed, Promtail replaced by Grafana Alloy; Loki stays the log store**
+  (Chef, 2026-11-11). Jaeger had no trace producers and is not in the strategic stack: its
+  service, Traefik router, Prometheus job, deploy health wait, icon and portal tile are gone.
+  Promtail (EOL upstream) is replaced one for one by a global `alloy` service
+  (`grafana/alloy:v1.21.2`, override with `skmon.ALLOY_IMAGE_VERSION`) that tails the same files
+  (`/var/log/**/*.log` as `job=varlogs`, container json logs as `job=docker`) and pushes to the
+  same Loki. Its config is `alloy-config.alloy.j2`, rendered to `/var/data/config/skmon-<env>/alloy/config.alloy`;
+  Prometheus scrapes it on port 12345 (job `alloy`). Alloy does not mount the docker socket
+  (Promtail mounted it but never used it). `skmon.replicas: 0` still parks it with the
+  `skmon-scaled-to-zero` placement constraint. Knobs renamed: `PROMTAIL_{CPU,MEMORY}_{LIMIT,RESERVATION}`
+  are now `ALLOY_*`; `JAEGER_*` are dropped. The next deploy's `docker stack deploy --prune`
+  removes the old `promtail` and `jaeger` services. Left for the operator: an existing Jaeger portal
+  tile (slug `jaeger`, `jaeger-<env>` off prod) is not deleted automatically, so delete it once in the
+  admin UI or with `ak shell`; `/var/data/skmon-<env>/jaeger/` and `/var/data/config/skmon-<env>/promtail/`
+  are left on disk. Dashboards built on the Loki `job`/`filename` labels keep working.
+- **v2 docs**: the skmon descriptor, its service page and STACK-MAP now say Loki is the log store
+  (they said VictoriaLogs replaces Loki). Only that line changed; the v2 skmon compose and Helm chart
+  still describe VictoriaLogs and are untouched.
+
 ## Unreleased (v2.26.20)
 
 ### Upgrade notes (instances)

@@ -3,7 +3,7 @@ instance must be able to choose the Grafana plugin list.
 
 Without a replicas knob, an operator who scales the stack to 0 to save
 resources gets it back at full size on the next deploy. Global services
-(promtail, cadvisor, node-exporter) cannot be scaled at all and a swarm
+(alloy, cadvisor, node-exporter) cannot be scaled at all and a swarm
 service cannot change mode in place, so for them 0 means a placement
 constraint that no node satisfies (mode stays global, scaling back up is a
 plain redeploy). The plugin list was hardcoded and includes Angular plugins
@@ -26,8 +26,8 @@ BASE = {
     "GRAFANA_SECRET_KEY": "y",
     "GRAFANA_ROOT_URL": "https://mon.example.org",
 }
-REPLICATED = {"prometheus", "grafana", "loki", "alertmanager", "jaeger"}
-GLOBAL = {"promtail", "cadvisor", "node-exporter"}
+REPLICATED = {"prometheus", "grafana", "loki", "alertmanager"}
+GLOBAL = {"alloy", "cadvisor", "node-exporter"}
 DEFAULT_PLUGINS = ("grafana-clock-panel,grafana-simple-json-datasource,grafana-piechart-panel,"
                    "marcusolsson-json-datasource,grafana-worldmap-panel")
 

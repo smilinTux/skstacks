@@ -91,17 +91,6 @@ scrape_configs:
     metrics_path: '/metrics'
     scrape_interval: 30s
 
-  # Jaeger metrics
-  - job_name: 'jaeger'
-    static_configs:
-      - targets: ['skmon-{{ env }}_jaeger:14269']
-        labels:
-          service: jaeger
-          component: tracing
-          environment: '{{ env }}'
-    metrics_path: '/metrics'
-    scrape_interval: 30s
-
   # Loki metrics
   - job_name: 'loki'
     static_configs:
@@ -113,20 +102,20 @@ scrape_configs:
     metrics_path: '/metrics'
     scrape_interval: 30s
 
-  # Promtail metrics (global service, use DNS SD)
-  - job_name: 'promtail'
+  # Grafana Alloy metrics (global service, use DNS SD)
+  - job_name: 'alloy'
     dns_sd_configs:
       - names:
-          - 'tasks.skmon-{{ env }}_promtail'
+          - 'tasks.skmon-{{ env }}_alloy'
         type: 'A'
-        port: 9080
+        port: 12345
     metrics_path: '/metrics'
     scrape_interval: 30s
     relabel_configs:
       - source_labels: [__meta_dns_name]
-        regex: 'tasks\.skmon-.*_promtail'
+        regex: 'tasks\.skmon-.*_alloy'
         target_label: service
-        replacement: 'promtail'
+        replacement: 'alloy'
       - target_label: component
         replacement: 'log-collection'
 
