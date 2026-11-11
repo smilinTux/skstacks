@@ -23,6 +23,12 @@ dynamic router), it needs one of:
    `authentik Admins`; an instance loosens that per its own vault if the
    service is meant for a broader audience (not the framework's call to
    make per-instance).
+   Note: `skadmin` replaces `authentik Admins` as the default once PR #360
+   lands, and a per-app access model (`SSO_ACCESS`, per-app admin and user
+   groups, fail-closed bindings) is designed in
+   `docs/design/sso-app-access-provisioning.md`. Until it ships, keep using
+   the single group knob, and never leave a tile or provider without a
+   binding.
 
 2. **A role-owned mechanism**, when the service needs its own OAuth2/OIDC
    login rather than just a bookmark (see `optional/skrac/tasks/authentik.yml`
