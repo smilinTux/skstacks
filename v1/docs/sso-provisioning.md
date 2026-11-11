@@ -5,7 +5,7 @@ recovery links, secret rotation, rollback) are in [sso-user-management.md](sso-u
 
 ## Model
 - One Authentik user per person. Username = the Nextcloud account id (uid). Pin it in user attribute `nextcloud_uid`.
-- Access to Nextcloud = membership of Authentik group `skhub-users` (bound to the application).
+- Access to Nextcloud = membership of Authentik group `app-skhub-users` (bound to the application).
 - Just-in-time provisioning: `user_oidc.auto_provision=true` plus `soft_auto_provision=true`. A first login either
   adopts the existing local account with the same uid (no duplicate) or creates a new one.
 - Groups: Authentik groups named `nc-<name>` become Nextcloud group `<name>` through the `nextcloud_groups` claim.
@@ -36,7 +36,7 @@ occ config:app:set user_oidc allow_multiple_user_backends --value=0   # /login r
 `/login?direct=1` still shows the local form (break-glass).
 
 ## Add a person
-1. Authentik: create the user (username, name, email), add to `skhub-users` and any `nc-<group>`.
+1. Authentik: create the user (username, name, email), add to `app-skhub-users` and any `nc-<group>`.
 2. Create a one-time link: `ak shell` with `authentik.recovery.lib.create_recovery_token(user, expiry, "note")`
    and prefix the returned path with the SSO origin. The link signs the person in once; they set a password under
    Settings > Change password and add an authenticator. Treat the link as a secret and send it yourself.
@@ -46,10 +46,10 @@ Self-service email recovery (the "Forgot password?" link on the login page) is e
 Invites: `POST /api/v3/core/users/<pk>/recovery_email/` with `{"email_stage": "<invite stage>", "token_duration": "days=7"}`.
 
 ## Deprovision
-Deactivate the Authentik user or remove it from `skhub-users`: no new logins. A disabled Nextcloud account cannot be used
+Deactivate the Authentik user or remove it from `app-skhub-users`: no new logins. A disabled Nextcloud account cannot be used
 with its sessions or app passwords either (WebDAV with its app password returns 503 once disabled), but the stored app
 passwords come back to life if the account is re-enabled. `v1/scripts/sso-nextcloud-deprovision.py --apply` disables
-Nextcloud accounts whose Authentik counterpart is inactive or outside `skhub-users` and never touches accounts without
+Nextcloud accounts whose Authentik counterpart is inactive or outside `app-skhub-users` and never touches accounts without
 a counterpart. Dry run is the default.
 
 Scheduled: Windmill script `f/ops/sso_deprovision` (workspace `fwe`), schedule every 15 minutes with `apply=true`.

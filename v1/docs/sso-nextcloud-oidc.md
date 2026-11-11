@@ -67,7 +67,7 @@ or on `sub` (a hash, which would create a second account per person).
   per provider, strict redirect URI `https://cloud.example.com/apps/user_oidc/code`, scope mappings
   openid, email, profile plus the `nextcloud` mapping above. Authorization flow: implicit consent.
 - Application: slug `skhub`, provider attached, launch URL the Nextcloud host.
-- Group `skhub-users` bound to the application (policy binding, order 0). Only members can complete
+- Group `app-skhub-users` bound to the application (policy binding, order 0). Only members can complete
   the Authentik side of the flow. Add a person to this group and set their `nextcloud_uid` attribute
   in one step; either alone is not enough.
 - Client secret: generated once, stored in Authentik and Nextcloud only, plus the operator vault.
@@ -84,7 +84,7 @@ metadata:
 entries:
   - model: authentik_core.group
     id: users-group
-    identifiers: {name: skhub-users}
+    identifiers: {name: app-skhub-users}
     attrs: {}
   - model: authentik_providers_oauth2.scopemapping
     id: nextcloud-claim
