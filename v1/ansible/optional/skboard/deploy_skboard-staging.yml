@@ -198,7 +198,7 @@
           slug: "{{ skboard.AUTHENTIK_TILE_SLUG | default(app, true) }}"
           name: "{{ skboard.AUTHENTIK_TILE_NAME | default('SKBoard', true) }}"
           launch_url: "https://{{ app }}{{ '' if env == 'prod' else '-' + env }}.{{ skboard.CLUSTERNAME | default(cluster_name) }}.{{ skboard.DOMAIN | default(domain) }}"
-          group: "{{ skboard.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          group: "{{ skboard.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
           icon: "{{ skboard.AUTHENTIK_TILE_ICON | default('fa://fa-list-check', true) }}"
           open_in_new_tab: "{{ skboard.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
           description: "{{ skboard.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"

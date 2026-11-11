@@ -272,7 +272,7 @@
           slug: "{{ skorch_cfg.AUTHENTIK_TILE_SLUG | default(app, true) }}"
           name: "{{ skorch_cfg.AUTHENTIK_TILE_NAME | default('SKOrch (n8n)', true) }}"
           launch_url: "https://skorch{{ '' if env == 'prod' else '-' + env }}.{{ skorch_cfg.CLUSTERNAME | default(cluster_name) }}.{{ skorch_cfg.DOMAIN | default(domain) }}"
-          group: "{{ skorch_cfg.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          group: "{{ skorch_cfg.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
           icon: "{{ skorch_cfg.AUTHENTIK_TILE_ICON | default('fa://fa-diagram-project', true) }}"
           icon_file: "{{ skorch_cfg.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
           icon_name: "{{ skorch_cfg.AUTHENTIK_TILE_ICON_NAME | default('n8n', true) }}"

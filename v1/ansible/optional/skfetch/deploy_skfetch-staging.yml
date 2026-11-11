@@ -226,7 +226,7 @@
           slug: "{{ item.key }}{{ '' if env == 'prod' else '-' + env }}"
           name: "{{ item.name }}"
           launch_url: "https://{{ item.key }}{{ '' if env == 'prod' else '-' + env }}.{{ skfetch.CLUSTERNAME }}.{{ skfetch.DOMAIN }}"
-          group: "{{ skfetch.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          group: "{{ skfetch.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
           icon: "{{ item.icon }}"
           icon_file: "icons/{{ item.key }}.png"
           icon_name: "{{ item.key }}"

@@ -213,7 +213,7 @@
           slug: "{{ skport.AUTHENTIK_TILE_SLUG | default(app, true) }}"
           name: "{{ skport.AUTHENTIK_TILE_NAME | default('SKPort (Portainer)', true) }}"
           launch_url: "https://skport{{ '' if env == 'prod' else '-' + env }}.{{ skport.CLUSTERNAME | default(cluster_name) }}.{{ skport.DOMAIN | default(domain) }}"
-          group: "{{ skport.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          group: "{{ skport.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
           icon: "{{ skport.AUTHENTIK_TILE_ICON | default('application-icons/portainer.png', true) }}"
           icon_file: "{{ skport.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
           icon_name: "{{ skport.AUTHENTIK_TILE_ICON_NAME | default('portainer', true) }}"

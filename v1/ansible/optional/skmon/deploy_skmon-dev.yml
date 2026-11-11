@@ -231,7 +231,7 @@
           slug: "{{ item.key }}{{ '' if env == 'prod' else '-' + env }}"
           name: "{{ item.name }}"
           launch_url: "https://{{ item.host_prefix }}{{ '' if env == 'prod' else '-' + env }}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}"
-          group: "{{ skmon.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          group: "{{ skmon.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
           icon: "{{ item.icon }}"
           icon_file: "icons/{{ item.icon_file }}"
           icon_name: "{{ item.icon_name }}"
