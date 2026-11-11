@@ -101,6 +101,14 @@ PROVIDER = file
 PROVIDER_CONFIG = /data/gitea/sessions
 COOKIE_SECURE = true
 
+[service]
+# Closed signup: Forgejo defaults DISABLE_REGISTRATION to false, and an open
+# instance collected hundreds of spam accounts (SEO links on their profiles).
+# Admins create accounts (Site Administration or `forgejo admin user create`).
+# skgit.DISABLE_REGISTRATION: false reopens self-registration.
+DISABLE_REGISTRATION = {{ (skgit.DISABLE_REGISTRATION | default(true) | bool) | lower }}
+SHOW_REGISTRATION_BUTTON = {{ (not (skgit.DISABLE_REGISTRATION | default(true) | bool)) | lower }}
+
 [lfs]
 ENABLED = {{ (skgit.LFS_ENABLED | default(true) | bool) | lower }}
 PATH = /data/lfs

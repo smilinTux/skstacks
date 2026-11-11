@@ -257,3 +257,20 @@ def test_every_env_playbook_installs_robots_txt_into_custom_public(playbook):
     assert len(copy) == 1
     assert copy[0]["copy"]["dest"] == "/var/data/{{ app }}-{{ env }}/data/gitea/public/robots.txt"
     assert copy[0]["when"] == "skgit.ROBOTS_TXT | default(true) | bool"
+
+
+# ---------------------------------------------------------------- registration
+
+
+def test_registration_is_closed_by_default():
+    """Forgejo defaults to open signup; an open instance collected spam accounts."""
+    svc = ini()["service"]
+    assert svc["DISABLE_REGISTRATION"] == "true"
+    assert svc["SHOW_REGISTRATION_BUTTON"] == "false"
+
+
+@pytest.mark.parametrize("value", [False, "false"])
+def test_registration_knob_reopens_signup(value):
+    svc = ini(DISABLE_REGISTRATION=value)["service"]
+    assert svc["DISABLE_REGISTRATION"] == "false"
+    assert svc["SHOW_REGISTRATION_BUTTON"] == "true"

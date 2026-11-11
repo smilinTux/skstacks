@@ -20,7 +20,10 @@ Each entry says what an instance must do, if anything.
   out once by this deploy). New defaults: `[git.config]` pack.threads=1, pack.windowMemory=256m,
   pack.deltaCacheSize=64m, gc.auto=0 (`skgit.GIT_CONFIG`), a robots.txt in Forgejo's custom/public
   (`skgit.ROBOTS_TXT`), healthcheck start period 60m (`skgit.HEALTH_START_PERIOD`). The
-  ACTIONS/PACKAGES/LFS/ENABLE_PUSH_CREATE_* knobs now reach app.ini. Any hand edit of the live
+  ACTIONS/PACKAGES/LFS/ENABLE_PUSH_CREATE_* knobs now reach app.ini. Self-registration is now CLOSED by default
+  (`[service] DISABLE_REGISTRATION = true`, `SHOW_REGISTRATION_BUTTON = false`, knob
+  `skgit.DISABLE_REGISTRATION`): Forgejo's default is open signup, and an open instance collected
+  spam accounts. Admins create accounts; an instance that wants open signup sets the knob to false. Any hand edit of the live
   app.ini that the template does not carry is overwritten, as before: compare first (skgit SOP §4).
 
 ## Unreleased (v2.26.20)

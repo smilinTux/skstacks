@@ -88,6 +88,13 @@ Settings the template owns besides the basics:
   `pack.deltaCacheSize = 64m`, `gc.auto = 0` bound the memory of concurrent
   repacks; Forgejo's own cron runs housekeeping.
 
+## Registration
+
+Self-registration is closed (`[service] DISABLE_REGISTRATION = true`,
+`SHOW_REGISTRATION_BUTTON = false`). Forgejo's default is open signup, which
+an internet-facing instance fills with spam accounts. An admin creates
+accounts in Site Administration or with `forgejo admin user create`.
+
 ## robots.txt
 
 The role installs `src/config/skgit/robots.txt` as
@@ -112,6 +119,7 @@ Required: `POSTGRES_PASSWORD`, `SHARED_SECRET`, `SECRET_KEY`,
 | `GIT_CONFIG` | pack limits above | dict of git config keys; a key here replaces the default |
 | `ROBOTS_TXT` | `true` | install the role's robots.txt; `false` leaves the file alone |
 | `HEALTH_START_PERIOD` | `60m` | Forgejo healthcheck start period (major upgrades migrate before answering) |
+| `DISABLE_REGISTRATION` | `true` | `[service] DISABLE_REGISTRATION` and hides the sign-up button: admins create accounts; `false` reopens self-registration |
 | `ACTIONS_ENABLED`, `PACKAGES_ENABLED`, `LFS_ENABLED` | `true` | `[actions]`, `[packages]`, `[lfs] ENABLED` |
 | `ENABLE_PUSH_CREATE_USER`, `ENABLE_PUSH_CREATE_ORG` | `true` | push-to-create |
 | `FORGEJO_VERSION` | see template | Forgejo image tag |
