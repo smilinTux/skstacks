@@ -15,6 +15,42 @@ Each entry says what an instance must do, if anything.
   `skadmin` must already exist in Authentik. Tiles already bound to `authentik Admins` are not moved
   automatically, so move them once in the admin UI or with `ak shell`.
 
+- **Renovate majors, wave 2 (data stores)**: back up each stack's data before deploying it. None of
+  these can be rolled back by repinning alone once the new major has written its data.
+  - **Postgres 18 for skgit, skmesh, sksso and skorch (server and dump sidecar; skorch: pgvector pg18
+    and postgres-backup-local 18).** 18+ images mount the data directory at `/var/lib/postgresql`
+    (PGDATA `/var/lib/postgresql/18/docker`); a pinned older image keeps `/var/lib/postgresql/data`.
+    A new shared guard (`v1/ansible/shared/tasks/postgres_major_guard.yml`) reads `PG_VERSION` and
+    refuses the deploy, changing nothing, when the data on disk is another major. **Instance action**
+    for every existing skgit, skmesh, sksso or skorch: pin `POSTGRES_IMAGE` and
+    `POSTGRES_BACKUP_IMAGE` to the 16 images to stay, or follow "Upgrading Postgres to 18" in the
+    role README (dump, move the old directory aside, deploy fresh, restore, verify). skgallery
+    (Immich's own image), skmem-pg and v2 skdata (no pg18 build yet) are not moved.
+  - **MariaDB 10.11 to 12.3.3 LTS for skhub and skbook (not 13.0, a rolling release Nextcloud 35
+    does not support).** Both env files now set `MARIADB_AUTO_UPGRADE=1`, so the first start upgrades
+    the datadir in place (the image saves a system-tables backup first). Healthchecks use
+    `mariadb-admin`. There is no downgrade: take a dump first. To stay, pin `skhub.MARIADB_IMAGE` or
+    the new `skbook.MARIADB_IMAGE`.
+  - **Redis 8.10.3 for skgallery, skorch and sksso; valkey 9.1.3 for skpeek; registry 3.1.2 for
+    skreg.** In place, no step: a newer server reads the older RDB/AOF, but the old major cannot read
+    what the new one saves. New pin knobs `skorch.REDIS_IMAGE`, `sksso.REDIS_IMAGE`, `skreg_image`
+    (skgallery `REDIS_VERSION` and skpeek `redis_image` already existed). Registry 3 drops the `oss`
+    and `swift` drivers and reads its config from `/etc/distribution/config.yml`; the skreg template
+    uses none of that.
+  - **promtail 2.9.17 to 3.6.11 (skmon).** Matches Loki 3. Promtail is end of life upstream; a move
+    to Grafana Alloy is future work.
+  - **n8n stays on 2.x** (3.x is still an upstream pre-release). Immich postgres updates are
+    disabled in Renovate (the image moves with `IMMICH_VERSION`).
+
+- **skmesh: NetBird 0.82.0 (dashboard v2.96.0), configurable `AUTHENTIK_SUB_MODE`, and the site
+  root registered as a redirect URI**: the provisioner used to force `sub_mode: user_id`, which on a
+  provider created as `hashed_user_id` turned the owner's next login into a new user without the
+  owner role. `AUTHENTIK_SUB_MODE` (default `user_id`) keeps what the instance uses; unknown values
+  fail before Authentik is touched. The dashboard's main login sends `https://<host>/` as its
+  redirect URI, so it is now in the strict list (it was dropped by every redeploy, breaking SSO
+  login). `AUTHENTIK_EXTRA_REDIRECT_URIS` adds more. **Instance action**: check the NetBird user ids
+  (64 hex characters means `hashed_user_id`) and set `AUTHENTIK_SUB_MODE` to match before deploying.
+
 ## skstacks-v2.26.19 - 2026-11-10
 
 ### Upgrade notes (instances)
