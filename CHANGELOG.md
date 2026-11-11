@@ -15,6 +15,16 @@ Each entry says what an instance must do, if anything.
   `skadmin` must already exist in Authentik. Tiles already bound to `authentik Admins` are not moved
   automatically, so move them once in the admin UI or with `ak shell`.
 
+- **skpatch-hosts: schedules, notification channels, upgrade mode and key rotation as code**:
+  the registrar run of `provision_skpatch_hosts_nodes.yml` now also converges, by name and never
+  deleting, `SCHEDULES` (or `skpatch_hosts_schedules`), `NOTIFICATIONS`, the APT `UPGRADE_MODE` per
+  system, and with `SYNC_CREDENTIAL: true` rewrites the estate credential's key (rotation, SOP §5).
+  Hosts can set `skpatch_hosts_dashboard_address`/`_port`. Nothing changes for an instance that sets
+  none of these. Armed hosts (`ALLOW_ACTIONS`) gain one sudoers line, `snap refresh`: rerun the
+  provisioning playbook to pick it up. README "Schedules and notifications as code" lists what the
+  pinned app does with schedules (serial update chains, reboots that do not wait, the Proxmox guard,
+  the Telegram poller) that an estate's schedule design has to respect.
+
 ## skstacks-v2.26.19 - 2026-11-10
 
 ### Upgrade notes (instances)
