@@ -3,7 +3,8 @@
 {%- set _host = (skgit.SUBDOMAIN_PREFIX | default('skgit')) ~ ('' if env == 'prod' else '-' ~ env) ~ '.' ~ _base_domain -%}
 {%- set _web_mw = skgit.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file', true) -%}
 {#- Crawler gate (Anubis): on unless skgit.ANUBIS_ENABLED is false. See README "Crawler gate". -#}
-{%- set _anubis = skgit.ANUBIS_ENABLED | default(true) | bool -%}
+{#- Plain Jinja on purpose (no Ansible `bool` filter): true/false or their strings. -#}
+{%- set _anubis = (skgit.ANUBIS_ENABLED | default(true) | string | lower) not in ['false', 'no', 'off', '0'] -%}
 version: '3.8'
 
 networks:
