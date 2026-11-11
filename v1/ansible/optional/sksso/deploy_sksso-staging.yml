@@ -202,6 +202,30 @@
         - templates
         - deploy
 
+    - name: sksec-web (CrowdSec Web UI) OAuth2 blueprint (sksso.SKSEC_WEB_OIDC_CLIENT_SECRET)
+      include_tasks:
+        file: tasks/sksec_web_blueprint.yml
+        apply:
+          tags:
+            - templates
+            - deploy
+      when: sksso.SKSEC_WEB_OIDC_CLIENT_SECRET | default('', true) | string | length > 0
+      tags:
+        - templates
+        - deploy
+
+    - name: skpatch-hosts (linux update dashboard) OAuth2 blueprint (sksso.SKPATCH_HOSTS_OIDC_CLIENT_SECRET)
+      include_tasks:
+        file: tasks/skpatch_hosts_blueprint.yml
+        apply:
+          tags:
+            - templates
+            - deploy
+      when: sksso.SKPATCH_HOSTS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0
+      tags:
+        - templates
+        - deploy
+
     - name: Branding pack (sksso.branding), files only
       include_tasks:
         file: tasks/branding.yml

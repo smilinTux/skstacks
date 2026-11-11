@@ -26,7 +26,7 @@
 #     slug: skpulse                      # Application slug
 #     name: "SKPulse (Uptime Kuma)"      # Application display name
 #     launch_url: "https://skpulse.example.com"
-#     group: "authentik Admins"          # must already exist in Authentik
+#     group: "skadmin"                   # must already exist in Authentik
 #     icon: "fa://fa-heart-pulse"        # optional fallback, "fa://fa-..." or an
 #                                         # already-uploaded "application-icons/<file>"
 #     icon_file: "icon.png"              # optional: a file the role ships at
@@ -59,25 +59,67 @@
 # bootstrapped once per cluster with sksso's src/sksso/ensure-api-token.sh,
 # the same token optional/skrac and optional/skmesh already use). sksso's
 # vault file is found the same way those roles find it: this app's own
-# vault filename with its `<app>-` prefix swapped for `sksso-`.
+# vault filename with its `<app>-` prefix swapped for `sksso-`. sksso is an
+# optional role, so for a core role (skfence, skfenceha) the directory is
+# also swapped from core/group_vars to optional/group_vars.
 #
 # Nothing here creates the group: a typo in `portal_tile.group`, or a
 # cluster where that group does not exist yet, fails loudly instead of
 # silently shipping a tile nobody can see.
 
+# sksso may not be deployed yet: a fresh cluster (or the release lab) brings
+# up roles that sit before sksso in the stage order. The provisioner joins
+# sksso's network to reach its API, so without that network there is no
+# portal to put a tile on. Skip with a visible warning instead of failing
+# the deploy; the tile is created on the role's next deploy after sksso is up.
+# Set portal_tile.require_sksso: true to fail instead.
+- name: "Portal tile ({{ app }}): check that sksso's network exists"
+  command:
+    argv:
+      - docker
+      - network
+      - inspect
+      - "{{ portal_tile.authentik_network | default('sksso-' ~ env) }}"
+  register: portal_tile_net
+  changed_when: false
+  failed_when: false
+  when: portal_tile.enabled | default(false) | bool
+
+- name: "Portal tile ({{ app }}): decide whether to provision"
+  set_fact:
+    portal_tile_on: >-
+      {{ (portal_tile.enabled | default(false) | bool)
+         and (portal_tile_net.rc | default(1)) == 0 }}
+
+- name: "Portal tile ({{ app }}): skip, sksso is not deployed on this cluster yet"
+  debug:
+    msg: >-
+      WARNING: network {{ portal_tile.authentik_network | default('sksso-' ~ env) }}
+      not found, so sksso is not deployed yet. Skipping the {{ portal_tile.slug | default(app) }}
+      portal tile; redeploy {{ app }} after sksso to create it.
+  when: (portal_tile.enabled | default(false) | bool) and not (portal_tile_on | bool)
+
+- name: "Portal tile ({{ app }}): fail, sksso is required here"
+  fail:
+    msg: "portal_tile.require_sksso is set but sksso's network is missing"
+  when: >-
+    (portal_tile.enabled | default(false) | bool) and not (portal_tile_on | bool)
+    and (portal_tile.require_sksso | default(false) | bool)
+
 - name: "Portal tile ({{ app }}): locate sksso's vault (holds sksso.api_token)"
   set_fact:
     portal_tile_sksso_vault_file: >-
-      {{ portal_tile.authentik_vault_file | default((vault_file_path | dirname) ~ '/'
+      {{ portal_tile.authentik_vault_file | default((vault_file_path
+         | replace('/core/group_vars/', '/optional/group_vars/') | dirname) ~ '/'
          ~ (vault_file_path | basename | regex_replace('^' ~ app ~ '-', 'sksso-'))) }}
-  when: portal_tile.enabled | default(false) | bool
+  when: portal_tile_on | default(false) | bool
 
 - name: "Portal tile ({{ app }}): load sksso's vault"
   include_vars:
     file: "{{ portal_tile_sksso_vault_file }}"
     name: portal_tile_sksso_vault
   no_log: true
-  when: portal_tile.enabled | default(false) | bool
+  when: portal_tile_on | default(false) | bool
 
 - name: "Portal tile ({{ app }}): check the Authentik automation token is present"
   assert:
@@ -88,7 +130,7 @@
       Generate it (openssl rand -hex 32), add it to sksso's vault, and register it in
       Authentik once with sksso's src/sksso/ensure-api-token.sh (see the sksso README).
     quiet: true
-  when: portal_tile.enabled | default(false) | bool
+  when: portal_tile_on | default(false) | bool
 
 - name: "Portal tile ({{ app }}): check whether the role ships an icon file"
   stat:
@@ -96,7 +138,7 @@
   register: portal_tile_icon_stat
   delegate_to: localhost
   become: false
-  when: (portal_tile.enabled | default(false) | bool) and (portal_tile.icon_file | default('') | length > 0)
+  when: (portal_tile_on | default(false) | bool) and (portal_tile.icon_file | default('') | length > 0)
 
 - name: "Portal tile ({{ app }}): ensure sksso's uploaded-icons directory exists"
   file:
@@ -105,7 +147,7 @@
     owner: '1000'
     group: '1000'
     mode: '0755'
-  when: (portal_tile.enabled | default(false) | bool) and (portal_tile_icon_stat.stat.exists | default(false))
+  when: (portal_tile_on | default(false) | bool) and (portal_tile_icon_stat.stat.exists | default(false))
 
 - name: "Portal tile ({{ app }}): copy the role's icon file into sksso's media"
   # Authentik 2025.12+ has no API endpoint to set an icon from a URL/upload
@@ -119,7 +161,7 @@
     owner: '1000'
     group: '1000'
     mode: '0644'
-  when: (portal_tile.enabled | default(false) | bool) and (portal_tile_icon_stat.stat.exists | default(false))
+  when: (portal_tile_on | default(false) | bool) and (portal_tile_icon_stat.stat.exists | default(false))
 
 - name: "Portal tile ({{ app }}): resolve the icon (an uploaded file wins over the fa:// fallback)"
   set_fact:
@@ -128,7 +170,7 @@
           ((portal_tile.icon_file | default('', true) | regex_search('(\.[A-Za-z0-9]+)$')) | default('.png', true)))
          if (portal_tile_icon_stat.stat.exists | default(false))
          else (portal_tile.icon | default('')) }}
-  when: portal_tile.enabled | default(false) | bool
+  when: portal_tile_on | default(false) | bool
 
 - name: "Portal tile ({{ app }}): build the provisioner input"
   set_fact:
@@ -139,13 +181,13 @@
       slug: "{{ portal_tile.slug }}"
       name: "{{ portal_tile.name }}"
       launch_url: "{{ portal_tile.launch_url }}"
-      group: "{{ portal_tile.group | default('authentik Admins') }}"
+      group: "{{ portal_tile.group | default('skadmin') }}"
       icon: "{{ portal_tile_resolved_icon | default('') }}"
       open_in_new_tab: "{{ portal_tile.open_in_new_tab | default(true) | bool }}"
       description: "{{ portal_tile.description | default('') }}"
       category: "{{ portal_tile.category | default('') }}"
   no_log: true
-  when: portal_tile.enabled | default(false) | bool
+  when: portal_tile_on | default(false) | bool
 
 - name: "Portal tile ({{ app }}): stage the provisioner"
   copy:
@@ -154,7 +196,7 @@
     owner: root
     group: root
     mode: '0644'
-  when: portal_tile.enabled | default(false) | bool
+  when: portal_tile_on | default(false) | bool
 
 - name: "Portal tile ({{ app }}): create or update the Application and its group binding"
   command:
@@ -175,16 +217,16 @@
   changed_when: "'created' in portal_tile_provision.stdout or 'updated (' in portal_tile_provision.stdout"
   failed_when: false
   no_log: true
-  when: portal_tile.enabled | default(false) | bool
+  when: portal_tile_on | default(false) | bool
 
 # The provisioner prints status lines only (never a secret), so its output
 # is safe to show; the task above is no_log because its stdin is secret.
 - name: "Portal tile ({{ app }}): show the provisioner result"
   debug:
     msg: "{{ (portal_tile_provision.stdout_lines | default([])) + (portal_tile_provision.stderr_lines | default([])) }}"
-  when: portal_tile.enabled | default(false) | bool
+  when: portal_tile_on | default(false) | bool
 
 - name: "Portal tile ({{ app }}): fail if provisioning failed"
   fail:
     msg: "Authentik portal tile provisioning failed (rc={{ portal_tile_provision.rc | default('?') }}), see the lines above"
-  when: (portal_tile.enabled | default(false) | bool) and (portal_tile_provision.rc | default(1)) != 0
+  when: (portal_tile_on | default(false) | bool) and (portal_tile_provision.rc | default(1)) != 0

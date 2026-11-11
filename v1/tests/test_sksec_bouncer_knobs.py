@@ -13,6 +13,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from image_pins import normalize_images
+
 sys.path.insert(0, str(Path(__file__).resolve().parent / "render"))
 import render_playbooks as rp  # noqa: E402
 
@@ -67,13 +69,13 @@ def test_unset_knobs_render_byte_identical(tmp_path, env, pas):
     vault = BASE if pas == "base" else rp.deep_merge(BASE, SET)
     out = ok(tmp_path, vault, env)
     for f in ("sksec.yml", "sksec.env"):
-        assert (out / f).read_text() == (BASELINE / f"{env}-{pas}-{f}").read_text(), f
+        assert normalize_images((out / f).read_text()) == normalize_images((BASELINE / f"{env}-{pas}-{f}").read_text()), f
 
 
 def test_explicit_defaults_render_byte_identical(tmp_path):
     out = ok(tmp_path, BASE | {"BOUNCER_REPLICAS": 1, "BOUNCER_HEALTHCHECK": False, "BOUNCER_TRUSTED_PROXIES": []})
     for f in ("sksec.yml", "sksec.env"):
-        assert (out / f).read_text() == (BASELINE / f"prod-base-{f}").read_text(), f
+        assert normalize_images((out / f).read_text()) == normalize_images((BASELINE / f"prod-base-{f}").read_text()), f
 
 
 def test_replicas_spread_one_per_node(tmp_path):

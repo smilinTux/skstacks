@@ -21,7 +21,7 @@ flowchart TB
     S4[garage_s3_secret_key]
   end
   subgraph swarm["Swarm: ${ENV}"]
-    G["garage (dxflrs/garage:v1.0.1)<br/>ports 3900, 3903<br/>vol garage-meta, garage-data"]
+    G["garage (dxflrs/garage:v2.5.0)<br/>ports 3900, 3903<br/>vol garage-meta, garage-data"]
   end
   subgraph k8s["K8s: ESO"]
     ES[ExternalSecret v1] --> SEC[Secret] -->|envFrom UPPERCASE| G2["Deployment garage<br/>replicas 3, 1/node"]

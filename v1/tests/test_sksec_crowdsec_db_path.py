@@ -81,12 +81,16 @@ def test_data_node_pins_crowdsec_only():
         assert "node.hostname == node-db" not in constraints(s[name]), name
 
 
-def test_data_node_and_ha_mode_combine():
+def test_data_node_wins_over_ha_mode_acme_master():
+    """DATA_NODE is the single source of truth once a local LAPI db
+    exists: the acme-master label is NOT also ANDed in. skfenceha's
+    manager selection is an ordered failover pick, not guaranteed to land
+    on any fixed hostname, so combining both made the service permanently
+    unschedulable the moment they disagreed (skstack06 lab, 2026-10-25),
+    with no self-heal -- see lapi_allowlist.yml's "no suitable node" guard
+    for the deploy-time assert that now catches this instead of hanging."""
     s = services(traefik_service_name="skfenceha", TRAEFIK_HA_MODE=True, **LOCAL)
-    assert constraints(s["crowdsec"]) == [
-        "node.labels.traefik.acme.master == true",
-        "node.hostname == node-db",
-    ]
+    assert constraints(s["crowdsec"]) == ["node.hostname == node-db"]
 
 
 def test_custom_path_renders_and_nfs_path_is_absent():
@@ -143,3 +147,26 @@ def test_wal_include_is_gated_on_data_node(env="prod"):
     e = _env()
     assert e.compile_expression(hits[0]["when"])(**_vars(env)) is False
     assert e.compile_expression(hits[0]["when"])(**_vars(env, DATA_NODE="node-db")) is True
+
+
+# ---- update order (coord card ef917e74) -----------------------------------------
+
+@pytest.mark.parametrize("env", ("dev", "staging", "prod"))
+@pytest.mark.parametrize("over", ({}, LOCAL), ids=("nfs-db", "local-db"))
+def test_crowdsec_updates_stop_first(env, over):
+    """One replica, one SQLite LAPI db: start-first would run two writers and
+    can strand the update at 2/1 on a node with no spare reservation."""
+    svc = services(env, **over)["crowdsec"]
+    assert svc["deploy"]["replicas"] == 1
+    assert svc["deploy"]["update_config"]["order"] == "stop-first"
+
+
+@pytest.mark.parametrize("env", ("dev", "staging", "prod"))
+def test_bouncer_keeps_start_first(env):
+    """The bouncer is stateless; start-first keeps the edge answering."""
+    assert services(env)["bouncer-traefik"]["deploy"]["update_config"]["order"] == "start-first"
+
+
+def test_stop_first_note_is_not_rendered():
+    """The reason lives in a Jinja comment, so the render diff is one line."""
+    assert "ef917e74" not in _env().from_string(T.read_text()).render(**_vars())

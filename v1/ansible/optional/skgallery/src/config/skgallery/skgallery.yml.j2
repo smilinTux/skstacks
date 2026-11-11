@@ -14,6 +14,14 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 {%- set _base_domain = (skgallery.CLUSTERNAME | default(cluster_name)) ~ '.' ~ (skgallery.DOMAIN | default(domain)) -%}
+{%- set _split = (skgallery.SPLIT_WORKERS | default(false) | string | lower) in ['true', 'yes', '1', 'on'] -%}
+{%- set _lb_hc = (skgallery.TRAEFIK_HEALTHCHECK | default(true) | string | lower) not in ['false', 'no', '0', 'off'] -%}
+{#- Postgres + redis on local disk on DATA_NODE (see the playbook guard): an NFS
+    write stall on the shared /var/data froze the database and the job queue
+    with it. Unset: the previous NFS paths, no node pin. -#}
+{%- set _data_node = skgallery.DATA_NODE | default('', true) | string -%}
+{%- set _db_path = skgallery.DB_DATA_PATH | default('/var/data/skgallery-' ~ env ~ '/db-data', true) | string -%}
+{%- set _redis_path = skgallery.REDIS_DATA_PATH | default('/var/data/skgallery-' ~ env ~ '/redis-data', true) | string -%}
 version: '3.8'
 
 # =============================================================================
@@ -40,6 +48,13 @@ services:
   immich-server:
     image: ghcr.io/immich-app/immich-server:{{ skgallery.IMMICH_VERSION | default('v2.7.5') }}
     env_file: /var/data/config/skgallery-{{ env }}/skgallery.env
+{% if _split %}
+    # SPLIT_WORKERS: this service runs only the API (uploads, web, mobile).
+    # Transcoding, thumbnails and the other jobs run in immich-microservices,
+    # so a video encode can no longer starve uploads and the health check.
+    environment:
+      - IMMICH_WORKERS_INCLUDE=api
+{% endif %}
     volumes:
       # === DIRECT BIND MOUNTS (NO NAMED VOLUMES) ===
       - /var/data/skgallery-{{ env }}/upload:/usr/src/app/upload
@@ -107,13 +122,77 @@ services:
         - "traefik.http.services.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=2283"
 
         # === TRAEFIK: Health Check ===
+        # TRAEFIK_HEALTHCHECK: false drops it. With one immich-server replica a failed
+        # probe has no other backend to fail over to: a short stall of the API (slow
+        # storage, a long GC) turns into instant 503s for every client instead of
+        # requests that wait it out. Swarm's container healthcheck still restarts a
+        # dead task.
+{% if _lb_hc %}
         - "traefik.http.services.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.healthcheck.path=/api/server/ping"
         - "traefik.http.services.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.healthcheck.interval=30s"
         - "traefik.http.services.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.healthcheck.timeout=10s"
     depends_on:
       - redis
       - database
+{% endif %}
 
+{% if _split %}
+  # ===========================================================================
+  # Immich Microservices - background jobs (SPLIT_WORKERS only)
+  # ===========================================================================
+  # Same image and storage as immich-server, every worker except the API:
+  # video transcoding, thumbnails, metadata, ML job dispatch. It holds its own
+  # CPU and memory limits, so heavy jobs stay out of the API's cgroup. No
+  # Traefik labels: it serves no HTTP. The image's built-in healthcheck probes
+  # the API port, which this worker does not open, so it is disabled.
+  immich-microservices:
+    image: ghcr.io/immich-app/immich-server:{{ skgallery.IMMICH_VERSION | default('v2.7.5') }}
+    env_file: /var/data/config/skgallery-{{ env }}/skgallery.env
+    environment:
+      - IMMICH_WORKERS_EXCLUDE=api
+    volumes:
+      - /var/data/skgallery-{{ env }}/upload:/usr/src/app/upload
+      - /var/data/skgallery-{{ env }}/thumbs:/usr/src/app/upload/thumbs
+      - /var/data/skgallery-{{ env }}/profile:/usr/src/app/upload/profile
+      - /etc/localtime:/etc/localtime:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "{{ skgallery.LOG_MAX_SIZE | default('10m') }}"
+        max-file: "{{ skgallery.LOG_MAX_FILES | default('5') }}"
+    networks:
+      - skgallery-{{ env }}
+    healthcheck:
+      disable: true
+    deploy:
+      mode: replicated
+      replicas: {{ skgallery.MICROSERVICES_REPLICAS | default(1) }}
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: any
+        delay: 10s
+      placement:
+        constraints:
+          - node.role == worker
+      resources:
+        limits:
+          cpus: '{{ skgallery.MICROSERVICES_CPU_LIMIT | default("4.0") }}'
+          memory: {{ skgallery.MICROSERVICES_MEMORY_LIMIT | default("4G") }}
+        reservations:
+          cpus: '{{ skgallery.MICROSERVICES_CPU_RESERVATION | default("0.5") }}'
+          memory: {{ skgallery.MICROSERVICES_MEMORY_RESERVATION | default("1G") }}
+    depends_on:
+      - redis
+      - database
+
+{% endif %}
   # ===========================================================================
   # Immich Machine Learning - AI/ML Processing
   # ===========================================================================
@@ -166,10 +245,10 @@ services:
   # Redis - In-memory Cache and Message Queue
   # ===========================================================================
   redis:
-    image: redis:{{ skgallery.REDIS_VERSION | default('7.4.9-alpine') }}
+    image: redis:{{ skgallery.REDIS_VERSION | default('7.4.12-alpine') }}
     command: redis-server --appendonly yes --maxmemory {{ skgallery.REDIS_MAXMEMORY | default('128mb') }} --maxmemory-policy noeviction
     volumes:
-      - /var/data/skgallery-{{ env }}/redis-data:/data
+      - {{ _redis_path }}:/data
     logging:
       driver: json-file
       options:
@@ -196,6 +275,9 @@ services:
       placement:
         constraints:
           - node.role == worker
+{% if _data_node %}
+          - node.hostname == {{ _data_node }}
+{% endif %}
       resources:
         limits:
           cpus: '{{ skgallery.REDIS_CPU_LIMIT | default("0.5") }}'
@@ -216,7 +298,7 @@ services:
     shm_size: {{ skgallery.DB_SHM_SIZE | default('128mb') }}
     volumes:
       # === DIRECT BIND MOUNT ===
-      - /var/data/skgallery-{{ env }}/db-data:/var/lib/postgresql/data
+      - {{ _db_path }}:/var/lib/postgresql/data
       - /etc/localtime:/etc/localtime:ro
     logging:
       driver: json-file
@@ -244,6 +326,9 @@ services:
       placement:
         constraints:
           - node.role == worker
+{% if _data_node %}
+          - node.hostname == {{ _data_node }}
+{% endif %}
       resources:
         limits:
           cpus: '{{ skgallery.DB_CPU_LIMIT | default("2.0") }}'
@@ -257,7 +342,7 @@ services:
   # ===========================================================================
   # Automated daily backups with retention policy
   postgres-db-backup:
-    image: postgres:{{ skgallery.POSTGRES_BACKUP_VERSION | default('14.23@sha256:a209aced4fa19381231fae4d9a4c5816f7691294f13572f8bddc082ba32e1c7c') }}
+    image: postgres:{{ skgallery.POSTGRES_BACKUP_VERSION | default('14.24@sha256:834a046089d76edd1d2e81c4741f3ad5d1853646ededc86c2708936aad31c1ed') }}
     env_file: /var/data/config/skgallery-{{ env }}/skgallery-backup.env
     environment:
       - PGTEMP=/dump/tmp

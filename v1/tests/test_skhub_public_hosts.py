@@ -50,7 +50,7 @@ V2_26_2 = {
     "richdocuments wopi_url":
         'docker exec "$CONTAINER_ID" php occ config:app:set richdocuments wopi_url --value="https://collabora.{{ skhub.CLUSTERNAME }}.{{ skhub.DOMAIN }}" 2>&1 || true',
     "spreed signaling_servers":
-        'docker exec "$CONTAINER_ID" php occ config:app:set spreed signaling_servers --value=\'{"servers":[{"server":"https://skhub.{{ skhub.CLUSTERNAME }}.{{ skhub.DOMAIN }}/standalone-signaling/","verify":true}],"secret":"{{ skhub.signaling_secret }}"}\' 2>&1 || true',
+        'docker exec "$CONTAINER_ID" php occ config:app:set spreed signaling_servers --value=\'{"servers":[{"server":"https://skhub.{{ skhub.CLUSTERNAME }}.{{ skhub.DOMAIN }}/standalone-signaling/","verify":true}],"secret":"{{ skhub.signaling_secret }}"}\' 2>&1',
 }
 SKHUB_LINES = ("notify_push:setup", "notify_push base_endpoint", "whiteboard collabBackendUrl",
                "spreed signaling_servers")
@@ -97,7 +97,7 @@ def _lines(pb, **over):
             continue
         for line in _env().from_string(body).render(**ctx).splitlines():
             for marker in V2_26_2:
-                if marker in line:
+                if marker in line and "config:app:get" not in line:
                     assert marker not in found, (pb.name, marker)
                     found[marker] = line
     assert set(found) == set(V2_26_2), (pb.name, set(V2_26_2) - set(found))

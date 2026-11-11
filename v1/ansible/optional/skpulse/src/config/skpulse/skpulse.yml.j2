@@ -43,7 +43,7 @@ version: '3.8'
 
 services:
   skpulse:
-    image: {{ skpulse_image | default('louislam/uptime-kuma:2.5.5') }}
+    image: {{ skpulse_image | default('louislam/uptime-kuma:2.5.9') }}
     env_file:
       - /var/data/config/skpulse-{{ env }}/skpulse.env
 

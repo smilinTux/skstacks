@@ -389,7 +389,7 @@
           slug: "{{ skpayment.AUTHENTIK_TILE_SLUG | default(app, true) }}"
           name: "{{ skpayment.AUTHENTIK_TILE_NAME | default('SKPayment', true) }}"
           launch_url: "https://{{ skp_host }}"
-          group: "{{ skpayment.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          group: "{{ skpayment.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
           icon: "{{ skpayment.AUTHENTIK_TILE_ICON | default('fa://fa-credit-card', true) }}"
           open_in_new_tab: "{{ skpayment.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
           description: "{{ skpayment.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"

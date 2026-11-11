@@ -3,8 +3,11 @@ version: '3.8'
 # skflow: Windmill, the cluster's shared workflow engine (README.md).
 # `server` serves the UI and the API on 8000 behind Traefik; `worker` runs
 # jobs (replicas from WORKER_REPLICAS); `worker-native` (opt-in,
-# NATIVE_WORKER_REPLICAS) runs only lightweight native jobs. All of them
-# read one env_file (DATABASE_URL etc.); only MODE/WORKER_GROUP differ.
+# NATIVE_WORKER_REPLICAS) runs only lightweight native jobs; each entry in
+# TAGGED_WORKERS (opt-in) adds `worker-<name>` pinned to WORKER_TAGS, so a
+# slow or bursty script can have its own pool without starving the shared
+# workers. All of them read one env_file (DATABASE_URL etc.); only
+# MODE/WORKER_GROUP/WORKER_TAGS differ.
 # With no external DATABASE_URL the stack runs its own Postgres and a
 # `postgres-db-backup` sidecar writing pg_dumpall archives for skbackup.
 # Tenants (document pipelines, agents) are separate stacks that call the
@@ -32,7 +35,7 @@ networks:
 services:
   server:
     # Default = sf_default_image in the playbook (a test keeps them equal).
-    image: {{ skflow.WINDMILL_IMAGE | default('ghcr.io/windmill-labs/windmill:1.837.0@sha256:661aa3e338be081812ef301a2be8defc50bd9d3c4dde89f8cd53a763e6452a74', true) }}
+    image: {{ skflow.WINDMILL_IMAGE | default('ghcr.io/windmill-labs/windmill:1.847.0@sha256:67ab003cfe395d7634d7fc0eada917fc894859bbc21fea487eee76760319d86f', true) }}
     env_file: /var/data/config/skflow-{{ env }}/skflow.env
     environment:
       - MODE=server
@@ -122,7 +125,7 @@ services:
         - "traefik.http.services.{{ sf_router }}.loadbalancer.healthcheck.timeout=10s"
 
   worker:
-    image: {{ skflow.WINDMILL_IMAGE | default('ghcr.io/windmill-labs/windmill:1.837.0@sha256:661aa3e338be081812ef301a2be8defc50bd9d3c4dde89f8cd53a763e6452a74', true) }}
+    image: {{ skflow.WINDMILL_IMAGE | default('ghcr.io/windmill-labs/windmill:1.847.0@sha256:67ab003cfe395d7634d7fc0eada917fc894859bbc21fea487eee76760319d86f', true) }}
     env_file: /var/data/config/skflow-{{ env }}/skflow.env
     environment:
       - MODE=worker
@@ -157,7 +160,7 @@ services:
 {% if (skflow.NATIVE_WORKER_REPLICAS | default(0, true) | int) > 0 %}
 
   worker-native:
-    image: {{ skflow.WINDMILL_IMAGE | default('ghcr.io/windmill-labs/windmill:1.837.0@sha256:661aa3e338be081812ef301a2be8defc50bd9d3c4dde89f8cd53a763e6452a74', true) }}
+    image: {{ skflow.WINDMILL_IMAGE | default('ghcr.io/windmill-labs/windmill:1.847.0@sha256:67ab003cfe395d7634d7fc0eada917fc894859bbc21fea487eee76760319d86f', true) }}
     env_file: /var/data/config/skflow-{{ env }}/skflow.env
     environment:
       - MODE=worker
@@ -190,6 +193,44 @@ services:
         - "com.skt.app=skflow"
         - "com.skt.env={{ env }}"
 {% endif %}
+{% for tw in (skflow.TAGGED_WORKERS | default([], true)) %}
+
+  worker-{{ tw.name }}:
+    image: {{ skflow.WINDMILL_IMAGE | default('ghcr.io/windmill-labs/windmill:1.847.0@sha256:67ab003cfe395d7634d7fc0eada917fc894859bbc21fea487eee76760319d86f', true) }}
+    env_file: /var/data/config/skflow-{{ env }}/skflow.env
+    environment:
+      - MODE=worker
+      - WORKER_GROUP={{ tw.group | default('default', true) }}
+      - WORKER_TAGS={{ tw.tags }}
+    volumes:
+      - /var/data/runtime/skflow-{{ env }}/worker-cache:/tmp/windmill/cache
+      - /var/data/runtime/skflow-{{ env }}/logs:/tmp/windmill/logs
+    networks:
+      - skflow-{{ env }}
+    logging: *logging
+    deploy:
+      mode: replicated
+      replicas: {{ tw.replicas | default(1, true) | int }}
+      placement:
+        constraints: {{ app_constraints | tojson }}
+      resources:
+        limits:
+          cpus: '{{ tw.cpus | default(skflow.WORKER_CPUS | default("2.00", true), true) }}'
+          memory: {{ tw.memory_limit | default(skflow.WORKER_MEMORY_LIMIT | default("2048M", true), true) }}
+        reservations:
+          memory: {{ tw.memory_reservation | default(skflow.WORKER_MEMORY_RESERVATION | default("256M", true), true) }}
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skflow"
+        - "com.skt.env={{ env }}"
+        - "com.skt.worker-tags={{ tw.tags }}"
+{% endfor %}
 {% if own_db %}
 
   postgres:

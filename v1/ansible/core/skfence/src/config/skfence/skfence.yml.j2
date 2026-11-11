@@ -162,8 +162,13 @@ services:
       - cloud-public-{{ env }}
 
   traefik-certs-dumper:
-    # v2.10.0 with --version v3 supports Traefik v3's acme.json layout.
-    image: ldez/traefik-certs-dumper:v2.10.0
+    # --version v3 supports Traefik v3's acme.json layout. v2.10.0 panics
+    # ("unsupported key type: ''") on acme.json written by Traefik 3.7+
+    # (the account KeyType field was dropped); fixed in v2.11.4. Pin a
+    # digest here (skfence.DUMPER_IMAGE) to stage a tactical version ahead
+    # of or instead of a full framework release, same convention as
+    # TRAEFIK_IMAGE.
+    image: {{ skfence.DUMPER_IMAGE | default("ldez/traefik-certs-dumper:v2.11.4@sha256:a34b27edf8e5e96a215035a6bfba00d769d2638f8444a5dd6dc27299d75f43c5", true) }}
     command:
       - file
       - --version

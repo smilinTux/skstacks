@@ -37,6 +37,8 @@
 # Security features beyond skfence:
 #   - skfenceha.DASHBOARD_AUTH_HASH: pre-hashed (htpasswd -nbB) dashboard
 #     basic-auth credential. Generate with src/skfenceha/create_user_password.sh.
+#   - skfenceha.DASHBOARD_SSO_MIDDLEWARE: e.g. authentik@file; replaces basic auth.
+#     Neither set: the dashboard is LAN-only (DASHBOARD_FALLBACK_ALLOW_CIDRS).
 #   - skfenceha.WHITELIST_IPS: list of CIDRs/IPs, empty by default. When
 #     non-empty, an ipAllowList middleware is added to the default chain.
 #   - skfenceha.CROWDSEC_ENABLED: opt-in reference to an externally deployed
@@ -270,6 +272,14 @@
         group: root
         mode: '0755'
 
+    - name: Deploy traefik-certs-watch sidecar script
+      copy:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/certs-watch.sh"
+        dest: "/var/data/config/{{ app }}-{{ env }}/certs-watch.sh"
+        owner: root
+        group: root
+        mode: '0755'
+
     - name: Deploy dynamic config (routers, services, middlewares, TLS options) to both the worker and ACME-master directories
       template:
         src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.1.src }}"
@@ -308,6 +318,7 @@
           - middlewares.yml
           - tls.yml
           - sksec.yml
+          - certs-generated.yml
       tags:
         - config
         - dynamic
@@ -406,7 +417,7 @@
           slug: "{{ skfenceha.AUTHENTIK_TILE_SLUG | default(app, true) }}"
           name: "{{ skfenceha.AUTHENTIK_TILE_NAME | default('SKFenceHA (Traefik Dashboard)', true) }}"
           launch_url: "https://{{ skfenceha.DASHBOARD_HOST | default('skfenceha' + ('-' + env if env != 'prod' else '') + '.' + (skfenceha.CLUSTERNAME | default(cluster_name)) + '.' + (skfenceha.DOMAIN | default(domain))) }}/dashboard/"
-          group: "{{ skfenceha.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          group: "{{ skfenceha.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
           icon: "{{ skfenceha.AUTHENTIK_TILE_ICON | default('fa://fa-route', true) }}"
           icon_file: "{{ skfenceha.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
           icon_name: "{{ skfenceha.AUTHENTIK_TILE_ICON_NAME | default('traefik', true) }}"

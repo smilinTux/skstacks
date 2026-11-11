@@ -106,3 +106,48 @@
       above. HTTP 403 on a new cluster: register sksso.api_token with src/sksso/ensure-api-token.sh,
       then deploy again.
   when: (sksso_capauth_provision.rc | default(1)) != 0
+
+# Authentik 2026.2+: the provisioner leaves the user links to us (the API can
+# no longer create a source connection for a given user). Link them with
+# capauth_link_users.py under `ak shell` in a running worker container, on
+# whichever node swarm placed it (inventory hostnames are swarm node names,
+# the same assumption core/skha makes).
+- name: Find the node running this stack's Authentik worker (user links)
+  command:
+    argv: [docker, service, ps, --filter, desired-state=running, --format, "{{ '{{' }}.Node{{ '}}' }}", "{{ app }}-{{ env }}_worker"]
+  register: sksso_capauth_worker_node
+  changed_when: false
+  when: "'user links: via ak shell' in (sksso_capauth_provision.stdout | default(''))"
+
+- name: Stage the CapAuth user linker on the worker's node
+  copy:
+    src: "{{ playbook_dir }}/src/{{ app }}/capauth_link_users.py"
+    dest: "/var/data/config/{{ app }}-{{ env }}/capauth_link_users.py"
+    owner: root
+    group: root
+    mode: '0644'
+  delegate_to: "{{ sksso_capauth_worker_node.stdout_lines | first }}"
+  when: "'user links: via ak shell' in (sksso_capauth_provision.stdout | default(''))"
+
+- name: Link the CapAuth users to their PGP fingerprints (ak shell)
+  shell: |
+    set -euo pipefail
+    c=$(docker ps -q --filter "name={{ app }}-{{ env }}_worker" | head -n1)
+    [ -n "$c" ] || { echo "no {{ app }}-{{ env }}_worker container on this node" >&2; exit 2; }
+    docker exec -i -e SKSSO_CAPAUTH_LINKS="$SKSSO_CAPAUTH_LINKS" "$c" ak shell \
+      < /var/data/config/{{ app }}-{{ env }}/capauth_link_users.py 2>&1 \
+      | grep -E '^(link |links: |users: |Traceback|[A-Za-z.]*(Error|Exit))' || true
+  args:
+    executable: /bin/bash
+  environment:
+    SKSSO_CAPAUTH_LINKS: "{{ {'source_slug': sksso_capauth_input.source_slug, 'users': sksso_capauth_input.users} | to_json }}"
+  register: sksso_capauth_links
+  changed_when: "': created' in sksso_capauth_links.stdout or ': updated (' in sksso_capauth_links.stdout"
+  failed_when: "'links: ok' not in sksso_capauth_links.stdout"
+  delegate_to: "{{ sksso_capauth_worker_node.stdout_lines | first }}"
+  when: "'user links: via ak shell' in (sksso_capauth_provision.stdout | default(''))"
+
+- name: Show the CapAuth user links
+  debug:
+    msg: "{{ sksso_capauth_links.stdout_lines | default([]) }}"
+  when: sksso_capauth_links is defined and sksso_capauth_links.stdout_lines is defined

@@ -119,16 +119,29 @@ entryPoints:
       middlewares:
         - drop-forwarded-headers@file
 {% endif %}
-{% if skfenceha.WORKER_RESPONDING_TIMEOUTS | default({}) %}
+{% if (skfenceha.WORKER_RESPONDING_TIMEOUTS | default({})) or (skfenceha.WORKER_LIFECYCLE | default({})) %}
     # skfenceha.WORKER_RESPONDING_TIMEOUTS instance var (map, rendered
     # verbatim). Long read/write timeouts keep multi-GB uploads/downloads
-    # (e.g. skhub/Nextcloud chunk assembly) from being cut off. Unset: no
-    # transport block (Traefik's own defaults).
+    # (e.g. skhub/Nextcloud chunk assembly) from being cut off.
+    # skfenceha.WORKER_LIFECYCLE instance var (map, rendered verbatim as
+    # lifeCycle, e.g. {graceTimeOut: 30s}): how long a stopping worker keeps
+    # serving in-flight requests. Traefik's default (10s) equals Docker's
+    # default stop grace, so a rolling restart SIGKILLed the worker mid-drain
+    # and cut every long request (TRAEFIK_WORKER_STOP_GRACE must stay longer).
+    # Unset (both): no transport block (Traefik's own defaults).
     transport:
+{% if skfenceha.WORKER_RESPONDING_TIMEOUTS | default({}) %}
       respondingTimeouts:
 {% for _timeout_name, _timeout_value in skfenceha.WORKER_RESPONDING_TIMEOUTS.items() %}
         {{ _timeout_name }}: {{ _timeout_value }}
 {% endfor %}
+{% endif %}
+{% if skfenceha.WORKER_LIFECYCLE | default({}) %}
+      lifeCycle:
+{% for _lc_name, _lc_value in skfenceha.WORKER_LIFECYCLE.items() %}
+        {{ _lc_name }}: {{ _lc_value }}
+{% endfor %}
+{% endif %}
 {% endif %}
   # TCP passthrough entrypoint for git-over-SSH style services behind this
   # edge (e.g. traefik.tcp labels routing to a git service's SSH port). Port

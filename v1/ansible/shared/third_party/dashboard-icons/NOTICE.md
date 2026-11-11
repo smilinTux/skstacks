@@ -48,7 +48,7 @@ These PNGs are taken as-is from the `png/` directory of:
 
 Not included (no checked entry in the upstream catalog for this exact
 service, or it already renders fine with a Font Awesome glyph): skboard,
-skdash, skgym, skhome, skmail, skpatch, skpayment, sksec-web, skseek,
+skdash, skgym, skhome, skmail, skpatch-hosts, skpayment, sksec-web, skseek,
 skwhoami. Those roles keep their `fa://fa-...` fallback icon; a real logo
 for any of them can be added the same way later if the project adds one.
 

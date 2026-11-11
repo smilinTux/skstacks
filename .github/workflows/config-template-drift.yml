@@ -58,6 +58,12 @@ on:
       - 'v1/ansible/optional/skbook/**'
       - '.github/workflows/config-template-drift.yml'
 
+concurrency:
+  # One run per workflow per PR (or ref): a new push to a PR cancels the
+  # superseded run; pushes to main queue instead of cancelling.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
@@ -65,8 +71,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: '3.12' }
       - run: pip install pytest pyyaml ansible-core
       - run: python -m pytest -q scripts/tests/test_config_template_tooling.py
@@ -74,8 +80,8 @@ jobs:
   drift:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: '3.12' }
       - run: pip install ansible-core
       - name: Generate template contents from this checkout
@@ -123,7 +129,7 @@ jobs:
   scrub:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Scrub-check templates/config-repo for real fleet identifiers
         run: scripts/scrub-check.sh templates/config-repo
 
@@ -131,8 +137,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: '3.12' }
       - run: pip install 'ansible-core==2.21.3' pyyaml jsonschema pytest
       - run: python v1/tests/render/render_playbooks.py --service skbook --env prod --pass base

@@ -101,7 +101,7 @@ def test_default_service_image_and_single_app_replica(base_out):
     assert app["deploy"]["placement"]["constraints"] == ["node.role == worker"]
     assert app["volumes"] == ["/var/data/sksec-web-prod/data:/app/data"]
     assert app["networks"] == ["sksec-prod", "cloud-public-prod"]
-    assert app["healthcheck"]["test"] == ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+    assert app["healthcheck"]["test"] == ["CMD", "/usr/local/bin/node", "-e", "require('http').get('http://127.0.0.1:3000/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
     assert (app["healthcheck"]["interval"], app["healthcheck"]["timeout"], app["healthcheck"]["retries"],
             app["healthcheck"]["start_period"]) == ("30s", "5s", 3, "15s")
 
@@ -132,6 +132,93 @@ def test_auth_mode_local_with_risk_flag_is_no_sso_middleware(tmp_path):
     out = ok(tmp_path, BASE | {"AUTH_MODE": "local", "ALLOW_LOCAL_PUBLIC_RISK": True})
     lab = labels(compose(out)["services"]["app"])
     assert lab["traefik.http.routers.sksec-web.middlewares"] == "default-no-error-pages@file"
+
+
+# --- AUTH_MODE oidc: the dashboard's own OIDC, no forward auth ------------
+
+OIDC_VAULT = {
+    "AUTH_MODE": "oidc",
+    "OIDC_ISSUER": "https://sso.example.test/application/o/sksec-web/",
+    "OIDC_CLIENT_SECRET": "example-oidc-client-secret-not-a-real-secret-01",
+}
+
+
+def test_auth_mode_oidc_has_no_forward_auth_middleware(tmp_path):
+    out = ok(tmp_path, BASE | OIDC_VAULT)
+    lab = labels(compose(out)["services"]["app"])
+    assert lab["traefik.http.routers.sksec-web.middlewares"] == "default-no-error-pages@file"
+    assert "authentik" not in lab["traefik.http.routers.sksec-web.middlewares"]
+
+
+def test_auth_mode_oidc_renders_the_auth_env(tmp_path):
+    out = ok(tmp_path, BASE | OIDC_VAULT)
+    env = env_file(out)
+    assert env["AUTH_ENABLED"] == "true"
+    assert env["AUTH_PASSWORD_LOGIN_ENABLED"] == "false"
+    assert env["AUTH_OIDC_ISSUER_URL"] == OIDC_VAULT["OIDC_ISSUER"]
+    assert env["AUTH_OIDC_CLIENT_ID"] == "sksec-web"
+    assert env["AUTH_OIDC_CLIENT_SECRET"] == OIDC_VAULT["OIDC_CLIENT_SECRET"]
+    assert env["AUTH_OIDC_SCOPE"] == "openid profile email groups"
+    assert env["AUTH_OIDC_GROUPS_CLAIM"] == "groups"
+    assert env["AUTH_OIDC_ADMIN_GROUPS"] == "skadmin"
+    assert "AUTH_OIDC_READ_ONLY_GROUPS" not in env
+    assert env["AUTH_OIDC_UNMATCHED_ROLE"] == "deny"
+    assert env["AUTH_OIDC_END_SESSION"] == "true"
+
+
+def test_auth_mode_oidc_client_id_defaults_to_the_same_slug_as_the_portal_tile(tmp_path):
+    # Design requirement: the OIDC blueprint and the portal tile must manage
+    # the SAME Authentik Application (one object, not two). sksso's own
+    # blueprint defaults its client id/slug to the router name too (see
+    # test_sksec_web_skpatch_hosts_oidc_sso.py); this just pins sksec-web's own
+    # side of that default: OIDC_CLIENT_ID and the portal tile's slug both
+    # fall back to the router name when unset.
+    out = ok(tmp_path, BASE | OIDC_VAULT)
+    assert env_file(out)["AUTH_OIDC_CLIENT_ID"] == "sksec-web"
+    pb = (ROLE / "deploy_sksec-web-prod.yml").read_text()
+    assert 'sksw_oidc_client_id: "{{ sksec_web.OIDC_CLIENT_ID | default(sksw_router, true) }}"' in pb
+    assert 'slug: "{{ sksec_web.AUTHENTIK_TILE_SLUG | default(sksw_router, true) }}"' in pb
+
+
+def test_auth_mode_oidc_custom_scope_and_groups(tmp_path):
+    out = ok(tmp_path, BASE | OIDC_VAULT | {
+        "OIDC_SCOPE": "openid profile email groups offline_access",
+        "OIDC_GROUPS_CLAIM": "roles",
+        "OIDC_ADMIN_GROUPS": "sksec-web-admins",
+        "OIDC_READ_ONLY_GROUPS": "sksec-web-viewers",
+        "OIDC_UNMATCHED_ROLE": "read-only",
+        "OIDC_END_SESSION": False,
+        "OIDC_CLIENT_ID": "sksec-web-custom",
+    })
+    env = env_file(out)
+    assert env["AUTH_OIDC_SCOPE"] == "openid profile email groups offline_access"
+    assert env["AUTH_OIDC_GROUPS_CLAIM"] == "roles"
+    assert env["AUTH_OIDC_ADMIN_GROUPS"] == "sksec-web-admins"
+    assert env["AUTH_OIDC_READ_ONLY_GROUPS"] == "sksec-web-viewers"
+    assert env["AUTH_OIDC_UNMATCHED_ROLE"] == "read-only"
+    assert env["AUTH_OIDC_END_SESSION"] == "false"
+    assert env["AUTH_OIDC_CLIENT_ID"] == "sksec-web-custom"
+
+
+def test_auth_mode_oidc_refuses_missing_issuer(tmp_path):
+    log = fails(tmp_path, BASE | {k: v for k, v in OIDC_VAULT.items() if k != "OIDC_ISSUER"})
+    assert "needs OIDC_ISSUER" in log
+
+
+def test_auth_mode_oidc_refuses_short_client_secret(tmp_path):
+    log = fails(tmp_path, BASE | OIDC_VAULT | {"OIDC_CLIENT_SECRET": "too-short"})
+    assert "OIDC_CLIENT_SECRET" in log
+    assert "too-short" not in log
+
+
+def test_auth_mode_oidc_refuses_an_sso_middleware(tmp_path):
+    log = fails(tmp_path, BASE | OIDC_VAULT | {"SSO_MIDDLEWARE": "authentik@file"})
+    assert "AUTH_MODE is 'oidc'" in log and "SSO_MIDDLEWARE is set" in log
+
+
+def test_auth_mode_oidc_refuses_bad_unmatched_role(tmp_path):
+    log = fails(tmp_path, BASE | OIDC_VAULT | {"OIDC_UNMATCHED_ROLE": "superadmin"})
+    assert "OIDC_UNMATCHED_ROLE must be deny" in log
 
 
 def test_default_env_is_read_only_and_LAPI_url(base_out):
@@ -188,7 +275,7 @@ def test_refuses_unpinned_image(tmp_path):
 
 
 def test_refuses_unknown_auth_mode(tmp_path):
-    log = fails(tmp_path, BASE | {"AUTH_MODE": "oidc"})
+    log = fails(tmp_path, BASE | {"AUTH_MODE": "bogus"})
     assert "AUTH_MODE must be" in log
 
 
@@ -222,3 +309,20 @@ def test_env_playbooks_render_with_their_own_subnet_and_host(tmp_path, env):
     app = compose(out, env)["services"]["app"]
     lab = labels(app)
     assert lab["traefik.http.routers.sksec-web-{0}.rule".format(env)] == f"Host(`sksec-web-{env}.render.example.test`)"
+
+
+
+# --- the healthcheck never assumes a binary the pinned image may lack ------
+
+def test_app_healthcheck_does_not_use_wget_or_curl(base_out):
+    # Regression guard for the bug found live 2026-10-27: the pinned
+    # crowdsec-web-ui image's base has neither wget nor curl, so a
+    # healthcheck test calling either one always fails -- the app itself
+    # was healthy and running the whole time, but Swarm killed and
+    # replaced the task every ~65-70s forever on the failing probe. node
+    # is guaranteed present (it runs the app); the healthcheck must use
+    # it directly rather than assume a shell utility.
+    test = compose(base_out)["services"]["app"]["healthcheck"]["test"]
+    joined = " ".join(test)
+    assert "wget" not in joined and "curl" not in joined, joined
+    assert "node" in joined

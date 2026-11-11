@@ -1,5 +1,5 @@
 """shared/src/authentik_portal_tile.py: the provider-less bookmark-tile
-provisioner used by skpulse/sksec-web/skpatch (and any future role) to put
+provisioner used by skpulse/sksec-web/skpatch-hosts (and any future role) to put
 a dashboard tile on the Authentik portal for a service that already sits
 behind the cluster's domain-wide ForwardAuth catch-all.
 
@@ -140,6 +140,51 @@ def test_ensure_application_updates_only_changed_fields():
     changed = patch_calls[0][2]
     assert set(changed) == {"launch_url", "meta_launch_url", "open_in_new_tab"}
     assert changed["meta_launch_url"] == "https://skpulse.example.com"
+
+
+def test_ensure_application_keeps_an_existing_provider():
+    # The slug may already be a real OIDC/proxy app (for example a Nextcloud
+    # user_oidc login). Nulling its provider 404s the discovery URL and
+    # breaks every SSO login, so an update must leave `provider` alone.
+    existing = {
+        "slug": "skpulse",
+        "name": "SKPulse (Uptime Kuma)",
+        "provider": 9,
+        "launch_url": "https://old.example.com",
+        "meta_launch_url": "https://old.example.com",
+        "open_in_new_tab": True,
+        "meta_icon": "fa://fa-heart-pulse",
+        "meta_description": "",
+        "policy_engine_mode": "any",
+        "group": "",
+    }
+    api = FakeApi(application=existing)
+    app = tile.ensure_application(api, CFG)
+    patch_calls = [c for c in api.calls if c[0] == "PATCH"]
+    assert len(patch_calls) == 1
+    assert "provider" not in patch_calls[0][2]
+    assert set(patch_calls[0][2]) == {"launch_url", "meta_launch_url"}
+    assert api.application["provider"] == 9
+    assert app["provider"] == 9
+
+
+def test_ensure_application_provider_backed_and_otherwise_unchanged_is_a_noop():
+    existing = {
+        "slug": "skpulse",
+        "name": "SKPulse (Uptime Kuma)",
+        "provider": 9,
+        "launch_url": "https://skpulse.example.com",
+        "meta_launch_url": "https://skpulse.example.com",
+        "open_in_new_tab": True,
+        "meta_icon": "fa://fa-heart-pulse",
+        "meta_description": "",
+        "policy_engine_mode": "any",
+        "group": "",
+    }
+    api = FakeApi(application=existing)
+    tile.ensure_application(api, CFG)
+    assert [c[0] for c in api.calls] == ["GET"]  # provider 9 is not a difference
+    assert api.application["provider"] == 9
 
 
 def test_ensure_group_binding_fails_loudly_on_missing_group():

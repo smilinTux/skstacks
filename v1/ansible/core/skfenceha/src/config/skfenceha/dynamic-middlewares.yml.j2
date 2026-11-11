@@ -15,10 +15,16 @@ http:
 {% endif %}
 {% else %}
     # No dashboard credentials configured (skfenceha.DASHBOARD_AUTH_HASH is
-    # empty): stub middleware so traefikAuth@file references never fail.
+    # empty). Fail safe: the dashboard and API answer only private/LAN source
+    # addresses (skfenceha.DASHBOARD_FALLBACK_ALLOW_CIDRS), never the whole
+    # internet. Before 2026-11-09 this was an empty chain, i.e. an open
+    # dashboard on any estate that forgot the hash.
     traefikAuth:
-      chain:
-        middlewares: []
+      ipAllowList:
+        sourceRange:
+{% for _cidr in skfenceha.DASHBOARD_FALLBACK_ALLOW_CIDRS | default(['127.0.0.1/32', '::1/128', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'], true) %}
+          - "{{ _cidr }}"
+{% endfor %}
 {% endif %}
 
 {% if skfenceha.WHITELIST_IPS | default([]) | length > 0 %}

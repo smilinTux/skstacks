@@ -22,8 +22,10 @@
 # core/sksec first: this role attaches to its sksec-<env> network and
 # registers its own CrowdSec machine credential against that LAPI. It is
 # admin-grade (the credential can read, and potentially delete, every
-# decision): AUTH_MODE defaults to sso (Authentik forward auth) and
-# decisions default to read-only. See README.md.
+# decision): AUTH_MODE defaults to sso (Authentik forward auth); oidc gives
+# the dashboard its own OIDC login against sksso instead (no forward auth,
+# one sign-in, no separate first-run account). Decisions default to
+# read-only. See README.md.
 - import_playbook: ../../shared/meta/skstack-header.yml
 
 # Step 1: Select manager node with failover
@@ -108,6 +110,24 @@
         sksw_host: "{{ sksec_web.HOSTNAME | default('sksec-web' + ('' if env == 'prod' else '-' + env) + '.' + sksw_base_domain, true) }}"
       tags: [config]
 
+    - name: Resolve the sksec-web OIDC settings
+      # AUTH_MODE oidc: the dashboard does its own OIDC against sksso
+      # (Authentik); no forward-auth middleware in front (sksw_sso_middleware
+      # above already resolves empty for any mode other than sso). The
+      # client id defaults to the router name so it is the SAME Authentik
+      # Application slug the blueprint (sksso.SKSEC_WEB_OIDC_CLIENT_SECRET)
+      # and the portal tile below both use -- one object, not two. See
+      # README.md "Sign-in and SSO".
+      set_fact:
+        sksw_oidc_client_id: "{{ sksec_web.OIDC_CLIENT_ID | default(sksw_router, true) }}"
+        sksw_oidc_scope: "{{ sksec_web.OIDC_SCOPE | default('openid profile email groups', true) }}"
+        sksw_oidc_groups_claim: "{{ sksec_web.OIDC_GROUPS_CLAIM | default('groups', true) }}"
+        sksw_oidc_admin_groups: "{{ sksec_web.OIDC_ADMIN_GROUPS | default('skadmin', true) }}"
+        sksw_oidc_read_only_groups: "{{ sksec_web.OIDC_READ_ONLY_GROUPS | default('', true) }}"
+        sksw_oidc_unmatched_role: "{{ sksec_web.OIDC_UNMATCHED_ROLE | default('deny', true) | string | lower }}"
+        sksw_oidc_end_session: "{{ sksec_web.OIDC_END_SESSION | default(true) | bool }}"
+      tags: [config]
+
     - name: Validate the image pin and the public host
       assert:
         that:
@@ -123,9 +143,9 @@
     - name: Fail loudly on an unknown AUTH_MODE
       assert:
         that:
-          - sksw_auth_mode in ['sso', 'local']
+          - sksw_auth_mode in ['sso', 'local', 'oidc']
         fail_msg: >-
-          ERROR: sksec_web.AUTH_MODE must be 'sso' or 'local' (it is
+          ERROR: sksec_web.AUTH_MODE must be 'sso', 'local' or 'oidc' (it is
           '{{ sksw_auth_mode }}'). See README.md "Sign-in and SSO".
         quiet: true
       tags: [config]
@@ -146,13 +166,32 @@
         quiet: true
       tags: [config]
 
+    - name: Refuse AUTH_MODE oidc without its own issuer and client secret
+      # oidc mode is the dashboard's OWN OIDC login (no forward auth), so it
+      # needs its own issuer/secret rather than SSO_MIDDLEWARE.
+      assert:
+        that:
+          - sksw_auth_mode != 'oidc' or (sksec_web.OIDC_ISSUER | default('', true) | string | length > 0)
+          - sksw_auth_mode != 'oidc' or (sksec_web.OIDC_CLIENT_SECRET | default('', true) | string | length >= 32)
+          - sksw_oidc_unmatched_role in ['deny', 'admin', 'read-only']
+        fail_msg: >-
+          ERROR: sksec_web.AUTH_MODE: oidc needs OIDC_ISSUER (the Authentik
+          application's issuer URL, e.g.
+          https://<sso host>/application/o/{{ sksw_oidc_client_id }}/) and
+          OIDC_CLIENT_SECRET (32+ chars, the same value as sksso's
+          SKSEC_WEB_OIDC_CLIENT_SECRET); OIDC_UNMATCHED_ROLE must be deny,
+          admin or read-only. See README.md "Sign-in and SSO".
+        quiet: true
+      tags: [config]
+
     - name: Collect contradictory sign-in settings
       # Only key NAMES and middleware names are collected, never a value
       # from the secret side of the vault.
       set_fact:
         sksw_auth_conflicts: >-
           {{ (["AUTH_MODE is 'local' (no SSO) but SSO_MIDDLEWARE is set"] if (sksw_auth_mode == 'local' and sksw_sso_middleware | length > 0) else [])
-             + (['TRAEFIK_MIDDLEWARES carries forward auth (' ~ sksw_middlewares ~ '): with AUTH_MODE local it is SSO under another name; use AUTH_MODE sso (SSO_MIDDLEWARE) instead']
+             + (["AUTH_MODE is 'oidc' (the app's own OIDC, no forward auth) but SSO_MIDDLEWARE is set"] if (sksw_auth_mode == 'oidc' and sksw_sso_middleware | length > 0) else [])
+             + (['TRAEFIK_MIDDLEWARES carries forward auth (' ~ sksw_middlewares ~ '): with AUTH_MODE ' ~ sksw_auth_mode ~ ' it is SSO under another name; use AUTH_MODE sso (SSO_MIDDLEWARE) instead']
                 if ('authentik' in sksw_middlewares | lower) or (sksw_sso_middleware | length > 0 and sksw_sso_middleware in sksw_middlewares.split(',')) else []) }}
       tags: [config]
 
@@ -298,6 +337,13 @@
       debug: var=deploy_output.stdout_lines
       tags: [deploy]
 
+    # crowdsec-web-ui 2026.10.10+ ignores its own env vars past first boot
+    # (see tasks/patch_app_config_yaml.yml); patch config.yaml directly for
+    # every later deploy, before anything else touches the app.
+    - name: Patch the owned keys in config.yaml for every deploy after the first
+      include_tasks:
+        file: tasks/patch_app_config_yaml.yml
+
     # Register this role's own CrowdSec machine credential against the
     # cluster's core/sksec LAPI (idempotent; never re-keys an existing one).
     - name: Register the sksec-web machine with CrowdSec
@@ -310,10 +356,15 @@
 
     - name: Create or update the sksec-web portal tile in Authentik
       # On by default (AUTHENTIK_TILE: true); opt out per instance with
-      # AUTHENTIK_TILE: false. sksec-web (the
-      # CrowdSec Web UI) sits behind the cluster's domain-wide Traefik
-      # ForwardAuth catch-all already; this just gives it a bookmark tile
-      # on the Authentik portal, bound to a group, with no provider.
+      # AUTHENTIK_TILE: false. AUTH_MODE sso/local: sksec-web sits behind
+      # the cluster's domain-wide Traefik ForwardAuth catch-all already (or
+      # has no forward auth at all in local mode); this just gives it a
+      # bookmark tile on the Authentik portal, bound to a group, with no
+      # provider. AUTH_MODE oidc: the slug below is the SAME one sksso's
+      # blueprint (tasks/sksec_web_blueprint.yml) gives the real OAuth2
+      # application, so this updates that one Application's tile fields and
+      # group binding instead of creating a second, provider-less one (see
+      # shared/src/authentik_portal_tile.py "keeping its existing provider").
       include_tasks: ../../shared/tasks/authentik_portal_tile.yml
       vars:
         portal_tile:
@@ -321,7 +372,7 @@
           slug: "{{ sksec_web.AUTHENTIK_TILE_SLUG | default(sksw_router, true) }}"
           name: "{{ sksec_web.AUTHENTIK_TILE_NAME | default('SKSec Web (CrowdSec)', true) }}"
           launch_url: "https://{{ sksw_host }}"
-          group: "{{ sksec_web.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          group: "{{ sksec_web.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
           icon: "{{ sksec_web.AUTHENTIK_TILE_ICON | default('fa://fa-shield-halved', true) }}"
           open_in_new_tab: "{{ sksec_web.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
           description: "{{ sksec_web.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"

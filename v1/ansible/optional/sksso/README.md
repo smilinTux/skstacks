@@ -101,6 +101,36 @@ sksso:
 
 ## Branding
 
+Two packs ship: `nam` (below) and `skworld`. A pack is optional parts only: the
+media dir is required, `templates/` and `nextcloud-theming.sh` are copied only when
+the pack has them.
+
+### `branding: skworld`
+
+`sksso.branding: skworld` copies `branding/skworld/media/` (logo, favicon, orange
+`skworld.css`, `apply_branding.py`) to `/var/data/sksso-<env>/media/public/skworld/`
+and installs `apply-branding` next to `deploy`. Run `apply-branding [stack]` once
+after the stack is up (idempotent). It:
+
+- sets the default brand: title (env `SKWORLD_BRAND_TITLE`, default "SKWorld"),
+  logo, favicon and custom CSS (orange accent, and the "Powered by authentik"
+  footer hidden);
+- sets the login flow's heading (env `SKWORLD_FLOW_TITLE`, default "Welcome to the
+  Kingdom");
+- makes sure the stock password-recovery flow exists: when no flow with slug
+  `default-recovery-flow` is present it applies Authentik's own blueprint
+  `example/flows-recovery-email-verification.yaml` in-process (an existing flow is
+  never overwritten), and sets it as the brand's recovery flow;
+- points the identification stage(s) of the brand's login flow at that flow, so the
+  login page shows "Forgot password?".
+
+Recovery email is sent through sksso's global email settings
+(`AUTHENTIK_EMAIL__*` in `sksso.env`, `sksso.email_from`); the skworld pack ships no
+email templates. Rollback: clear the brand's logo, favicon, custom CSS and recovery
+flow in the admin UI, and clear `recovery_flow` on the identification stage.
+
+### `branding: nam`
+
 `sksso.branding: nam` copies the NAM brand pack (`branding/nam/`) to shared
 storage on every deploy: logo, favicon, flow background and `nam.css` to
 `/var/data/sksso-<env>/media/public/nam/`, and the branded email templates
@@ -370,6 +400,121 @@ blueprint without applying it: `docker exec -i <server container> sh -c 'cat >
 `Importer.from_string(yaml).validate()` (it runs in a transaction that is
 rolled back).
 
+## sksec-web / skpatch-hosts (OIDC) login
+
+`sksso.SKSEC_WEB_OIDC_CLIENT_SECRET` / `sksso.SKPATCH_HOSTS_OIDC_CLIENT_SECRET`
+(32+ chars, `openssl rand -hex 32`) give `sksec-web` (crowdsec-web-ui) /
+`skpatch-hosts` (linux-update-dashboard) their own OIDC login as code, when that
+role's own `AUTH_MODE: oidc` is set (see `optional/sksec-web/README.md` /
+`optional/skpatch-hosts/README.md` "Sign-in..."). Unset, nothing changes. Set,
+the deploy renders `/var/data/config/sksso-<env>/blueprints/<app>-oidc.yaml`
+(no secret inside) and mounts the blueprints directory at
+`/blueprints/custom` (read only) in `server` and `worker`, same mechanism
+as skflow above; the secret lands in `sksso.env` (0600) as
+`<APP>_OIDC_CLIENT_SECRET`, which the blueprint reads with `!Env`.
+
+Unlike skflow (Windmill), neither app needs a provisioner script on its own
+side: both read their OIDC config from plain environment variables at
+startup (that role's own deploy playbook renders them), verified against
+the pinned upstream source. No Windmill-style "set a global API setting"
+step exists or is needed.
+
+The blueprint creates or adopts (matched by name or slug, so an object made
+by hand is taken over, not duplicated):
+
+| Object | Value |
+|---|---|
+| OAuth2 provider `<app>` | confidential, client id `<app>` (default; `<APP>_OIDC_CLIENT_ID` overrides), strict redirect `https://<app host>/api/auth/oidc/callback`, authorization flow `default-provider-authorization-implicit-consent`, invalidation flow `default-provider-invalidation-flow`, signing key `authentik Self-signed Certificate`, subject mode `hashed_user_id`, issuer mode `per_provider`, scopes openid, email, profile, and a private `groups` scope mapping (`request.user.ak_groups.all()`) |
+| Application `<app>` | name `<APP>_APP_NAME` (default `SKSec Web (CrowdSec)` / `SKPatch Hosts`), launch URL `https://<app host>/` |
+
+**No policy binding here, unlike skflow's blueprint above.** The
+Application slug (`<app>`, i.e. the plain router name: `sksec-web` or
+`skpatch-hosts`, same for both envs other than prod) is the SAME slug each
+role's own portal tile defaults `AUTHENTIK_TILE_SLUG` to, so
+`shared/tasks/authentik_portal_tile.yml` (run from that role's own deploy,
+after this blueprint) finds this exact Application and manages its tile
+fields and **group binding** itself, keeping this provider in place rather
+than nulling it (`shared/src/authentik_portal_tile.py` "keeping its
+existing provider", #242) -- one Authentik Application per app, not two.
+Who may sign in is therefore that role's own `AUTHENTIK_TILE_GROUP`
+(default `authentik Admins`), not a group this blueprint owns.
+
+```yaml
+sksso:
+  SKSEC_WEB_OIDC_CLIENT_SECRET: "..."  # same value as sksec_web.OIDC_CLIENT_SECRET
+  SKSEC_WEB_HOST: sksec-web.example.org  # default sksec-web[-<env>].<base>
+  SKSEC_WEB_OIDC_CLIENT_ID: sksec-web
+  SKSEC_WEB_APP_NAME: "SKSec Web (CrowdSec)"
+  SKPATCH_HOSTS_OIDC_CLIENT_SECRET: "..."     # same value as skpatch_hosts.OIDC_CLIENT_SECRET
+  SKPATCH_HOSTS_HOST: skpatch-hosts.example.org       # default skpatch-hosts[-<env>].<base>
+  SKPATCH_HOSTS_OIDC_CLIENT_ID: skpatch-hosts
+  SKPATCH_HOSTS_APP_NAME: "SKPatch Hosts"
+```
+
+Run order across the two roles' playbooks: deploy (or redeploy) `sksso`
+with the relevant `<APP>_OIDC_CLIENT_SECRET` set, THEN deploy that app with
+its own matching `AUTH_MODE: oidc` / `OIDC_CLIENT_SECRET`. Running the
+app's deploy first is not an error: its portal tile task creates a
+provider-less Application at that slug, and the next `sksso` deploy's
+blueprint apply sets the provider onto that SAME object (Authentik
+blueprints are authoritative for the fields they declare), so the two
+converge regardless of order. There is no teardown path: turning `AUTH_MODE`
+back to `sso`/`local` and removing the `sksso` vault key stops this
+blueprint from being rendered or re-applied, but the provider/application it
+already created in Authentik is not deleted (same limitation as skflow's
+blueprint above); clean it up by hand if the app is being retired, not just
+switched back to forward auth.
+
+## Application access and group model
+
+Design (not yet implemented): [`docs/design/sso-app-access-provisioning.md`](../../../../docs/design/sso-app-access-provisioning.md).
+Read this section for what is true today, and the design for where it is going.
+
+**What the framework does today.**
+
+- Every role with a portal tile binds it to ONE Authentik group, `AUTHENTIK_TILE_GROUP`. The default is
+  `authentik Admins` on a release without PR #360 and `skadmin` with it. The group must already exist;
+  nothing in the framework creates `skadmin`, `skuser` or any per-app group.
+- The tile script only adds bindings. It never removes one, so changing the default does not move an
+  existing tile off `authentik Admins`; it adds the new binding next to the old one.
+- A provider-less tile is a bookmark. It controls portal visibility only. Access to a forward-auth
+  service is decided by the application behind the matched provider, which for most services is the
+  domain-wide catch-all. That catch-all is hand-made on each instance; no code here creates or binds it.
+- Authentik admits every authenticated user to an application that has NO policy bindings. An unbound
+  catch-all therefore lets any user of the instance (including accounts that exist for other services)
+  through forward auth. `skrac` and `skmesh` write no binding for their applications either. Check each
+  instance by hand until the conformance check below exists: every application must show at least one
+  binding in the admin UI.
+- `OIDC_ADMIN_GROUPS` (sksec-web, skpatch-hosts) and `OIDC_ADMIN_GROUP` (skrac) are independent strings and
+  are not derived from the Authentik binding.
+
+**Target model (design).** Follows `standards/APPLICATION_ACCESS_SSO_STANDARD.md` in the sk-standards repo
+(PROPOSED, sk-standards PR #70).
+
+- Global groups `skadmin` (reaches every app) and `skuser` (an optional baseline bundle; never grants admin).
+  Per-app groups `app-<app>-admins` and `app-<app>-users`. `authentik Admins` is reserved for administering
+  Authentik itself and is never bound to an application.
+- One block per app: `SSO_ACCESS: admin-only | app-groups | any-account | public` (default `admin-only`,
+  fail-closed) and `SSO_BASELINE: true | false` (the standard's `in_baseline`, `app-groups` only, default
+  false). `any-account` and `public` are reviewed opt-outs that need an exemption record. An estate list
+  `sksso.BASELINE_APPS` overrides the per-role baseline flags.
+- Two first-class ways to provision a person: add them to `skuser` for the baseline apps, or to individual
+  `app-<app>-users` groups. Neither implies the other.
+- `skuser` and `skadmin` are bound directly on each app; groups are never parents of one another for access,
+  because Authentik allows one parent per group and inheritance direction is release dependent.
+- The tile script would create the groups idempotently, bind them, and refuse to leave an application with
+  zero bindings; the catch-all would be bound to `skadmin` only; OIDC role mapping defaults would derive
+  from the per-app groups; a conformance check (the standard's C1 to C10) would list unbound applications and
+  applications still bound to `authentik Admins`; a gate harness would prove the `sktest-user` account
+  (`skuser` only) is denied non-baseline and admin tools and the `sktest-admin` account (`skadmin` only) is
+  allowed.
+- Any app that is not `admin-only` gets its own provider; the catch-all serves `admin-only` apps only.
+  `skhub-users` and `skflow-operators` are renamed in place to `app-skhub-users` and `app-skflow-users`.
+- Test identities (`sktest-admin`, `sktest-user`, `sktest-nogroup`, `sktest-appadmin`, `sktest-appuser`, and the
+  service account `sksvc-test`) skip interactive MFA only as members of the `sktest` group, and still pass
+  through the application access policy. Credentials are per-estate `sksso.TEST_*` vault keys.
+- Existing instances migrate in additive steps first, and only later prune `authentik Admins` bindings.
+
 ## SSO for skhub and skflow
 
 Authentik (this role) is the identity provider for two apps in the estate. Both use native OAuth2/OIDC, so
@@ -382,7 +527,7 @@ neither sits behind forward auth. Operator procedures are in
 |---|---|---|
 | Authentik application / provider | `skhub` / `skhub-nextcloud` (confidential, RS256, subject mode `user_id`) | `skflow-windmill` / `skflow-windmill` (this role's blueprint) |
 | Strict redirect URI | `https://<skhub host>/apps/user_oidc/code` | `https://<skflow host>/user/login_callback/authentik` |
-| Who may sign in | group `skhub-users` | group `skflow-operators` |
+| Who may sign in | group `app-skhub-users` | group `skflow-operators` |
 | Scopes | `openid email profile nextcloud` | `openid offline_access email profile` |
 | Client side config | Nextcloud app `user_oidc` provider (`occ user_oidc:provider`) | Windmill global setting `oauths` (written by the skflow play) |
 | Shipped as code today | blueprint documented, not yet rendered by this role | yes, `skflow-windmill.yaml.j2` |
@@ -405,7 +550,7 @@ Authentik gets it back.
 
 | Group | Meaning |
 |---|---|
-| `skhub-users` | may sign in to Nextcloud (bound to the `skhub` application) |
+| `app-skhub-users` | may sign in to Nextcloud (bound to the `skhub` application) |
 | `skflow-operators` | may sign in to Windmill (bound by the blueprint; Windmill CE limit: 10 SSO users) |
 | `nc-<name>` | provisioning group: members get Nextcloud group `<name>` (only names matching the provider's whitelist regex are synced, for example `^(ops-team|hh-.+)$`) |
 | `skadmin`, `skeditor`, `skreadonly` | portal tiers; independent of SSO |

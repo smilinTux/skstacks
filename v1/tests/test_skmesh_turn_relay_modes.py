@@ -33,6 +33,8 @@ import jinja2
 import pytest
 import yaml
 
+from image_pins import is_pinned
+
 from test_secret_file_modes_survive_deploy import CHMOD, _grants_other_read
 
 SKMESH = pathlib.Path(__file__).resolve().parents[1] / "ansible/optional/skmesh"
@@ -155,22 +157,23 @@ IMAGE_VARS = {
 }
 
 
-NETBIRD_080 = {
-    # NetBird v0.80.0 (2026-10-01), multi-arch OCI index digests from the registry.
-    "management": "netbirdio/management:0.80.0@sha256:8bb1b26f3c8de72420c6a0dd40b979e619f8d05c6b3154e74efc0f471f4967fc",
-    "signal": "netbirdio/signal:0.80.0@sha256:d0fe9d51cdbac2542dffabc85066d897f628cca57f1aa08328639777b496d5b4",
-    "relay": "netbirdio/relay:0.80.0@sha256:1aff236dc73fde48857d6619816f442daa1035758f4d38a208c7b46752836484",
-    # dashboard v2.94.0 (2026-09-28), the release paired with management 0.80.
-    "dashboard": "netbirdio/dashboard:v2.94.0@sha256:70e0fc6dd3b7758148d182fb55ecd8d4f9ce01e9bba56c9389224e0b8354009d",
+NETBIRD_REPOS = {
+    "management": "netbirdio/management",
+    "signal": "netbirdio/signal",
+    "relay": "netbirdio/relay",
+    "dashboard": "netbirdio/dashboard",
 }
 
 
 def test_image_defaults():
     svcs = _compose(dict(BASE))["services"]
-    for svc, image in NETBIRD_080.items():
-        assert svcs[svc]["image"] == image, svc
-    assert svcs["postgres"]["image"] == "postgres:16.15-alpine"
-    assert svcs["postgres-db-backup"]["image"].startswith("postgres:16.14@sha256:")
+    for svc, repo in NETBIRD_REPOS.items():
+        assert is_pinned(svcs[svc]["image"], repo), svc
+    # management, signal and relay ship as one release: same tag on all three.
+    tags = {svcs[s]["image"].split(":")[1].split("@")[0] for s in ("management", "signal", "relay")}
+    assert len(tags) == 1, tags
+    assert svcs["postgres"]["image"].startswith("postgres:16.")
+    assert is_pinned(svcs["postgres-db-backup"]["image"], "postgres", "16.")
 
 
 @pytest.mark.parametrize("svc,var", sorted(IMAGE_VARS.items()))

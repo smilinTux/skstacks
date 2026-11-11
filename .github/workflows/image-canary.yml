@@ -11,12 +11,18 @@ on:
   pull_request:
     paths: ['v1/**']
 
+concurrency:
+  # One run per workflow per PR (or ref): a new push to a PR cancels the
+  # superseded run; pushes to main queue instead of cancelling.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   check-images:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: '3.12' }
       - run: pip install jinja2
       - run: bash v1/scripts/check_images.sh

@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   stirling-pdf:
-    image: frooodle/s-pdf:2.14.3
+    image: frooodle/s-pdf:3.3.0@sha256:ed7b1775c6706b5e5ea24fa6155f078eff1027bd35a17d21834e4407036025e6
     env_file: /var/data/config/skpdf-staging/skpdf.env
     logging:
       driver: json-file

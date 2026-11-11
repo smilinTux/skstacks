@@ -1,0 +1,49 @@
+# sksso.SKSEC_WEB_OIDC_CLIENT_SECRET, before the stack deploy: render the
+# Authentik blueprint that gives sksec-web (crowdsec-web-ui) its OAuth2
+# login (sksec_web.AUTH_MODE: oidc). The blueprint lives in
+# /var/data/config/sksso-<env>/blueprints (mounted at /blueprints/custom in
+# server and worker); the worker applies it. The client secret reaches
+# Authentik as the SKSEC_WEB_OIDC_CLIENT_SECRET env var (see sksso.env.j2)
+# and is read with !Env, so it is not in the blueprint file. See the README
+# section "sksec-web / skpatch-hosts (OIDC) login".
+
+- name: Resolve the sksec-web OIDC settings
+  set_fact:
+    sksso_sksec_web_base: "{{ sksso.DOMAIN if (sksso.CLOUDFLARED | default(false) | bool) else (sksso.CLUSTERNAME ~ '.' ~ sksso.DOMAIN) }}"
+    sksso_sksec_web_client_id: "{{ sksso.SKSEC_WEB_OIDC_CLIENT_ID | default('sksec-web' ~ ('' if env == 'prod' else '-' ~ env), true) }}"
+    sksso_sksec_web_app_name: "{{ sksso.SKSEC_WEB_APP_NAME | default('SKSec Web (CrowdSec)', true) }}"
+  no_log: true
+
+- name: Resolve the sksec-web public host
+  set_fact:
+    sksso_sksec_web_host: "{{ sksso.SKSEC_WEB_HOST | default('sksec-web' ~ ('' if env == 'prod' else '-' ~ env) ~ '.' ~ sksso_sksec_web_base, true) }}"
+  no_log: true
+
+- name: Check the sksec-web OIDC vault keys
+  assert:
+    that:
+      - "(sksso.SKSEC_WEB_OIDC_CLIENT_SECRET | default('') | string | length) >= 32"
+      - "sksso_sksec_web_host is match('^[A-Za-z0-9][A-Za-z0-9.-]*$')"
+      - "sksso_sksec_web_client_id is match('^[a-z0-9][a-z0-9-]*$')"
+    fail_msg: >-
+      sksso.SKSEC_WEB_OIDC_CLIENT_SECRET needs 32+ characters (openssl rand
+      -hex 32, the same value as sksec_web.OIDC_CLIENT_SECRET),
+      SKSEC_WEB_HOST a plain host name and SKSEC_WEB_OIDC_CLIENT_ID a
+      lowercase slug.
+    quiet: true
+
+- name: Create the Authentik blueprints directory
+  file:
+    path: /var/data/config/{{ app }}-{{ env }}/blueprints
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Render the sksec-web-oidc blueprint (no secret inside)
+  template:
+    src: "{{ playbook_dir }}/src/config/{{ app }}/blueprints/sksec-web-oidc.yaml.j2"
+    dest: /var/data/config/{{ app }}-{{ env }}/blueprints/sksec-web-oidc.yaml
+    owner: root
+    group: root
+    mode: '0644'

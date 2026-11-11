@@ -17,9 +17,15 @@ networks:
 # README.md "Local database on a pinned node" for the measured latency gap
 # this closes; it matters most for a downstream OIDC client with a short
 # HTTP timeout (skrac/MeshCentral's openid-client default is 3.5s).
+{# The /blueprints/custom mount (server + worker) is needed when ANY app's
+   own OAuth2/OIDC blueprint is rendered: skflow (Windmill), sksec-web
+   (AUTH_MODE: oidc) or skpatch-hosts (AUTH_MODE: oidc). A Jinja comment, so
+   unset knobs still render byte-identical to the v2.26.3 baseline. The
+   condition is inlined in each {% if %} guard, never a {% set %}, so this
+   0644 file is never treated as carrying a secret value. #}
 services:
   postgres:
-    image: postgres:16.2
+    image: postgres:16.15
     env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}.env
     environment:
       - PGTEMP=/var/lib/postgresql/data/tmp
@@ -56,7 +62,7 @@ services:
       start_period: 40s
 
   postgres-db-backup:
-    image: postgres:16.2
+    image: postgres:16.15
     env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}-backup.env
     environment:
       - PGTEMP=/dump/tmp
@@ -112,7 +118,7 @@ services:
       - {{ app }}-{{ env }}
 
   redis:
-    image: docker.io/library/redis:7.2.4
+    image: docker.io/library/redis:7.4.12
     env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}.env
     command: redis-server --dir /data --save 60 1 --loglevel warning
     healthcheck:
@@ -200,7 +206,7 @@ services:
       - /var/data/config/{{ app }}-{{ env }}/custom/user_settings.py:/data/user_settings.py:ro
 {% endif %}
       - /var/data/{{ app }}-{{ env }}/custom-templates:/templates
-{% if sksso.SKFLOW_OIDC_CLIENT_SECRET | default('', true) | string | length > 0 %}
+{% if (sksso.SKFLOW_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKSEC_WEB_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKPATCH_HOSTS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) %}
       - /var/data/config/{{ app }}-{{ env }}/blueprints:/blueprints/custom:ro
 {% endif %}
       - /etc/localtime:/etc/localtime:ro
@@ -249,20 +255,18 @@ services:
       - /var/data/config/{{ app }}-{{ env }}/custom/user_settings.py:/data/user_settings.py:ro
 {% endif %}
       - /var/data/{{ app }}-{{ env }}/custom-templates:/templates
-{% if sksso.SKFLOW_OIDC_CLIENT_SECRET | default('', true) | string | length > 0 %}
+{% if (sksso.SKFLOW_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKSEC_WEB_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKPATCH_HOSTS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) %}
       - /var/data/config/{{ app }}-{{ env }}/blueprints:/blueprints/custom:ro
 {% endif %}
       - /etc/localtime:/etc/localtime:ro
-    # A worker is a process with a `worker` argument and `manage` (`python -m
-    # manage worker`: 2024.x runs celery in it, 2025.10+ dramatiq) or a celery
-    # executable (older releases).
-    # argv elements are compared exactly, so this check cannot match itself.
+    # The image's own check. A process match cannot work here: from 2026.5 the
+    # worker is `ak worker`, and PID 1 (`dumb-init -- ak worker`) has the same argv.
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import os; procs = [p for p in os.listdir('/proc') if p.isdigit()]; argvs = [open(f'/proc/{p}/cmdline').read().split(chr(0)) for p in procs if os.path.exists(f'/proc/{p}/cmdline')]; workers = [a for a in argvs if 'worker' in a and ('manage' in a or any(x.endswith('celery') for x in a))]; exit(0 if workers else 1)\" || exit 1"]
+      test: ["CMD-SHELL", "ak healthcheck"]
       interval: 30s
-      timeout: 10s
+      timeout: 30s
       retries: 5
-      start_period: 60s
+      start_period: 120s
 {% if sksso.CAPAUTH_ENABLED | default(false) %}
 
   # CapAuth OIDC identity provider (sksso.CAPAUTH_ENABLED): PGP-signed login,

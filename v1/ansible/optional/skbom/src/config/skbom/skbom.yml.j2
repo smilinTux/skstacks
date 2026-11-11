@@ -1,0 +1,258 @@
+version: '3.8'
+
+# skbom: OWASP Dependency-Track (SBOM store + continuous CVE matching
+# against NVD/GHSA/OSV), the image-patching half of the skpatch program
+# (README.md, ../../../../docs/skpatch-program.md). Two upstream images,
+# both pinned by digest: `apiserver` (Java, unauthenticated /health on
+# 8080) and `frontend` (a static SPA served by nginx on 8080, pointed at
+# apiserver by API_BASE_URL). One host, two routers: PathPrefix(`/api`)
+# goes to apiserver, everything else to frontend. Its own Postgres
+# (`postgres`) plus a `postgres-db-backup` pg_dumpall sidecar, the same
+# pattern skflow uses (and the same Postgres image, so the two share a
+# layer). Opt-in: nothing renders unless this playbook runs. See README.md.
+{% set hc_interval = skbom.HEALTH_CHECK_INTERVAL | default('30s', true) %}
+{% set hc_timeout = skbom.HEALTH_CHECK_TIMEOUT | default('10s', true) %}
+{% set hc_retries = skbom.HEALTH_CHECK_RETRIES | default(3, true) | int %}
+{% set hc_start = skbom.HEALTH_CHECK_START_PERIOD | default('90s', true) %}
+{% set app_constraints = skbom.PLACEMENT_CONSTRAINTS | default(['node.labels.skbom == true'], true) %}
+{% set db_constraints = app_constraints + (['node.hostname == ' + skb_data_node] if skb_data_node else []) %}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "{{ skbom.LOG_MAX_SIZE | default('10m', true) }}"
+    max-file: "{{ skbom.LOG_MAX_FILES | default('3', true) }}"
+
+networks:
+  cloud-public-{{ env }}:
+    external: true
+  skbom-{{ env }}:
+    external: true
+
+services:
+  apiserver:
+    # Default = skb_default_apiserver_image in the playbook (a test keeps
+    # them equal). Runs as uid 1000 (no root entrypoint step), so the data
+    # directory below is chowned to 1000:1000 by the deploy, not by the
+    # container.
+    image: {{ skbom.APISERVER_IMAGE | default('dependencytrack/apiserver:4.14.6@sha256:3110dd66ee9d1b4b9a4dc6c51c68c23f14ba006b6e5a74d0b5204e169a1da09a', true) }}
+    env_file: /var/data/config/skbom-{{ env }}/apiserver.env
+    volumes:
+      - {{ skb_apiserver_data_path }}:/data
+    # /health is unauthenticated (confirmed against a live container: a
+    # fresh apiserver with Postgres reachable answers
+    # {"status":"UP","checks":[{"name":"database","status":"UP",...}]}).
+    # The apiserver image ships curl (Debian trixie base), unlike the thin
+    # images that burned sksec-web; no Node one-liner needed here.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:8080/health || exit 1"]
+      interval: {{ hc_interval }}
+      timeout: {{ hc_timeout }}
+      retries: {{ hc_retries }}
+      start_period: {{ hc_start }}
+    networks:
+      - skbom-{{ env }}
+      - cloud-public-{{ env }}
+    logging: *logging
+    deploy:
+      mode: replicated
+      replicas: 1
+      # db_constraints, not app_constraints: apiserver's /data (secret,
+      # keystore) is local state exactly like Postgres's data directory,
+      # so it gets the same DATA_NODE pin when APISERVER_DATA_PATH is
+      # local disk (see the deploy's "Fail closed on a local data path"
+      # guard, which checks all three paths together).
+      placement:
+        constraints: {{ db_constraints | tojson }}
+      resources:
+        limits:
+          cpus: '{{ skbom.APISERVER_CPUS | default("2.00", true) }}'
+          memory: {{ skbom.APISERVER_MEMORY_LIMIT | default("4096M", true) }}
+        reservations:
+          memory: {{ skbom.APISERVER_MEMORY_RESERVATION | default("1024M", true) }}
+      # stop-first: a second apiserver task starting against the same
+      # Postgres mid-migration is the risk this avoids, same reasoning as
+      # skflow's own Postgres service (not skflow's server, which is
+      # stateless at this layer; skbom's apiserver owns schema migrations).
+      update_config:
+        order: stop-first
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skbom"
+        - "com.skt.env={{ env }}"
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.routers.{{ skb_router }}-api.rule=Host(`{{ skb_host }}`) && PathPrefix(`/api`)"
+        - "traefik.http.routers.{{ skb_router }}-api.entrypoints=websecure"
+        - "traefik.http.routers.{{ skb_router }}-api.tls=true"
+        - "traefik.http.routers.{{ skb_router }}-api.tls.certresolver=main"
+{% if skb_tls_options != 'none' %}
+        - "traefik.http.routers.{{ skb_router }}-api.tls.options={{ skb_tls_options }}"
+{% endif %}
+        # 50: must win over the frontend's catch-all (priority 5) for the
+        # same host, same convention as skflow's -api/-outpost routers.
+        - "traefik.http.routers.{{ skb_router }}-api.priority=50"
+        - "traefik.http.routers.{{ skb_router }}-api.middlewares={{ skb_middlewares }}"
+        - "traefik.http.routers.{{ skb_router }}-api.service={{ skb_router }}-api"
+        - "traefik.http.services.{{ skb_router }}-api.loadbalancer.server.port=8080"
+        - "traefik.http.services.{{ skb_router }}-api.loadbalancer.healthcheck.path=/health"
+        - "traefik.http.services.{{ skb_router }}-api.loadbalancer.healthcheck.interval=30s"
+        - "traefik.http.services.{{ skb_router }}-api.loadbalancer.healthcheck.timeout=10s"
+
+  frontend:
+    # Default = skb_default_frontend_image in the playbook. Stateless SPA:
+    # no volume. Runs as uid 101 (nginx); ships curl and wget both.
+    image: {{ skbom.FRONTEND_IMAGE | default('dependencytrack/frontend:4.14.6@sha256:f298c3e6061096bf76575a1bbe994528089141856ec7b2ec63469cf3f2abeedf', true) }}
+    env_file: /var/data/config/skbom-{{ env }}/frontend.env
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/"]
+      interval: {{ hc_interval }}
+      timeout: {{ hc_timeout }}
+      retries: {{ hc_retries }}
+      start_period: {{ hc_start }}
+    networks:
+      - skbom-{{ env }}
+      - cloud-public-{{ env }}
+    logging: *logging
+    deploy:
+      mode: replicated
+      replicas: {{ skbom.FRONTEND_REPLICAS | default(1, true) | int }}
+      placement:
+        constraints: {{ app_constraints | tojson }}
+      resources:
+        limits:
+          cpus: '{{ skbom.FRONTEND_CPUS | default("0.50", true) }}'
+          memory: {{ skbom.FRONTEND_MEMORY_LIMIT | default("256M", true) }}
+        reservations:
+          memory: {{ skbom.FRONTEND_MEMORY_RESERVATION | default("64M", true) }}
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skbom"
+        - "com.skt.env={{ env }}"
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.routers.{{ skb_router }}.rule=Host(`{{ skb_host }}`)"
+        - "traefik.http.routers.{{ skb_router }}.entrypoints=websecure"
+        - "traefik.http.routers.{{ skb_router }}.tls=true"
+        - "traefik.http.routers.{{ skb_router }}.tls.certresolver=main"
+{% if skb_tls_options != 'none' %}
+        - "traefik.http.routers.{{ skb_router }}.tls.options={{ skb_tls_options }}"
+{% endif %}
+        # 5: below the api router's 50, above skfenceha's per-domain
+        # catch-alls (priority 1), same convention as skflow.
+        - "traefik.http.routers.{{ skb_router }}.priority=5"
+        - "traefik.http.routers.{{ skb_router }}.middlewares={{ skb_middlewares }}"
+        - "traefik.http.routers.{{ skb_router }}.service={{ skb_router }}"
+        - "traefik.http.services.{{ skb_router }}.loadbalancer.server.port=8080"
+        - "traefik.http.services.{{ skb_router }}.loadbalancer.healthcheck.path=/"
+        - "traefik.http.services.{{ skb_router }}.loadbalancer.healthcheck.interval=30s"
+        - "traefik.http.services.{{ skb_router }}.loadbalancer.healthcheck.timeout=10s"
+
+  postgres:
+    # Default = skb_default_pg_image in the playbook: the EXACT same
+    # literal skflow's own POSTGRES_IMAGE default uses, so the two roles
+    # share a layer on any node that runs both.
+    image: {{ skbom.POSTGRES_IMAGE | default('postgres:17.7-alpine@sha256:bb377b7239d2774ac8cc76f481596ce96c5a6b5e9d141f6d0a0ee371a6e7c0f2', true) }}
+    env_file: /var/data/config/skbom-{{ env }}/postgres.env
+    environment:
+      - PGTEMP=/var/lib/postgresql/data/tmp
+    volumes:
+      - {{ skb_pg_path }}:/var/lib/postgresql/data
+    networks:
+      - skbom-{{ env }}
+    logging: *logging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U {{ skbom.DB_USERNAME | default('dtrack', true) }} -d {{ skbom.DB_NAME | default('dtrack', true) }}"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    deploy:
+      mode: replicated
+      # Exactly one: a single Postgres data directory.
+      replicas: 1
+      placement:
+        constraints: {{ db_constraints | tojson }}
+      resources:
+        limits:
+          cpus: '{{ skbom.POSTGRES_CPUS | default("1.00", true) }}'
+          memory: {{ skbom.POSTGRES_MEMORY_LIMIT | default("1024M", true) }}
+        reservations:
+          memory: {{ skbom.POSTGRES_MEMORY_RESERVATION | default("256M", true) }}
+      # stop-first: two Postgres on one data directory corrupt it.
+      update_config:
+        order: stop-first
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skbom"
+        - "com.skt.env={{ env }}"
+
+  postgres-db-backup:
+    # Debian variant: the dump loop needs bash, which alpine does not ship.
+    # Default = skb_default_pg_backup_image in the playbook: the EXACT same
+    # literal skflow's own POSTGRES_BACKUP_IMAGE default uses.
+    image: {{ skbom.POSTGRES_BACKUP_IMAGE | default('postgres:17.7@sha256:2006493727bd5277eece187319af1ef82b4cf82cf4fc1ed00da0775b646ac2a4', true) }}
+    env_file: /var/data/config/skbom-{{ env }}/postgres-backup.env
+    environment:
+      - PGTEMP=/dump/tmp
+    volumes:
+      - {{ skb_dump_path }}:/dump
+    networks:
+      - skbom-{{ env }}
+    # pg_dumpall, not pg_dump: same dump loop skflow uses, one shell (list
+    # form, no heredoc), each run its own temp file renamed only on
+    # success, dumps older than BACKUP_KEEP_DAYS pruned only after a good
+    # dump. Every $ is $$ so docker stack deploy does not interpolate it.
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -o pipefail
+        trap 'exit 0' HUP INT TERM
+        rm -f /dump/.dump_*.tmp
+        sleep 2m & wait $$!
+        while true; do
+          NAME=dump_$$(date +%d-%m-%Y_%H_%M_%S).sql.gz
+          TMP=/dump/.$${NAME}.tmp
+          if pg_dumpall -h postgres -U "$${PGUSER}" | gzip -c > "$${TMP}" && [ -s "$${TMP}" ]; then
+            mv -f "$${TMP}" "/dump/$${NAME}"
+            echo "[backup] OK /dump/$${NAME} ($$(stat -c %s "/dump/$${NAME}") bytes)"
+            DAYS=$${BACKUP_KEEP_DAYS:-7}
+            [ "$${DAYS}" -ge 1 ] 2>/dev/null || DAYS=1
+            find /dump -maxdepth 1 -type f -name 'dump_*.sql.gz' ! -name "$${NAME}" -mmin +$$((DAYS * 1440)) -print -delete
+          else
+            echo "[backup] FAIL: dump failed or empty, previous dumps kept" >&2
+            rm -f "$${TMP}"
+          fi
+          sleep "$${BACKUP_FREQUENCY:-86400}" & wait $$!
+        done
+    healthcheck:
+      disable: true
+    logging: *logging
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: {{ db_constraints | tojson }}
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+        reservations:
+          memory: 32M
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skbom"
+        - "com.skt.env={{ env }}"

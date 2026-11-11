@@ -28,7 +28,13 @@ http:
         - websecure
       middlewares:
         - dashboard-chain@file
-{% if skfenceha.DASHBOARD_AUTH_HASH | default('') != '' %}
+{# skfenceha.DASHBOARD_SSO_MIDDLEWARE (e.g. authentik@file): SSO-gated
+    dashboard, no basic auth on top. Unset: traefikAuth@file, which is basic
+    auth when DASHBOARD_AUTH_HASH is set and a LAN-only allowlist otherwise
+    (dynamic-middlewares.yml.j2), so the dashboard is never public by default. #}
+{% if skfenceha.DASHBOARD_SSO_MIDDLEWARE | default('', true) %}
+        - {{ skfenceha.DASHBOARD_SSO_MIDDLEWARE }}
+{% else %}
         - traefikAuth@file
 {% endif %}
       service: api@internal

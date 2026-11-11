@@ -589,3 +589,46 @@ def test_unknown_authentication_flow_fails_loudly(fake_authentik):
     out = _provision(_cfg(fake, authentication_flow="no-such-login-flow"))
     assert out.returncode == 1 and "no-such-login-flow" in out.stderr
     assert fake.objects["provider"] == []
+
+
+# Authentik 2026.2 added OAuth2Provider.grant_types: a provider created over
+# the API without it gets [] and every authorize answers invalid_request
+# ("Invalid grant_type for provider"). Caught by the v2.26.17 gate's skmesh
+# login proof on stock 2026.8.5.
+NETBIRD_GRANTS = ["authorization_code", "refresh_token", "client_credentials",
+                  "urn:ietf:params:oauth:grant-type:device_code"]
+
+
+def test_provisioner_sets_grant_types_on_2026_authentik(fake_authentik):
+    fake = fake_authentik("2026.8.5")
+    out = _provision(_cfg(fake))
+    assert out.returncode == 0, out.stderr
+    assert sorted(fake.objects["provider"][0]["grant_types"]) == sorted(NETBIRD_GRANTS)
+    again = _provision(_cfg(fake))
+    assert again.returncode == 0 and "updated (" not in again.stdout
+
+
+def test_provisioner_fixes_an_empty_grant_list_left_by_an_older_deploy(fake_authentik):
+    fake = fake_authentik("2026.8.5")
+    assert _provision(_cfg(fake)).returncode == 0
+    fake.objects["provider"][0]["grant_types"] = []
+    out = _provision(_cfg(fake))
+    assert out.returncode == 0 and "provider: updated (grant_types)" in out.stdout
+    assert sorted(fake.objects["provider"][0]["grant_types"]) == sorted(NETBIRD_GRANTS)
+
+
+def test_provisioner_omits_grant_types_before_2026_2(fake_authentik):
+    fake = fake_authentik("2025.12.3")
+    assert _provision(_cfg(fake)).returncode == 0
+    assert "grant_types" not in fake.objects["provider"][0]
+
+
+def test_provisioner_ignores_fields_authentik_adds_to_redirect_uris(fake_authentik):
+    # Authentik 2026.8 returns every redirect URI with redirect_uri_type;
+    # a second deploy must still report the provider unchanged.
+    fake = fake_authentik("2026.8.5")
+    assert _provision(_cfg(fake)).returncode == 0
+    for u in fake.objects["provider"][0]["redirect_uris"]:
+        u["redirect_uri_type"] = "authorization"
+    again = _provision(_cfg(fake))
+    assert again.returncode == 0 and "provider: unchanged" in again.stdout, again.stdout

@@ -18,8 +18,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: '3.12' }
       - run: pip install pytest pyyaml
       - name: pytest
@@ -32,11 +32,11 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: '3.12' }
       - run: bash v2/skwire/build_pyz.sh "$GITHUB_WORKSPACE/skwire.pyz"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: skwire.pyz, path: skwire.pyz }
 
   binary:
@@ -54,8 +54,8 @@ jobs:
           # (system Python) or `pip install skwire`. Re-add macos-13 here if needed.
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: '3.12' }
       - run: pip install pyinstaller
       - name: build native binary
@@ -77,7 +77,7 @@ jobs:
         env:
           PYTHONUTF8: '1'          # insurance; the binary also self-forces UTF-8 stdio
         run: "dist/${{ matrix.asset }} scan"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset }}
           path: v2/dist/${{ matrix.asset }}
@@ -89,8 +89,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions: { contents: write }
     steps:
-      - uses: actions/checkout@v4               # for the installer scripts
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7               # for the installer scripts
+      - uses: actions/download-artifact@v8
         with: { path: artifacts }
       - name: collect artifacts + installers
         run: |
@@ -98,7 +98,7 @@ jobs:
           find artifacts -type f -exec cp {} release/ \;
           cp v2/skwire/install.sh v2/skwire/install.ps1 release/
           ls -la release
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: release/*
           generate_release_notes: true

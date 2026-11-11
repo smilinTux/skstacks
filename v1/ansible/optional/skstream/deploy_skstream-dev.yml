@@ -89,6 +89,38 @@
       loop: "{{ skstream.DUMB_EXTRA_BINDS | default([]) }}"
       tags: [config]
 
+    - name: Refuse a plex_watchlist.py bind over a pinned cli_debrid
+      # The managed Plex Home fix (cli_debrid de5c411f) ships in the pinned
+      # release; a vendored copy of the module from an older release would
+      # shadow the new code. Unpin (CLI_DEBRID_VERSION: '') to keep a bind.
+      assert:
+        that:
+          - >-
+            (skstream.CLI_DEBRID_VERSION | default('v0.7.81') | string | length == 0)
+            or ('/cli_debrid/content_checkers/plex_watchlist.py' not in
+            (skstream.DUMB_EXTRA_BINDS | default([]) | select('mapping') | selectattr('target', 'defined') | map(attribute='target') | list))
+        fail_msg: >-
+          skstream.DUMB_EXTRA_BINDS binds /cli_debrid/content_checkers/plex_watchlist.py
+          while CLI_DEBRID_VERSION pins cli_debrid to
+          {{ skstream.CLI_DEBRID_VERSION | default('v0.7.81') }}, which already has the
+          managed Plex Home fix. Remove that bind (or set CLI_DEBRID_VERSION: '').
+      tags: [config]
+
+    - name: Validate skstream.PLEX_OTHER_WATCHLISTS (username and token on every entry)
+      assert:
+        that:
+          - item is mapping
+          - (item.username | default('') | string | length) > 0
+          - (item.token | default('') | string | length) > 0
+        fail_msg: >-
+          Each skstream.PLEX_OTHER_WATCHLISTS entry needs a username (the plex.tv
+          username, or the profile title for a managed Plex Home user) and that
+          user's own plex.tv token.
+        quiet: true
+      loop: "{{ skstream.PLEX_OTHER_WATCHLISTS | default([]) }}"
+      loop_control: { label: "{{ item.username | default('?') if item is mapping else '?' }}" }
+      tags: [config]
+
     - name: Create {{ app }} directories on the shared data mount (not recursive)
       file: { path: "{{ item.path }}", state: directory, owner: "{{ item.owner }}", group: "{{ item.owner }}", mode: "{{ item.mode }}" }
       loop:
@@ -189,6 +221,58 @@
       delegate_to: "{{ skstream.MEDIA_NODE }}"
       tags: [host]
 
+    - name: Get the owner's Plex friends-watchlist RSS feed URL (needs Plex Pass)
+      uri:
+        url: https://discover.provider.plex.tv/rss
+        method: POST
+        headers: { X-Plex-Token: "{{ skstream.PLEX_TOKEN }}", X-Plex-Client-Identifier: skstacks-skstream, Accept: application/json }
+        body_format: json
+        body: { feedType: friendsWatchlist }
+        status_code: [200, 201]
+      register: skstream_friends_rss
+      no_log: true
+      when: skstream.PLEX_FRIENDS_WATCHLIST | default(false) | bool
+      tags: [host, watchlists]
+
+    - name: Install skstream-converge on the media node
+      copy: { src: "{{ playbook_dir }}/src/{{ app }}/skstream-converge", dest: /usr/local/sbin/skstream-converge, owner: root, group: root, mode: '0755' }
+      delegate_to: "{{ skstream.MEDIA_NODE }}"
+      tags: [host, watchlists]
+
+    - name: Converge the cli_debrid pin and Plex watchlist sources (upsert only)
+      # Edits only keys skstream owns; UI changes and other sources survive.
+      # The spec carries tokens, so it goes on stdin and the task is no_log.
+      command:
+        argv:
+          - python3
+          - /usr/local/sbin/skstream-converge
+          - --dumb-config
+          - "/var/data/{{ app }}-{{ env }}/dumb/config/dumb_config.json"
+          - --cli-config
+          - "{{ skstream_local_root }}/dumb-data/cli_debrid/config/config.json"
+        stdin: >-
+          {{ {
+            'cli_debrid_version': skstream.CLI_DEBRID_VERSION | default('v0.7.81') | string,
+            'other_watchlists': skstream.PLEX_OTHER_WATCHLISTS | default([]),
+            'friends_rss_url': (((skstream_friends_rss.json | default({})).RSSInfo | default([{}]))[0].url | default('')
+                                if (skstream.PLEX_FRIENDS_WATCHLIST | default(false) | bool) else ''),
+            'versions': ['1080p'],
+            'filter_out': skstream.CLI_DEBRID_FILTER_OUT | default(None),
+            'foreign_language_penalty': skstream.CLI_DEBRID_FOREIGN_LANGUAGE_PENALTY | default(None),
+            'minimum_scrape_score': skstream.CLI_DEBRID_MINIMUM_SCRAPE_SCORE | default(None),
+            'cutoff_date': skstream.CUTOFF_DATE | default('') | string,
+            'check_minutes': skstream.WATCHLIST_CHECK_MINUTES | default(5) | int
+          } | to_json }}
+      register: skstream_converge
+      changed_when: (skstream_converge.stdout | from_json).values() | select | list | length > 0
+      no_log: true
+      delegate_to: "{{ skstream.MEDIA_NODE }}"
+      tags: [host, watchlists]
+
+    - name: Show what the converge changed (booleans only)
+      debug: { msg: "{{ skstream_converge.stdout }}" }
+      tags: [host, watchlists]
+
     - name: Deploy {{ app }} stack
       shell: "cd /var/data/{{ app }}-{{ env }} && ./deploy"
       register: deploy_output
@@ -197,12 +281,24 @@
       debug: var=deploy_output.stdout_lines
       tags: [deploy]
 
-    - name: Enable and start skstream-dumb.service (restart when the unit changed)
+    - name: Enable and start skstream-dumb.service (restart when the unit or the cli_debrid pin changed)
+      # DUMB installs the pinned cli_debrid release when it starts.
       systemd:
         name: "skstream-dumb{{ skstream_sfx }}.service"
         enabled: true
         daemon_reload: true
-        state: "{{ 'restarted' if (skstream_unit.changed | default(false)) else 'started' }}"
+        state: "{{ 'restarted' if (skstream_unit.changed | default(false)) or ((skstream_converge.stdout | default('{}') | from_json).dumb_changed | default(false)) else 'started' }}"
+      register: skstream_dumb_start
+      delegate_to: "{{ skstream.MEDIA_NODE }}"
+      tags: [host, deploy]
+
+    - name: Restart only cli_debrid when only its sources changed (the rclone mount stays up)
+      command:
+        argv: [docker, exec, "skstream-dumb{{ skstream_sfx }}", curl, -fsS, -X, POST, "http://127.0.0.1:8000/process/restart-service",
+               -H, "Content-Type: application/json", -d, '{"process_name": "CLI Debrid"}']
+      when:
+        - (skstream_converge.stdout | default('{}') | from_json).cli_changed | default(false)
+        - not (skstream_dumb_start.changed | default(false))
       delegate_to: "{{ skstream.MEDIA_NODE }}"
       tags: [host, deploy]
 
@@ -219,7 +315,7 @@
           slug: "{{ skstream.AUTHENTIK_TILE_SLUG | default(app, true) }}"
           name: "{{ skstream.AUTHENTIK_TILE_NAME | default('SKStream (Plex)', true) }}"
           launch_url: "https://skstream{{ '' if env == 'prod' else '-' + env }}.{{ skstream.CLUSTERNAME }}.{{ skstream.DOMAIN }}"
-          group: "{{ skstream.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          group: "{{ skstream.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
           icon: "{{ skstream.AUTHENTIK_TILE_ICON | default('fa://fa-film', true) }}"
           icon_file: "{{ skstream.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
           icon_name: "{{ skstream.AUTHENTIK_TILE_ICON_NAME | default('plex', true) }}"

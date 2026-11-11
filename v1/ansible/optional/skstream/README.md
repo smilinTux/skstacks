@@ -91,6 +91,9 @@ Namespace `skstream`. Required: `RD_API_KEY`, `PLEX_TOKEN`, `MEDIA_NODE`.
 | `CUTOFF_DATE` | `''` | watchlist cutoff: `YYYY-MM-DD` or days (e.g. `7`); `''` takes whole back catalogs of watchlisted shows |
 | `WATCHLIST_CHECK_MINUTES` | `5` | |
 | `CLI_DEBRID_HYBRID_MODE` | `true` | cli_debrid `Scraping.hybrid_mode`: take a cached release if any, else the best uncached one |
+| `CLI_DEBRID_FILTER_OUT` | Russian-release filter | list of cli_debrid `filter_out` patterns added to each managed scraping version on every deploy (append only: patterns added in the UI stay, and removing one here does not remove it there). Unset uses `DEFAULT_FILTER_OUT` in `skstream-converge`, which rejects `Rus`/`Ru`/`Ukr` tags, Russian dub and tracker groups (LostFilm, ColdFilm, ViruseProject, Ultradox and others) and any Cyrillic letter in a release name. `language_code: en` alone only lowers a foreign release's score, so a cached Russian pack can still win. `[]` adds nothing |
+| `CLI_DEBRID_FOREIGN_LANGUAGE_PENALTY` | `1000` | cli_debrid `foreign_language_penalty` on each managed scraping version, set on every deploy. With `language_weight` 3 a release tagged with another audio language (cli_debrid's own detection; subtitle tags, MULTi/DUAL/DL and the title's original language are exempt) scores about -2350, so together with `CLI_DEBRID_MINIMUM_SCRAPE_SCORE` it is dropped, not just ranked down. That matters because the Adding queue takes any cached release before any uncached one whatever its score. cli_debrid's stock value is `30` |
+| `CLI_DEBRID_MINIMUM_SCRAPE_SCORE` | `1.0` | cli_debrid `Scraping.minimum_scrape_score`, set on every deploy; global, drops every result scoring below it. Real releases scored 483-953 on nor. `0.0` turns the filter off (and with it the drop above) |
 | `RCLONE_MOUNT_NAME` | `rclone_RD` | directory under the mount; Plex libraries live below `/mnt/debrid/<name>/` |
 | `PLEX_MOVIE_LIBRARIES`, `PLEX_SHOW_LIBRARIES` | `Movies`, `TV Shows` | comma lists, for cli_debrid |
 | `KOMETA_ENABLED` | `false` | `KOMETA_TIME` (`03:00`) |
@@ -100,7 +103,10 @@ Namespace `skstream`. Required: `RD_API_KEY`, `PLEX_TOKEN`, `MEDIA_NODE`.
 | `DUMB_MEMORY_LIMIT` | `2g` | |
 | `PLEX_ENDPOINT_MODE` | `dnsrr` | `vip` or `dnsrr`; keep dnsrr while host-level containers share the overlay (see above) |
 | `PLEX_EXTRA_BINDS` | `[]` | list of `{source, target}` read-only binds into Plex, e.g. `{source: /var/data/skfetch-prod/media, target: /skfetch/media}` so libraries can include skfetch folders |
-| `DUMB_EXTRA_BINDS` | `[]` | list of `{source, target, read_only}` binds into the DUMB container (`read_only` default `true`), rendered as `-v source:target[:ro]` after the `/data` bind. For a patched cli_debrid module until upstream releases the fix, e.g. `{source: /var/lib/skstream/patches/plex_watchlist.py, target: /cli_debrid/content_checkers/plex_watchlist.py}`. The source file is yours to place on `MEDIA_NODE`; absolute paths without spaces or colons (the play checks). Drop the entry once a DUMB image ships the fix |
+| `DUMB_EXTRA_BINDS` | `[]` | list of `{source, target, read_only}` binds into the DUMB container (`read_only` default `true`), rendered as `-v source:target[:ro]` after the `/data` bind. The source file is yours to place on `MEDIA_NODE`; absolute paths without spaces or colons (the play checks). The play refuses a bind over `/cli_debrid/content_checkers/plex_watchlist.py` while `CLI_DEBRID_VERSION` pins a release: the managed Plex Home fix it once carried is upstream now |
+| `CLI_DEBRID_VERSION` | `v0.7.81` | cli_debrid release DUMB installs (set in `dumb_config.json` on every deploy; a change restarts `skstream-dumb`). `''` leaves DUMB's own selection alone. DUMB images up to at least 2.23.0 bake cli_debrid 0.7.23, and the container runs with `--rm`, so a pin is downloaded from GitHub on each start of `skstream-dumb`. A pin also sets `cli_battery.enabled: false`: cli_debrid v0.7.29 and later run CLI Battery in-process and ship no `cli_battery/main.py`, so DUMB's standalone battery service crashes and holds cli_debrid back. It also points cli_debrid's data paths (`USER_CONFIG`, `USER_LOGS`, `USER_DB_CONTENT`, `config_file`, `log_file`) at `/data/cli_debrid` directly: DUMB reinstalls a pinned release into `/cli_debrid` on every start and its `/cli_debrid/data` symlink did not survive that. Drop the pin once a `DUMB_IMAGE` bakes the release you want |
+| `PLEX_OTHER_WATCHLISTS` | `[]` | list of `{username, token, display_name}`: one "Other Plex Watchlist" source per viewer, each with that viewer's own plex.tv token. `username` is the plex.tv username, or the profile title for a managed Plex Home user. Tokens are secrets: vault only (see [Viewers](#viewers-and-their-watchlists)) |
+| `PLEX_FRIENDS_WATCHLIST` | `false` | add one "My Friends Plex RSS Watchlist" source fed by the owner's friends RSS feed (needs Plex Pass on the `PLEX_TOKEN` account); the play fetches the feed URL |
 | `placement_constraints` | `["node.labels.skstream-media == true"]` | list; `[]` for none |
 | `router_middlewares_pre`, `router_middlewares`, `tls_options` | none | Traefik router hooks |
 | `PUID`, `PGID`, `TZ` | `1000`, `1000`, `UTC` | |
@@ -157,6 +163,35 @@ redeploy once with `FORCE_SEED: true`.
 ```
 ansible-playbook optional/skstream/deploy_skstream-prod.yml -l <managers> -e target_manager_group=<managers>
 ```
+
+## Viewers and their watchlists
+
+Every viewer's watchlist feeds cli_debrid the same way the owner's does, once it
+is a content source. Which kind depends on the account:
+
+- **Managed Plex Home profile** (a kid's profile, no plex.tv login of its own):
+  an entry in `PLEX_OTHER_WATCHLISTS` with the profile title as `username` and
+  the profile's own plex.tv token. The owner can mint it: cli_debrid's
+  Settings, "Collect User Tokens", or plexapi
+  `MyPlexAccount(token=OWNER).switchHomeUser(title).authenticationToken`.
+- **Friend** (their own plex.tv account, the server shared with them): the
+  owner cannot mint their token. `PLEX_FRIENDS_WATCHLIST: true` covers every
+  friend at once through the owner's friends RSS feed, as long as the friend's
+  watchlist privacy lets friends see it. A friend who hands over their own
+  token can go in `PLEX_OTHER_WATCHLISTS` instead.
+
+The seeds are written once, so these do not live in the seed: every deploy
+runs `skstream-converge` on `MEDIA_NODE`, which upserts exactly these sources
+(matched by type and username), their check period
+(`WATCHLIST_CHECK_MINUTES`) and the `CLI_DEBRID_VERSION` pin. It never removes
+or edits a source it did not create, and prints only what changed. When only
+sources changed it restarts cli_debrid alone through DUMB's API, so the rclone
+mount Plex reads stays up.
+
+Library access is plex.tv account state, not deploy state: give a new viewer
+the same libraries and Downloads as the others in Plex (Settings, Manage
+Library Access) or with plexapi `updateFriend(user, server,
+sections=server.library.sections())`.
 
 ## Using it
 

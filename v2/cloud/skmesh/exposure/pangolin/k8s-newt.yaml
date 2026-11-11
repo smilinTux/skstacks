@@ -18,7 +18,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: newt
-          image: fosrl/newt:1.0.0
+          image: fosrl/newt:1.20.0
           securityContext:
             # ponytail: root + NET_ADMIN for the tunnel; writable paths are the
             # emptyDirs below. Add a mount if a newt release writes elsewhere.

@@ -257,6 +257,10 @@ def _talk_shell(pb, **over):
         nextcloud_container={"stdout": "cid"})
 
 
+def _set_lines(shell):
+    return [l for l in shell.splitlines() if "php occ config:app:set spreed" in l]
+
+
 @pytest.mark.parametrize("pb", PLAYBOOKS, ids=lambda p: p.name)
 @pytest.mark.parametrize("empty", [None, []])
 def test_stun_unset_or_empty_leaves_the_task_unchanged(pb, empty):
@@ -264,7 +268,7 @@ def test_stun_unset_or_empty_leaves_the_task_unchanged(pb, empty):
     shell = _talk_shell(pb, **over)
     assert shell == _talk_shell(pb)
     assert "stun_servers" not in shell
-    assert len(shell.strip().splitlines()) == 3
+    assert len(_set_lines(shell)) == 2
 
 
 @pytest.mark.parametrize("pb", PLAYBOOKS, ids=lambda p: p.name)
@@ -305,8 +309,140 @@ def test_tls443_appends_a_turns_443_tcp_entry(pb):
 
 
 @pytest.mark.parametrize("pb", PLAYBOOKS, ids=lambda p: p.name)
+@pytest.mark.parametrize("extra", [{}, TLS], ids=["tls443-off", "tls443-on"])
+def test_3478_entry_is_plain_turn_only(pb, extra):
+    # eturnal in aio-talk has no TLS listener on 3478, so turns: there is a dead URL.
+    entry = _turn_servers(_talk_shell(pb, **extra))[0]
+    assert entry["server"].endswith(":3478")
+    assert entry["schemes"] == "turn"
+    assert entry["protocols"] == "udp,tcp"
+
+
+@pytest.mark.parametrize("pb", PLAYBOOKS, ids=lambda p: p.name)
 def test_talk_task_stays_no_log(pb):
     assert _talk_task(pb).get("no_log") is True
+
+
+# --- typed and sensitive write (Nextcloud 29+ config lexicon) -------------------
+# Talk declares stun_servers and turn_servers as sensitive arrays; an untyped
+# occ config:app:set is refused with "Config value were not updated" and exit 0.
+
+TYPED_PROBE = "config:app:set --help | grep -q -- '--sensitive'"
+TYPED_OPTS = "--no-interaction --type=array --sensitive"
+
+
+@pytest.mark.parametrize("pb", PLAYBOOKS, ids=lambda p: p.name)
+def test_turn_and_stun_use_the_typed_sensitive_form(pb):
+    shell = _talk_shell(pb, TALK_STUN_SERVERS=["turn.example.com:3478"])
+    assert TYPED_PROBE in shell
+    assert f'TYPED="{TYPED_OPTS}"' in shell
+    for key in ("turn_servers", "stun_servers"):
+        line = next(l for l in _set_lines(shell) if f"spreed {key} " in l)
+        assert f"spreed {key} $TYPED --value='" in line, line
+    sig = next(l for l in _set_lines(shell) if "signaling_servers" in l)
+    assert "$TYPED" not in sig  # not in the lexicon, plain string write
+
+
+@pytest.mark.parametrize("pb", PLAYBOOKS, ids=lambda p: p.name)
+def test_typed_form_is_only_used_when_occ_has_it(pb):
+    # occ before 29 has no --type/--sensitive; the options are set only behind the probe.
+    shell = _talk_shell(pb)
+    assert shell.count("TYPED=") == 2
+    assert shell.index('TYPED=""') < shell.index(TYPED_PROBE) < shell.index(f'TYPED="{TYPED_OPTS}"')
+
+
+@pytest.mark.parametrize("pb", PLAYBOOKS, ids=lambda p: p.name)
+def test_refused_write_is_not_swallowed(pb):
+    task = _talk_task(pb)
+    shell = _talk_shell(pb, TALK_STUN_SERVERS=["turn.example.com:3478"])
+    assert "ignore_errors" not in task
+    assert "failed_when" not in task or "false" not in str(task["failed_when"]).lower()
+    assert "|| true" not in shell
+    assert shell.lstrip().startswith("set -e")
+    # occ exits 0 on a refused write, so each key is read back; get exits 1 when unset.
+    for key in ("signaling_servers", "turn_servers", "stun_servers"):
+        assert f'php occ config:app:get spreed {key} >/dev/null' in shell
+
+
+@pytest.mark.parametrize("pb", PLAYBOOKS, ids=lambda p: p.name)
+def test_stun_readback_only_when_stun_is_set(pb):
+    assert "config:app:get spreed stun_servers" not in _talk_shell(pb)
+
+
+def _run_with_stub_docker(tmp_path, pb, modern, mode):
+    """Run the rendered script against a fake docker. modes: accepts (stores
+    everything), strict (Nextcloud 35 lexicon: an untyped write to turn/stun is
+    refused with exit 0), drops (turn_servers is never stored, exit 0)."""
+    store = tmp_path / "store"
+    store.mkdir()
+    log = tmp_path / "calls.log"
+    help_line = 'echo "      --sensitive  Set value as sensitive"' if modern else 'echo "no such options"'
+    docker = tmp_path / "docker"
+    docker.write_text(f"""#!/bin/bash
+shift 4
+echo "$*" >> {log}
+if [ "$1 $2" = "config:app:set --help" ]; then {help_line}; exit 0; fi
+if [ "$1" = config:app:set ]; then
+  key=$3
+  case " $* " in *" --sensitive "*) typed=1;; *) typed=0;; esac
+  case "{mode}:$key:$typed" in
+    strict:turn_servers:0|strict:stun_servers:0|drops:turn_servers:*)
+      echo "Config value were not updated"; exit 0;;
+  esac
+  echo stored > {store}/$key; exit 0
+fi
+if [ "$1" = config:app:get ]; then [ -f {store}/$3 ]; exit $?; fi
+exit 0
+""")
+    docker.chmod(0o755)
+    script = tmp_path / "talk.sh"
+    script.write_text(_talk_shell(pb, TALK_STUN_SERVERS=["turn.example.com:3478"]))
+    r = subprocess.run(["bash", str(script)], capture_output=True, text=True,
+                       env=dict(os.environ, PATH=f"{tmp_path}:{os.environ['PATH']}"))
+    calls = [l for l in log.read_text().splitlines() if l.startswith("config:app:set spreed")]
+    return r, calls, sorted(p.name for p in store.iterdir())
+
+
+ALL_KEYS = ["signaling_servers", "stun_servers", "turn_servers"]
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+@pytest.mark.parametrize("pb", PLAYBOOKS, ids=lambda p: p.name)
+def test_stub_nextcloud_35_strict_lexicon_accepts_the_typed_write(tmp_path, pb):
+    r, calls, stored = _run_with_stub_docker(tmp_path, pb, modern=True, mode="strict")
+    assert r.returncode == 0, r.stderr
+    assert stored == ALL_KEYS
+    for l in calls:
+        if "turn_servers" in l or "stun_servers" in l:
+            assert " --type=array --sensitive " in l
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+@pytest.mark.parametrize("pb", PLAYBOOKS, ids=lambda p: p.name)
+def test_stub_nextcloud_28_gets_the_plain_write(tmp_path, pb):
+    r, calls, stored = _run_with_stub_docker(tmp_path, pb, modern=False, mode="accepts")
+    assert r.returncode == 0, r.stderr
+    assert stored == ALL_KEYS
+    assert calls and not any("--sensitive" in l or "--type" in l for l in calls)
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+@pytest.mark.parametrize("pb", PLAYBOOKS, ids=lambda p: p.name)
+@pytest.mark.parametrize("modern", [True, False], ids=["nc29plus", "nc28"])
+def test_stub_refused_write_fails_the_script(tmp_path, pb, modern):
+    r, _calls, stored = _run_with_stub_docker(tmp_path, pb, modern=modern, mode="drops")
+    assert r.returncode != 0
+    assert "turn_servers" not in stored
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+@pytest.mark.parametrize("pb", PLAYBOOKS, ids=lambda p: p.name)
+def test_stub_untyped_write_would_have_been_swallowed(tmp_path, pb):
+    # Regression for the old form: a plain write on a strict store stores nothing.
+    # With the probe unable to see --sensitive the script must still fail, not pass.
+    r, _calls, stored = _run_with_stub_docker(tmp_path, pb, modern=False, mode="strict")
+    assert r.returncode != 0
+    assert "turn_servers" not in stored
 
 
 # --- the guard and the Talk task through real Ansible ---------------------------
@@ -341,7 +477,7 @@ def test_real_ansible_default_and_set(tmp_path, pb):
     assert r0.returncode == 0, r0.stdout[-2000:]
     r1, empty = _real(tmp_path, pb, {"TALK_STUN_SERVERS": [], "INTERNAL_INGRESS_IP": ""})
     assert r1.returncode == 0 and empty == unset
-    assert "stun_servers" not in unset and len(unset.strip().splitlines()) == 3
+    assert "stun_servers" not in unset and len(_set_lines(unset)) == 2
     r2, st = _real(tmp_path, pb, {"TALK_STUN_SERVERS": ["turn.example.com:3478"], "INTERNAL_INGRESS_IP": "10.20.30.40",
                                   "TALK_TURN_TLS_443": True, "TURN_DOMAIN": "turn.example.com"})
     assert r2.returncode == 0, r2.stdout[-2000:]

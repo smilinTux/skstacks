@@ -131,6 +131,8 @@ FAKE_STDOUT = {
     "sksw_crowdsec_container": "render-container",
     "sksw_lapi_machines": "[]",
     "sksw_lapi_machines_after": "[]",
+    # skstream: the converge prints booleans only
+    "skstream_converge": '{"dumb_changed": false, "cli_changed": false}',
 }
 
 
@@ -576,13 +578,28 @@ def write_inventory(path: Path, target_group: str) -> None:
     path.write_text(yaml.safe_dump({"all": {"hosts": {"localhost": host}, "children": groups}}))
 
 
-def stage_companion_vaults(svc: str, env: str, vault_dir: Path, vars_dir: Path = VARS) -> list[str]:
+def role_type(name: str, ansible_dir: Path = ANSIBLE) -> str:
+    """'core' or 'optional': which v1/ansible/<type>/ dir holds the role."""
+    return "core" if (ansible_dir / "core" / name).is_dir() else "optional"
+
+
+def stage_companion_vaults(svc: str, env: str, vault_dir: Path, vars_dir: Path = VARS,
+                           vaults_root: Path | None = None) -> list[str]:
     """Stage vars/<svc>.with.<other>.yml as <other>-<env>_vault.yml: the fake
-    vault of another service this deploy reads (e.g. skmesh reads sksso's)."""
+    vault of another service this deploy reads (e.g. skmesh reads sksso's).
+
+    With vaults_root, each companion goes where an instance keeps it,
+    <vaults_root>/<other's role type>/group_vars/<env>/, so a core role
+    (skfence) reading an optional role's vault (sksso) is rendered against
+    the real layout instead of a copy planted in its own core dir."""
     staged = []
     for extra in sorted(vars_dir.glob(f"{svc}.with.*.yml")):
         other = extra.name[len(svc) + len(".with."):-len(".yml")]
-        (vault_dir / f"{other}-{env}_vault.yml").write_text(extra.read_text())
+        dest = vault_dir
+        if vaults_root is not None:
+            dest = vaults_root / role_type(other) / "group_vars" / env
+            dest.mkdir(parents=True, exist_ok=True)
+        (dest / f"{other}-{env}_vault.yml").write_text(extra.read_text())
         staged.append(other)
     return staged
 
@@ -605,7 +622,7 @@ def run_one(work: Path, stype: str, svc: str, env: str, pb: Path, pass_name: str
     vault_dir = run_dir / "vaults" / stype / "group_vars" / env
     vault_dir.mkdir(parents=True)
     (vault_dir / f"{svc}-{env}_vault.yml").write_text(yaml.dump(vault, Dumper=VarsDumper))
-    stage_companion_vaults(svc, env, vault_dir)
+    stage_companion_vaults(svc, env, vault_dir, vaults_root=run_dir / "vaults")
     inv_dir = run_dir / "inventory"
     shutil.copytree(FIXTURES, inv_dir)
     target_group = "skfenceha_managers" if svc == "skfenceha" else "swarm_managers"

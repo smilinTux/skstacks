@@ -3,10 +3,370 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
-## Unreleased (v2.26.17)
+## Unreleased (v2.26.20)
 
 ### Upgrade notes (instances)
 
+- **Portal tiles and OIDC app admins default to the `skadmin` group, not `authentik Admins`**: the
+  `AUTHENTIK_TILE_GROUP` defaults (every role with a portal tile, plus the shared
+  `authentik_portal_tile.yml`) and the `OIDC_ADMIN_GROUPS` defaults (sksec-web, skpatch-hosts) are now
+  `skadmin`. `authentik Admins` stays Authentik's own administration group, and the automation API
+  account still lives there. An instance that wants the old binding sets the knob explicitly.
+  `skadmin` must already exist in Authentik. Tiles already bound to `authentik Admins` are not moved
+  automatically, so move them once in the admin UI or with `ak shell`.
+
+- **skpatch-hosts: schedules, notification channels, upgrade mode and key rotation as code**:
+  the registrar run of `provision_skpatch_hosts_nodes.yml` now also converges, by name and never
+  deleting, `SCHEDULES` (or `skpatch_hosts_schedules`), `NOTIFICATIONS`, the APT `UPGRADE_MODE` per
+  system, and with `SYNC_CREDENTIAL: true` rewrites the estate credential's key (rotation, SOP §5).
+  Hosts can set `skpatch_hosts_dashboard_address`/`_port`. Nothing changes for an instance that sets
+  none of these. Armed hosts (`ALLOW_ACTIONS`) gain one sudoers line, `snap refresh`: rerun the
+  provisioning playbook to pick it up. README "Schedules and notifications as code" lists what the
+  pinned app does with schedules (serial update chains, reboots that do not wait, the Proxmox guard,
+  the Telegram poller) that an estate's schedule design has to respect.
+
+## skstacks-v2.26.19 - 2026-11-10
+
+### Upgrade notes (instances)
+
+- **Renovate majors, wave 1 (internet-facing stacks)**: back up each stack before deploying it.
+  - **skhub: Nextcloud default 31.0.14 to 35.0.2.** Nextcloud only upgrades one major at a time, so a new
+    pre-deploy guard (`tasks/major_upgrade_guard.yml`) fails the play on a skipped major or a downgrade,
+    and leaves the running stack untouched. An instance on 34 can take 35 directly. An instance on an
+    older major pins `NEXTCLOUD_IMAGE` to the next major and steps up one deploy at a time (the README
+    lists the 32, 33 and 34 digests). New `tasks/post_upgrade.yml` runs `occ upgrade` only when the DB
+    still needs it, `app:update --all` after a major, and adds missing columns and primary keys. Each step
+    is several minutes of maintenance mode. Rollback means restoring the backup and pinning the previous
+    image.
+  - **skhub: Talk TURN and STUN servers are written as typed, sensitive config again.** Talk on
+    Nextcloud 29+ declares `turn_servers` and `stun_servers` as sensitive arrays, and occ silently
+    refused the old untyped write ("Config value were not updated", exit 0). The task hid that error,
+    so Talk ran without our TURN/STUN. The write now uses `--type=array --sensitive -n` when occ supports
+    it, reads each key back, and fails the deploy on a refused write. After deploying, check that Talk
+    calls connect behind NAT.
+  - **skmail: docker-mailserver default to 17.0.0.** No template change was needed, and a test keeps the
+    renamed 16 and 17 settings out. Coming from 16.x, the Rspamd Bayes data starts empty (state moves to
+    Valkey). Back up `config` and `mailstate`. The restart can take up to the 1800s healthcheck window
+    because of the per-mailbox ownership `chown`.
+  - **skgit: Forgejo 15.0.9 to 17.0.1, runner 11.3.1 to 13.2.1, dind 27.5.1 to 29.9.3.** A direct 15 to
+    17 jump is supported, and migrations run in order. Before deploying, back up and run
+    `forgejo manager flush-queues`. After deploying, run `forgejo doctor check --all`. Runner 13 drops the
+    old workflow commands (`set-output`, `set-env`, `add-path`) and `${{ gitea.* }}`. An existing dind
+    volume keeps its image store.
+  - **skorch: n8n stays on 2.x.** n8n 3.x is still an upstream pre-release, so its breaking-change notes
+    are parked on #352 for later. The pinned-digest test no longer hardcodes the major version.
+  - **Undeployed descriptors (v2 tree, skboard)**: authentik 2026.8, valkey 9, tempo 3, grafana 13,
+    gitlab 19, garage 2, vikunja 2.8, terraform cloudflare 5 (resources migrated to
+    `cloudflare_dns_record`) and vault 5. Nothing that deploys today uses these files. The upgrade path
+    for each is in `v2/infra/tofu/README.md` and in PR #351. FalkorDB 6 was declined because skgraph is
+    retired.
+
+- **skpatch-hosts: host auto-registration works again, through a dashboard session instead of an
+  API token**: linux-update-dashboard 2026.10.9 refuses API tokens for creating systems and
+  credentials, so v2.26.17 refused registration outright. `provision_skpatch_hosts_nodes.yml` now
+  runs `register_systems.js` inside the dashboard's own container, which signs a five-minute
+  session for an existing dashboard admin with the app's own session key (works in `sso`, `local`
+  and `oidc` modes; revoked by that user's "sign out everywhere"). New vault keys:
+  `skpatch_hosts.REGISTER_AS` (the admin's username) plus `SSH_PRIVATE_KEY` (the registrar creates
+  the SSH credential from it) or `CREDENTIAL_ID` (an existing one; `API_CREDENTIAL_ID` is still
+  read). It creates missing systems and never edits or deletes one. **A vault that still sets
+  `API_TOKEN` now fails** with these steps; remove it. `PROVISIONER_IMAGE` is no longer used by
+  this role.
+
+## skstacks-v2.26.18 - 2026-11-10
+
+### Upgrade notes (instances)
+
+- **skgallery: Postgres and Redis can live on local disk on one pinned node
+  (`skgallery.DATA_NODE`, `DB_DATA_PATH`, `REDIS_DATA_PATH`)**: both were hardcoded under
+  `/var/data/skgallery-<env>/` (NFS on a typical instance). On an instance (2026-11-09) NFS
+  write stalls of 30 to 120 s froze the database and the bullmq job queue with it, so the
+  worker lost its job locks and the API stopped answering. With a path outside `/var/data`
+  the playbook creates it on `DATA_NODE` (owner 999; 0700 for the database) and pins
+  `database` and `redis` there, and refuses to run without `DATA_NODE`. The NFS directories
+  are left in place as the rollback copy. Unset renders exactly as before. **Instance action**:
+  optional. To move: stop the stack's `database`, `redis` and Immich services, copy both
+  directories to the new paths on `DATA_NODE` with ownership and modes kept, set the three
+  keys, redeploy, verify, then rename the NFS copies. Tests: `v1/tests/test_skgallery_local_db.py`.
+- **skfenceha: traefik-worker rolling restarts drain instead of dropping traffic**: the
+  worker publishes host-mode ports, so start-first is impossible, and it stopped with Docker's
+  default 10 s grace, the same as Traefik's own default drain: every restart SIGKILLed the
+  worker (exit 137) mid-drain and the next node went down 10 s later. On an instance
+  (2026-11-09) two restarts refused connections for about 4.5 minutes and failed a Windmill
+  flow. Now `stop_grace_period` defaults to 45 s (`TRAEFIK_WORKER_STOP_GRACE`), the delay
+  between nodes to 30 s (`TRAEFIK_WORKER_UPDATE_DELAY`, update and rollback), the deploy waits
+  up to 900 s for the rolling restart (`WORKER_UPDATE_TIMEOUT`), and the new
+  `WORKER_LIFECYCLE` map renders `entryPoints.websecure.transport.lifeCycle` (unset: nothing,
+  as before). **Instance action**: recommended: set `WORKER_LIFECYCLE: {graceTimeOut: 30s}`
+  (keep it below the stop grace) and redeploy skfenceha. Tests:
+  `test_skfenceha_worker_timeouts.py`, `test_skfenceha_worker_resources.py`.
+- **skgallery: optional split of Immich's background jobs out of the API
+  (`skgallery.SPLIT_WORKERS`)**: Immich runs its API and its job workers (video
+  transcoding, thumbnails, metadata) in one container under one CPU limit. With software
+  transcoding the encode takes the whole limit, so the API stops reading upload bodies: large
+  phone video uploads stall until the client gives up, and Traefik's 10 s health check marks
+  the backend down (503s for every client). Seen on an instance on 2026-11-09 with a 9 GB
+  iPhone video. With `SPLIT_WORKERS: true` immich-server runs only the API
+  (`IMMICH_WORKERS_INCLUDE=api`) and a new `immich-microservices` service runs every other
+  worker (`IMMICH_WORKERS_EXCLUDE=api`) under its own limits
+  (`MICROSERVICES_CPU_LIMIT`/`_MEMORY_LIMIT`, defaults 4.0 / 4G;
+  `MICROSERVICES_CPU_RESERVATION`/`_MEMORY_RESERVATION`, `MICROSERVICES_REPLICAS`). It shares
+  the media mounts and the env file, has no router, and has the image's API healthcheck
+  disabled. Unset, the stack renders exactly as before. **Instance action**: recommended for
+  any instance that takes large video uploads: set `SPLIT_WORKERS: true` and redeploy (the
+  API restarts once; do it when no large upload is in flight). Tests:
+  `v1/tests/test_skgallery_split_workers.py`.
+- **skgallery: the Traefik load-balancer health check can be turned off
+  (`skgallery.TRAEFIK_HEALTHCHECK: false`)**: with a single immich-server replica the probe
+  has nothing to fail over to. When the API stalled for 30 to 60 s on slow NFS writes
+  (2026-11-09), every probe timeout marked the only backend down and Traefik answered every
+  phone upload with an instant 503 (358 of them in two bursts), so the iOS app retried
+  hundreds of files. Without the probe those requests wait out the stall. Swarm's container
+  healthcheck still restarts a dead task; raise `HEALTH_CHECK_RETRIES` if stalls can run past
+  its window. Unset keeps the probe, so the stack renders as before. **Instance action**:
+  optional; recommended with one immich-server replica and shared storage. Tests:
+  `v1/tests/test_skgallery_split_workers.py`.
+
+## skstacks-v2.26.17 - 2026-11-08
+
+### Upgrade notes (instances)
+
+- **skhub: notify_push no longer installs an HTTP error page as its binary**: the manual
+  fallback fetched the binary with `curl -sL` and checked it with `test -f`, so a GitHub 504
+  saved a 92-byte HTML page as the executable and notify_push crash-looped on "exec format
+  error", on every later redeploy too. It now retries, fails on HTTP errors, writes to a `.part`
+  file, and checks the ELF header both before skipping the download and after it. Retries span
+  about 3 minutes, since GitHub release downloads 504ed on and off for an hour that day. An instance
+  already holding a bad file gets it replaced on the next deploy. Found by the v2.26.17 gate.
+- **skpatch-hosts: node provisioning no longer fails when host registration is off**: with
+  `skpatch_hosts.API_TOKEN` unset, every provision run failed with "'selected_manager' is
+  undefined" because ansible-core 2.19+ templates `delegate_to` before `when`. Registration now
+  lives in `tasks/register_systems.yml`, included only when it is configured, and picks the first
+  answering manager from `swarm_managers` itself: the shared manager selection only kept managers
+  inside the play's own hosts, and this play's hosts are the nodes being registered. Its delegated
+  tasks now use the manager's own connection (ssh by default): the play runs `connection: local`,
+  so they had been running on the controller instead of the manager.
+  **Host auto-registration itself is refused for now**: the pinned linux-update-dashboard
+  (2026.10.9) rejects every API-token request to create or edit a system (403 "API tokens cannot
+  configure SSH connections"), so with `API_TOKEN`/`API_CREDENTIAL_ID` set the provision play fails
+  with that explanation. Add nodes in the dashboard until a session-based redesign lands.
+  **Instance action**: none.
+- **Authentik 2026.2+: OAuth2 providers now set `grant_types`**: Authentik 2026.2 added the
+  field and gives a provider created without it an empty list, so every sign-in fails with
+  `invalid_request` ("Invalid grant_type for provider"). Providers that existed before the upgrade
+  were migrated to every grant type, so only fresh installs broke (caught by the v2.26.17 gate's
+  skmesh login). skmesh sets NetBird's code, refresh, client_credentials and device code grants;
+  skrac and the sksec-web, skpatch-hosts and skflow blueprints set the code flow. A redeploy narrows
+  a migrated provider from all seven grant types to the ones it uses. The skmesh and skrac
+  provisioners also stop re-PATCHing `redirect_uris` on every deploy (2026.8 returns each entry with
+  an added `redirect_uri_type`). CapAuth user links (`sksso.CAPAUTH_USERS`) are made with
+  `ak shell` on Authentik 2026.2+, in the worker container on its node: 2026.8 made the API's
+  source-connection `user` read-only, so creating a link over the API answered HTTP 500.
+  **Instance action**: none.
+- **skstream: cli_debrid pinned to v0.7.81, viewer watchlists as code**: the DUMB and
+  cli_debrid configs are seeded once, so per-viewer watchlist sources and the cli_debrid version
+  lived only on the media node (nor had six managed Plex Home sources, a friends RSS source and a
+  hand-patched `plex_watchlist.py`). New `skstream-converge` runs on `MEDIA_NODE` every deploy
+  and upserts only what skstream owns: `CLI_DEBRID_VERSION` (default `v0.7.81`, which carries
+  upstream's managed Plex Home fix de5c411f; `''` = no pin), `PLEX_OTHER_WATCHLISTS` (one source
+  per viewer with their own token) and `PLEX_FRIENDS_WATCHLIST` (owner's friends RSS feed, Plex
+  Pass). A pin also turns off DUMB's standalone CLI Battery (cli_debrid v0.7.29+ runs it
+  in-process and has no `cli_battery/main.py`), and points cli_debrid's data paths at
+  `/data/cli_debrid` directly (DUMB reinstalls a pinned release on every start and lost its
+  `/cli_debrid/data` symlink, so cli_debrid died with a PermissionError). Other sources and UI
+  edits are never touched. A new pin restarts `skstream-dumb`; a
+  sources-only change restarts cli_debrid alone (the rclone mount stays up). The play now refuses
+  a `DUMB_EXTRA_BINDS` entry over `plex_watchlist.py` while a release is pinned.
+  **Instance action**: an instance with that patch bind must drop it from the vault in the same
+  deploy. The first deploy upgrades cli_debrid (nor: 0.7.23 to 0.7.81): back up
+  `<LOCAL_ROOT>/dumb-data/cli_debrid` first. Move viewer tokens into `PLEX_OTHER_WATCHLISTS` and
+  set `PLEX_FRIENDS_WATCHLIST: true` where friends should count; existing matching sources are
+  adopted by username, not duplicated.
+- **Portal tile skips cleanly when sksso is not deployed yet**: the default-on tile provisioner
+  joins `sksso-<env>`, so any role deployed before sksso (a fresh cluster, the release lab:
+  skvector in the v2.26.17 gate) failed with "network sksso-dev not found". The shared task now
+  checks the network first and skips the tile with a warning; the tile appears on the role's next
+  deploy after sksso. `portal_tile.require_sksso: true` fails instead. **Instance action**: none.
+- **Docs: one agent instructions file, `AGENTS.md`**: the root `CLAUDE.md` shim is removed and
+  `AGENTS.md` is reshaped to the sk-standards AGENT_INSTRUCTIONS_STANDARD (commands copied from
+  CI). `v2/CLAUDE.md` and `v3/CLAUDE.md` become nested `AGENTS.md` files. Claude Code reads
+  `AGENTS.md` natively and skips it when a `CLAUDE.md` sits next to it. **Instance action**: none.
+- **Tests: skhealth cost line no longer flakes on a long suite**: the test ran the
+  engine inside pytest and held pytest's own peak RSS to the unit's 128 MiB budget,
+  which a 5000-test run crossed (129.4 MiB). It now checks the line reports the
+  process's own peak. **Instance action**: none.
+- **CI: superseded PR runs are cancelled, Renovate rebases only on conflict**: every
+  test and scan workflow (not the release or deploy ones) now has a concurrency group
+  per workflow and PR, so a new push to a PR cancels its older run; pushes to main
+  still queue. `renovate.json` sets `rebaseWhen: conflicted`, so a merge to main no
+  longer rebases every open Renovate PR (with strict up-to-date protection that
+  queued about six workflows per PR on each merge). **Instance action**: none.
+- **sksso: `skworld` branding pack with a working password-recovery flow**: setting
+  `sksso.branding: skworld` now copies the SKWorld login look (logo, favicon, orange
+  theme) and installs `apply-branding`, which sets the default brand, applies
+  Authentik's stock `default-recovery-flow` when it is missing, and links it to the
+  login page so "Forgot password?" appears. Recovery email uses sksso's global email
+  settings. `tasks/branding.yml` no longer requires `templates/` or
+  `nextcloud-theming.sh` in a pack (skipped when absent); the `nam` pack behaves as
+  before. **Instance action**: none for an instance without `sksso.branding` or on
+  `nam`. To adopt, set `branding: skworld` in the sksso vars, deploy sksso, then run
+  `/var/data/sksso-<env>/apply-branding sksso-<env>` once on the node hosting the
+  `_server` container.
+- **Portal tiles on core roles find sksso's vault again**: skfence and skfenceha (core
+  roles) looked for sksso's vault under `core/group_vars/<env>/`, but sksso is optional
+  and its vault lives under `optional/group_vars/<env>/`, so their default-on portal tile
+  task failed with "Could not find or access ... sksso-..._vault.yml". The shared
+  `authentik_portal_tile.yml` now swaps the directory for core roles too. skmesh's tile
+  no longer errors when its icon copy result is undefined. **Instance action**: none;
+  `portal_tile.authentik_vault_file` still overrides the path.
+- **skstream: Plex 1.43.5.11079 (from 1.43.4.10903)**: `PLEX_IMAGE`'s default moves to
+  `plexinc/pms-docker:1.43.5.11079-b3b13e506` with its multi-arch digest (the version tag is
+  now in the pin too, so the running version is readable from `docker service ls`).
+  **Instance action**: none for an instance on the default; the next skstream deploy
+  updates Plex. An instance pinning its own `PLEX_IMAGE` is unaffected.
+- **skpatch role renamed to skpatch-hosts, plus opt-in host auto-registration**: the
+  Ansible role at `v1/ansible/optional/skpatch/` moved to `v1/ansible/optional/skpatch-hosts/`
+  (role dir, both deploy and provisioning playbook filenames, the `skpatch_hosts:` vault
+  namespace, stack/network/router/default-host names, the `AUTHENTIK_TILE_SLUG` default,
+  and sksso's companion OIDC vault keys `SKPATCH_HOSTS_OIDC_CLIENT_SECRET`/`_HOST`/
+  `_CLIENT_ID`/`_APP_NAME`); the **skpatch program** name (`docs/skpatch-program.md`, the
+  planned `skflow` `f/skpatch` flows) is unchanged -- this role is only the host-patching
+  half of it. The portal tile's default name also changes to "SKPatch Hosts" (previously
+  "SKPatch (Linux updates)"). **Instance action**: see
+  `v1/ansible/optional/skpatch-hosts/SOP.md` "Migrating an existing skpatch instance to
+  skpatch-hosts" for the full in-place recipe (rename the vault file and its top-level
+  key, deploy the new stack alongside the still-running old one, reprovision under the
+  new playbook name, verify, then remove the old stack -- `DATA_PATH` and the provisioned
+  `skpatch-ro` account are kept, so no credential or SSH-access loss).
+
+  **Also new on this role**: `provision_skpatch_hosts_nodes.yml`, on every `present` run,
+  can now upsert the target group's nodes as dashboard systems through the upstream app's
+  own API (`src/skpatch-hosts/systems_sync.py`), so the dashboard is never empty after a
+  deploy. Opt-in (`skpatch_hosts.API_TOKEN` + `API_CREDENTIAL_ID`, both unset by default);
+  idempotent by the upstream app's own `(hostname, port, username)` uniqueness (confirmed
+  against the pinned `linux-update-dashboard` source, `system-service.ts`); a node no
+  longer in the target group is reported, never deleted. Researched: the dashboard's API
+  tokens are a separate auth path from session-cookie login, so `AUTH_MODE: oidc` with
+  password login off does not block them -- no local-admin-password bootstrap is needed.
+  What IS unavoidable: every token, regardless of permissions, is barred from
+  `/api/credentials` (upstream's own token-scope list), and registering a system needs an
+  existing `credentialId`; only a signed-in human can create that credential, through the
+  UI, once per estate. See README.md "Automatic host registration" for that one-time
+  bootstrap (mint a token with `systems:add`/`systems:edit`, add one SSH credential for
+  the estate's existing keypair, put both values in the vault). Tests:
+  `v1/tests/test_skpatch_hosts_render.py`, `test_skpatch_hosts_provision.py`,
+  `test_skpatch_hosts_systems_sync.py`, `test_sksec_web_skpatch_hosts_oidc_sso.py`.
+
+- **sksso on Authentik 2026.5 or newer**: the worker healthcheck only recognized `manage` and
+  `celery` processes, so the worker introduced in 2026.5 (`ak worker`) was marked unhealthy and
+  killed by Swarm every few minutes although it was working. It now uses the image's own
+  `ak healthcheck`. Redeploy sksso before or with an upgrade to 2026.5+.
+- **sksec-web / skpatch new `AUTH_MODE: oidc` (2026-11-06), via sksso as code**: both
+  roles default to `AUTH_MODE: sso` and keep doing exactly what they did before
+  (byte-identical render when `AUTH_MODE` is unset) -- this is additive, not a default
+  change. The new third mode gives the dashboard its own OIDC login against sksso
+  (Authentik), with no forward-auth middleware in front and Authentik group membership
+  deciding the role (admin/read-only/deny), closing the "sign in to Authentik, then
+  still hit the app's own first-run local-account screen" gap both roles' READMEs
+  previously called "out of scope". Verified against the pinned upstream source
+  (`crowdsec-web-ui` `server/config.ts`/`server/app-auth.ts`,
+  `linux-update-dashboard` `server/auth/auth-config.ts`/`server/auth/oidc.ts`), not
+  just docs. sksso renders the Authentik side as code (OAuth2 provider + application +
+  a private `groups` scope mapping), the same blueprint mechanism skflow (Windmill) already
+  uses, gated on a new `sksso.SKSEC_WEB_OIDC_CLIENT_SECRET` / `sksso.SKPATCH_OIDC_CLIENT_SECRET`
+  (same value as each app's own `OIDC_CLIENT_SECRET`). The blueprint's Application slug
+  defaults to the same router name each role's own portal tile (`AUTHENTIK_TILE_SLUG`)
+  already defaults to, so the existing portal-tile provisioner
+  (`shared/src/authentik_portal_tile.py`, its provider-preservation logic from #242)
+  manages that ONE Authentik Application's tile + group binding instead of creating a
+  second, provider-less one. **Instance action**: none to keep current behavior. To
+  adopt `oidc` on an existing `sso`/`local` instance: (1) in sksso's vault, set
+  `SKSEC_WEB_OIDC_CLIENT_SECRET` / `SKPATCH_OIDC_CLIENT_SECRET` (32+ chars) and
+  redeploy sksso; (2) in that app's own vault, set `AUTH_MODE: oidc`, `OIDC_ISSUER`
+  (`https://<sso host>/application/o/<client id>/`), and the SAME client secret in
+  `OIDC_CLIENT_SECRET`, then redeploy that app. There is no teardown path yet: flipping
+  back to `sso`/`local` and removing the secret from sksso's vault stops the blueprint
+  from being re-applied, but does not delete the provider/application Authentik already
+  has (same limitation skflow's blueprint has had all along); clean that up by hand if
+  retiring OIDC for an app rather than redeploying it elsewhere. Tests:
+  `v1/tests/test_sksec_web_render.py`, `v1/tests/test_skpatch_render.py`,
+  `v1/tests/test_sksec_web_skpatch_oidc_sso.py`.
+- **sksec-web config patcher runs with the controller's own Python**: `tasks/patch_app_config_yaml.yml` called a hardcoded `~/.skenv/bin/python3`, so a
+  controller without that venv (or without ruamel.yaml in it) failed the deploy with
+  `ModuleNotFoundError`. It now uses `ansible_playbook_python`, and the controller's
+  packages are listed in the new `v1/ansible/requirements-controller.txt`; a missing
+  ruamel.yaml fails with an install hint. `v1/tests/test_no_hardcoded_controller_venv.py`
+  keeps any task from hardcoding a venv again. **Instance action**: install
+  `v1/ansible/requirements-controller.txt` into the Python that runs `ansible-playbook`
+  on each deploy controller (a no-op where ruamel.yaml 0.19.1 is already there).
+
+- **skpatch Phase 1 (image pin audit, 2026-11-06), skgraph/skvector/sksync/skpdf/skorch
+  defaults**: a fleet-wide audit of every image still running `:latest` on the nor and
+  NAM estates found these five framework defaults were the real gaps (the rest of the
+  audited list was already pinned, either as an existing framework default or an
+  instance override; `docker service ls` just never shows the `@sha256` suffix, which
+  is what made them look unpinned at a glance). `skgraph.FALKORDB_VERSION` (`v4.18.8`),
+  `skvector.QDRANT_VERSION` (`v1.17.0`), and `sksync.SYNCTHING_VERSION` (`2.0.13`) kept
+  a real version tag but no digest; all three now carry the digest for the version
+  running today, a no-op at the next deploy. `skpdf.IMAGE_TAG`'s default was stale
+  (`2.14.3`; `3.1.0` is what every instance pinning its own override is actually
+  running) and `skorch_cfg.N8N_VERSION`'s default pinned an old digest with no tag
+  (`n8nio/n8n@sha256:cae1f28d...`); both are bumped to the version running today
+  (`3.1.0`, `2.40.7`) with its digest. **Instance action**: none; an instance pinning
+  its own override is unaffected, one relying on the default picks up the version
+  bump (skpdf, skorch) or just gains the digest (skgraph, skvector, sksync) on its
+  next deploy. `v1/tests/test_no_latest_images.py` already covers all five generically
+  (it walks every `v1/ansible/*/*/src/**/*.j2`), so no scope-list change was needed;
+  confirmed the five new defaults also match `renovate.json`'s regex managers so
+  Renovate can track them going forward.
+- **skhub, Talk `turn_servers` 3478 entry**: the post-deploy task now writes `"schemes":"turn"`
+  instead of `"turn,turns"` for `<TURN_DOMAIN>:3478`. aio-talk's eturnal never serves TLS on
+  3478, so the `turns:<host>:3478` URLs it advertised could never connect (confirmed on nor and
+  NAM, 2026-10-25: TLS handshake gets EOF) and only slowed ICE gathering on restricted networks.
+  TURN over TLS is the separate `TALK_TURN_TLS_443` entry (`turns:<TURN_DOMAIN>:443`), unchanged.
+  **Instance action**: none; the next skhub deploy rewrites the entry.
+
+- **Authentik portal tiles (every role with `AUTHENTIK_TILE`, default on since #231)**:
+  `authentik_portal_tile.py` PATCHed an existing Application with `provider: null` on every
+  deploy. When the tile's slug is also a provider-backed app (for example skhub's slug used by
+  Nextcloud `user_oidc`), that detached the provider, the OIDC discovery URL returned 404 and
+  every SSO login through it failed ("Could not reach the OpenID Connect provider"). The tile
+  now leaves an existing provider untouched and manages only the tile fields; new tiles are
+  still created provider-less. **Instance action**: if a deploy since #231 already detached a
+  provider, reattach it once in Authentik (Applications, the app, Provider); deploys no longer
+  undo it.
+
+- **skfenceha (HA Traefik edge) and skfence, `DUMPER_IMAGE`**: `traefik-certs-dumper`
+  was pinned to `v2.10.0`, which panics (`unsupported key type: ''`) on `acme.json`
+  written by Traefik 3.7+ (the account `KeyType` field was dropped). Bumped to
+  `v2.11.4` by digest in both roles (tactically live on two estates since
+  2026-10-24; this lands the framework pin). **Instance action**: none for the
+  version bump itself (the default moves); an instance pinning its own
+  `DUMPER_IMAGE`/`skfence.DUMPER_IMAGE` ahead of the framework is unaffected.
+- **skfenceha only, new `traefik-certs-watch` sidecar**: `traefik-worker` reads
+  `acme.json` once at container start and never again, so a cert renewed or
+  newly issued by `traefik-acme` never reached a running worker without
+  restarting every worker by hand (confirmed on the NAM estate, 2026-10-24: a
+  worker cert expiring 2026-12-14 with nothing to renew it at the edge). Fixed
+  by a new global-mode sidecar, one per manager node (same placement as
+  `traefik-worker`, no Docker socket, no network), that turns
+  `traefik-certs-dumper`'s already-dumped PEM output (mounted into
+  `traefik-worker` since this role's first version, but never read by it)
+  into a Traefik file-provider `tls.certificates` dynamic file
+  (`certs-generated.yml`) that `traefik-worker`'s existing file provider
+  already watches. Every node redundantly regenerates and writes the same
+  file because the shared dynamic directory is NFS and a write from a
+  *different* node never fires another node's `fsnotify` watch (the
+  mechanism Traefik's file provider relies on, confirmed from its v3.7
+  source: no polling fallback exists); each node's own write to that shared
+  file is always a *local* write as far as that same node's own watch is
+  concerned, so this sidesteps the limitation instead of needing to defeat
+  it. **Instance action**: none to pick up the fix (redeploying skfenceha
+  adds the sidecar automatically); `skfenceha.CERTS_WATCH_IMAGE` and
+  `skfenceha.CERTS_WATCH_INTERVAL_SECONDS` (default 15) are available to
+  override it, and `certs-generated.yml` is now a reserved dynamic file name
+  (`EXTRA_DYNAMIC_FILES` on skfenceha cannot use it). See the skfenceha
+  README, "Cert reload without a restart".
 - **skhub `enable_files_antivirus` now installs the app, instance action only to opt in:** with `skhub.enable_files_antivirus: true` the deploy installs and enables Nextcloud's `files_antivirus` (best-effort app-store install, before the existing `av_host`/`av_port`/`av_mode=daemon` task) and sets `av_infected_action` from the new `FILES_ANTIVIRUS_INFECTED_ACTION` (default `only_log`: log and notify, never delete). Unset or false renders and runs exactly as before. Needs about 1 GiB resident for the existing `clamav` service (2G limit), so leave it off on a memory-constrained node. Tests: `v1/tests/test_skhub_files_antivirus_install.py`.
 
 - **(all apps, test-only):** new render-time test guards against the class of bug #232/#234 covered: Traefik v3's swarm provider skips any service whose labels carry both the deprecated `traefik.docker.*` family and the current `traefik.swarm.*` family at once ("both Docker and Swarm labels are defined" -> "Skip container"), dropping its routers to the error-pages fallback with no other symptom. `test_no_service_emits_both_traefik_docker_and_swarm_labels` (`test_compose_templates_render.py`) renders every app template with an empty context and fails if any service's labels contain both prefixes; a template needing real fixture vars to render is skipped there and relies on its own app-specific test instead. No template in this release carries `traefik.docker.*` (confirmed by a fleet-wide search: zero occurrences), so this is a test-only addition - nothing renders differently. **Instance action:** none.
@@ -55,6 +415,56 @@ Each entry says what an instance must do, if anything.
   `docs/ROLE_AUTHORING_CHECKLIST.md` for the general mechanism.
 
 ### Changes
+
+- v1: new optional role **skbom** (`v1/ansible/optional/skbom/`): OWASP Dependency-Track
+  (Apache-2.0), the image-patching half of the skpatch program (`docs/skpatch-program.md`): an
+  SBOM store matched continuously against NVD/GHSA/OSV, replacing the hand-kept CVE register
+  the program's design doc describes retiring. Two upstream images, `dependencytrack/apiserver`
+  and `dependencytrack/frontend`, release `4.14.6` (the latest 4.x stable release; v5 is a
+  separate major line, see the README "Why 4.x, not 5.x"), both multi-arch and pinned by the
+  manifest-list digest, resolved from the Docker Hub registry API and cross-checked by actually
+  pulling both images. Its own Postgres uses the identical `postgres:17.7-alpine` digest
+  `skflow` defaults to (the two share a registry layer on any node running both) plus a
+  `pg_dumpall` sidecar copied from skflow's own dump loop. One host, two Traefik routers:
+  `PathPrefix(`/api`)` to `apiserver`, everything else to `frontend`, each with its own
+  `loadbalancer.server.port` label on its own service (not one service proxying to the other,
+  unlike skgym). Default placement constraint is `node.labels.skbom == true`, not the bare
+  `node.role == worker` most optional roles default to, because apiserver needs a node sized
+  for its JVM heap (`EXTRA_JAVA_OPTIONS` default `-Xmx3g`); apiserver's own `/data` (a
+  secret/keystore) shares Postgres's `DATA_NODE` pin since it is local state too. OIDC login
+  against Authentik (Dependency-Track's own, not a forward-auth proxy) is off by default and
+  validated all-or-nothing: `OIDC_ENABLED: true` needs both `OIDC_ISSUER` and `OIDC_CLIENT_ID`,
+  or the deploy refuses. Health checks confirmed against the live images rather than assumed:
+  apiserver's unauthenticated `GET /health` and frontend's `GET /`, both over `curl`/`wget`
+  (both images ship a real HTTP client, unlike the thin image sksec-web was burned by). Tests:
+  `v1/tests/test_skbom_render.py` (happy path, every knob set, the OIDC all-or-nothing guard,
+  the three-path `DATA_NODE` guard, loud failures for a missing/short `DB_PASSWORD` and an
+  unpinned image); keeps `v1/tests/test_compose_templates_render.py` (the `traefik.docker.*` /
+  `traefik.swarm.*` lint from #235), `v1/tests/test_no_latest_images.py` and
+  `v1/tests/test_unique_subnets.py` (new subnets `skbom-{prod,staging,dev}` =
+  `172.16.{64,65,66}.0/24`) green. Catalog row + detail section in
+  `docs/v1-service-catalog.md`; full 9-section SOP in
+  `v1/ansible/optional/skbom/SOP.md`.
+- Docs only, no instance action: new `docs/skpatch-program.md` documents the skpatch program as a
+  whole (host patching via the existing `skpatch` role, plus the planned image-patching pipeline:
+  Trivy SBOM scanning + Dependency-Track packaged as `skbom`, Renovate run as an `skflow`
+  (Windmill) `f/skpatch` flow, and a Forgejo Actions runner on a dedicated build host), with the
+  four standard architecture diagrams (system context, component view, data-flow with a crypto
+  label on every hop, sequence), the cadence/policy table, and the release path (gate, tag the
+  exact tested commit, forward-merge, deploy one estate then the other). `v1/ansible/optional/
+  skpatch/README.md` is reworked to the `sk-standards` README-as-hub shape and a new
+  `v1/ansible/optional/skpatch/SOP.md` carries the full 9-section operating procedure plus a
+  mermaid diagram of the role itself, with a `docs-evidence` block (5 hermetic checks). Both
+  `docs/v1-service-catalog.md` and `docs/ROLE_AUTHORING_CHECKLIST.md` now link to the new docs;
+  the checklist gained a "Role docs (README + SOP)" section naming skpatch as the reference
+  implementation of that shape. No role behavior, template, or vault default changed.
+
+- v1: **skhub** the Talk post-deploy task writes `"schemes":"turn"` (was `"turn,turns"`) for the
+  `<TURN_DOMAIN>:3478` `turn_servers` entry in all three deploy playbooks; eturnal in aio-talk has
+  no TLS listener, so the `turns:` URLs on 3478 were dead. README "Talk HPB TURN" updated. Tests:
+  `v1/tests/test_skhub_internal_ingress_and_stun.py` (3478 entry is `turn` only, with and without
+  `TALK_TURN_TLS_443`). Verified live on nor: Talk advertising `turn:` udp/tcp 3478 plus `turns:` 443,
+  skcall relay-only ICE matrix passes on all three.
 
 - v1: new shared task `shared/tasks/authentik_portal_tile.yml` + `shared/src/authentik_portal_tile.py`:
   idempotently creates/updates a provider-less Authentik `core.Application` and its group policy
@@ -127,7 +537,60 @@ Each entry says what an instance must do, if anything.
   modeled on the existing `skmesh.with.sksso.yml`), so the existing per-role render suites keep
   passing with no change to their own assertions.
 
-## Unreleased (v2.26.16)
+- v1: `ldez/traefik-certs-dumper` bumped from `v2.10.0` to `v2.11.4` by digest in
+  both `core/skfence/src/config/skfence/skfence.yml.j2` and
+  `core/skfenceha/src/config/skfenceha/skfenceha.yml.j2`, each behind a new
+  `DUMPER_IMAGE` override knob (same convention as the existing `TRAEFIK_IMAGE`
+  knob, two independent vault keys since an instance runs only one of the two
+  roles). v2.10.0 panics on the account-level ACME data Traefik 3.7+ writes to
+  `acme.json` (the `KeyType` field was removed from the account struct);
+  v2.11.4 parses it. Tests:
+  `v1/tests/test_dumper_image_knob.py` (default is the fixed version on both
+  roles, override replaces it, the two roles' knobs are independent, and
+  `traefik-worker`'s existing `/certs:ro` mount -- previously unused -- is
+  still there for `traefik-certs-watch` to rely on).
+
+- v1 (skfenceha only): new `traefik-certs-watch` global-mode sidecar
+  (`src/config/skfenceha/certs-watch.sh`, `busybox:1.36.1-musl` by digest,
+  overridable via `CERTS_WATCH_IMAGE`/`CERTS_WATCH_INTERVAL_SECONDS`) closes
+  the gap where a cert `traefik-acme` renews or newly issues never reaches a
+  running `traefik-worker`, since the worker only ever reads `acme.json` once
+  at startup. The sidecar polls the shared, read-only `/certs` directory
+  `traefik-certs-dumper` already populates and -- only when the computed
+  result changes -- atomically rewrites a `tls.certificates` file
+  (`certs-generated.yml`) into the same shared `dynamic/` directory
+  `traefik-worker`'s file provider already watches with `watch: true`. It
+  deliberately runs on every manager node rather than once centrally: the
+  shared dynamic directory is NFS, and NFS does not propagate a write's
+  change notification to a different node's `fsnotify` watch (reproduced on
+  the NAM estate, 2026-10-24, and confirmed as inherent to Traefik v3.7's
+  file provider by reading its source: `watcher.Add()` is only ever called on
+  the configured directory itself, with no polling fallback). Running the
+  regenerator on every node instead means every node's own write is a local
+  write to that same node's own watch, which always fires regardless of
+  backing store -- proven end-to-end against a real, unmodified
+  `traefik:v3.7.16` container (the same digest this framework pins): before,
+  it served `CN=TRAEFIK DEFAULT CERT` for a test SNI with no matching
+  dynamic cert; a cert was generated and the sidecar run once against the
+  same shared directory the running container's file provider watches; the
+  container's `StartedAt`/`RestartCount` were unchanged throughout, and a
+  second TLS handshake for the same SNI then returned the injected
+  `CN=test.example.com` cert, with zero restart. Also added
+  `certs-generated.yml` to the dynamic-file reserved-name list (skfenceha
+  only -- skfence has no such sidecar, since its single Traefik process is
+  the same one doing the renewal, with no cross-process staleness to fix)
+  and deploy.j2 tracking (`record_preexisting`/`preexisted`, so a fresh
+  install does not force-restart it mid-first-boot, same as every other
+  service in this stack). Tests: `v1/tests/test_skfenceha_certs_watch.py`
+  (render shape: global mode, same placement as `traefik-worker`, pinned
+  image + both override knobs, `/certs` read-only vs. `/dynamic-out`
+  read-write, no Docker socket, no network, script is POSIX `/bin/sh` with
+  no bashisms, script defaults match the compose environment) and
+  `v1/tests/test_skfenceha_certs_watch_reserved_name.py` (reserved name
+  present on skfenceha in all three envs, absent on skfence, and the
+  `certs-watch.sh` deploy task exists with the right mode in all three envs).
+
+## skstacks-v2.26.16 - 2026-11-06
 
 ### Upgrade notes (instances)
 
@@ -135,7 +598,7 @@ Each entry says what an instance must do, if anything.
 - **skfence, skfenceha:** none required for the bump itself (patch-equivalent for our usage: no breaking change found in buffering, forwardAuth, errors, headers, plugins, swarm provider options or respondingTimeouts between v3.6 and v3.7 for our Docker/Swarm + file-provider setup). Traefik image moves from v3.6.2 to v3.7.16 (this month's security batch: CVE-2026-114635/114637/114639/114640/114642 and GHSA-hrpp-p4fc-wwf8, all fixed by v3.7.14-v3.7.16). An instance that pulls the image fresh on its next deploy picks up the patched build automatically; no vault change needed. New optional `TRAEFIK_IMAGE` (per role: `skfence.TRAEFIK_IMAGE` / `skfenceha.TRAEFIK_IMAGE`, the image had no override knob before this release) lets an instance pin a digest to stage a tactical version ahead of or instead of a full framework release; unset renders the new default above. skfenceha's `traefik-acme` and `traefik-worker` always move together under the one knob.
 - **skhub, skbook:** none required; no default image changed. PHP2Shell (CVE-2026-109618, CVE-2026-109619) response: checked both framework defaults live by running them, not by tag name. No patched build exists yet for either (skhub's `nextcloud:31.0.14` default bundles PHP 8.3.30; skbook's `lscr.io/linuxserver/bookstack:v26.09-ls285` bundles PHP 8.5.10, and even `:latest` is only 8.5.11). A patched `nextcloud:34.0.5` exists (current major, same-day emergency rebuild) but is not made the skhub default: that would be a 3-major jump for any instance that never pinned its own `NEXTCLOUD_IMAGE`, and this framework's lab only ever does a fresh skhub install, never proves a version-to-version upgrade, so the jump is unproven and `renovate.json` deliberately never groups major bumps for the same reason. See the skhub and skbook READMEs for the live-verified PHP versions and the pin-forward recommendation for genuinely new installs. Prod (nor, NAM) is unaffected either way: both instances pin `NEXTCLOUD_IMAGE` explicitly in their own vaults and are being hot-patched there directly, independent of this framework default.
 
-- **sksec:** none required. New optional `DATA_NODE`/`CROWDSEC_DB_PATH` pin the CrowdSec LAPI's SQLite db to local disk on one node (default stays the legacy NFS path; a local path without `DATA_NODE` is refused). See the README's "Moving the LAPI db off NFS" for the zero-downtime migration runbook before adopting it on an instance with an existing bouncer/ban history.
+- **sksec:** none required. New optional `DATA_NODE`/`CROWDSEC_DB_PATH` pin the CrowdSec LAPI's SQLite db to local disk on one node (default stays the legacy NFS path; a local path without `DATA_NODE` is refused). See the README's "Moving the LAPI db off NFS" for the zero-downtime migration runbook before adopting it on an instance with an existing bouncer/ban history. With `TRAEFIK_HA_MODE` also set, `DATA_NODE` now pins the service to itself alone (the HA acme-master constraint is dropped, not ANDed in) -- see the placement-constraint fix entry below before enabling both on an HA instance.
 - **sksso:** `AUTHENTIK_ERROR_REPORTING__ENABLED` now defaults to `false` (was `true`). This is a sovereign stack: Authentik no longer phones home to its upstream Sentry by default. An instance that wants the old behavior sets `sksso.error_reporting_enabled: "true"` explicitly.
 - **sksec-web:** new optional role, opt-in; nothing an instance already deploys renders differently because of it. Deploy `core/sksec` first (this role attaches to its `sksec-<env>` network and registers against its LAPI).
 - **skgit:** none required. When `skgit.TRAEFIK_MIDDLEWARES` puts `crowdsec-bouncer@file` on the main router, the skgit service also gets a `skgit[-env]-runner-rpc` Traefik router (priority 200) for `/api/actions/runner.v1.RunnerService/` that skips the CrowdSec forward-auth (`skgit.RUNNER_RPC_MIDDLEWARES`, default `default-no-crowdsec@file`). It keeps Forgejo runners working when the CrowdSec LAPI is slow and the bouncer fails closed with 403. Runners still authenticate with their tokens. Without that knob nothing renders differently. An instance that already added the same eight `skgit-runner-rpc` labels by hand sees no change on the next deploy.
@@ -147,6 +610,7 @@ Each entry says what an instance must do, if anything.
 - **skflow:** new optional role, opt-in; nothing an instance already deploys renders differently because of it. An instance that runs a hand-deployed Windmill under the stack name `skflow-<env>` follows the README's "Migrating a hand-deployed Windmill" before its first framework deploy.
 - **skpulse:** sign-in now has two modes, `skpulse.AUTH_MODE: sso` (the new default: Authentik forward auth, `SSO_MIDDLEWARE` defaulting to `authentik@file`, on the dashboard/login/`/socket.io/` router only) and `local` (Kuma's own login, no forward auth, no Authentik objects). A skpulse vault that never set `AUTH_MODE` previously rendered one Traefik router with no forward auth at all; it now defaults to `sso` (fail closed), so an instance that wants to keep running with no SSO in front must set `AUTH_MODE: local` on its next deploy. Push monitors (`/api/push/`), public status pages (`/status`, `/status-page`, `/api/status-page/`) and badges (`/api/badge/`) now render on a separate, higher-priority router that never carries SSO in either mode (previously they shared the one router, so an instance that had hand-set `TRAEFIK_MIDDLEWARES` to include a forward-auth middleware had silently broken all three).
 - **skpulse:** the `disableAuth` toggle (above) can now be re-run on its own, `--tags authmode` (vault load, `AUTH_MODE` resolve/assert/conflict checks and the toggle itself, nothing else), for the window between an instance's first deploy and whenever its admin account actually gets created through Kuma's own first-run UI. Found on a real instance (nor) stuck showing Kuma's own login behind Authentik 11 days after its admin account was created, because nothing had redeployed it since. **Instance action**: none to adopt; an instance in that exact state can run `--tags authmode` instead of waiting for (or forcing) a full redeploy.
+- **skpulse:** a fresh install's deploy now completes Kuma's own first-run setup itself (database type sqlite, then the first admin account, `skadmin`, with a freshly generated password) instead of needing a manual click-through, even behind Authentik's forward-auth gate. The generated password lands in `~/.skstacks-generated/` on the deploying controller (0600, never printed, not committed); move it into the instance vault if anyone needs to sign in to Kuma directly. **Instance action**: none; a no-op for any instance whose database is already configured.
 ### Changes
 
 - v1: **sksso** new optional `colocate_with_data_node` (default `false`): with `DATA_NODE` also set, adds `node.hostname == <DATA_NODE>` to `server` and `worker` as well as the existing `postgres`/`redis` pin. Root cause: on a multi-node Swarm estate where `server`/`worker` float independently of `DATA_NODE`, every OIDC token-endpoint request's DB/Redis calls cross the overlay network instead of staying on loopback. Measured on two production estates: colocated p50 roughly 0.5s; cross-node p50 1.26s / p95 1.57s / max 2.27s under light recurring load. This eats into a downstream OIDC client's HTTP timeout margin; skrac (MeshCentral)'s pinned `openid-client@5.7.1` defaults to 3.5s with no exposed way to raise it (see skrac README "OIDC login timeout margin"). Default stays `false`: no instance's render changes without opting in, and colocating does make `DATA_NODE` a shared failure domain for `server`/`worker` too (documented trade-off). READMEs: sksso "Colocating server + worker with the data node", skrac "OIDC login timeout margin". Tests: `v1/tests/test_sksso_placement_renders.py` (happy path: all four services pinned; edge case: opted in with `DATA_NODE` unset is a no-op; failure/regression case: `DATA_NODE` set alone, or with `colocate_with_data_node: false` explicitly, renders identically to today).
@@ -154,6 +618,7 @@ Each entry says what an instance must do, if anything.
 - v1: **skfence, skfenceha** Traefik `v3.6.2` to `v3.7.16@sha256:abb2b9c1b132b5b0be40d09c85bf8d3dab2a59fa0eb3aa955ab8be5efbb73de6` (this month's security batch: CVE-2026-114635, CVE-2026-114637, CVE-2026-114639, CVE-2026-114640, CVE-2026-114642, and GHSA-hrpp-p4fc-wwf8, fixed across v3.7.14-v3.7.16). Read the v3.6-to-v3.7 migration notes for every area that could touch our middlewares (buffering, forwardAuth, errors, headers, plugins, swarm provider options, respondingTimeouts): no breaking change applies to our Docker/Swarm + file-provider setup (the gated changes are h2c upgrade headers no longer forwarded [v3.7.13], a stricter rootless-target rejection [v3.7.13], CONNECT requests now always 501 [v3.7.15], none of which any of our routes rely on; `underscoreHeadersStrategy`/`aliasHeadersStrategy` is unused in this framework). One real but non-blocking finding: both skfenceha's `authentik` forwardAuth middleware and sksec's `crowdsec-bouncer` forwardAuth middleware set `trustForwardHeader: true`, deprecated since v3.6.14 in favor of entrypoint-level `forwardedHeaders.trustedIPs` (still supported, not removed, in v3.7.16). Deliberately NOT migrated in this release: the replacement needs per-cluster verification of which upstream IPs (Cloudflare, cloudflared) should be trusted at the entrypoint on nor and NAM, which is a real production-networking change independent of this version bump and deserves its own reviewed PR, not a bundled side effect. Tracked for a follow-up. Added `skfence.TRAEFIK_IMAGE` / `skfenceha.TRAEFIK_IMAGE` (the image had no override knob before this release, so an instance could not stage a tactical version ahead of a full framework release): unset renders this release's default; skfenceha's `traefik-acme` and `traefik-worker` always move together under the one knob. Updated: `docs/v1-service-catalog.md`, both roles' READMEs, `v1/tests/test_no_latest_images.py` example string. No render-fixture files reference the literal image string, so no golden-fixture update was needed. Tests: `v1/tests/test_traefik_image_knob.py` (default on both roles, override on each, the two knobs independent).
 
 - v1: **sksec** CrowdSec LAPI db on local disk: new optional `sksec.DATA_NODE` (pins the `crowdsec` service to this node, combined with the existing HA-mode `traefik.acme.master` constraint when `TRAEFIK_HA_MODE` is also set) and `sksec.CROWDSEC_DB_PATH` (default unchanged: `/var/data/runtime/sksec-<env>/crowdsec-db` on NFS; a path outside `/var/data` is refused without `DATA_NODE`, same guard shape as sksso's `DATA_NODE`). With `DATA_NODE` set, the deploy also sets `db_config.use_wal: true` in CrowdSec's `config.yaml` (`tasks/enable_wal.yml`, idempotent, never applied on the NFS path: WAL is not safe on NFS). Root cause: `fbonalair/traefik-crowdsec-bouncer` queries the LAPI for every request and the db's SQLite writes serialize under load on NFS; once a lookup exceeds `CROWDSEC_TIMEOUT` the bouncer fails CLOSED (403) to every protected route (coord card `d6fa93ec`, nor incident 2026-10-21: 437/8900 external requests 403 in 30 minutes, CPU-raised as an interim hotfix in skstack01-prod#129). CrowdSec's own entrypoint re-registers the persisted bouncer key from `sksec.env` at every start and never re-keys an existing one, so a fresh/empty db still gets a working bouncer automatically; migrating the real db file (README "Migrating a running instance", a live `sqlite3 .backup` with no required outage) is still the right default so local bans and CAPI/console sync state are not lost. The config dir (machine credentials, hub data, `acquis.yaml`) is unaffected and stays on shared storage either way. Tests: `v1/tests/test_sksec_data_node_unset.py` (default skip, local dirs created on `DATA_NODE` with 0750, `delegate_to` renders without `DATA_NODE` defined), `v1/tests/test_sksec_crowdsec_db_path.py` (real-Ansible render: byte-identical with the knob unset, bind mount + placement constraints with it set, HA+DATA_NODE combined, local path without `DATA_NODE` refused).
+- v1: **sksec** fixes the HA+`DATA_NODE` placement constraint introduced two entries above, found live on the skstack06 lab before it ever reached a real estate: the compose template ANDed `node.labels.traefik.acme.master == true` with `node.hostname == <DATA_NODE>`, requiring both on the SAME node. `skfenceha`'s manager selection (`shared/tasks/select_manager_node.yml`) is an ordered failover pick, not guaranteed to land the acme-master label on any fixed hostname, so the moment it landed on a manager other than `DATA_NODE` the `crowdsec` service became permanently unschedulable ("no suitable node"), with no self-heal. Traced why the constraint existed at all: CrowdSec reads Traefik's access logs from the shared `/var/data` mount the same way on every node (`acquis.yaml.j2` globs both `worker/` and `acme/` subdirectories, polling since NFS gives no inotify event for another node's writes) -- it never needed to run on the acme master specifically. That constraint was there only because, before `DATA_NODE` existed, pinning to the one label Swarm already guaranteed unique was a cheap way to land on a single stable node. `DATA_NODE` is a complete, more direct answer to the same need, so it now pins `node.hostname == DATA_NODE` alone; without `DATA_NODE`, HA mode keeps pinning to the acme-master label, unchanged. `tasks/lapi_allowlist.yml`'s wait-for-the-crowdsec-task loop now also recognizes a `docker service ps` "no suitable node" error and fails with the real cause (check `DATA_NODE` against the current acme-master node) instead of a bare "no Running task yet" timeout. README "Moving the LAPI db off NFS" updated. Tests: `v1/tests/test_sksec_crowdsec_db_path.py` (`test_data_node_wins_over_ha_mode_acme_master` replaces the old combined-constraint assertion; the DATA_NODE-unset HA-mode case is unchanged and still covered by `test_ha_mode_only_renders_the_legacy_single_constraint`), `v1/tests/test_sksec_lapi_allowlist.py` (`test_unschedulable_crowdsec_task_fails_with_a_clear_message`, against a docker test double that reports the real "no suitable node" error text).
 - v1: **sksso** `AUTHENTIK_ERROR_REPORTING__ENABLED` defaults to `false` (was the upstream Authentik default of `true`): a sovereign stack should not phone error reports home to Authentik's Sentry by default. `sksso.error_reporting_enabled` still overrides either way. Tests: `v1/tests/test_sksso_error_reporting.py` (unset renders `false`, explicit `"true"`/`"false"` both honored).
 - v1: new optional role **sksec-web** (`v1/ansible/optional/sksec-web`): [crowdsec-web-ui](https://github.com/TheDuffman85/crowdsec-web-ui) (AGPL-3.0), a browser dashboard for the cluster's existing `core/sksec` CrowdSec LAPI. Named to match the main role (`core/sksec`) with `-web` appended. One digest-pinned upstream image (`CROWDSEC_WEB_UI_IMAGE`, no default without `@sha256:`), service `app` (one replica, SQLite under `/app/data` for its own session/auth state and a local alert cache; CrowdSec's LAPI stays the source of truth). Attaches to the existing `sksec-<env>` overlay network (no new subnet) and, after deploy, idempotently registers its own CrowdSec machine credential (`cscli machines add`, `sksec_web.LAPI_PASSWORD`, 24+ chars, required, never printed or passed as a literal argv on the container's process list) against that LAPI, distinct from `core/sksec`'s own Traefik bouncer key. Admin-grade by design: `AUTH_MODE` defaults to `sso` (Authentik forward auth, same double-gate pattern as skhome/skgym) and refuses `local` mode without an explicit `ALLOW_LOCAL_PUBLIC_RISK: true`; decisions default to read-only (`sksec_web.READ_ONLY: true` sets the upstream image's own `PERMISSION_READ_ONLY`), and this role never edits `core/sksec`'s `trusted_ips` (the second, LAPI-side gate on decision deletion), documented instead as a manual opt-in. Env var names (`CROWDSEC_URL`/`CROWDSEC_USER`/`CROWDSEC_PASSWORD`/`PERMISSION_READ_ONLY`/`CROWDSEC_LOOKBACK_PERIOD`/`AUTH_SECRET`) verified against the upstream source, not its README (which documents an older, now-wrong naming scheme). `DATA_PATH` on local disk requires `DATA_NODE` (fail closed). Tests: `v1/tests/test_sksec_web_render.py` (real Ansible: defaults, every knob, the `AUTH_MODE`/risk-flag/contradictory-middleware guards, missing/short-`LAPI_PASSWORD` and unpinned-image refusals, dev/staging/prod playbook parity). skstack06 lab stage: see below.
 - docs: `v1/docs/sso-user-management.md`, the operator runbook for people and passwords with skhub SSO enabled (add a person or household, claims and the `nextcloud_uid` username mapping, remove, reset, recovery links, MFA, app passwords and service accounts, break-glass, secret rotation, rollback, forward-auth lesson, portal tile sync caveat). Cross-links from the Nextcloud OIDC doc, the provisioning doc and the estate plan. No behavior change.
@@ -395,7 +860,7 @@ The skstack06 stages gain checks for this release: every skhealth webhook post v
 - v1: new tool **skstacks-deploy** (`tools/skstacks-deploy`), a one-command v1 app deploy with automatic rollback: renders, deploys, probes the result (`v1/ansible/optional/<app>/probe.yml`, added for skbook, skfetch, skhub, sksso and skstream) and rolls back to the prior image/compose state on a failed probe instead of leaving a broken deploy live. **Instance action**: none; opt in by using the tool for a deploy.
 - v1: new published package **skstacks-config-template** (Gap 1 of the config-template-and-safe-deploy design): `scripts/generate-config-template.sh` and `scripts/scrub-check.sh` turn a private instance config repo into a redacted, shareable template (`templates/config-repo/`), with a CI job (`config-template-drift.yml`) that fails if the template drifts from a fresh render or still carries vault ciphertext or a fleet-specific literal the estate denylist should have caught. **Instance action**: none; an operator who wants to publish their own config layout as a template runs the script.
 
-## Unreleased (v2.26.16)
+## skstacks-v2.26.16 - 2026-11-06
 
 - v1 skbackup: assemble recursive offsite snapshot sources on a private tmpfs with stable dataset-relative paths, including children whose live mountpoints lie outside their parents. Inspect frozen parents outside the backup tree, skip empty containers and preserve parent-owned files only where child directories already exist. Track all mounts for reverse-order trap cleanup, including partial failure and termination. Preserve restic host, tags and source paths so existing seed snapshots remain eligible parents. Tests cover custom mountpoints, a real seed-parent reuse and restore, file-holding parents, unsafe directories and cleanup. **Instance action**: redeploy the skbackup engine before resuming an affected offsite run.
 

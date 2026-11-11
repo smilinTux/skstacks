@@ -23,6 +23,13 @@ dynamic router), it needs one of:
    `authentik Admins`; an instance loosens that per its own vault if the
    service is meant for a broader audience (not the framework's call to
    make per-instance).
+   Note: `skadmin` replaces `authentik Admins` as the default once PR #360
+   lands, and a per-app access model (`SSO_ACCESS`, per-app admin and user
+   groups, fail-closed bindings, per `standards/APPLICATION_ACCESS_SSO_STANDARD.md`
+   in sk-standards) is designed in
+   `docs/design/sso-app-access-provisioning.md`. Until it ships, keep using
+   the single group knob, and never leave a tile or provider without a
+   binding.
 
 2. **A role-owned mechanism**, when the service needs its own OAuth2/OIDC
    login rather than just a bookmark (see `optional/skrac/tasks/authentik.yml`
@@ -47,6 +54,23 @@ API call.
 under `core/` and `optional/` for a `Host(` rule, then checks the role's
 `deploy_<app>-prod.yml` for one of the three options above. A role with a
 web UI and none of them fails the suite, naming the role.
+
+## Role docs (README + SOP)
+
+Per [`sk-standards`](https://github.com/smilinTux/sk-standards)'
+[`SK_REPO_DOC_STANDARD`](https://github.com/smilinTux/sk-standards/blob/main/standards/SK_REPO_DOC_STANDARD.md),
+a role's README is the hub (purpose, quickstart, "Start here", config
+knobs, "Related projects / See also") and its `SOP.md` carries the full
+operating procedure in the standard's 9-section order, with at least one
+mermaid architecture diagram of the role itself. **Reference
+implementation:** `v1/ansible/optional/skpatch-hosts/`
+([README](../v1/ansible/optional/skpatch-hosts/README.md) ·
+[SOP](../v1/ansible/optional/skpatch-hosts/SOP.md)): a role with a nontrivial
+privilege model (an SSH credential per estate, a gated sudoers
+allowlist) is exactly the case where splitting "what and why" (README)
+from "how, in full" (SOP) earns its keep. Not yet backfilled onto every
+existing role; new or substantially reworked roles should follow this
+shape going forward.
 
 ## Everything else
 

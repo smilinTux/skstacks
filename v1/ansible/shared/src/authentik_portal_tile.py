@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Create or update a provider-less Authentik portal tile, idempotently.
 
-Some roles (skpulse/Uptime Kuma, sksec-web/CrowdSec Web UI, skpatch/linux
+Some roles (skpulse/Uptime Kuma, sksec-web/CrowdSec Web UI, skpatch-hosts/linux
 update dashboard, and others) sit behind the cluster's domain-wide Traefik
 ForwardAuth catch-all (authentik@file on the router): Authentik already
 gates the host, so no OAuth2/Proxy *provider* is needed for auth. What was
@@ -25,7 +25,7 @@ command line or in a process environment):
   url, host, token      - reach Authentik's API (see tasks/authentik_portal_tile.yml)
   slug, name             - the Application's slug and display name
   launch_url             - where the tile links to
-  group                  - group name the tile is visible to (e.g. "authentik Admins")
+  group                  - group name the tile is visible to (e.g. "skadmin")
   icon                   - optional meta_icon ("fa://fa-..." or "application-icons/...")
   open_in_new_tab         - optional bool, default true
   description             - optional meta_description
@@ -113,6 +113,12 @@ def ensure_application(api, cfg):
         obj = api.call("POST", "/core/applications/", desired)
         print("application: created")
         return obj
+    if current.get("provider") is not None:
+        # The slug is already a provider-backed app (an OIDC login, say).
+        # Nulling its provider would 404 its discovery URL and break every
+        # SSO login through it, so keep the provider and manage only the tile.
+        del desired["provider"]
+        print("application: keeping its existing provider")
     changed = {k: v for k, v in desired.items() if not same(current.get(k), v)}
     if not changed:
         print("application: unchanged")

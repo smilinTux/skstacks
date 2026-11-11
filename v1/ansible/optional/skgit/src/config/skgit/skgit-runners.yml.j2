@@ -19,7 +19,7 @@ services:
   # Provides an isolated Docker daemon for runner job containers.
   # =============================================================================
   dind:
-    image: docker:27.3.1-dind
+    image: docker:29.9.3-dind@sha256:08a98015fce594af7c382883bea080ea206de74402a95da9dc52b6428c8cd121
     container_name: skgit-{{ env }}-dind
     hostname: skgit-{{ env }}-dind
     privileged: true
@@ -60,7 +60,7 @@ services:
   # Executes CI/CD workflows from SKGit
   # =============================================================================
   forgejo-runner:
-    image: code.forgejo.org/forgejo/runner:{{ skgit.RUNNER_VERSION | default('11.1.2') }}
+    image: code.forgejo.org/forgejo/runner:{{ skgit.RUNNER_VERSION | default('13.2.1') }}
     container_name: skgit-{{ env }}-runner
     hostname: skgit-{{ env }}-runner
     restart: unless-stopped
@@ -113,7 +113,7 @@ services:
             --instance $$INSTANCE_URL \
             --token $$RUNNER_REGISTRATION_TOKEN \
             --name "$$RUNNER_NAME" \
-            --labels "docker:docker://catthehacker/ubuntu:act-latest,docker-cli:docker://docker:27-cli,node-20:docker://catthehacker/ubuntu:act-latest,ubuntu-latest:docker://catthehacker/ubuntu:act-latest,ubuntu-22.04:docker://catthehacker/ubuntu:act-22.04" \
+            --labels "docker:docker://catthehacker/ubuntu:act-latest,docker-cli:docker://docker:29-cli,node-20:docker://catthehacker/ubuntu:act-latest,ubuntu-latest:docker://catthehacker/ubuntu:act-latest,ubuntu-22.04:docker://catthehacker/ubuntu:act-22.04" \
             --no-interactive;
           echo "Runner registered";
         else
@@ -135,7 +135,7 @@ services:
   # Runs periodic cleanup to prevent the root FS from filling up with images.
   # =============================================================================
   dind-cleanup:
-    image: docker:27.3.1-cli
+    image: docker:29.9.3-cli@sha256:2357639ad1ea7d0194134bf3292622fd4e562483966ed674e5d7c945b5f3b28d
     container_name: skgit-{{ env }}-dind-cleanup
     restart: unless-stopped
     depends_on:

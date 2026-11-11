@@ -223,6 +223,12 @@ def provision(api, cfg):
 
     if not cfg.get("users"):
         return
+    if version_tuple(version) >= (2026, 2):
+        # Authentik 2026.8 made UserSourceConnection.user read-only in the
+        # API (POST answers HTTP 500 on a NULL user_id). The role links the
+        # users with capauth_link_users.py under `ak shell` instead.
+        print("user links: via ak shell (authentik 2026.2+)")
+        return
     conns = api.get("/sources/user_connections/oauth/", source__slug=cfg["source_slug"], page_size=1000)
     conns = conns.get("results", [])
     # Authentik allows ONE connection per (user, source): a new fingerprint
