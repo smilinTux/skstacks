@@ -75,12 +75,14 @@ snapshot_indexer() {
     api PUT "/_snapshot/$REPO" "{\"type\":\"fs\",\"settings\":{\"location\":\"$REPO_PATH\",\"compress\":true}}" >/dev/null \
         || { log "ERROR: cannot register the snapshot repository (is the indexer up?)"; return 1; }
     name="skaegis-$(date -u +%Y%m%dt%H%M%Sz)"
-    if api PUT "/_snapshot/$REPO/$name?wait_for_completion=true" '{"include_global_state":false}' | grep -q '"state":"SUCCESS"'; then
-        log "snapshot $name complete"
-    else
-        log "ERROR: snapshot $name did not complete, kept the previous snapshots"
-        return 1
-    fi
+    # Capture first, then match: a failed call is reported, never read as a
+    # mere "no match".
+    out=$(api PUT "/_snapshot/$REPO/$name?wait_for_completion=true" '{"include_global_state":false}') \
+        || { log "ERROR: snapshot $name request failed, kept the previous snapshots"; return 1; }
+    case "$out" in
+    *'"state":"SUCCESS"'*) log "snapshot $name complete" ;;
+    *) log "ERROR: snapshot $name did not complete, kept the previous snapshots"; return 1 ;;
+    esac
     cutoff=$(( $(date -u +%s) - KEEP_DAYS * 86400 ))
     api GET "/_snapshot/$REPO/_all" \
         | tr '{' '\n' | sed -n 's/.*"snapshot":"\(skaegis-[^"]*\)".*"start_time_in_millis":\([0-9]*\).*/\1 \2/p' \
