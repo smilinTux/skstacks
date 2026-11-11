@@ -153,12 +153,6 @@
             mode: '0644'
           register: ska_apt_source
 
-        - name: Release a previous hold so a version bump can apply
-          command: apt-mark unhold wazuh-agent
-          register: ska_unhold
-          changed_when: "'Canceled hold' in ska_unhold.stdout"
-          failed_when: false
-
         - name: Install the pinned agent
           # The package's own postinst reads these on a first install and
           # writes the server address, the group and the enrolment password;
@@ -168,6 +162,8 @@
             state: present
             update_cache: "{{ ska_apt_source is changed }}"
             allow_downgrade: false
+            # the package is held (below): a version bump must move it anyway
+            allow_change_held_packages: true
           environment:
             WAZUH_MANAGER: "{{ ska_agent_manager }}"
             WAZUH_MANAGER_PORT: "{{ ska_agent_port }}"
@@ -180,9 +176,9 @@
           register: ska_agent_pkg
 
         - name: Hold the agent at the pinned version (skpatch-hosts must not move it)
-          command: apt-mark hold wazuh-agent
-          register: ska_hold
-          changed_when: "'set on hold' in ska_hold.stdout"
+          dpkg_selections:
+            name: wazuh-agent
+            selection: hold
 
         - name: Point the agent at the manager (server address)
           replace:
