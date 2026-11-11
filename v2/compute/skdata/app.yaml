@@ -48,6 +48,8 @@ healthcheck:
 # overlay; the stock image here keeps the descriptor renderable everywhere.
 deploy:
   container: postgres
+  # Stays on 17: the real image is smilintux/skmem-pg:pg17-bm25-age (pg_search + AGE built from our
+  # own Dockerfile); there is no 18 build yet, see renovate.json.
   image: "postgres:17-alpine"
   ports:
     - "5432:5432"

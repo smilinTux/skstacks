@@ -78,6 +78,20 @@
       "dependencyDashboardApproval": true
     },
     {
+      "description": "skmem-pg and the skdata stub stay on Postgres 17: the sovereign image is built from our own Dockerfile (pgvector + ParadeDB pg_search + Apache AGE) and no Postgres 18 build is published. Re-enable when a pg18 image exists.",
+      "matchFileNames": [
+        "v1/ansible/optional/skmem-pg/**",
+        "v2/compute/skdata/**"
+      ],
+      "matchPackageNames": [
+        "postgres"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "enabled": false
+    },
+    {
       "description": "Authentik (sksso) majors need a human: config/schema migrations between majors are not always backward compatible",
       "matchPackageNames": [
         "ghcr.io/goauthentik/server"
