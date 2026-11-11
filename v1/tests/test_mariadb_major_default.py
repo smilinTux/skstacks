@@ -56,9 +56,9 @@ def _skhub_services(**skhub):
 
 
 def test_db_stop_grace_period_defaults_to_120s():
-    # MariaDB 12.x garbles tc.log on a clean shutdown just before deleting it; a
-    # SIGKILL after swarm's default 10s grace in that window leaves a "Bad magic
-    # header in tc log" that stops every later start (v2.26.20 gate, 2026-11-11).
+    # Room for a slow shutdown on a busy NFS datadir. The tc.log crashloop itself is
+    # handled by the entrypoint guard (test_mariadb_tclog_guard.py): the gate showed a
+    # clean, fast shutdown can still leave the closed log behind.
     assert _skbook_services()["db"]["stop_grace_period"] == "120s"
     assert _skhub_services()["db"]["stop_grace_period"] == "120s"
 

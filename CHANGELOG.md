@@ -31,10 +31,13 @@ Each entry says what an instance must do, if anything.
     the datadir in place (the image saves a system-tables backup first). Healthchecks use
     `mariadb-admin`. There is no downgrade: take a dump first. To stay, pin `skhub.MARIADB_IMAGE` or
     the new `skbook.MARIADB_IMAGE`.
-    The `db` services now get `stop_grace_period: 120s` (knob `DB_STOP_GRACE_PERIOD`): 12.x keeps a
-    `tc.log`, and a SIGKILL after swarm's default 10 s grace during a slow shutdown left it garbled, so
-    every later start aborted with "Bad magic header in tc log" (found by the v2.26.20 gate on an NFS
-    datadir). If an instance ever hits that, stop the db, move `tc.log` out of the datadir and start it.
+    12.x keeps a `tc.log`. On a clean shutdown it overwrites the first magic byte with `A` and then
+    deletes the file; on an NFS datadir that delete does not always land, and every later start aborts
+    with "Bad magic header in tc log" (found twice by the v2.26.20 gate). The `db` services now start
+    through a small wrapper that moves aside only a `tc.log` carrying that closed marker
+    (`tc.log.closed-<time>` next to it) and then runs the normal entrypoint. A genuinely crashed log is
+    left for MariaDB's own recovery. They also get `stop_grace_period: 120s` (knob
+    `DB_STOP_GRACE_PERIOD`) for a slow shutdown on a busy datadir.
   - **Redis 8.10.3 for skgallery, skorch and sksso; valkey 9.1.3 for skpeek; registry 3.1.2 for
     skreg.** In place, no step: a newer server reads the older RDB/AOF, but the old major cannot read
     what the new one saves. New pin knobs `skorch.REDIS_IMAGE`, `sksso.REDIS_IMAGE`, `skreg_image`
@@ -45,6 +48,12 @@ Each entry says what an instance must do, if anything.
     to Grafana Alloy is future work.
   - **n8n stays on 2.x** (3.x is still an upstream pre-release). Immich postgres updates are
     disabled in Renovate (the image moves with `IMMICH_VERSION`).
+
+- **skorch: the postgres healthcheck runs as the configured user**: it used `$POSTGRES_USER`, which
+  docker stack deploy fills in from the deployer's shell (unset), so the probe ran with an empty
+  user and database and the server logged `FATAL: role "-d" does not exist` every 10 s since
+  v2.18.0. It now uses `$${POSTGRES_USER}`. A new test scans every `pg_isready` healthcheck for a
+  deploy-time variable.
 
 - **skmesh: NetBird 0.82.0 (dashboard v2.96.0), configurable `AUTHENTIK_SUB_MODE`, and the site
   root registered as a redirect URI**: the provisioner used to force `sub_mode: user_id`, which on a

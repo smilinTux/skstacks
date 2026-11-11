@@ -98,10 +98,26 @@ services:
 {% endif %}
 
   db:
-    # MariaDB 12.x keeps tc.log open while it runs and garbles its first byte on a
-    # clean shutdown just before deleting it. Swarm's default 10s stop grace can
-    # SIGKILL a slow (NFS) shutdown in that window, and the next start then aborts
-    # with "Bad magic header in tc log". Give the shutdown time to finish.
+    # MariaDB 12.x keeps a tc.log (mmap transaction coordinator log). On a clean
+    # shutdown it overwrites the first magic byte with 'A' and then deletes the
+    # file; the 'A' is there so that a delete that fails is not mistaken for a
+    # crashed log. On an NFS datadir that delete does not always land, and the
+    # next start then aborts with "Bad magic header in tc log" (crashloop, found
+    # by the v2.26.20 gate). The wrapper moves aside only a log carrying that
+    # closed marker (41 23 05 74). A real crashed log (fe 23 05 74) is left for
+    # MariaDB's own recovery. $$ so docker stack deploy does not interpolate.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        f=/var/lib/mysql/tc.log;
+        if [ -f "$$f" ] && [ "$$(head -c 4 "$$f" | od -An -tx1 | tr -d ' \n')" = 41230574 ]; then
+        mv "$$f" "$$f.closed-$$(date +%Y%m%dT%H%M%S)" &&
+        echo "skstacks: moved aside a tc.log MariaDB had closed but not deleted";
+        fi;
+        exec docker-entrypoint.sh "$$@"
+      - docker-entrypoint.sh
+    # Room for a slow shutdown on a busy NFS datadir.
     stop_grace_period: {{ skbook.DB_STOP_GRACE_PERIOD | default('120s', true) }}
     image: {{ skbook.MARIADB_IMAGE | default('mariadb:12.3.3@sha256:d46e102fa8b9b72bfcdeb56f9dd538742092119dc8b11f31fe662605cd234cd9') }}
     env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}.env
