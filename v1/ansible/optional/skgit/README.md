@@ -121,6 +121,7 @@ Required: `POSTGRES_PASSWORD`, `SHARED_SECRET`, `SECRET_KEY`,
 | `placement_constraints` | `[]` | swarm constraints for every service |
 | `first_install_wait_seconds` | `1800` | deploy wait for the Forgejo task and API |
 | `AUTHENTIK_TILE*` | on | Authentik portal tile |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_USERNAME` | unset, `skadmin` | local admin account, created only with `admin_enabled: true` |
 
 ## Verify
 
