@@ -465,6 +465,56 @@ already created in Authentik is not deleted (same limitation as skflow's
 blueprint above); clean it up by hand if the app is being retired, not just
 switched back to forward auth.
 
+## Application access and group model
+
+Design (not yet implemented): [`docs/design/sso-app-access-provisioning.md`](../../../../docs/design/sso-app-access-provisioning.md).
+Read this section for what is true today, and the design for where it is going.
+
+**What the framework does today.**
+
+- Every role with a portal tile binds it to ONE Authentik group, `AUTHENTIK_TILE_GROUP`. The default is
+  `authentik Admins` on a release without PR #360 and `skadmin` with it. The group must already exist;
+  nothing in the framework creates `skadmin`, `skuser` or any per-app group.
+- The tile script only adds bindings. It never removes one, so changing the default does not move an
+  existing tile off `authentik Admins`; it adds the new binding next to the old one.
+- A provider-less tile is a bookmark. It controls portal visibility only. Access to a forward-auth
+  service is decided by the application behind the matched provider, which for most services is the
+  domain-wide catch-all. That catch-all is hand-made on each instance; no code here creates or binds it.
+- Authentik admits every authenticated user to an application that has NO policy bindings. An unbound
+  catch-all therefore lets any user of the instance (including accounts that exist for other services)
+  through forward auth. `skrac` and `skmesh` write no binding for their applications either. Check each
+  instance by hand until the conformance check below exists: every application must show at least one
+  binding in the admin UI.
+- `OIDC_ADMIN_GROUPS` (sksec-web, skpatch-hosts) and `OIDC_ADMIN_GROUP` (skrac) are independent strings and
+  are not derived from the Authentik binding.
+
+**Target model (design).** Follows `standards/APPLICATION_ACCESS_SSO_STANDARD.md` in the sk-standards repo
+(PROPOSED, sk-standards PR #70).
+
+- Global groups `skadmin` (reaches every app) and `skuser` (an optional baseline bundle; never grants admin).
+  Per-app groups `app-<app>-admins` and `app-<app>-users`. `authentik Admins` is reserved for administering
+  Authentik itself and is never bound to an application.
+- One block per app: `SSO_ACCESS: admin-only | app-groups | any-account | public` (default `admin-only`,
+  fail-closed) and `SSO_BASELINE: true | false` (the standard's `in_baseline`, `app-groups` only, default
+  false). `any-account` and `public` are reviewed opt-outs that need an exemption record. An estate list
+  `sksso.BASELINE_APPS` overrides the per-role baseline flags.
+- Two first-class ways to provision a person: add them to `skuser` for the baseline apps, or to individual
+  `app-<app>-users` groups. Neither implies the other.
+- `skuser` and `skadmin` are bound directly on each app; groups are never parents of one another for access,
+  because Authentik allows one parent per group and inheritance direction is release dependent.
+- The tile script would create the groups idempotently, bind them, and refuse to leave an application with
+  zero bindings; the catch-all would be bound to `skadmin` only; OIDC role mapping defaults would derive
+  from the per-app groups; a conformance check (the standard's C1 to C10) would list unbound applications and
+  applications still bound to `authentik Admins`; a gate harness would prove the `sktest-user` account
+  (`skuser` only) is denied non-baseline and admin tools and the `sktest-admin` account (`skadmin` only) is
+  allowed.
+- Any app that is not `admin-only` gets its own provider; the catch-all serves `admin-only` apps only.
+  `skhub-users` and `skflow-operators` are renamed in place to `app-skhub-users` and `app-skflow-users`.
+- Test identities (`sktest-admin`, `sktest-user`, `sktest-nogroup`, `sktest-appadmin`, `sktest-appuser`, and the
+  service account `sksvc-test`) skip interactive MFA only as members of the `sktest` group, and still pass
+  through the application access policy. Credentials are per-estate `sksso.TEST_*` vault keys.
+- Existing instances migrate in additive steps first, and only later prune `authentik Admins` bindings.
+
 ## SSO for skhub and skflow
 
 Authentik (this role) is the identity provider for two apps in the estate. Both use native OAuth2/OIDC, so
