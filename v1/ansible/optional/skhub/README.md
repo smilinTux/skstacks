@@ -110,8 +110,26 @@ exercise.
 | `CLAMD_CONCURRENT_DATABASE_RELOAD` | `false` (renders `no`) | `clamd.conf` `ConcurrentDatabaseReload`. `true` restores the image's compiled-in default (~94% RSS spike during a database reload, measured above). |
 | `CLAMAV_RESOURCES_RESERVATIONS_MEMORY` | `512M` | `clamav` service `deploy.resources.reservations.memory`. |
 | `CLAMAV_RESOURCES_LIMITS_MEMORY` | `2G` | `clamav` service `deploy.resources.limits.memory`. Comfortably above the ~1.86 GiB untuned-reload peak measured above; with the tuned defaults actual usage should not exceed the ~960 MiB idle baseline. |
-| `enable_files_antivirus` | `false` | When `true`, the deploy additionally sets the `files_antivirus` app's `av_max_file_size` (`FILES_ANTIVIRUS_MAX_FILE_SIZE`, default `-1` unlimited) and `av_stream_max_length` (bytes, computed from `CLAMD_STREAM_MAX_LENGTH_MB`) via `occ`. Unset/false on an instance that never installed `files_antivirus` (e.g. the clamav container is unused), so the deploy does not write appconfig rows for an app that is not there. This is in addition to the existing unconditional `av_host`/`av_port`/`av_mode` task, which always runs. |
+| `enable_files_antivirus` | `false` | When `true`, the deploy additionally installs and enables the `files_antivirus` app (app store, best-effort; 6.5.0 supports Nextcloud 32 to 36), sets the app's `av_infected_action` (`FILES_ANTIVIRUS_INFECTED_ACTION`, default `only_log`, see below), and sets the `files_antivirus` app's `av_max_file_size` (`FILES_ANTIVIRUS_MAX_FILE_SIZE`, default `-1` unlimited) and `av_stream_max_length` (bytes, computed from `CLAMD_STREAM_MAX_LENGTH_MB`) via `occ`. Unset/false on an instance that never installed `files_antivirus` (e.g. the clamav container is unused), so the deploy does not write appconfig rows for an app that is not there. This is in addition to the existing unconditional `av_host`/`av_port`/`av_mode` task, which always runs. |
 | `FILES_ANTIVIRUS_MAX_FILE_SIZE` | `-1` | `files_antivirus` app's `av_max_file_size` (bytes, `-1` = unlimited), only applied with `enable_files_antivirus`. |
+| `FILES_ANTIVIRUS_INFECTED_ACTION` | `only_log` | `files_antivirus` app's `av_infected_action`: `only_log` (log and notify, the file is kept) or `delete`. Default is log only so a first rollout cannot remove a user's file on a false positive; switch to `delete` only after a soak period. Only applied with `enable_files_antivirus`. |
+
+Recommended vault values for an instance with memory to spare (the daemon sits at
+about 1 GiB resident, peak below the 2G limit with the tuned defaults):
+
+```yaml
+skhub:
+  enable_files_antivirus: true
+  FILES_ANTIVIRUS_MAX_FILE_SIZE: 26214400   # 25 MiB, equal to CLAMD_STREAM_MAX_LENGTH_MB
+  FILES_ANTIVIRUS_INFECTED_ACTION: only_log
+```
+
+`av_mode` is `daemon` over the stack network (`<app>-<env>_clamav:3310`, never
+published), so no second clamd and no executable inside the Nextcloud image.
+Keep `FILES_ANTIVIRUS_MAX_FILE_SIZE` at or below the stream limit: a file larger
+than clamd's `StreamMaxLength` makes the scan error instead of skip. An
+instance short on RAM (under about 2 GiB of available memory beyond its current
+load) should leave `enable_files_antivirus` off.
 
 ## Local code tree on a pinned node
 
