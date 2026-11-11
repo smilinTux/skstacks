@@ -5,3 +5,7 @@ abbebd122b19006884a27719c964bf7abd02ff27:v1/ansible/optional/skorch/src/gpg-sign
 *:v1/ansible/optional/skorch/src/gpg-signer/tests/test_signer.py:generic-api-key:44
 # test_skgit_first_install_waits.py:33 is a made-up sentinel password (PR #75) used to assert the password never leaks into output; not a credential.
 *:v1/tests/test_skgit_first_install_waits.py:generic-api-key:33
+# skaegis provision_skaegis_agents.yml:56 is Wazuh's PUBLIC package signing key fingerprint
+# (packages.wazuh.com/key/GPG-KEY-WAZUH), checked before apt trusts the key. Not a credential;
+# the branch history named the variable *_key_fpr, which the generic rule matched.
+*:v1/ansible/optional/skaegis/provision_skaegis_agents.yml:generic-api-key:56
