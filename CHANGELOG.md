@@ -3,6 +3,26 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased (v2.26.21)
+
+### Upgrade notes (instances)
+
+- **skgit: Anubis crawler gate, app.ini as the only Forgejo config, git pack limits**: an Anubis
+  (v1.28.2, pinned by digest) service now fronts Forgejo's web UI by default: browser user agents get
+  a proof-of-work challenge once a week, non-browser clients and known good crawlers pass. A new
+  `-direct` router (priority 150, same middleware chain as the main router) keeps git smart HTTP,
+  LFS, `/api/` (runner RPC included), login, OAuth/OIDC, `.well-known`, assets, avatars, robots.txt
+  and `/metrics` away from the gate; the `/v2` registry and runner RPC routers are unchanged. Opt
+  out with `skgit.ANUBIS_ENABLED: false`. The FORGEJO__* environment on the service never reached
+  app.ini (the service runs `forgejo web` directly); app.ini.j2 now carries what it was meant to
+  set, so a deploy ADDS `[security] REVERSE_PROXY_LIMIT/REVERSE_PROXY_TRUSTED_PROXIES` (Forgejo logs
+  real client IPs) and `[session] PROVIDER = file` (sessions survive a restart; users are signed
+  out once by this deploy). New defaults: `[git.config]` pack.threads=1, pack.windowMemory=256m,
+  pack.deltaCacheSize=64m, gc.auto=0 (`skgit.GIT_CONFIG`), a robots.txt in Forgejo's custom/public
+  (`skgit.ROBOTS_TXT`), healthcheck start period 60m (`skgit.HEALTH_START_PERIOD`). The
+  ACTIONS/PACKAGES/LFS/ENABLE_PUSH_CREATE_* knobs now reach app.ini. Any hand edit of the live
+  app.ini that the template does not carry is overwritten, as before: compare first (skgit SOP §4).
+
 ## Unreleased (v2.26.20)
 
 ### Upgrade notes (instances)
