@@ -449,7 +449,7 @@ How people and passwords work once it is on (full runbook:
 [`v1/docs/sso-user-management.md`](../../../docs/sso-user-management.md)):
 
 - Passwords, MFA and active/inactive state live in Authentik only. Access to Nextcloud is membership of the
-  Authentik group `skhub-users`.
+  Authentik group `app-skhub-users`.
 - The ID token carries `nextcloud_uid` (attribute of that name, else the Authentik username, pinned on first
   login) and `nextcloud_groups` (Authentik groups named `nc-<name>` become Nextcloud group `<name>`). Set
   the attribute first when an existing Nextcloud account has a different uid than the person's Authentik

@@ -25,12 +25,20 @@
 // /api/systems/:id replaces the whole connection config. Systems on the
 // credential that this run's target list does not name are reported only.
 //
+// Optionally (configure() below) it also converges the dashboard's own
+// configuration from the same input: APT upgrade mode per system, notification
+// channels and schedules, all matched by name. That part edits, but only what
+// the input names, and never deletes.
+//
 // Input (stdin, secrets included, so nothing is on a command line):
 //   register_as    dashboard username of an existing admin (local or OIDC)
 //   credential_id  an existing SSH credential's id, or 0 to use `credential`
 //   credential     {name, username, private_key}: found by name, created if
 //                  missing (never rewritten: rotate a key in the dashboard)
-//   systems        [{name, hostname, port}], this run's targets
+//   sync_credential  true: rewrite that credential's key from `credential`
+//                  (key rotation); default false
+//   systems        [{name, hostname, port, upgrade_mode?}], this run's targets
+//   upgrade_mode, notifications, schedules: see configure() below
 // Output: status lines only, never a secret; the last one is
 // "registration: ok" on success. Exit non-zero on any error.
 "use strict";
@@ -132,7 +140,21 @@ async function main() {
       });
       useId = out.id;
       console.log(`credential ${cred.name}: created (id ${useId})`);
+      cfg.sync_credential = false; // just written from the same key
     }
+  }
+
+  // Key rotation: overwrite the credential's private key from this run's
+  // key (sync_credential, the vault's SYNC_CREDENTIAL). Off by default so a
+  // run never silently replaces a key an operator changed in the dashboard.
+  if (cfg.sync_credential) {
+    if (!(cred.username && cred.private_key)) fail("sync_credential needs credential {username, private_key}");
+    const current = creds.find((c) => c.id === useId) || { name: cred.name };
+    await call("PUT", `/credentials/${useId}`, {
+      name: current.name,
+      payload: { username: cred.username, privateKey: cred.private_key, passphrase: "" },
+    });
+    console.log(`credential ${current.name}: key synced from this run (id ${useId})`);
   }
 
   const existing = (await call("GET", "/systems")).systems || [];
@@ -162,7 +184,170 @@ async function main() {
     console.log("not in this run's target list (left in the dashboard, not removed):");
     for (const s of orphaned) console.log(`  ${s.name} (${s.hostname}:${s.port})`);
   }
+
+  await configure(call, cfg);
   console.log("registration: ok");
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard configuration as code (all optional; nothing below runs unless the
+// input names it). Everything is matched BY NAME and converged: a missing
+// schedule or channel is created, one that differs is updated, and one this
+// input does not name is reported and left alone, never deleted.
+//   upgrade_mode    "upgrade" | "full-upgrade": APT default upgrade mode for
+//                   this run's systems (per system: systems[].upgrade_mode).
+//                   Uses the narrow PUT /api/systems/:id/upgrade-mode, never
+//                   the whole-config PUT. A system whose package manager has
+//                   not been detected yet (first check still pending) is
+//                   reported and picked up by the next run.
+//   notifications   [{name, type, enabled, notify_on, systems, config}]
+//   schedules       [{name, type, enabled, cron, systems, only_if_required,
+//                     cache_hours, notifications}]
+// `systems` is a list of dashboard system NAMES (any system in the dashboard,
+// not only this run's), or null/absent for all systems. Names it cannot find
+// are reported; a schedule left with no system at all is skipped, never
+// widened to "all".
+// ---------------------------------------------------------------------------
+const sortedJson = (v) => JSON.stringify(v, (k, x) => (x && typeof x === "object" && !Array.isArray(x)
+  ? Object.keys(x).sort().reduce((o, key) => ((o[key] = x[key]), o), {}) : x));
+
+function resolveNames(label, names, idByName) {
+  if (names === null || names === undefined) return { ids: null, missing: [] };
+  if (!Array.isArray(names)) fail(`${label}: systems must be a list of names or null`);
+  const ids = [];
+  const missing = [];
+  for (const n of names) {
+    if (idByName.has(n)) ids.push(idByName.get(n));
+    else missing.push(n);
+  }
+  return { ids, missing };
+}
+
+function aptMode(system) {
+  let configs = system.pkgManagerConfigs;
+  if (typeof configs === "string") {
+    try { configs = JSON.parse(configs); } catch { configs = null; }
+  }
+  return (configs && configs.apt && configs.apt.defaultUpgradeMode) || "upgrade";
+}
+
+async function configure(call, cfg) {
+  const wantsModes = cfg.upgrade_mode || cfg.systems.some((w) => w.upgrade_mode);
+  const notifs = Array.isArray(cfg.notifications) ? cfg.notifications : [];
+  const scheds = Array.isArray(cfg.schedules) ? cfg.schedules : [];
+  if (!wantsModes && !notifs.length && !scheds.length) return;
+
+  const all = (await call("GET", "/systems")).systems || [];
+  const byKey = new Map(all.map((s) => [`${s.hostname}:${Number(s.port || 22)}`, s]));
+  const idByName = new Map(all.map((s) => [s.name, s.id]));
+
+  if (wantsModes) {
+    for (const w of cfg.systems) {
+      const want = w.upgrade_mode || cfg.upgrade_mode;
+      if (!want) continue;
+      if (want !== "upgrade" && want !== "full-upgrade") fail(`${w.name}: upgrade_mode must be upgrade or full-upgrade`);
+      const s = byKey.get(`${w.hostname}:${Number(w.port || 22)}`);
+      if (!s) continue;
+      const detected = s.pkgManager || (Array.isArray(s.detectedPkgManagers) && s.detectedPkgManagers.length);
+      if (!detected) {
+        console.log(`${s.name}: upgrade mode pending (package manager not detected yet, next run sets it)`);
+        continue;
+      }
+      const managers = [s.pkgManager, ...(Array.isArray(s.detectedPkgManagers) ? s.detectedPkgManagers : [])];
+      if (!managers.includes("apt") && !managers.includes("dnf")) {
+        console.log(`${s.name}: upgrade mode n/a (${s.pkgManager || "unknown"} has none)`);
+        continue;
+      }
+      if (aptMode(s) === want) {
+        console.log(`${s.name}: upgrade mode ${want} unchanged`);
+        continue;
+      }
+      try {
+        await call("PUT", `/systems/${s.id}/upgrade-mode`, { fullUpgrade: want === "full-upgrade" });
+        console.log(`${s.name}: upgrade mode set to ${want}`);
+      } catch (err) {
+        console.log(`${s.name}: upgrade mode not set (${err.message.slice(0, 160)})`);
+      }
+    }
+  }
+
+  const notifIdByName = new Map();
+  if (notifs.length) {
+    const have = (await call("GET", "/notifications")).notifications || [];
+    for (const n of have) notifIdByName.set(n.name, n.id);
+    for (const n of notifs) {
+      if (!n.name || !n.type) fail("every notification needs name and type");
+      const { ids, missing } = resolveNames(`notification ${n.name}`, n.systems, idByName);
+      if (missing.length) console.log(`notification ${n.name}: not in the dashboard, ignored: ${missing.join(", ")}`);
+      const body = {
+        name: n.name,
+        type: n.type,
+        enabled: n.enabled !== false,
+        notifyOn: n.notify_on || ["updates"],
+        systemIds: ids,
+        config: n.config || {},
+      };
+      // Channel config carries secrets that the API only ever returns masked,
+      // so it cannot be compared: an existing channel is rewritten every run
+      // (same values in, same channel out).
+      if (notifIdByName.has(n.name)) {
+        const id = notifIdByName.get(n.name);
+        await call("PUT", `/notifications/${id}`, body);
+        console.log(`notification ${n.name}: synced (id ${id})`);
+      } else {
+        const out = await call("POST", "/notifications", { ...body, schedule: null });
+        notifIdByName.set(n.name, out.id);
+        console.log(`notification ${n.name}: created (id ${out.id})`);
+      }
+    }
+    for (const n of have) {
+      if (!notifs.some((x) => x.name === n.name)) console.log(`notification ${n.name}: not declared here, left as is`);
+    }
+  }
+
+  if (scheds.length) {
+    if (scheds.length !== new Set(scheds.map((x) => x.name)).size) fail("schedule names must be unique");
+    if (!notifIdByName.size && scheds.some((x) => x.type === "notification_digest")) {
+      for (const n of (await call("GET", "/notifications")).notifications || []) notifIdByName.set(n.name, n.id);
+    }
+    const have = (await call("GET", "/schedules")).schedules || [];
+    const haveByName = new Map(have.map((x) => [x.name, x]));
+    for (const d of scheds) {
+      if (!d.name || !d.type || !d.cron) fail("every schedule needs name, type and cron");
+      const { ids, missing } = resolveNames(`schedule ${d.name}`, d.systems, idByName);
+      if (missing.length) console.log(`schedule ${d.name}: not in the dashboard, left out: ${missing.join(", ")}`);
+      if (ids !== null && ids.length === 0) {
+        console.log(`schedule ${d.name}: skipped (none of its systems are in the dashboard yet)`);
+        continue;
+      }
+      const config = { cron: String(d.cron).trim() };
+      if (d.type === "refresh") config.cacheDurationHours = Number(d.cache_hours ?? 12);
+      if (d.type === "reboot") config.onlyIfRequired = d.only_if_required !== false;
+      if (d.type === "notification_digest") {
+        config.notificationIds = (d.notifications || []).map((name) => {
+          if (!notifIdByName.has(name)) fail(`schedule ${d.name}: no notification channel named ${name}`);
+          return notifIdByName.get(name);
+        });
+      }
+      const want = { type: d.type, enabled: d.enabled !== false, systemIds: ids, config };
+      const cur = haveByName.get(d.name);
+      if (!cur) {
+        const out = await call("POST", "/schedules", { name: d.name, ...want });
+        console.log(`schedule ${d.name}: created (id ${out.id}, ${d.type} "${config.cron}")`);
+        continue;
+      }
+      const curShape = { type: cur.type, enabled: cur.enabled, systemIds: cur.systemIds, config: cur.config };
+      if (sortedJson(curShape) === sortedJson(want)) {
+        console.log(`schedule ${d.name}: unchanged (id ${cur.id})`);
+        continue;
+      }
+      await call("PUT", `/schedules/${cur.id}`, want);
+      console.log(`schedule ${d.name}: updated (id ${cur.id}, ${d.type} "${config.cron}")`);
+    }
+    for (const x of have) {
+      if (!scheds.some((d) => d.name === x.name)) console.log(`schedule ${x.name}: not declared here, left as is (${x.enabled ? "enabled" : "disabled"})`);
+    }
+  }
 }
 
 main().catch((err) => fail(err && err.message ? err.message : String(err)));

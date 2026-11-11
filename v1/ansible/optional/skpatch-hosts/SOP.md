@@ -137,6 +137,22 @@ ansible-playbook -i envs/prod/inventory.ini \
   --vault-password-file ~/.vault_pass_env/.<instance>_prod_vault_pass
 ```
 
+**Rotating the estate key** (suspected exposure, or routine):
+
+1. `ssh-keygen -t ed25519 -N '' -f <scratch>/skpatch-hosts_<estate> -C skpatch-hosts@<estate>`.
+2. In the vault, replace `SSH_PUBLIC_KEY` and `SSH_PRIVATE_KEY` with the new
+   halves and set `SYNC_CREDENTIAL: true` (plus `CREDENTIAL_ID` if the
+   credential was made by hand). Shred the scratch files.
+3. Rerun `provision_skpatch_hosts_nodes.yml` against **every** inventory that
+   holds this estate's targets. `authorized_key exclusive: true` replaces the
+   old key on each host it reaches, and the registrar rewrites the
+   dashboard credential in the same run.
+4. Verify: on each host `ssh-keygen -lf ~<PROVISION_USER>/.ssh/authorized_keys`
+   shows only the new fingerprint; a dashboard refresh reaches every system.
+   Any host that was unreachable still trusts the OLD key: list it, and
+   rerun against it (`-l <host>`) as soon as it is back.
+5. Set `SYNC_CREDENTIAL` back to `false`.
+
 **Rollback.** Redeploy with the previous `skpatch_hosts.IMAGE` digest pinned in
 the vault, then rerun the deploy playbook, the same path as any other
 image-pinned swarm service in this framework. Credentials in
@@ -268,6 +284,11 @@ skpatch-hosts:
   REGISTER_AS: ""                           # an existing dashboard admin's username (local or OIDC)
   SSH_PRIVATE_KEY: ""                       # private half of SSH_PUBLIC_KEY; the registrar creates the credential from it
   CREDENTIAL_ID: 0                          # or an existing sshKey credential's id (takes precedence)
+  # Dashboard configuration as code (README "Schedules and notifications as code"); all optional
+  SYNC_CREDENTIAL: false                    # true: rewrite the credential's key from SSH_PRIVATE_KEY (key rotation)
+  UPGRADE_MODE: ""                          # upgrade | full-upgrade: APT default for registered systems; "" leaves it
+  NOTIFICATIONS: []                         # [{name, type, enabled, notify_on, systems, config}], secrets allowed
+  SCHEDULES: []                             # [{name, type, cron, enabled, systems, only_if_required, cache_hours, notifications}]
 ```
 
 **Per-host actions ceiling.** In the group_vars of any host that must
@@ -299,7 +320,7 @@ self-signed five-minute session for `REGISTER_AS`), and ships two playbooks:
 | Playbook | Purpose | Key `-e` flags |
 |---|---|---|
 | `deploy_skpatch-hosts-<env>.yml` | Deploy/update the dashboard stack | `target_manager_group` |
-| `provision_skpatch_hosts_nodes.yml` | Grant/revoke SSH access and sudo rights on target nodes; on `present`, also adds those nodes as dashboard systems when missing (opt-in) | `-l <estate-group>`, `skpatch_hosts_provision_env`, `skpatch_hosts_provision_state` (`present` or `absent`), `skpatch_hosts_register_manager_group` (default `swarm_managers`) |
+| `provision_skpatch_hosts_nodes.yml` | Grant/revoke SSH access and sudo rights on target nodes; on `present`, also adds those nodes as dashboard systems when missing and converges schedules, channels and upgrade modes (opt-in, README "Schedules and notifications as code") | `-l <estate-group>`, `skpatch_hosts_provision_env`, `skpatch_hosts_provision_state` (`present` or `absent`), `skpatch_hosts_register_manager_group` (default `swarm_managers`) |
 
 ## 8. Troubleshooting
 
@@ -318,6 +339,10 @@ self-signed five-minute session for `REGISTER_AS`), and ships two playbooks:
 | `API_TOKEN is set, but the pinned dashboard ... refuses` | Expected: token registration never worked on 2026.10.9. Remove `API_TOKEN`, set `REGISTER_AS` (README "Automatic host registration"). |
 | A node is missing from the dashboard after a `present` run | `REGISTER_AS` or the credential were unset at the time (registration skips, by design; check the play's own debug output); set them and rerun. |
 | A node's dashboard name or settings were not updated by a run | Expected: registration creates missing systems only and never edits one. Change it in the dashboard. |
+| A schedule or channel you changed in the dashboard reverted | It is declared in `SCHEDULES`/`NOTIFICATIONS` (or `skpatch_hosts_schedules`); every registrar run converges it back. Change it there. |
+| `upgrade mode pending (package manager not detected yet ...)` | Expected right after a system is registered; the next run sets it. |
+| Upgrade-all ends "warning" on the snap step | The host was provisioned before the `snap refresh` sudoers line existed; rerun the provisioning playbook against it. |
+| A scheduled reboot of a Proxmox host says "Reboot blocked" | By design: the role does not grant the app's `pvesh` backup guard, so hypervisors are rebooted from Proxmox. Take them out of the reboot schedule. |
 | A retired node still shows in the dashboard | Expected: registration never deletes. Remove it by hand once its history is no longer needed. |
 
 ## 9. Maturity-tier + Version reference
@@ -344,7 +369,7 @@ self-signed five-minute session for `REGISTER_AS`), and ships two playbooks:
 <!-- docs-evidence
      Executed by the docs-check gate (DOCS_FRESHNESS_STANDARD §1.3).
      Hermetic: repo-local, no network, no live host.
-verified: 2026-11-06
+verified: 2026-11-11
 checks:
   - name: deploy playbook exists
     run: test -f v1/ansible/optional/skpatch-hosts/deploy_skpatch-hosts-prod.yml

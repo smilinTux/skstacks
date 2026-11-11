@@ -15,7 +15,7 @@ Role docs: [sksso](../ansible/optional/sksso/README.md), [skhub](../ansible/opti
 1. Authentik is the only place a person's password, MFA and active/inactive state live.
 2. Nextcloud logs people in through its `user_oidc` app. The ID token carries a `nextcloud_uid` claim
    (the Nextcloud account id) and a `nextcloud_groups` claim.
-3. Access to Nextcloud = membership of the Authentik group `skhub-users`. Access to Windmill =
+3. Access to Nextcloud = membership of the Authentik group `app-skhub-users`. Access to Windmill =
    membership of `skflow-operators`.
 4. The first login creates the Nextcloud account, or adopts an existing local account with the same
    uid (no duplicate). That is just-in-time provisioning: there is no separate "create the user in
@@ -42,7 +42,7 @@ To let SSO manage a new kind of group, add its name pattern to the whitelist reg
    attribute), display name, email.
 2. If they already have a Nextcloud account under a different uid, set attribute `nextcloud_uid` to that
    uid now.
-3. Add them to `skhub-users` (Nextcloud), to `skflow-operators` if they use Windmill (Community Edition
+3. Add them to `app-skhub-users` (Nextcloud), to `skflow-operators` if they use Windmill (Community Edition
    allows at most 10 SSO users in total), and to any `nc-<group>` groups they need.
 4. Give them a way in. Self-service email needs Authentik SMTP, which is NOT configured on every
    instance (check `AUTHENTIK_EMAIL__HOST`). Without SMTP, issue a one-time link yourself (see "Issue a
@@ -68,11 +68,11 @@ To let SSO manage a new kind of group, add its name pattern to the whitelist reg
 
 ## Remove a person
 
-1. Authentik: set the user inactive (preferred, reversible), or remove them from `skhub-users`. They can
+1. Authentik: set the user inactive (preferred, reversible), or remove them from `app-skhub-users`. They can
    no longer start a login. Also remove them from `skflow-operators` for Windmill.
 2. Existing Nextcloud browser sessions and app passwords keep working until the deprovision job runs.
    Run it: `v1/scripts/sso-nextcloud-deprovision.py` (dry run by default, `--apply` disables the
-   Nextcloud accounts whose Authentik user is inactive or outside `skhub-users`; accounts that have no
+   Nextcloud accounts whose Authentik user is inactive or outside `app-skhub-users`; accounts that have no
    Authentik counterpart, such as the local admin and service accounts, are never touched). Prefer a
    schedule (for example a 15 minute Windmill schedule); until one exists, run it by hand after every
    removal and say so in the change record.
