@@ -289,7 +289,9 @@
         - { path: "{{ ska_certs_path }}", owner: '1000', mode: '0500' }
         - { path: "{{ ska_backup_path }}", owner: root, mode: '0711' }
         - { path: "{{ ska_backup_path }}/snapshots", owner: '1000', mode: '0700' }
-      delegate_to: "{{ skaegis.DATA_NODE | default(inventory_hostname, true) if not ska_data_path.startswith('/var/data/') else inventory_hostname }}"
+      # Per path: a path outside /var/data is local disk on DATA_NODE, one
+      # under it is the shared tree, written from the manager.
+      delegate_to: "{{ ska_data_node if (ska_data_node | length > 0 and not item.path.startswith('/var/data/')) else inventory_hostname }}"
 
     - name: Create the {{ app }} manager state directories (seeded by the image on first start)
       file:
@@ -299,7 +301,7 @@
         group: root
         mode: '0750'
       loop: [api-configuration, etc, logs, queue, multigroups, integrations, active-response, agentless, wodles, filebeat-etc, filebeat-var]
-      delegate_to: "{{ skaegis.DATA_NODE | default(inventory_hostname, true) if not ska_data_path.startswith('/var/data/') else inventory_hostname }}"
+      delegate_to: "{{ ska_data_node if (ska_data_node | length > 0 and not ska_manager_path.startswith('/var/data/')) else inventory_hostname }}"
 
     - name: Raise vm.max_map_count on the indexer node (OpenSearch needs 262144)
       # Only reachable when the node is known (DATA_NODE); with label-only

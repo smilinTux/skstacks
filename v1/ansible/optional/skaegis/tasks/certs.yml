@@ -24,7 +24,7 @@
 
 - name: Resolve where the certificates live
   set_fact:
-    ska_certs_node: "{{ skaegis.DATA_NODE | default(inventory_hostname, true) if not ska_data_path.startswith('/var/data/') else inventory_hostname }}"
+    ska_certs_node: "{{ ska_data_node if (ska_data_node | length > 0 and not ska_certs_path.startswith('/var/data/')) else inventory_hostname }}"
     ska_cert_files:
       - root-ca.pem
       - root-ca-manager.pem
