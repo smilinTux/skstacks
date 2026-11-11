@@ -73,8 +73,12 @@ services:
     volumes:
       - /var/data/runtime/skorch-{{ env }}/postgres:{{ _pg_data_mount }}
       - /var/data/skorch-{{ env }}/postgres-init:/docker-entrypoint-initdb.d
+{# $$ = the container's own env (postgres.env). A single $ is interpolated by docker stack
+   deploy from the deployer's shell, where these are unset, so the probe ran as
+   `pg_isready -U  -d ` and the server logged FATAL: role "-d" does not exist on every
+   probe (test_pg_isready_healthchecks.py). #}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 10
