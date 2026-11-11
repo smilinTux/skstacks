@@ -26,7 +26,7 @@
 #     slug: skpulse                      # Application slug
 #     name: "SKPulse (Uptime Kuma)"      # Application display name
 #     launch_url: "https://skpulse.example.com"
-#     group: "authentik Admins"          # must already exist in Authentik
+#     group: "skadmin"                   # must already exist in Authentik
 #     icon: "fa://fa-heart-pulse"        # optional fallback, "fa://fa-..." or an
 #                                         # already-uploaded "application-icons/<file>"
 #     icon_file: "icon.png"              # optional: a file the role ships at
@@ -181,7 +181,7 @@
       slug: "{{ portal_tile.slug }}"
       name: "{{ portal_tile.name }}"
       launch_url: "{{ portal_tile.launch_url }}"
-      group: "{{ portal_tile.group | default('authentik Admins') }}"
+      group: "{{ portal_tile.group | default('skadmin') }}"
       icon: "{{ portal_tile_resolved_icon | default('') }}"
       open_in_new_tab: "{{ portal_tile.open_in_new_tab | default(true) | bool }}"
       description: "{{ portal_tile.description | default('') }}"

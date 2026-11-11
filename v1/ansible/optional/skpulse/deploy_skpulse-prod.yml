@@ -487,7 +487,7 @@
           slug: "{{ skpulse.AUTHENTIK_TILE_SLUG | default(skp_router, true) }}"
           name: "{{ skpulse.AUTHENTIK_TILE_NAME | default('SKPulse (Uptime Kuma)', true) }}"
           launch_url: "https://{{ skp_public_host }}"
-          group: "{{ skpulse.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          group: "{{ skpulse.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
           icon: "{{ skpulse.AUTHENTIK_TILE_ICON | default('fa://fa-heart-pulse', true) }}"
           icon_file: "{{ skpulse.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
           icon_name: "{{ skpulse.AUTHENTIK_TILE_ICON_NAME | default('uptime-kuma', true) }}"

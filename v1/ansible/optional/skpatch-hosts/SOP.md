@@ -233,7 +233,7 @@ skpatch-hosts:
   OIDC_CLIENT_SECRET: ""                    # oidc mode: required, >= 32 chars, same value as sksso's SKPATCH_HOSTS_OIDC_CLIENT_SECRET
   OIDC_SCOPE: "openid profile email groups"
   OIDC_GROUPS_CLAIM: groups
-  OIDC_ADMIN_GROUPS: "authentik Admins"     # CSV of Authentik group names
+  OIDC_ADMIN_GROUPS: "skadmin"     # CSV of Authentik group names
   OIDC_READ_ONLY_GROUPS: ""                 # CSV, default none
   OIDC_UNMATCHED_ROLE: deny                 # deny | admin | read-only
   OIDC_END_SESSION: true
@@ -257,7 +257,7 @@ skpatch-hosts:
   AUTHENTIK_TILE_SLUG: skpatch-hosts
   AUTHENTIK_TILE_DESCRIPTION: "Linux update dashboard"
   AUTHENTIK_TILE_ICON: "fa://fa-wrench"
-  AUTHENTIK_TILE_GROUP: "authentik Admins"  # must already exist
+  AUTHENTIK_TILE_GROUP: "skadmin"  # must already exist
   AUTHENTIK_TILE_OPEN_IN_NEW_TAB: true
   # Read by provision_skpatch_hosts_nodes.yml, not the swarm deploy:
   ALLOW_ACTIONS: false                      # instance-wide default; a host's own skpatch_hosts_allow_actions: false always wins

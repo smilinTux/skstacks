@@ -277,7 +277,7 @@
           slug: "{{ skstor.AUTHENTIK_TILE_SLUG | default(app, true) }}"
           name: "{{ skstor.AUTHENTIK_TILE_NAME | default('SKStor (Garage S3)', true) }}"
           launch_url: "https://skstor{{ '' if env == 'prod' else '-' + env }}.{{ skstor.CLUSTERNAME }}.{{ skstor.DOMAIN }}"
-          group: "{{ skstor.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          group: "{{ skstor.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
           icon: "{{ skstor.AUTHENTIK_TILE_ICON | default('application-icons/minio-light.png', true) }}"
           icon_file: "{{ skstor.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
           icon_name: "{{ skstor.AUTHENTIK_TILE_ICON_NAME | default('garage', true) }}"

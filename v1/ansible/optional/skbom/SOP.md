@@ -196,7 +196,7 @@ skbom:
   AUTHENTIK_TILE: true                      # false opts out of the portal tile
   AUTHENTIK_TILE_SLUG: ""                   # default skbom[-env]
   AUTHENTIK_TILE_NAME: "SKBom (Dependency-Track)"
-  AUTHENTIK_TILE_GROUP: "authentik Admins"
+  AUTHENTIK_TILE_GROUP: "skadmin"
   AUTHENTIK_TILE_ICON: "fa://fa-shield-halved"
   AUTHENTIK_TILE_ICON_FILE: "icon.png"
   AUTHENTIK_TILE_ICON_NAME: "skbom"

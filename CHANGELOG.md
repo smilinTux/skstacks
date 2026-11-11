@@ -3,6 +3,18 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased (v2.26.20)
+
+### Upgrade notes (instances)
+
+- **Portal tiles and OIDC app admins default to the `skadmin` group, not `authentik Admins`**: the
+  `AUTHENTIK_TILE_GROUP` defaults (every role with a portal tile, plus the shared
+  `authentik_portal_tile.yml`) and the `OIDC_ADMIN_GROUPS` defaults (sksec-web, skpatch-hosts) are now
+  `skadmin`. `authentik Admins` stays Authentik's own administration group, and the automation API
+  account still lives there. An instance that wants the old binding sets the knob explicitly.
+  `skadmin` must already exist in Authentik. Tiles already bound to `authentik Admins` are not moved
+  automatically, so move them once in the admin UI or with `ak shell`.
+
 ## skstacks-v2.26.19 - 2026-11-10
 
 ### Upgrade notes (instances)
