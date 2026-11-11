@@ -465,6 +465,49 @@ already created in Authentik is not deleted (same limitation as skflow's
 blueprint above); clean it up by hand if the app is being retired, not just
 switched back to forward auth.
 
+
+## skaegis (OIDC) login
+
+`sksso.SKAEGIS_OIDC_CLIENT_SECRET` (32+ chars, `openssl rand -hex 32`) gives
+skaegis (the Wazuh dashboard, `optional/skaegis`) its OpenID login as code.
+`AUTH_MODE: oidc` is the skaegis default, so set this before the first skaegis
+deploy. Unset, nothing changes. Set, the deploy renders
+`/var/data/config/sksso-<env>/blueprints/skaegis-oidc.yaml` (no secret
+inside), mounts the blueprints directory at `/blueprints/custom` (read only)
+in `server` and `worker`, and puts the secret in `sksso.env` (0600) as
+`SKAEGIS_OIDC_CLIENT_SECRET`, which the blueprint reads with `!Env`.
+
+The blueprint creates or adopts:
+
+| Object | Value |
+|---|---|
+| Group `skadmin` | adopted if it exists, created empty if not; members are managed in Authentik |
+| OAuth2 provider `skaegis` | confidential, client id `skaegis` (`skaegis-<env>` outside prod; `SKAEGIS_OIDC_CLIENT_ID` overrides), strict redirect `https://<skaegis host>/auth/openid/login`, implicit-consent authorization flow, default invalidation flow, signing key `authentik Self-signed Certificate`, issuer mode `per_provider`, grant types authorization_code and refresh_token, scopes openid, email, profile and a private `groups` scope mapping |
+| Application `skaegis` | name `SKAEGIS_APP_NAME` (default `skaegis`), launch URL `https://<skaegis host>/`, policy engine mode `any` |
+| Policy binding | the application bound to `skadmin` (order 0, enabled, not negated) |
+
+**Unlike the sksec-web and skpatch-hosts blueprints, this one owns the
+binding.** skaegis is `admin-only` under APPLICATION_ACCESS_SSO_STANDARD and
+sees every enrolled host's weaknesses, so the gate must stay closed even if
+an instance switches its portal tile off. skaegis's own tile task uses the
+same slug and the same group, finds this binding and reports it unchanged:
+one Application, one binding. Inside the dashboard the indexer maps the
+`groups` claim to its admin roles from `skadmin` only; `authentik Admins` is
+never mapped.
+
+```yaml
+sksso:
+  SKAEGIS_OIDC_CLIENT_SECRET: "..."   # same value as skaegis.OIDC_CLIENT_SECRET
+  SKAEGIS_HOST: skaegis.example.org   # default skaegis[-<env>].<base>
+  SKAEGIS_OIDC_CLIENT_ID: skaegis
+  SKAEGIS_APP_NAME: "skaegis"
+```
+
+Run order: deploy `sksso` with the secret set, then deploy skaegis with the
+matching `skaegis.OIDC_CLIENT_SECRET` and `skaegis.OIDC_ISSUER`
+(`https://<sso host>/application/o/skaegis/`). The other order also
+converges on the next sksso deploy, as for skpatch-hosts above.
+
 ## Application access and group model
 
 Design (not yet implemented): [`docs/design/sso-app-access-provisioning.md`](../../../../docs/design/sso-app-access-provisioning.md).

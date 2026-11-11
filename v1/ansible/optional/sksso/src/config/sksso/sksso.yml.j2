@@ -19,7 +19,8 @@ networks:
 # HTTP timeout (skrac/MeshCentral's openid-client default is 3.5s).
 {# The /blueprints/custom mount (server + worker) is needed when ANY app's
    own OAuth2/OIDC blueprint is rendered: skflow (Windmill), sksec-web
-   (AUTH_MODE: oidc) or skpatch-hosts (AUTH_MODE: oidc). A Jinja comment, so
+   (AUTH_MODE: oidc), skpatch-hosts (AUTH_MODE: oidc) or skaegis
+   (AUTH_MODE: oidc). A Jinja comment, so
    unset knobs still render byte-identical to the v2.26.3 baseline. The
    condition is inlined in each {% if %} guard, never a {% set %}, so this
    0644 file is never treated as carrying a secret value. #}
@@ -206,7 +207,7 @@ services:
       - /var/data/config/{{ app }}-{{ env }}/custom/user_settings.py:/data/user_settings.py:ro
 {% endif %}
       - /var/data/{{ app }}-{{ env }}/custom-templates:/templates
-{% if (sksso.SKFLOW_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKSEC_WEB_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKPATCH_HOSTS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) %}
+{% if (sksso.SKFLOW_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKSEC_WEB_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKPATCH_HOSTS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKAEGIS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) %}
       - /var/data/config/{{ app }}-{{ env }}/blueprints:/blueprints/custom:ro
 {% endif %}
       - /etc/localtime:/etc/localtime:ro
@@ -255,7 +256,7 @@ services:
       - /var/data/config/{{ app }}-{{ env }}/custom/user_settings.py:/data/user_settings.py:ro
 {% endif %}
       - /var/data/{{ app }}-{{ env }}/custom-templates:/templates
-{% if (sksso.SKFLOW_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKSEC_WEB_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKPATCH_HOSTS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) %}
+{% if (sksso.SKFLOW_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKSEC_WEB_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKPATCH_HOSTS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKAEGIS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) %}
       - /var/data/config/{{ app }}-{{ env }}/blueprints:/blueprints/custom:ro
 {% endif %}
       - /etc/localtime:/etc/localtime:ro
