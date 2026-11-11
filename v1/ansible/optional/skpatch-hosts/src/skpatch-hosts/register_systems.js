@@ -253,6 +253,11 @@ async function configure(call, cfg) {
         console.log(`${s.name}: upgrade mode pending (package manager not detected yet, next run sets it)`);
         continue;
       }
+      const managers = [s.pkgManager, ...(Array.isArray(s.detectedPkgManagers) ? s.detectedPkgManagers : [])];
+      if (!managers.includes("apt") && !managers.includes("dnf")) {
+        console.log(`${s.name}: upgrade mode n/a (${s.pkgManager || "unknown"} has none)`);
+        continue;
+      }
       if (aptMode(s) === want) {
         console.log(`${s.name}: upgrade mode ${want} unchanged`);
         continue;

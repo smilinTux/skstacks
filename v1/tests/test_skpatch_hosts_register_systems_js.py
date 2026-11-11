@@ -331,3 +331,12 @@ def test_a_digest_naming_an_unknown_channel_fails(dash):
     out = _run(dash, _cfg(schedules=[{"name": "d", "type": "notification_digest", "cron": "0 7 * * *",
                                       "notifications": ["nope"]}]))
     assert out.returncode != 0 and "no notification channel named nope" in out.stderr
+
+
+def test_upgrade_mode_skips_a_package_manager_without_one(dash):
+    assert _run(dash, _cfg()).returncode == 0
+    dash.systems[0]["pkgManager"] = "pacman"
+    out = _run(dash, _cfg(upgrade_mode="full-upgrade"))
+    assert out.returncode == 0, out.stderr
+    assert "wkr-1: upgrade mode n/a (pacman has none)" in out.stdout
+    assert not any(p.endswith("/upgrade-mode") for _, p in dash.calls)
