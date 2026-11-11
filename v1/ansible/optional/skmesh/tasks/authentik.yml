@@ -61,6 +61,9 @@
       host: "{{ skmesh_sso_host }}"
       token: "{{ skmesh_sksso_vault.sksso.api_token }}"
       client_id: "{{ skmesh.NETBIRD_AUTH_CLIENT_ID | default('skmesh') }}"
+      # NetBird keys users on the token's sub. Changing it on a live instance turns every
+      # existing user (owner included) into a new one, so keep what the instance started with.
+      sub_mode: "{{ skmesh.AUTHENTIK_SUB_MODE | default('user_id', true) }}"
       provider_name: "{{ skmesh.AUTHENTIK_APP_SLUG | default('skmesh') }}"
       app_name: "{{ skmesh.AUTHENTIK_APP_NAME | default('SKMesh') }}"
       app_slug: "{{ skmesh.AUTHENTIK_APP_SLUG | default('skmesh') }}"
@@ -68,10 +71,9 @@
       icon: >-
         {{ 'application-icons/sk/' ~ (skmesh.AUTHENTIK_TILE_ICON_NAME | default('netbird', true)) ~ '.png'
            if (skmesh_icon_copy is defined and skmesh_icon_copy is succeeded) else (skmesh.AUTHENTIK_TILE_ICON | default('', true)) }}
-      redirect_uris:
-        - "https://{{ skmesh_host }}/nb-auth"
-        - "https://{{ skmesh_host }}/nb-silent-auth"
-        - "http://localhost:53000"
+      # AUTHENTIK_EXTRA_REDIRECT_URIS: extra strict redirect URIs, e.g. a custom
+      # dashboard build that returns to "https://<host>/" instead of /nb-auth.
+      redirect_uris: "{{ ['https://' ~ skmesh_host ~ '/nb-auth', 'https://' ~ skmesh_host ~ '/nb-silent-auth', 'http://localhost:53000'] + (skmesh.AUTHENTIK_EXTRA_REDIRECT_URIS | default([], true)) }}"
       authorization_flow: "{{ skmesh.AUTHENTIK_AUTHORIZATION_FLOW | default('default-provider-authorization-implicit-consent') }}"
       invalidation_flow: "{{ skmesh.AUTHENTIK_INVALIDATION_FLOW | default('default-provider-invalidation-flow') }}"
       authentication_flow: "{{ skmesh.AUTHENTIK_AUTHENTICATION_FLOW | default('') }}"

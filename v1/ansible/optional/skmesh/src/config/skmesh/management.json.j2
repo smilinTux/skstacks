@@ -104,7 +104,8 @@
       "Audience": "{{ _cid }}",
       "ClientID": "{{ _cid }}",
       "Scope": "openid",
-      "UseIDToken": false
+      "UseIDToken": false,
+      "DisablePromptLogin": {{ 'false' if (skmesh.DISABLE_PROMPT_LOGIN | default(true) | string | lower) in ['false', 'no', '0'] else 'true' }}
     }
   },
 {% endif %}
@@ -115,7 +116,8 @@
       "ClientSecret": "",
       "Scope": "openid profile email offline_access",
       "RedirectURLs": ["http://localhost:53000"],
-      "UseIDToken": false
+      "UseIDToken": false,
+      "DisablePromptLogin": {{ 'false' if (skmesh.DISABLE_PROMPT_LOGIN | default(true) | string | lower) in ['false', 'no', '0'] else 'true' }}
     }
   }
 {% else %}

@@ -17,7 +17,7 @@ swapped out from under it on the next deploy from this framework - the
 default is deliberately not the only option.
 
 Default (unset): the upstream `netbirdio/dashboard` release paired with the
-pinned NetBird version, tag plus digest (`v2.94.0` for NetBird 0.80.0; see
+pinned NetBird version, tag plus digest (`v2.96.0` for NetBird 0.82.0; see
 `src/config/skmesh/skmesh.yml.j2`). This is not
 pullable from a private fork's own registry, so an instance that depends
 on one (see "Instance notes" below) must set `DASHBOARD_IMAGE` explicitly;
@@ -53,7 +53,8 @@ idempotent and drift-correcting:
 
 - OAuth2/OpenID provider `<AUTHENTIK_APP_SLUG>`: public client
   `NETBIRD_AUTH_CLIENT_ID` (default `skmesh`), PKCE, `sub` = the user's
-  numeric id (NetBird's Authentik IdP manager looks users up by it),
+  numeric id (NetBird's Authentik IdP manager looks users up by it;
+  `AUTHENTIK_SUB_MODE` overrides it, see below),
   redirect URIs `https://<skmesh host>/nb-auth`, `/nb-silent-auth` and
   `http://localhost:53000`, scopes openid, email, profile, offline_access
   and goauthentik.io/api, the default self-signed signing key;
@@ -71,6 +72,27 @@ set as `meta_icon`. Override with `AUTHENTIK_TILE_ICON_FILE` /
 `AUTHENTIK_TILE_ICON_NAME`, or fall back to a `fa://fa-...` glyph with
 `AUTHENTIK_TILE_ICON` if the copy ever fails.
 
+**`AUTHENTIK_SUB_MODE` (keep what a live instance started with).** NetBird
+stores each user under the token's `sub`. An instance whose provider was
+created by hand, or before this provisioner, may use Authentik's default
+`hashed_user_id`; forcing `user_id` there makes the owner's next login a new
+user without the owner role. Check the NetBird user ids first: 64 hex
+characters means `hashed_user_id`, set `AUTHENTIK_SUB_MODE: hashed_user_id`.
+With hashed ids the IdP manager logs `user ... not found in IDP` (it looks
+users up by numeric id); logins and roles are unaffected.
+
+**`AUTHENTIK_EXTRA_REDIRECT_URIS` (custom dashboard builds).** The provider
+gets `/nb-auth`, `/nb-silent-auth` and `http://localhost:53000`, strict. A
+dashboard image that returns to the site root (NAM's `ghcr.io/smilintux/skmesh`)
+needs `AUTHENTIK_EXTRA_REDIRECT_URIS: ["https://<host>/"]`, otherwise every
+redeploy drops it and login stops with "Redirect URI Error".
+
+**Application bindings.** If the `skmesh` application has policy bindings
+(for example an admin group), bind the `IDP_MANAGER_USERNAME` group too.
+Otherwise Authentik answers the IdP manager's client_credentials login with
+`invalid_grant` and management logs `unable to get authentik token,
+statusCode 400`.
+
 Every secret goes in on stdin; the task is `no_log` and the provisioner
 prints status lines only. Management reaches `sso<-env>.<base>` through an
 `extra_hosts` entry to `SSO_HOST_IP` (the edge), and the dashboard's
@@ -81,6 +103,10 @@ with `EXTRA_CA_CERT` (PEM); it is mounted into `/etc/ssl/certs/`.
 If `sksso` enforces CSRF-trusted origins, add this stack's `skmesh.*`
 hostname to `sksso.csrf_extra_origins` in sksso's vault so login redirects
 are not rejected.
+
+`DISABLE_PROMPT_LOGIN` (default `true`): NetBird otherwise sends `prompt=login` on the
+SSO flow, and Authentik then asks for the password twice (seen on the iOS app: a login,
+a second login, then the authorize). Set `false` to force a fresh login every time.
 
 ## TURN / STUN
 
@@ -124,8 +150,13 @@ for traffic that cannot go peer to peer.
 `POSTGRES_BACKUP_IMAGE` (optional) override the framework defaults, e.g. to
 pin `tag@sha256:digest`.
 
-Defaults: NetBird `0.80.0` (management, signal, relay) and dashboard
-`v2.94.0`, each pinned as `tag@sha256:<multi-arch index digest>`.
+Defaults: NetBird `0.82.0` (management, signal, relay) and dashboard
+`v2.96.0`, each pinned as `tag@sha256:<multi-arch index digest>`.
+
+**Upgrading from 0.80.0 to 0.82.0.** The 0.81.x and 0.82.0 release notes list
+no breaking change and no manual step (0.82.0 adds a separate access-log store
+that by default follows the main store). Take a database dump first, then
+redeploy. Done on two live instances (from 0.79.0 and from 0.80.0) 2026-11-08.
 
 **Upgrading from 0.79.0 (framework v2.26.5 and older).** The NetBird 0.80.0
 release notes list no breaking change and no manual step. Management's
