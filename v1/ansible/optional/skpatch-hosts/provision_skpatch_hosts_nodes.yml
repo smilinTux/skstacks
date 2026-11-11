@@ -236,9 +236,20 @@
           host registration"; nodes can always be added by hand in the dashboard instead.
       when: skpatch_state == 'present' and not (skp_reg_on | bool)
 
+    # The dashboard connects from inside its container, which does not
+    # always reach a host on the address the controller uses (an ssh-config
+    # alias, a tailnet name): skpatch_hosts_dashboard_address/_port on the
+    # host override ansible_host/ansible_port for the registered system.
+    # skpatch_hosts_upgrade_mode (upgrade | full-upgrade) overrides the
+    # vault's UPGRADE_MODE for that one system.
     - name: Collect this run's target systems (name, hostname, port) from the play's own hosts
       set_fact:
-        skp_reg_systems: "{{ skp_reg_systems | default([]) + [{'name': item, 'hostname': hostvars[item].ansible_host | default(item), 'port': hostvars[item].ansible_port | default(22) | int}] }}"
+        skp_reg_systems: >-
+          {{ skp_reg_systems | default([]) + [{
+               'name': item,
+               'hostname': hostvars[item].skpatch_hosts_dashboard_address | default(hostvars[item].ansible_host | default(item), true),
+               'port': hostvars[item].skpatch_hosts_dashboard_port | default(hostvars[item].ansible_port | default(22), true) | int,
+               'upgrade_mode': hostvars[item].skpatch_hosts_upgrade_mode | default('', true) | string}] }}
       loop: "{{ ansible_play_hosts_all | default(ansible_play_hosts) }}"
       when: skpatch_state == 'present' and skp_reg_on | bool
 
