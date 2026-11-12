@@ -45,6 +45,19 @@ jobs:
       - run: pip install 'ansible-core==2.21.3' pyyaml jsonschema pytest
       - run: python v1/tests/render/render_playbooks.py
 
+  skmon-validators:
+    # Renders skmon through real Ansible, then runs each tool's own validator
+    # (Loki -verify-config, Alloy validate, ...) in the image pinned in pins.yml.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: '3.12' }
+      - run: pip install 'ansible-core==2.21.3' pyyaml jsonschema pytest
+      - run: python v1/tests/render/render_playbooks.py --service skmon --keep "$RUNNER_TEMP/skmon"
+      - run: bash v1/tests/skmon/validate_configs.sh "$RUNNER_TEMP/skmon"
+
   tofu:
     runs-on: ubuntu-latest
     steps:
