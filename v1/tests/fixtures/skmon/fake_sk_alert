@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Stub with sk-alert's command-line shape for the skmon-bridge tests.
+# Records argv (NUL-separated, one file per call) under $FAKE_CALLS_DIR; sleeps $FAKE_SLEEP
+# seconds, then exits $FAKE_EXIT. Echoes the secret material it can see to stderr and stdout,
+# so a bridge that logs captured output would leak it.
+set -u
+if [ -n "${FAKE_CALLS_DIR:-}" ]; then
+  printf '%s\0' "$@" > "$FAKE_CALLS_DIR/call-$(date +%s%N)-$$.argv"
+fi
+[ -n "${SKALERT_CONFIG_DIR:-}" ] && [ -r "$SKALERT_CONFIG_DIR/alert.secret" ] && cat "$SKALERT_CONFIG_DIR/alert.secret" >&2
+echo "env-secret=${FAKE_SECRET_ENV:-}"
+sleep "${FAKE_SLEEP:-0}" >/dev/null 2>&1
+exit "${FAKE_EXIT:-0}"

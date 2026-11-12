@@ -1,0 +1,40 @@
+{
+ "version": "4",
+ "receiver": "bridge",
+ "externalURL": "https://alertmanager.example.test",
+ "groupLabels": {
+  "alertname": "NfsMountUnresponsive"
+ },
+ "status": "firing",
+ "groupKey": "{}/{class=\"storage\"}:{alertname=\"NfsMountUnresponsive\"}",
+ "commonLabels": {
+  "alertname": "NfsMountUnresponsive",
+  "severity": "critical",
+  "class": "storage",
+  "estate": "example",
+  "node": "worker-2"
+ },
+ "commonAnnotations": {
+  "summary": "Shared storage is not answering (stat timed out after 5 s).",
+  "runbook": "the storage server and its pool state."
+ },
+ "alerts": [
+  {
+   "status": "firing",
+   "labels": {
+    "alertname": "NfsMountUnresponsive",
+    "severity": "critical",
+    "class": "storage",
+    "estate": "example",
+    "node": "worker-2"
+   },
+   "annotations": {
+    "summary": "Shared storage is not answering (stat timed out after 5 s).",
+    "runbook": "the storage server and its pool state."
+   },
+   "startsAt": "2026-11-12T10:00:00.123456789Z",
+   "endsAt": "0001-01-01T00:00:00Z",
+   "fingerprint": "abc"
+  }
+ ]
+}

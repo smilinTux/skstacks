@@ -1,0 +1,30 @@
+{
+ "version": "4",
+ "receiver": "watchdog",
+ "externalURL": "https://alertmanager.example.test",
+ "groupLabels": {
+  "alertname": "NfsMountUnresponsive"
+ },
+ "status": "firing",
+ "groupKey": "{}:{alertname=\"Watchdog\"}",
+ "commonLabels": {
+  "alertname": "Watchdog",
+  "severity": "none"
+ },
+ "commonAnnotations": {
+  "summary": "always firing"
+ },
+ "alerts": [
+  {
+   "status": "firing",
+   "labels": {
+    "alertname": "Watchdog",
+    "severity": "none"
+   },
+   "annotations": {},
+   "startsAt": "2026-11-12T10:00:00.123456789Z",
+   "endsAt": "0001-01-01T00:00:00Z",
+   "fingerprint": "abc"
+  }
+ ]
+}

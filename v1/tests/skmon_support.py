@@ -499,3 +499,116 @@ def route_for(config_text: str, **labels) -> dict:
         return hits or [merged]
 
     return match(root, {})[0]
+
+
+# --- skmon-bridge test helpers (Task 12; Task 14 reuses them) ---------------------
+
+import dataclasses
+import json
+import sys
+import threading
+import urllib.error
+import urllib.request
+
+import pytest
+
+BRIDGE_DIR = SRC / "skmon/bridge"
+FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures/skmon"
+FAKE_SK_ALERT = FIXTURES / "fake_sk_alert"
+if str(BRIDGE_DIR) not in sys.path:
+    sys.path.insert(0, str(BRIDGE_DIR))
+
+
+def load(name: str) -> dict:
+    """A bridge fixture payload (v1/tests/fixtures/skmon/<name>)."""
+    return json.loads((FIXTURES / name).read_text())
+
+
+@dataclasses.dataclass
+class RunningBridge:
+    """A bridge on free loopback ports; calls() lists the argv of every fake sk-alert run."""
+    cfg: object
+    state: object
+    main_port: int
+    healthz_port: int
+    calls_dir: pathlib.Path
+
+    def calls(self) -> list[list[str]]:
+        files = sorted(self.calls_dir.glob("call-*.argv"))
+        return [f.read_bytes().decode().split("\0")[:-1] for f in files]
+
+
+def _start_bridge(tmp_path, monkeypatch, fake_exit="0", fake_sleep="0", timeout_s=20.0):
+    import skmon_bridge as sb
+    calls = tmp_path / "calls"
+    calls.mkdir()
+    conf = tmp_path / "conf"
+    conf.mkdir()
+    (conf / "alert.secret").write_text("SECRET-MARKER-FILE\n")
+    for k, v in {"FAKE_CALLS_DIR": str(calls), "FAKE_EXIT": fake_exit, "FAKE_SLEEP": fake_sleep,
+                 "FAKE_SECRET_ENV": "SECRET-MARKER-ENV"}.items():
+        monkeypatch.setenv(k, v)
+    cfg = sb.Config(estate="example", grafana_url="https://skmon.example.test", skalert=str(FAKE_SK_ALERT),
+                    talk=True, alertmanager_url="http://127.0.0.1:1", timeout_s=timeout_s,
+                    config_dir=str(conf), state_dir=str(tmp_path / "state"))
+    state = sb.State()
+    main_srv, health_srv = sb.make_server(cfg, state, "127.0.0.1", 0, 0)
+    threads = [threading.Thread(target=s.serve_forever, daemon=True) for s in (main_srv, health_srv)]
+    for t in threads:
+        t.start()
+    running = RunningBridge(cfg, state, main_srv.server_address[1], health_srv.server_address[1], calls)
+    return running, (main_srv, health_srv)
+
+
+def _stop(servers):
+    for s in servers:
+        s.shutdown()
+        s.server_close()
+
+
+@pytest.fixture
+def server(tmp_path, monkeypatch):
+    running, servers = _start_bridge(tmp_path, monkeypatch)
+    yield running
+    _stop(servers)
+
+
+@pytest.fixture
+def server_slow(tmp_path, monkeypatch):
+    """The fake sk-alert sleeps 2 s against a 0.5 s timeout."""
+    running, servers = _start_bridge(tmp_path, monkeypatch, fake_sleep="2", timeout_s=0.5)
+    yield running
+    _stop(servers)
+
+
+@pytest.fixture
+def server_failing(tmp_path, monkeypatch):
+    """The fake sk-alert exits 1."""
+    running, servers = _start_bridge(tmp_path, monkeypatch, fake_exit="1")
+    yield running
+    _stop(servers)
+
+
+def _request(url: str, data: bytes | None = None, method: str | None = None, headers: dict | None = None):
+    req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.body = resp.read()
+            return resp
+    except urllib.error.HTTPError as err:
+        err.body = err.read()
+        return err
+
+
+def post(server, path: str, payload, main: bool = True, raw: bytes | None = None):
+    """POST a JSON payload (or raw bytes); returns the response or the HTTPError (both have .status and .body)."""
+    port = server.main_port if main else server.healthz_port
+    data = raw if raw is not None else json.dumps(payload).encode()
+    return _request(f"http://127.0.0.1:{port}{path}", data=data, method="POST",
+                    headers={"Content-Type": "application/json"})
+
+
+def get(server, path: str, main: bool = True):
+    """GET a path on the main port (main=True) or the healthz port (main=False)."""
+    port = server.main_port if main else server.healthz_port
+    return _request(f"http://127.0.0.1:{port}{path}")
