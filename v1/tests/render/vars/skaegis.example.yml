@@ -1,0 +1,13 @@
+# Public, obviously fake example vault for the real-Ansible render gate
+# (v1/tests/render/render_playbooks.py). example.test only; no real secrets.
+# Base pass: AUTH_MODE unset = oidc (the skaegis default), label placement.
+skaegis:
+  CLUSTERNAME: render
+  DOMAIN: example.test
+  INDEXER_PASSWORD: "example-indexer-password-0123"
+  DASHBOARD_PASSWORD: "example-dashboard-password-0123"
+  API_PASSWORD: "Example.Api.Password.0123"
+  ENROLMENT_PASSWORD: "example-enrolment-password-0123"
+  CLUSTER_KEY: "00000000000000000000000000000000"
+  OIDC_ISSUER: "https://sso.render.example.test/application/o/skaegis/"
+  OIDC_CLIENT_SECRET: "example-oidc-client-secret-not-a-secret-0123456789"

@@ -1,0 +1,60 @@
+# The "set" pass: every optional knob set, fake values only.
+skaegis:
+  CLOUDFLARED: true
+  HOSTNAME: skaegis.example.test
+  INDEXER_IMAGE: "registry.example.test/wazuh-indexer:4.14.10@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  MANAGER_IMAGE: "registry.example.test/wazuh-manager:4.14.10@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  DASHBOARD_IMAGE: "registry.example.test/wazuh-dashboard:4.14.10@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  CERTS_GENERATOR_IMAGE: "registry.example.test/wazuh-certs-generator:0.0.5@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  DATA_NODE: render-node-1
+  DATA_PATH: /var/lib/skaegis-render/data
+  INDEXER_DATA_PATH: /var/lib/skaegis-render/indexer
+  BACKUP_PATH: /var/lib/skaegis-render/backup
+  PLACEMENT_CONSTRAINTS: ["node.role == worker", "node.labels.skaegis == true"]
+  DASHBOARD_PLACEMENT_CONSTRAINTS: ["node.role == worker"]
+  TRAEFIK_MIDDLEWARES: "crowdsec-bouncer@file,default@file"
+  SSO_MIDDLEWARE: "authentik@file"
+  TLS_OPTIONS: "none"
+  SSO_HOST_IP: "192.0.2.10"
+  EXTRA_CA_CERT: "-----BEGIN CERTIFICATE-----\nZXhhbXBsZQ==\n-----END CERTIFICATE-----\n"
+  OIDC_CLIENT_ID: "example-oidc-client-id"
+  OIDC_SCOPE: "openid profile email groups"
+  OIDC_GROUPS_CLAIM: "groups"
+  OIDC_SUBJECT_CLAIM: "preferred_username"
+  OIDC_LOGOUT_URL: "https://sso.example.test/application/o/skaegis/end-session/"
+  INDEXER_HEAP: "3g"
+  INDEXER_CPUS: "3.00"
+  INDEXER_MEMORY_LIMIT: "6G"
+  INDEXER_MEMORY_RESERVATION: "5G"
+  MANAGER_CPUS: "2.00"
+  MANAGER_MEMORY_LIMIT: "3G"
+  MANAGER_MEMORY_RESERVATION: "1G"
+  DASHBOARD_CPUS: "1.00"
+  DASHBOARD_MEMORY_LIMIT: "1536M"
+  DASHBOARD_MEMORY_RESERVATION: "512M"
+  AGENT_PUBLISH: true
+  AGENT_PUBLISH_MODE: host
+  AGENT_PORT: 1514
+  ENROLMENT_PORT: 1515
+  FEED_UPDATE_INTERVAL: "30m"
+  SESSION_TTL_MS: 1800000
+  APPLY_SECURITY_CONFIG: true
+  BACKUP_ENABLED: true
+  BACKUP_FREQUENCY: 43200
+  BACKUP_KEEP_DAYS: 14
+  BACKUP_START_DELAY: 600
+  BACKUP_SNAPSHOTS: true
+  HEALTH_CHECK_INTERVAL: "15s"
+  HEALTH_CHECK_TIMEOUT: "5s"
+  HEALTH_CHECK_RETRIES: 4
+  INDEXER_START_PERIOD: "240s"
+  MANAGER_START_PERIOD: "360s"
+  DASHBOARD_START_PERIOD: "240s"
+  AUTHENTIK_TILE: true
+  AUTHENTIK_TILE_SLUG: "example-oidc-client-id"
+  AUTHENTIK_TILE_NAME: "skaegis"
+  AUTHENTIK_TILE_GROUP: "skadmin"
+  AUTHENTIK_TILE_ICON: "fa://fa-shield-halved"
+  AUTHENTIK_TILE_OPEN_IN_NEW_TAB: true
+  AUTHENTIK_TILE_DESCRIPTION: "Continuous CVE detection"
+  AUTHENTIK_TILE_CATEGORY: "Security"

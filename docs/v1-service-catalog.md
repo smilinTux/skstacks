@@ -40,6 +40,7 @@ tag yet.
 | [skfenceha](#skfenceha) | core | HA multi-manager Traefik edge | Traefik `v3.7.16` | none (alt. to skfence) | `:80`/`:443`/`:222`(ssh)/`:8082`, ACME host `:8080` | `runtime/skfenceha-<env>/{acme,certs}` | `CLOUDFLARE_EMAIL`+token (if ACME on) | `CROWDSEC_ENABLED` (false), `RATE_LIMIT_ENABLED` (true) | v2.19.0 |
 | [skha](#skha) | core | Keepalived VRRP floating VIP | keepalived (apt, unpinned) | none | VIP only, no container ports | none (host config) | `vip`, `auth_pass` | `health_checks` list | pending |
 | [sksec](#sksec) | core | CrowdSec agent + Traefik bouncer | crowdsec `v1.6.11` + bouncer `0.5.0` | skfence or skfenceha | forwardAuth middleware only, no public router | `config/sksec-<env>/` | `CROWDSEC_AGENT_HOST`, `COLLECTIONS` | `TRAEFIK_HA_MODE` (false) | v2.19.0 |
+| [skaegis](#skaegis) | optional | Continuous CVE detection: the Detect step of the suite (Defend sksec, Detect skaegis, Remediate [skpatch](./skpatch-program.md)) | Wazuh `4.14.10` indexer + manager + dashboard (upstream, digest-pinned) | sksso for default `AUTH_MODE: oidc`; skfence or skfenceha | `skaegis[-env].<cluster>.<domain>` (agents on `:1514`/`:1515`) | `skaegis-<env>/{data,backup}` (indexer on local disk with `DATA_NODE`) | `INDEXER_PASSWORD`, `DASHBOARD_PASSWORD`, `API_PASSWORD`, `ENROLMENT_PASSWORD`, `CLUSTER_KEY`; `OIDC_ISSUER`, `OIDC_CLIENT_SECRET` (oidc) | `AUTH_MODE` (oidc), `DATA_NODE` (floating), `AGENT_PUBLISH` (true) | pending |
 | [skboard](#skboard) | optional | Vikunja task board (sqlite) | Vikunja `2.8.0` | none | `skboard[-env].<cluster>.<domain>` | `skboard-<env>/data` | `JWT_SECRET`, `CLUSTERNAME`, `DOMAIN` | mailer (off) | v2.19.0 |
 | [skbom](#skbom) | optional | OWASP Dependency-Track (SBOM store + CVE matching), the image-patching half of the skpatch program | Dependency-Track `4.14.6` apiserver + frontend, Postgres `17.7` (all digest-pinned) | skfence or skfenceha; sksso for the portal tile or `OIDC_ENABLED` | `skbom[-env].<cluster>.<domain>` | `skbom-<env>/apiserver-data`, `runtime/skbom-<env>/postgres`, `skbom-<env>/database-dump` | `DB_PASSWORD` | `OIDC_ENABLED` (false), `PLACEMENT_CONSTRAINTS` (`node.labels.skbom == true`, not a bare worker), `DATA_NODE` (floating) | pending |
 | [skbook](#skbook) | optional | BookStack wiki + MariaDB | BookStack `v26.09-ls285`, MariaDB `10.11` | none | `skbook[-env].<cluster>.<domain>` | `skbook-<env>/bookstack/config`, `runtime/skbook-<env>/db` | `MYSQL_ROOT_PASSWORD`, `DB_USERNAME`/`DB_PASSWORD`, `APP_KEY` | `ENABLE_SSO` (false) | v2.19.0 |
@@ -269,6 +270,54 @@ rotate it.
 ---
 
 ## Optional services
+
+### skaegis
+
+Continuous CVE detection on unmodified upstream [Wazuh](https://github.com/wazuh/wazuh-docker) 4.14.10
+(GPL-2.0): an indexer, a manager, a dashboard and a backup sidecar, every image
+pinned by digest. It is the Detect step of the suite: Defend (sksec), Detect
+(skaegis), Remediate ([skpatch](./skpatch-program.md)). It detects known,
+published CVEs on every host that runs an agent; it does not patch anything,
+and the remediation loop drafts changes for a human to review, never
+auto-merging. Sign-in is the dashboard's own OpenID login against sksso,
+admin-only: the gate and the in-app admin role are the group `skadmin`.
+
+**Prerequisites**: sksso deployed first with `SKAEGIS_OIDC_CLIENT_SECRET` set
+(it creates the provider, the application and the `skadmin` binding); a node
+labelled `docker node update --label-add skaegis=true <node>`; `vm.max_map_count`
+262144 on the indexer node (the play sets it when `DATA_NODE` is set); the
+indexer's data on local disk, never NFS.
+
+**Minimal vault snippet**:
+
+```yaml
+skaegis:
+  CLUSTERNAME: "<cluster>"
+  DOMAIN: "example.com"
+  INDEXER_PASSWORD: "<openssl rand -base64 24 | tr -d '/+=\n'>"
+  DASHBOARD_PASSWORD: "<openssl rand -base64 24 | tr -d '/+=\n'>"
+  API_PASSWORD: "Aa1.<openssl rand -hex 16>"
+  ENROLMENT_PASSWORD: "<openssl rand -base64 24 | tr -d '/+=\n'>"
+  CLUSTER_KEY: "<openssl rand -hex 16>"
+  OIDC_ISSUER: "https://sso.<cluster>.<domain>/application/o/skaegis/"
+  OIDC_CLIENT_SECRET: "<same as sksso.SKAEGIS_OIDC_CLIENT_SECRET>"
+```
+
+**Deploy**: `deploy_skaegis-<env>.yml`, standard invocation, then
+`provision_skaegis_agents.yml -l <hosts>` for Linux agents (Windows through the
+skrac rail, see the SOP).
+
+**Health check**: `docker service ls | grep skaegis-<env>` shows `1/1` for
+indexer, manager and dashboard; `curl -sI https://skaegis.<cluster>.<domain>/`
+returns the dashboard's redirect to sign-in.
+
+**Gotchas**: API_PASSWORD must satisfy the Wazuh API password policy or the
+manager refuses to start. The internal `admin` user (`INDEXER_PASSWORD`) is the
+break-glass login: store it off-cluster. Agents are held at the pinned version
+(`apt-mark hold`) so skpatch-hosts never moves them. Sizing: about 9 to 11 GB
+RAM reserved, 4 to 5 vCPU and 150 GB local disk for a comfortable production
+instance. See the [README](../v1/ansible/optional/skaegis/README.md) and
+[SOP](../v1/ansible/optional/skaegis/SOP.md).
 
 ### skboard
 

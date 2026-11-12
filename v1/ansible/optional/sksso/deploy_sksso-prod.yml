@@ -226,6 +226,18 @@
         - templates
         - deploy
 
+    - name: skaegis (Wazuh dashboard) OAuth2 blueprint (sksso.SKAEGIS_OIDC_CLIENT_SECRET)
+      include_tasks:
+        file: tasks/skaegis_blueprint.yml
+        apply:
+          tags:
+            - templates
+            - deploy
+      when: sksso.SKAEGIS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0
+      tags:
+        - templates
+        - deploy
+
     - name: Branding pack (sksso.branding), files only
       include_tasks:
         file: tasks/branding.yml
