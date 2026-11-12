@@ -14,9 +14,16 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 ---
-# skmon agent play: one Grafana Alloy agent per agent host (spec 7.2). Imported last
-# by deploy_skmon-<env>.yml with `env` set; runs on group skmon_agent_hosts, which the
-# deploy play fills from skmon_agent_host_list when the inventory does not define it.
+# skmon agent play: one Grafana Alloy agent per agent host (spec 7.2). Imported twice by
+# deploy_skmon-<env>.yml with `env` and `skmon_agent_phase` set; runs on group
+# skmon_agent_hosts, which the deploy play fills from skmon_agent_host_list when the
+# inventory does not define it.
+#
+# Phases (R80): `pre` runs before the stack deploy and does the work only when unparked, so
+# the agents are up before vmalert evaluates NodeDown; `post` runs after the stack deploy and
+# does the work only when parked, so the stack is at 0 before the agents go. Both phases
+# derive the facts, the targets and this host's settings; without a phase (agent.yml run on
+# its own) the play always does the work.
 #
 # Install mode per host: agent_mode (hostvar) container|systemd, default systemd for
 # skmon_extra_hosts members and container for every other host (derived once, in
@@ -84,6 +91,24 @@
         skmon_pyroscope_push_url: >-
           {{ 'http://' ~ (skmon_agent_targets | selectattr('node', 'equalto', skmon_data_node) | first | default({'addr': skmon_data_node })).addr
              ~ ':' ~ (skmon.PYROSCOPE_PORT | default(4040)) }}
+
+    - name: Check the agent phase
+      assert:
+        that:
+          - (skmon_agent_phase | default('')) in ['', 'pre', 'post']
+        fail_msg: "skmon_agent_phase is '{{ skmon_agent_phase }}'; it must be pre, post or unset."
+        quiet: true
+      tags:
+        - always
+
+    - name: End this host's agent play outside its phase
+      # pre does the work only when unparked, post only when parked (R80).
+      meta: end_host
+      when: >-
+        ((skmon_agent_phase | default('')) == 'pre' and skmon_parked)
+        or ((skmon_agent_phase | default('')) == 'post' and not skmon_parked)
+      tags:
+        - always
 
     - name: Restrict the agent port (and DATA_NODE's published ports) to the estate addresses
       # Rules stay while parked; state absent on a systemd host removes unit, script, hooks and chain.

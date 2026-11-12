@@ -36,8 +36,8 @@ All keys live under the `skmon:` map of the instance vault. Required keys have n
 | `GRAFANA_ROOT_URL` | `https://skmon[-env].<cluster>.<domain>` | Grafana's public URL, no trailing slash. |
 | `GRAFANA_OIDC_CLIENT_ID`, `GRAFANA_OIDC_CLIENT_SECRET` | required, 32+ characters each | Authentik OIDC client for Grafana. |
 | `AUTHENTIK_HOST` | required | Public hostname of sksso. Grafana's OIDC endpoints are built from it. Also adds an `authentik` health probe. |
-| `AUTHENTIK_PROVISION` | `true` | The play creates the Authentik provider, applications, bindings and tiles. `false` skips that (create them by hand) and also skips retiring the old tiles. |
-| `AUTHENTIK_TILE` | `true` | Create the portal tiles. |
+| `AUTHENTIK_PROVISION` | `true` | The play creates the Authentik providers, applications and `skadmin` bindings, and removes the retired applications. `false` skips that (create them by hand). Needs sksso on the cluster: see "Authentik and sksso" below. |
+| `AUTHENTIK_TILE` | `true` | Create the portal tiles (icons and portal labels). Needs sksso on the cluster. |
 | `AUTHENTIK_VAULT_FILE` | `sksso-...` beside this vault | sksso's vault, read for `sksso.api_token` (32+ characters). |
 | `AUTHENTIK_INTERNAL_URL` | `http://sksso-<env>_server:9000` | Where the provisioner reaches Authentik. |
 | `AUTHENTIK_NETWORK` | `sksso-<env>` | Overlay network the provisioner joins. |
@@ -115,6 +115,10 @@ skmon:
   ALERT_OUT_OF_DOMAIN_CHANNEL: telegram
 ```
 
+## Authentik and sksso
+
+Grafana's OIDC sign-in, the forward auth of vmui, Alertmanager and Pyroscope, and the portal tiles all need sksso (Authentik) deployed on the same cluster. The Authentik work runs in the last play of the deploy, after the stack and the agents, so the alert path never waits on, or fails with, the SSO system. That play first checks that sksso's overlay network (`AUTHENTIK_NETWORK`, default `sksso-<env>`) exists. When it does not, the play prints a WARNING and skips the provisioning (the Grafana OIDC provider and application, the forward-auth providers, the `skadmin` bindings and the removal of the retired applications) and the tiles; the deploy does not fail, but Grafana's OIDC sign-in does not work until sksso is up and skmon is deployed again. A provisioning failure with sksso present still fails the deploy, after the agents have converged.
+
 ## Removed keys
 
 `AUTHENTIK_TILE_GROUP` and `GRAFANA_BASIC_AUTH` are retired. Grafana signs in through OIDC, and vmui and Alertmanager use forward auth through `FORWARD_AUTH_MIDDLEWARE` (default `authentik@file`). Every `PROMETHEUS_*`, `NODE_EXPORTER_*`, `CADVISOR_*`, `PROMTAIL_*` and `JAEGER_*` key is gone and the deploy fails with a message naming any that is still set: delete them.
@@ -167,7 +171,7 @@ The bridge publishes `HEALTHZ_PORT` in host mode on `DATA_NODE`, serving only `/
 
 ## Parking
 
-`replicas: 0`, or the string "0", parks the stack. Every Swarm service renders scaled to 0, and the agent play stops and removes the agent on every host. The deploy script skips health waits and forced updates, and the guards that only make sense unparked (the Authentik provisioning and the probe discovery, for example) are skipped. `DATA_PATH` and the agent's state directory are never deleted, so unparking brings back history.
+`replicas: 0`, or the string "0", parks the stack. Every Swarm service renders scaled to 0, and the agent play stops and removes the agent on every host. The deploy script skips health waits and forced updates, and the guards that only make sense unparked (the Authentik provisioning and the probe discovery, for example) are skipped. `DATA_PATH` and the agent's state directory are never deleted, so unparking brings back history. Order matters for the alerts: parking scales the stack to 0 first and removes the agents after it, and unparking (like a first install or a v1 migration) starts the agents before the stack, so vmalert never sees a node without its agent.
 
 ## Sizing
 
@@ -201,7 +205,7 @@ Loki volume is the one number to measure on each estate. A 64 GB dedicated disk 
 3. Deploy. `docker stack deploy --prune` removes `prometheus`, `node-exporter`, `cadvisor`, `promtail` and `jaeger`. The first v2 deploy restarts every skmon service and replaces the stack. Old data on `/var/data` is untouched.
 4. Optional: copy the old Grafana database to `DATA_PATH/grafana` once, if anyone cares about saved prefs and annotations. Dashboards are provisioned, so nothing is lost without it.
 5. Prometheus history is not migrated. `vmctl` can import it if it is ever wanted.
-6. The retired Authentik tiles are removed by the play when `AUTHENTIK_PROVISION` is true (otherwise by hand). After a week, remove the old `/var/data/skmon-<env>` directories by hand.
+6. The retired Authentik tiles are removed by the play when `AUTHENTIK_PROVISION` is true and sksso is deployed (otherwise by hand; see "Authentik and sksso"). Deploy sksso first if Grafana's OIDC sign-in is wanted on the first run. After a week, remove the old `/var/data/skmon-<env>` directories by hand.
 7. Verify: every node `up`, a test alert end to end (run on `DATA_NODE`, see Verify: `amtool alert add` of a `severity=warning` alert, seen in the room, then resolved), and an outside Kuma keyword monitor on `/healthz`, created by hand, green.
 
 An estate is not done until the outside probe is green. On a single-host estate that probe is the only guaranteed signal for a whole-host failure, because the monitor shares the host's failure domain; the estate's runbook must say so.

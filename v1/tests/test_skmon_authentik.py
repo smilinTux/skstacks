@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from skmon_support import (BASE, CFG, GUARDS, PLAYS, ROLE, ansible_environment, eval_asserts, guard_facts,
+from skmon_support import (BASE, CFG, GUARDS, PLAYS, ROLE, all_play_tasks, ansible_environment, eval_asserts, guard_facts,
                            load_tasks, render, services, task_named)
 
 # Loaded under its own module name: skrac ships an `authentik_provision` too, and a plain
@@ -136,6 +136,74 @@ def test_every_play_runs_the_provisioner_unless_parked_or_off():
         assert "not skmon_parked" in t["when"] and "AUTHENTIK_PROVISION" in t["when"] and "default(true)" in t["when"]
         sec = task_named(p, "Render the {{ app }} Docker secret contents")
         assert "grafana_oidc_client_secret" in sec["set_fact"]["skmon_secrets"]
+
+
+def _sksso_ctx(play, parked=False, network_rc=0, provision=True):
+    """Facts after the play's sksso network check, as the Authentik play derives them (R81)."""
+    jenv = ansible_environment()
+    ctx = {"skmon_parked": parked, "skmon": {**BASE, "AUTHENTIK_PROVISION": provision}, "env": "prod",
+           "skmon_sksso_network": {} if parked else {"rc": network_rc}}
+    value = task_named(play, "Decide whether sksso is there to provision")["set_fact"]["skmon_sksso_present"]
+    ctx["skmon_sksso_present"] = jenv.from_string(value).render(**ctx) == "True"
+    return jenv, ctx
+
+
+def _runs(jenv, task, ctx):
+    return bool(jenv.compile_expression(task["when"])(**ctx))
+
+
+def test_authentik_runs_last_after_the_post_agent_import():
+    from skmon_support import play_steps
+    for p in PLAYS:
+        steps = play_steps(p)
+        kind, names = steps[-1]
+        assert kind == "play" and names[0] == "Check that sksso's network exists (Authentik provisioning and the tiles need it)"
+        assert names[-2:] == ["Create or update the skmon providers and applications in Authentik",
+                              "Create or update the skmon portal tiles and remove the retired ones in Authentik"]
+        assert steps[-2] == ("import", {"file": "agent.yml", "vars": {"env": p.stem.split("-")[-1], "skmon_agent_phase": "post"}})
+        # neither include is anywhere else in the playbook
+        assert sum("tasks/authentik.yml" in str(t.get("include_tasks")) for t in all_play_tasks(p)) == 1
+
+
+def test_sksso_network_check_is_read_only_and_never_fails():
+    for p in PLAYS:
+        t = task_named(p, "Check that sksso's network exists (Authentik provisioning and the tiles need it)")
+        assert t["command"]["argv"][:3] == ["docker", "network", "inspect"]
+        assert "AUTHENTIK_NETWORK" in t["command"]["argv"][3] and "'sksso-' ~ env" in t["command"]["argv"][3]
+        assert t["failed_when"] is False and t["changed_when"] is False and t["when"] == "not skmon_parked"
+
+
+def test_without_sksso_network_provisioning_and_tiles_are_skipped_with_a_warning():
+    for p in PLAYS:
+        jenv, ctx = _sksso_ctx(p, network_rc=1)
+        assert ctx["skmon_sksso_present"] is False
+        warn = task_named(p, "Say that the Authentik provisioning and the tiles are skipped without sksso")
+        assert _runs(jenv, warn, ctx)
+        msg = " ".join(warn["debug"]["msg"].split())
+        assert "WARNING" in msg and "sksso" in msg and "portal tiles" in msg and "OIDC" in msg
+        assert not _runs(jenv, task_named(p, "Create or update the skmon providers and applications in Authentik"), ctx)
+        assert not _runs(jenv, task_named(p, "Create or update the skmon portal tiles and remove the retired ones in Authentik"), ctx)
+
+
+def test_with_sksso_network_provisioning_and_tiles_run_without_a_warning():
+    for p in PLAYS:
+        jenv, ctx = _sksso_ctx(p, network_rc=0)
+        assert ctx["skmon_sksso_present"] is True
+        assert not _runs(jenv, task_named(p, "Say that the Authentik provisioning and the tiles are skipped without sksso"), ctx)
+        assert _runs(jenv, task_named(p, "Create or update the skmon providers and applications in Authentik"), ctx)
+        assert _runs(jenv, task_named(p, "Create or update the skmon portal tiles and remove the retired ones in Authentik"), ctx)
+        jenv, off = _sksso_ctx(p, network_rc=0, provision=False)
+        assert not _runs(jenv, task_named(p, "Create or update the skmon providers and applications in Authentik"), off)
+
+
+def test_parked_skips_the_check_the_warning_and_both_includes():
+    for p in PLAYS:
+        jenv, ctx = _sksso_ctx(p, parked=True)
+        assert ctx["skmon_sksso_present"] is False
+        for name in ("Say that the Authentik provisioning and the tiles are skipped without sksso",
+                     "Create or update the skmon providers and applications in Authentik",
+                     "Create or update the skmon portal tiles and remove the retired ones in Authentik"):
+            assert not _runs(jenv, task_named(p, name), ctx), name
 
 
 def _deep(jenv, value, ctx):

@@ -35,3 +35,25 @@ def test_parked_deploy_script_does_not_force_update():
 def test_parked_deploy_script_still_deploys_so_replicas_reach_zero():
     out = s.render_deploy(replicas=0)
     assert "docker stack deploy" in out and "--prune" in out
+
+
+def _work_order(play, parked):
+    """Which of agents/stack do work, in playbook order, for one parking state (R80)."""
+    import test_skmon_agent_play as ap
+    order = []
+    for kind, detail in s.play_steps(play):
+        if kind == "import" and detail["file"] == "agent.yml" and ap._agent_does_work(detail["vars"]["skmon_agent_phase"], parked):
+            order.append("agents")
+        elif kind == "play" and "Deploy {{ app }} stack" in detail:
+            order.append("stack")
+    return order
+
+
+def test_unparked_agents_converge_before_the_stack():
+    for p in s.PLAYS:
+        assert _work_order(p, parked=False) == ["agents", "stack"], p.name
+
+
+def test_parking_stops_the_stack_before_the_agents():
+    for p in s.PLAYS:
+        assert _work_order(p, parked=True) == ["stack", "agents"], p.name

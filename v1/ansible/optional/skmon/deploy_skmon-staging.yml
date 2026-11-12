@@ -35,7 +35,7 @@
       vars:
         target_group: "{{ target_manager_group | default('swarm_managers') }}"
 
-# Step 2: Deploy to selected manager
+# Step 2: the vault, the guards, the derived facts and the probe list on the selected manager
 - hosts: selected_manager_group
   become: true
   vars:
@@ -209,6 +209,37 @@
         - config
         - probes
 
+    - name: Put every skmon agent host in the agent play's group
+      # agent.yml runs on skmon_agent_hosts; an inventory without that group would
+      # otherwise match zero hosts and silently deploy no agent.
+      add_host:
+        name: "{{ item }}"
+        groups: skmon_agent_hosts
+      loop: "{{ skmon_agent_host_list }}"
+      changed_when: false
+      tags:
+        - always
+
+# Step 3: when unparked, the agents converge BEFORE the stack deploy (R80), so vmalert never
+# evaluates a node whose agent is not running yet (NodeDown on every first install, v1
+# migration and unpark). agent.yml derives its facts in both phases and does its work in
+# this one only when unparked.
+- import_playbook: agent.yml
+  vars:
+    env: staging
+    skmon_agent_phase: pre
+
+# Step 4: configs, secrets, dashboards and the stack deploy on the selected manager. What the
+# Step 2 play derived (the vault, the guard facts, the probe list, app_networks) are host
+# facts and carry over to this play.
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skmon
+    env: staging
+    service_name: skmon
+    service_type: optional
+  tasks:
     # MonitorDiskFilling (rules/meta.yml.j2) watches the filesystem that holds DATA_PATH.
     - name: Find the filesystem that holds DATA_PATH on the data node
       command:
@@ -455,22 +486,62 @@
       tags:
         - deploy
 
-    - name: Put every skmon agent host in the agent play's group
-      # agent.yml runs on skmon_agent_hosts; an inventory without that group would
-      # otherwise match zero hosts and silently deploy no agent.
-      add_host:
-        name: "{{ item }}"
-        groups: skmon_agent_hosts
-      loop: "{{ skmon_agent_host_list }}"
+# Step 5: when parking, the agents are removed AFTER the stack is at 0 (R80), so vmalert is
+# gone before they disappear. agent.yml does its work in this phase only when parked.
+- import_playbook: agent.yml
+  vars:
+    env: staging
+    skmon_agent_phase: post
+
+# Step 6: Authentik provisioning and the portal tiles, last (R81). The alert path (stack and
+# agents) has already converged, so an absent or failing sksso cannot hold it back.
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skmon
+    env: staging
+    service_name: skmon
+    service_type: optional
+  tasks:
+    - name: Check that sksso's network exists (Authentik provisioning and the tiles need it)
+      # The provisioner and the tile task join this overlay network to reach Authentik. sksso may
+      # not be deployed on this cluster (yet): skip both with a warning instead of failing.
+      command:
+        argv: ["docker", "network", "inspect", "{{ skmon.AUTHENTIK_NETWORK | default('sksso-' ~ env) }}"]
+      register: skmon_sksso_network
       changed_when: false
+      failed_when: false
+      check_mode: false
+      when: not skmon_parked
       tags:
-        - always
+        - config
+        - authentik
+
+    - name: Decide whether sksso is there to provision
+      set_fact:
+        skmon_sksso_present: "{{ (not skmon_parked) and (skmon_sksso_network.rc | default(1)) == 0 }}"
+      tags:
+        - config
+        - authentik
+
+    - name: Say that the Authentik provisioning and the tiles are skipped without sksso
+      debug:
+        msg: >-
+          WARNING: network {{ skmon.AUTHENTIK_NETWORK | default('sksso-' ~ env) }} not found, so sksso
+          is not deployed on this cluster. Skipping the skmon Authentik provisioning (Grafana's OIDC
+          provider and application, the vmui, Alertmanager and Pyroscope forward-auth providers, the
+          skadmin bindings, the retired applications' removal) and the portal tiles. Grafana's OIDC
+          sign-in does not work until then; redeploy skmon after sksso.
+      when: not skmon_parked and not (skmon_sksso_present | bool)
+      tags:
+        - config
+        - authentik
 
     - name: Create or update the skmon providers and applications in Authentik
       # On by default; AUTHENTIK_PROVISION: false skips it (the Grafana OIDC env still renders
       # from the vault values). Skipped while parked. See tasks/authentik.yml.
       include_tasks: "{{ playbook_dir }}/tasks/authentik.yml"
-      when: not skmon_parked and (skmon.AUTHENTIK_PROVISION | default(true) | bool)
+      when: not skmon_parked and (skmon_sksso_present | bool) and (skmon.AUTHENTIK_PROVISION | default(true) | bool)
       tags:
         - config
         - authentik
@@ -480,12 +551,7 @@
       # deletes the tiles of the retired UIs. Opt out with AUTHENTIK_TILE: false.
       # Skipped while parked. See tasks/tiles.yml.
       include_tasks: "{{ playbook_dir }}/tasks/tiles.yml"
-      when: not skmon_parked
+      when: not skmon_parked and (skmon_sksso_present | bool)
       tags:
         - config
         - authentik
-
-# Step 3: the Alloy agent on every agent host (a host container, or a systemd unit)
-- import_playbook: agent.yml
-  vars:
-    env: staging

@@ -80,8 +80,10 @@ def test_every_play_includes_the_tiles_after_the_provisioner_unless_parked():
         provision = names.index("Create or update the skmon providers and applications in Authentik")
         inc = next(t for t in tasks if "tasks/tiles.yml" in str(t.get("include_tasks")))
         assert names.index(inc["name"]) > provision, p
-        assert not jenv.compile_expression(inc["when"])(skmon_parked=True)
-        assert jenv.compile_expression(inc["when"])(skmon_parked=False)
+        assert not jenv.compile_expression(inc["when"])(skmon_parked=True, skmon_sksso_present=False)
+        assert jenv.compile_expression(inc["when"])(skmon_parked=False, skmon_sksso_present=True)
+        # sksso's network absent: skipped, not failed (R81)
+        assert not jenv.compile_expression(inc["when"])(skmon_parked=False, skmon_sksso_present=False)
 
 
 def test_tile_group_is_fixed_and_the_knob_is_retired():

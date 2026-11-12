@@ -5,7 +5,7 @@ import yaml
 
 from image_pins import template_default
 from skmon_support import (AGENT_PLAY, AGENT_RUN, AGENT_TARGETS, CFG, PLAYS, ROLE, cfg, load_tasks, mounts,
-                           play_tasks, render_run_script, run_script_args)
+                           play_steps, play_tasks, render_run_script, run_script_args)
 
 PINS = yaml.safe_load((CFG / "pins.yml").read_text())
 
@@ -137,11 +137,68 @@ def test_nothing_on_the_agent_path_touches_var_data():
     assert "/var/data" not in AGENT_PLAY.read_text()
 
 
-def test_env_plays_import_the_agent_play_last_with_their_env():
+def _layout(p):
+    """The env play's steps after the header import and the select-manager play."""
+    steps = play_steps(p)
+    assert steps[0] == ("import", {"file": "../../shared/meta/skstack-header.yml", "vars": {}})
+    return steps[2:]
+
+
+def test_env_plays_import_the_agent_play_around_the_stack_deploy():
+    # R80: prepare (facts, probes, agent group), agents pre, stack, agents post, Authentik last (R81)
     for p in PLAYS:
         env = re.search(r"deploy_skmon-(\w+)\.yml", p.name).group(1)
-        last = yaml.safe_load(p.read_text())[-1]
-        assert last == {"import_playbook": "agent.yml", "vars": {"env": env}}, p.name
+        prep, pre, stack, post, auth = _layout(p)
+        assert prep[0] == "play" and "Set the skmon probe list" in prep[1]
+        assert prep[1][-1] == "Put every skmon agent host in the agent play's group", p.name
+        assert pre == ("import", {"file": "agent.yml", "vars": {"env": env, "skmon_agent_phase": "pre"}}), p.name
+        assert stack[0] == "play" and "Deploy {{ app }} stack" in stack[1], p.name
+        assert "Render the {{ app }} Swarm config contents" in stack[1]
+        assert post == ("import", {"file": "agent.yml", "vars": {"env": env, "skmon_agent_phase": "post"}}), p.name
+        assert auth[0] == "play" and "Create or update the skmon providers and applications in Authentik" in auth[1]
+
+
+def test_nothing_the_agent_play_reads_is_made_after_the_pre_import():
+    # the agents converge before the stack: the probe list and the agent group come first
+    for p in PLAYS:
+        prep, _, stack, _, _ = _layout(p)
+        for name in ("Set the skmon probe list", "Put every skmon agent host in the agent play's group",
+                     "Check the skmon vault and derive the data facts", "Derive the skmon agent scrape targets"):
+            assert name in prep[1] and name not in stack[1], (p.name, name)
+
+
+def _gate():
+    return next(t for t in play_tasks(AGENT_PLAY) if t.get("meta") == "end_host")
+
+
+def _agent_does_work(phase, parked):
+    from skmon_support import ansible_environment
+    when = _gate()["when"]
+    ctx = {"skmon_parked": parked, **({"skmon_agent_phase": phase} if phase is not None else {})}
+    return not ansible_environment().compile_expression(when.strip())(**ctx)
+
+
+def test_agent_phase_gate():
+    assert _agent_does_work("pre", False) and not _agent_does_work("pre", True)
+    assert _agent_does_work("post", True) and not _agent_does_work("post", False)
+    # agent.yml on its own (no phase) always does the work
+    assert _agent_does_work(None, False) and _agent_does_work(None, True)
+
+
+def test_agent_phase_gate_follows_the_derived_facts_and_precedes_the_work():
+    # both phases derive the facts, the targets and this host's settings (DATA_NODE's address)
+    names = [t.get("name") for t in play_tasks(AGENT_PLAY)]
+    gate = names.index(_gate()["name"])
+    for name in ("Derive the skmon facts", "Derive the skmon agent targets", "Find this host's agent target",
+                 "Derive this host's agent settings", "Derive this host's profiling settings"):
+        assert names.index(name) < gate, name
+    assert names.index("Restrict the agent port (and DATA_NODE's published ports) to the estate addresses") == gate + 1
+    assert all(not t.get("when") for t in _play()["pre_tasks"] if t.get("name") != "Load vault file")
+
+
+def test_agent_phase_is_checked():
+    t = next(t for t in play_tasks(AGENT_PLAY) if t.get("name") == "Check the agent phase")
+    assert "['', 'pre', 'post']" in t["assert"]["that"][0]
 
 
 def test_env_plays_put_every_agent_host_in_the_group():

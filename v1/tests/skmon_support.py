@@ -147,20 +147,41 @@ def _flatten(tasks):
             yield from _flatten(t.get(key))
 
 
+def _play_flat(play: dict) -> list[dict]:
+    return list(_flatten([*(play.get("pre_tasks") or []), *(play.get("tasks") or []),
+                          *(play.get("post_tasks") or [])]))
+
+
 def play_tasks(path: pathlib.Path) -> list[dict]:
-    """Flat task list of the play whose vars.app is skmon."""
-    for play in yaml.safe_load(path.read_text()):
-        if isinstance(play, dict) and (play.get("vars") or {}).get("app") == "skmon":
-            return list(_flatten([*(play.get("pre_tasks") or []), *(play.get("tasks") or []),
-                                  *(play.get("post_tasks") or [])]))
-    raise LookupError(f"no skmon play in {path}")
+    """Flat task list of every play whose vars.app is skmon, in playbook order.
+
+    The env plays split the manager work into several plays around the two agent imports
+    (R80, R81); facts carry over between them, so tests read them as one task list.
+    """
+    plays = [p for p in yaml.safe_load(path.read_text())
+             if isinstance(p, dict) and (p.get("vars") or {}).get("app") == "skmon"]
+    if not plays:
+        raise LookupError(f"no skmon play in {path}")
+    return [t for p in plays for t in _play_flat(p)]
+
+
+def play_steps(path: pathlib.Path) -> list[tuple[str, object]]:
+    """The playbook's sequence as (kind, detail): ("import", {file, vars}) for an
+    import_playbook, ("play", [task names]) for a play. Used for play-order tests."""
+    steps = []
+    for p in yaml.safe_load(path.read_text()):
+        if not isinstance(p, dict):
+            continue
+        if "import_playbook" in p:
+            steps.append(("import", {"file": p["import_playbook"], "vars": p.get("vars") or {}}))
+        else:
+            steps.append(("play", [t.get("name") for t in _play_flat(p)]))
+    return steps
 
 
 def all_play_tasks(path: pathlib.Path) -> list[dict]:
     """Flat task list of every play in a playbook file (imports carry no tasks)."""
-    return [t for play in yaml.safe_load(path.read_text()) if isinstance(play, dict)
-            for t in _flatten([*(play.get("pre_tasks") or []), *(play.get("tasks") or []),
-                               *(play.get("post_tasks") or [])])]
+    return [t for play in yaml.safe_load(path.read_text()) if isinstance(play, dict) for t in _play_flat(play)]
 
 
 # --- guard evaluation (a small Ansible stand-in, not a full emulator) ---------
