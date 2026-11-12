@@ -15,49 +15,70 @@
 
 version: '3.8'
 
+{#- Swarm config helper: `swarm_config(key)` names a config after the sha256 of its
+    rendered content, so a content change rolls the service. The plays pass
+    skmon_configs (key -> rendered content) and write each to the file below
+    before `docker stack deploy`; the CLI reads it once and stores it in Raft. #}
+{% macro swarm_config(key) -%}
+name: "skmon_{{ env }}_{{ key }}_{{ (skmon_configs[key] | hash('sha256'))[:12] }}"
+    file: "/var/data/config/skmon-{{ env }}/configs/{{ key }}"
+{%- endmacro %}
+{% set sfx = '' if env == 'prod' else '-' ~ env %}
+{% set replicas = 0 if skmon_parked | default(false) else 1 %}
+{% set fwd = skmon.FORWARD_AUTH_MIDDLEWARE | default('authentik@file') %}
+{% set data = skmon_data_path | default('') %}
+{% set node = skmon_data_node | default('') %}
+
 services:
-  prometheus:
-    image: prom/prometheus:v3.16.0
-    volumes:
-      - /var/data/config/skmon-{{ env }}/prometheus:/etc/prometheus:ro
-      - /var/data/skmon-{{ env }}/prometheus/data:/prometheus
+  victoriametrics:
+    image: {{ skmon.VICTORIAMETRICS_IMAGE | default('victoriametrics/victoria-metrics:v1.155.0') }}
     command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time={{ skmon.PROMETHEUS_RETENTION | default("30d") }}'
-      - '--web.enable-lifecycle'
+      - '-storageDataPath=/storage'
+      - '-retentionPeriod={{ skmon.METRICS_RETENTION | default("90d") }}'
+      - '-promscrape.config=/etc/skmon/vm-scrape.yml'
+      - '-promscrape.config.strictParse=true'
+      - '-selfScrapeInterval=30s'
+      - '-httpListenAddr=:8428'
+    volumes:
+      - {{ data }}/vm:/storage
+    configs:
+      - source: vm-scrape
+        target: /etc/skmon/vm-scrape.yml
     networks:
       - skmon-{{ env }}
       - cloud-public-{{ env }}
     deploy:
       mode: replicated
-      replicas: {{ skmon.replicas | default(1) | int }}
+      replicas: {{ replicas }}
+      placement:
+        constraints:
+          - node.hostname == {{ node }}
       resources:
         limits:
-          cpus: '{{ skmon.PROMETHEUS_CPU_LIMIT | default("0.5") }}'
-          memory: {{ skmon.PROMETHEUS_MEMORY_LIMIT | default("1024M") }}
+          cpus: '{{ skmon.VICTORIAMETRICS_CPU_LIMIT | default("1.0") }}'
+          memory: {{ skmon.VICTORIAMETRICS_MEMORY_LIMIT | default("1G") }}
         reservations:
-          cpus: '{{ skmon.PROMETHEUS_CPU_RESERVATION | default("0.1") }}'
-          memory: {{ skmon.PROMETHEUS_MEMORY_RESERVATION | default("128M") }}
+          cpus: '{{ skmon.VICTORIAMETRICS_CPU_RESERVATION | default("0.1") }}'
+          memory: {{ skmon.VICTORIAMETRICS_MEMORY_RESERVATION | default("256M") }}
       labels:
         - "traefik.enable=true"
         - "traefik.swarm.network=cloud-public-{{ env }}"
-        - "traefik.http.routers.prometheus{% if env != 'prod' %}-{{ env }}{% endif %}-secure.rule=Host(`prometheus{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}`)"
-        - "traefik.http.routers.prometheus{% if env != 'prod' %}-{{ env }}{% endif %}-secure.entrypoints=websecure"
-        - "traefik.http.routers.prometheus{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls=true"
-        - "traefik.http.routers.prometheus{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls.certresolver=main"
-        - "traefik.http.routers.prometheus{% if env != 'prod' %}-{{ env }}{% endif %}-secure.service=prometheus{% if env != 'prod' %}-{{ env }}{% endif %}"
-        - "traefik.http.services.prometheus{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=9090"
-        - "traefik.http.routers.prometheus{% if env != 'prod' %}-{{ env }}{% endif %}-secure.middlewares=default-security-headers@file,gzip@file,traefikAuth@file"
+        - "traefik.http.routers.vmui{{ sfx }}-secure.rule=Host(`vmui{{ sfx }}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}`)"
+        - "traefik.http.routers.vmui{{ sfx }}-secure.entrypoints=websecure"
+        - "traefik.http.routers.vmui{{ sfx }}-secure.tls=true"
+        - "traefik.http.routers.vmui{{ sfx }}-secure.tls.certresolver=main"
+        - "traefik.http.routers.vmui{{ sfx }}-secure.service=vmui{{ sfx }}"
+        - "traefik.http.services.vmui{{ sfx }}.loadbalancer.server.port=8428"
+        - "traefik.http.routers.vmui{{ sfx }}-secure.middlewares=default-security-headers@file,gzip@file,{{ fwd }}"
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9090/-/healthy || exit 1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8428/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
 
   grafana:
-    image: grafana/grafana:13.3.0
+    image: {{ skmon.GRAFANA_IMAGE | default('grafana/grafana:13.3.0') }}
     env_file:
       - /var/data/config/skmon-{{ env }}/skmon.env
     environment:
@@ -66,17 +87,20 @@ services:
       - GF_METRICS_ENABLED=true
       - GF_METRICS_BASIC_AUTH_ENABLED=false
     volumes:
-      - /var/data/skmon-{{ env }}/grafana/data:/var/lib/grafana
-      - /var/data/config/skmon-{{ env }}/grafana/provisioning:/etc/grafana/provisioning:ro
+      - {{ data }}/grafana:/var/lib/grafana
+      - {{ data }}/grafana-provisioning:/etc/grafana/provisioning:ro
     networks:
       - skmon-{{ env }}
       - cloud-public-{{ env }}
     depends_on:
-      - prometheus
+      - victoriametrics
       - loki
     deploy:
       mode: replicated
-      replicas: {{ skmon.replicas | default(1) | int }}
+      replicas: {{ replicas }}
+      placement:
+        constraints:
+          - node.hostname == {{ node }}
       resources:
         limits:
           cpus: '{{ skmon.GRAFANA_CPU_LIMIT | default("0.5") }}'
@@ -87,13 +111,13 @@ services:
       labels:
         - "traefik.enable=true"
         - "traefik.swarm.network=cloud-public-{{ env }}"
-        - "traefik.http.routers.grafana{% if env != 'prod' %}-{{ env }}{% endif %}-secure.rule=Host(`skmon{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}`)"
-        - "traefik.http.routers.grafana{% if env != 'prod' %}-{{ env }}{% endif %}-secure.entrypoints=websecure"
-        - "traefik.http.routers.grafana{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls=true"
-        - "traefik.http.routers.grafana{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls.certresolver=main"
-        - "traefik.http.routers.grafana{% if env != 'prod' %}-{{ env }}{% endif %}-secure.service=grafana{% if env != 'prod' %}-{{ env }}{% endif %}"
-        - "traefik.http.services.grafana{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=3000"
-        - "traefik.http.routers.grafana{% if env != 'prod' %}-{{ env }}{% endif %}-secure.middlewares=default-security-headers@file,gzip@file,traefikAuth@file"
+        - "traefik.http.routers.grafana{{ sfx }}-secure.rule=Host(`skmon{{ sfx }}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}`)"
+        - "traefik.http.routers.grafana{{ sfx }}-secure.entrypoints=websecure"
+        - "traefik.http.routers.grafana{{ sfx }}-secure.tls=true"
+        - "traefik.http.routers.grafana{{ sfx }}-secure.tls.certresolver=main"
+        - "traefik.http.routers.grafana{{ sfx }}-secure.service=grafana{{ sfx }}"
+        - "traefik.http.services.grafana{{ sfx }}.loadbalancer.server.port=3000"
+        - "traefik.http.routers.grafana{{ sfx }}-secure.middlewares=default-security-headers@file,gzip@file,traefikAuth@file"
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1"]
       interval: 30s
@@ -102,153 +126,85 @@ services:
       start_period: {{ skmon.GRAFANA_HEALTH_START_PERIOD | default('60s') }}
 
   loki:
-    image: grafana/loki:3.7.9
+    image: {{ skmon.LOKI_IMAGE | default('grafana/loki:3.7.9') }}
     command: -config.file=/etc/loki/local-config.yaml
     volumes:
-      - /var/data/config/skmon-{{ env }}/loki:/etc/loki
-      - /var/data/skmon-{{ env }}/loki-data:/loki
-      - /var/data/skmon-{{ env }}/loki-data/tsdb-index:/loki/tsdb-index
-      - /var/data/skmon-{{ env }}/loki-data/tsdb-cache:/loki/tsdb-cache
+      - {{ data }}/loki:/loki
+    configs:
+      - source: loki
+        target: /etc/loki/local-config.yaml
+    ports:
+      # Agents push logs here. Allowlisting to node addresses comes with the firewall task.
+      - target: 3100
+        published: 3100
+        protocol: tcp
+        mode: host
     networks:
       - skmon-{{ env }}
     deploy:
       mode: replicated
-      replicas: {{ skmon.replicas | default(1) | int }}
+      replicas: {{ replicas }}
+      placement:
+        constraints:
+          - node.hostname == {{ node }}
       resources:
         limits:
-          cpus: '{{ skmon.LOKI_CPU_LIMIT | default("0.5") }}'
-          memory: {{ skmon.LOKI_MEMORY_LIMIT | default("512M") }}
+          cpus: '{{ skmon.LOKI_CPU_LIMIT | default("1.0") }}'
+          memory: {{ skmon.LOKI_MEMORY_LIMIT | default("1G") }}
         reservations:
           cpus: '{{ skmon.LOKI_CPU_RESERVATION | default("0.1") }}'
-          memory: {{ skmon.LOKI_MEMORY_RESERVATION | default("256M") }}
-
-  # Promtail is EOL upstream (2026-03-02): future work is a move to Grafana Alloy
-  # (`alloy convert --source-format=promtail` converts this config). 3.x needs Loki 3.x.
-  promtail:
-    image: grafana/promtail:3.6.11@sha256:a761cb834cfaeee29745440d4884d6748f0a08d8f68928db1d707018c1dcfbe9
-    command: -config.file=/etc/promtail/promtail-config.yaml
-    volumes:
-      - /var/data/config/skmon-{{ env }}/promtail:/etc/promtail
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
-      - /var/log:/var/log:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks:
-      - skmon-{{ env }}
-    deploy:
-      mode: global
-{% if (skmon.replicas | default(1) | int) == 0 %}
-      placement:
-        constraints:
-          # scaled to 0: no node has this id, mode stays global
-          - node.id == skmon-scaled-to-zero
-{% endif %}
-      resources:
-        limits:
-          cpus: '{{ skmon.PROMTAIL_CPU_LIMIT | default("0.25") }}'
-          memory: {{ skmon.PROMTAIL_MEMORY_LIMIT | default("256M") }}
-        reservations:
-          cpus: '{{ skmon.PROMTAIL_CPU_RESERVATION | default("0.1") }}'
-          memory: {{ skmon.PROMTAIL_MEMORY_RESERVATION | default("64M") }}
-
-  cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.55.1
-    volumes:
-      - /:/rootfs:ro
-      - /var/run:/var/run:ro
-      - /sys:/sys:ro
-      - /var/lib/docker/:/var/lib/docker:ro
-      - /dev/disk/:/dev/disk:ro
-    networks:
-      - skmon-{{ env }}
-    deploy:
-      mode: global
-{% if (skmon.replicas | default(1) | int) == 0 %}
-      placement:
-        constraints:
-          # scaled to 0: no node has this id, mode stays global
-          - node.id == skmon-scaled-to-zero
-{% endif %}
-      resources:
-        limits:
-          cpus: '{{ skmon.CADVISOR_CPU_LIMIT | default("0.25") }}'
-          memory: {{ skmon.CADVISOR_MEMORY_LIMIT | default("256M") }}
-        reservations:
-          cpus: '{{ skmon.CADVISOR_CPU_RESERVATION | default("0.1") }}'
-          memory: {{ skmon.CADVISOR_MEMORY_RESERVATION | default("64M") }}
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/healthz || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-
-  node-exporter:
-    image: prom/node-exporter:v1.12.1
-    command:
-      - '--path.procfs=/host/proc'
-      - '--path.sysfs=/host/sys'
-      - '--path.rootfs=/rootfs'
-      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
-    volumes:
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /:/rootfs:ro
-    networks:
-      - skmon-{{ env }}
-    deploy:
-      mode: global
-{% if (skmon.replicas | default(1) | int) == 0 %}
-      placement:
-        constraints:
-          # scaled to 0: no node has this id, mode stays global
-          - node.id == skmon-scaled-to-zero
-{% endif %}
-      resources:
-        limits:
-          cpus: '{{ skmon.NODE_EXPORTER_CPU_LIMIT | default("0.10") }}'
-          memory: {{ skmon.NODE_EXPORTER_MEMORY_LIMIT | default("128M") }}
-        reservations:
-          cpus: '{{ skmon.NODE_EXPORTER_CPU_RESERVATION | default("0.05") }}'
-          memory: {{ skmon.NODE_EXPORTER_MEMORY_RESERVATION | default("32M") }}
+          memory: {{ skmon.LOKI_MEMORY_RESERVATION | default("384M") }}
 
   alertmanager:
-    image: prom/alertmanager:{{ skmon.ALERTMANAGER_IMAGE_VERSION | default('v0.34.2') }}
-    user: "0:0"
+    image: {{ skmon.ALERTMANAGER_IMAGE | default('prom/alertmanager:' ~ (skmon.ALERTMANAGER_IMAGE_VERSION | default('v0.34.2'))) }}
     command:
       - '--config.file=/etc/alertmanager/config.yml'
       - '--storage.path=/alertmanager'
     volumes:
-      - /var/data/config/skmon-{{ env }}/alertmanager/config.yml:/etc/alertmanager/config.yml:ro
-      - /var/data/skmon-{{ env }}/alertmanager/data:/alertmanager
+      - {{ data }}/alertmanager:/alertmanager
+    configs:
+      - source: alertmanager
+        target: /etc/alertmanager/config.yml
     networks:
       - skmon-{{ env }}
       - cloud-public-{{ env }}
     deploy:
       mode: replicated
-      replicas: {{ skmon.replicas | default(1) | int }}
+      replicas: {{ replicas }}
+      placement:
+        constraints:
+          - node.hostname == {{ node }}
       resources:
         limits:
           cpus: '{{ skmon.ALERTMANAGER_CPU_LIMIT | default("0.25") }}'
-          memory: {{ skmon.ALERTMANAGER_MEMORY_LIMIT | default("256M") }}
+          memory: {{ skmon.ALERTMANAGER_MEMORY_LIMIT | default("128M") }}
         reservations:
           cpus: '{{ skmon.ALERTMANAGER_CPU_RESERVATION | default("0.1") }}'
-          memory: {{ skmon.ALERTMANAGER_MEMORY_RESERVATION | default("64M") }}
+          memory: {{ skmon.ALERTMANAGER_MEMORY_RESERVATION | default("32M") }}
       labels:
         - "traefik.enable=true"
         - "traefik.swarm.network=cloud-public-{{ env }}"
-        - "traefik.http.routers.alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}-secure.rule=Host(`alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}`)"
-        - "traefik.http.routers.alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}-secure.entrypoints=websecure"
-        - "traefik.http.routers.alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls=true"
-        - "traefik.http.routers.alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls.certresolver=main"
-        - "traefik.http.routers.alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}-secure.service=alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}"
-        - "traefik.http.services.alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=9093"
-        - "traefik.http.routers.alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}-secure.middlewares=default-security-headers@file,gzip@file,traefikAuth@file"
+        - "traefik.http.routers.alertmanager{{ sfx }}-secure.rule=Host(`alertmanager{{ sfx }}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}`)"
+        - "traefik.http.routers.alertmanager{{ sfx }}-secure.entrypoints=websecure"
+        - "traefik.http.routers.alertmanager{{ sfx }}-secure.tls=true"
+        - "traefik.http.routers.alertmanager{{ sfx }}-secure.tls.certresolver=main"
+        - "traefik.http.routers.alertmanager{{ sfx }}-secure.service=alertmanager{{ sfx }}"
+        - "traefik.http.services.alertmanager{{ sfx }}.loadbalancer.server.port=9093"
+        - "traefik.http.routers.alertmanager{{ sfx }}-secure.middlewares=default-security-headers@file,gzip@file,{{ fwd }}"
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9093/-/healthy || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
+
+{% if skmon_configs | default({}) %}
+configs:
+{% for key in skmon_configs %}
+  {{ key }}:
+    {{ swarm_config(key) }}
+{% endfor %}
+{% endif %}
 
 networks:
   skmon-{{ env }}:

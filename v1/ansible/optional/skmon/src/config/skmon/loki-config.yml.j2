@@ -36,4 +36,4 @@ compactor:
   delete_request_store: filesystem
 
 limits_config:
-  retention_period: {{ skmon.LOKI_RETENTION_PERIOD | default('30d') }}
+  retention_period: {{ skmon.LOGS_RETENTION | default('30d') }}

@@ -14,8 +14,8 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 ---
-# skmon: monitoring stack (Prometheus, Grafana, Loki, Promtail,
-# cAdvisor, node-exporter, Alertmanager), adapted from
+# skmon: monitoring stack (VictoriaMetrics, Grafana, Loki,
+# Alertmanager), adapted from
 # optional/skgraph and optional/skmem-pg SOP.
 # TODO before deploy: register the skmon-{{ env }} overlay subnet in
 # shared/networks (pick a free /24 if these placeholders collide on your
@@ -89,12 +89,7 @@
       loop:
         - { path: "/var/data/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/config/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/config/{{ app }}-{{ env }}/prometheus", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/config/{{ app }}-{{ env }}/grafana/provisioning/datasources", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/config/{{ app }}-{{ env }}/grafana/provisioning/dashboards", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/config/{{ app }}-{{ env }}/loki", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/config/{{ app }}-{{ env }}/promtail", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/config/{{ app }}-{{ env }}/alertmanager", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/config/{{ app }}-{{ env }}/configs", owner: "root", group: "root", mode: "0750" }
 
     - name: Process {{ app }} environment templates
       template:
@@ -109,30 +104,70 @@
       tags:
         - templates
 
-    - name: Process {{ app }} configuration templates
-      template:
-        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
-        dest: "{{ item.dest }}"
-        owner: root
-        group: '{{ item.group | default("root") }}'
-        mode: '{{ item.mode | default("0644") }}'
-      loop:
-        - { src: "prometheus.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/prometheus/prometheus.yml", group: "65534", mode: "0640" }
-        - { src: "grafana-datasources.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/grafana/provisioning/datasources/datasources.yml" }
-        - { src: "grafana-dashboards.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/grafana/provisioning/dashboards/dashboards.yml" }
-        - { src: "loki-config.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/loki/local-config.yaml" }
-        - { src: "promtail-config.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/promtail/promtail-config.yaml" }
-        - { src: "alertmanager-config.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/alertmanager/config.yml" }
+    - name: Render the {{ app }} Swarm config contents
+      # Contents live in a variable (the compose template names each config after
+      # the sha256 of its content) and are written to disk only so the docker CLI
+      # can read them once at stack deploy; the running stack never reads /var/data.
+      set_fact:
+        skmon_configs:
+          vm-scrape: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/vm-scrape.yml.j2') }}"
+          loki: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/loki-config.yml.j2') }}"
+          alertmanager: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/alertmanager-config.yml.j2') }}"
+      no_log: true
       tags:
         - config
 
-    - name: Copy dashboard JSON files
+    - name: Write the {{ app }} Swarm config sources
       copy:
-        src: "{{ playbook_dir }}/src/config/{{ app }}/dashboards/{{ item }}"
-        dest: "/var/data/config/{{ app }}-{{ env }}/grafana/provisioning/dashboards/{{ item }}"
+        content: "{{ item.value }}"
+        dest: "/var/data/config/{{ app }}-{{ env }}/configs/{{ item.key }}"
+        owner: root
+        group: root
+        mode: '0640'
+      loop: "{{ skmon_configs | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      no_log: true
+      tags:
+        - config
+
+    - name: Create the Grafana provisioning directories on the data node
+      file:
+        path: "{{ skmon_data_path }}/grafana-provisioning/{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      delegate_to: "{{ skmon_data_node }}"
+      loop:
+        - datasources
+        - dashboards
+      tags:
+        - config
+        - dashboards
+
+    - name: Process Grafana provisioning templates on the data node
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
+        dest: "{{ skmon_data_path }}/grafana-provisioning/{{ item.dest }}"
         owner: root
         group: root
         mode: '0644'
+      delegate_to: "{{ skmon_data_node }}"
+      loop:
+        - { src: "grafana-datasources.yml.j2", dest: "datasources/datasources.yml" }
+        - { src: "grafana-dashboards.yml.j2", dest: "dashboards/dashboards.yml" }
+      tags:
+        - config
+
+    - name: Copy dashboard JSON files to the data node
+      copy:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/dashboards/{{ item }}"
+        dest: "{{ skmon_data_path }}/grafana-provisioning/dashboards/{{ item }}"
+        owner: root
+        group: root
+        mode: '0644'
+      delegate_to: "{{ skmon_data_node }}"
       loop:
         - docker-swarm.json
         - traefik.json

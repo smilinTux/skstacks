@@ -22,20 +22,41 @@ BASE = {
     "GRAFANA_ADMIN_USER": "admin",
     "GRAFANA_ADMIN_PASSWORD": "fake-admin-password",
     "GRAFANA_SECRET_KEY": "fake-secret-key",
+    "GRAFANA_ROOT_URL": "https://skmon.c1.example.test",
+}
+
+# Config templates delivered as hash-named Swarm configs: key -> template file.
+CONFIG_TEMPLATES = {
+    "vm-scrape": "vm-scrape.yml.j2",
+    "loki": "loki-config.yml.j2",
+    "alertmanager": "alertmanager-config.yml.j2",
 }
 
 
 def render(tpl: pathlib.Path, env: str = "prod", extra_ctx: dict | None = None, **skmon) -> str:
-    """Render a role template with the framework's filters and StrictUndefined."""
+    """Render a role template with the framework's filters and StrictUndefined.
+
+    The data facts the plays set (skmon_data_node, skmon_data_path, skmon_parked)
+    are derived from the vault the same way tasks/facts.yml does, unless
+    extra_ctx overrides them.
+    """
     jenv = _schema.make_environment()
     jenv.undefined = jinja2.StrictUndefined
-    ctx = {"app": "skmon", "env": env, "skmon": {**BASE, **skmon}, **(extra_ctx or {})}
+    facts = guard_facts(env=env, **dict(skmon))
+    derived = {k: facts[k] for k in ("skmon_data_node", "skmon_data_path", "skmon_parked")}
+    ctx = {"app": "skmon", "env": env, "skmon": {**BASE, **skmon}, **derived, **(extra_ctx or {})}
     return jenv.from_string(tpl.read_text()).render(**ctx)
 
 
+def ctx_with_configs(env: str = "prod", **skmon) -> dict:
+    """Template context carrying `skmon_configs`: every config template rendered, as the plays do."""
+    configs = {key: render(CFG / name, env=env, **skmon) for key, name in CONFIG_TEMPLATES.items()}
+    return {"skmon_configs": configs}
+
+
 def compose(**skmon) -> dict:
-    """The whole rendered compose document."""
-    return yaml.safe_load(render(CFG / "skmon.yml.j2", **skmon))
+    """The whole rendered compose document (configs rendered the way the plays do)."""
+    return yaml.safe_load(render(CFG / "skmon.yml.j2", extra_ctx=ctx_with_configs(**skmon), **skmon))
 
 
 def services(**skmon) -> dict[str, dict]:

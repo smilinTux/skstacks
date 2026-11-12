@@ -1,0 +1,9 @@
+# Minimal scrape config: VictoriaMetrics scraping itself. The full target set
+# (agents, swarm exporter, Traefik, extras) is added by later tasks.
+global:
+  scrape_interval: {{ skmon.SCRAPE_INTERVAL | default('30s') }}
+
+scrape_configs:
+  - job_name: victoriametrics
+    static_configs:
+      - targets: ['localhost:8428']
