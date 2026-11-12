@@ -163,3 +163,44 @@ def test_unknown_path_is_404_and_metrics_is_200():
 def test_env_defaults():
     assert se.parse_env({}) == {"host": "http://socket-proxy:2375", "poll_s": 15.0, "port": 9323, "timeout_s": 10.0}
     assert se.parse_env({"SKSWARM_PORT": "1", "SKSWARM_DOCKER_HOST": "http://x:1"})["port"] == 1
+
+
+def _flaky(exc, fail_on="/tasks"):
+    """FakeApi that raises exc on one endpoint while .broken is set."""
+    api = FakeApi()
+    api.broken = False
+    good = api.__call__
+
+    def call(path):
+        if api.broken and path == fail_on:
+            raise exc
+        return good(path)
+
+    call.api = api
+    return call, api
+
+
+def test_any_exception_sets_up_zero_keeps_values_and_recovers():
+    import http.client
+    for exc in (http.client.IncompleteRead(b"x"), http.client.BadStatusLine("x"), RuntimeError("boom"), KeyError("k")):
+        call, api = _flaky(exc)
+        e = Exporter(call, clock=lambda: T0)
+        e.poll()
+        api.broken = True
+        e.poll()
+        m = parse(e.render())
+        assert value(m, "skswarm_up") == 0 and value(m, "skswarm_service_replicas_running", service="web") == 1
+        api.broken = False
+        e.poll()
+        assert value(parse(e.render()), "skswarm_up") == 1
+
+
+def test_failed_call_records_elapsed_wall_time():
+    ticks = iter([0.0, 0.5, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0])  # per call: start, then end only on failure
+    api = FakeApi()
+    api.fail = True
+    e = Exporter(api, clock=lambda: T0, mono=lambda: next(ticks))
+    e.poll()
+    m = parse(e.render())
+    assert value(m, "skswarm_api_duration_seconds", endpoint="/services") == 0.5
+    assert value(m, "skswarm_up") == 0

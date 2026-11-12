@@ -73,9 +73,10 @@ def _split(svc: dict) -> "tuple[str, str]":
 
 
 class Exporter:
-    def __init__(self, api: Api, clock: Callable[[], float]) -> None:
+    def __init__(self, api: Api, clock: Callable[[], float], mono: Callable[[], float] = time.monotonic) -> None:
         self.api = api
         self.clock = clock
+        self.mono = mono  # wall-time source for failed-call durations
         self.up = 0
         self.durations: dict[str, float] = {}
         # series name -> list of (label pairs, value); replaced wholesale on a good poll.
@@ -88,9 +89,12 @@ class Exporter:
         data: dict[str, Any] = {}
         ok = True
         for ep in ENDPOINTS:
+            t0 = self.mono()
             try:
                 body, secs = self.api(ep)
-            except (OSError, ValueError) as exc:  # json.JSONDecodeError is a ValueError
+            except Exception as exc:  # OSError, JSON errors, http.client errors: all mean "poll failed"
+                # A timeout is the latency case that matters, so record the elapsed time of a failed call too.
+                self.durations[ep] = self.mono() - t0
                 log.warning("docker api %s failed: %s", ep, type(exc).__name__)
                 ok = False
                 continue
@@ -101,7 +105,7 @@ class Exporter:
             return
         try:
             self._compute(data["/services"], data["/tasks"], data["/nodes"])
-        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        except Exception as exc:
             log.warning("unexpected docker api shape: %s", type(exc).__name__)
             self.up = 0
             return
@@ -248,9 +252,18 @@ def main() -> None:
 
     def loop() -> None:
         while True:
-            body = exp.render_after_poll()
-            with lock:
-                state["body"] = body
+            try:
+                body = exp.render_after_poll()
+                with lock:
+                    state["body"] = body
+            except Exception:  # the poll thread must never die
+                log.exception("poll iteration failed")
+                exp.up = 0
+                try:
+                    with lock:
+                        state["body"] = exp.render()
+                except Exception:
+                    log.exception("render after failed poll also failed")
             time.sleep(cfg["poll_s"])
 
     def get_body() -> str:
