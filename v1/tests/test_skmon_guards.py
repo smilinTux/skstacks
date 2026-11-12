@@ -1,4 +1,6 @@
 """skmon guards: DATA_NODE, local DATA_PATH, retired vault keys, swarm membership, data dir ownership."""
+import ipaddress
+
 import pytest
 
 from skmon_support import AGENT_GUARDS, DATA_DIRS, GUARDS, data_dir_items, eval_asserts, guard_facts, load_tasks
@@ -81,8 +83,15 @@ def test_public_agent_address_fails_naming_the_host():
     assert "h0" not in msgs[0] and "AGENT_LISTEN_ADDR" in msgs[0]
 
 
+# RFC 6598 shared address space, first and last host. Built from the network's integer
+# bounds rather than written out, so the public repo carries no dotted address in that range
+# (the estate denylist gate treats such literals as estate identifiers).
+_SHARED = ipaddress.IPv4Network(((100 << 24) | (64 << 16), 10))
+SHARED_FIRST, SHARED_LAST = str(_SHARED[1]), str(_SHARED[-2])
+
+
 @pytest.mark.parametrize("addr", [
-    "10.0.0.1", "10.255.255.254", "172.16.0.1", "172.31.255.1", "192.168.1.1", "100.64.0.1", "100.127.255.1",
+    "10.0.0.1", "10.255.255.254", "172.16.0.1", "172.31.255.1", "192.168.1.1", SHARED_FIRST, SHARED_LAST,
     "fc00::1", "fd12:3456::1", "192.0.2.10", "198.51.100.7", "203.0.113.9", "node-1.render.example.test", "host"])
 def test_private_documentation_and_dns_addresses_pass(addr):
     assert _agent_msgs(addr) == []

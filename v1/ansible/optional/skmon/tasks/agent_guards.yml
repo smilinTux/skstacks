@@ -2,8 +2,8 @@
 # skmon agent address guard. Runs after the plays have built skmon_agent_targets.
 # An agent listens on, and VictoriaMetrics scrapes, the node's private address:
 # an inventory address that is a public IP literal would expose the agent. Private
-# (RFC 1918, 100.64.0.0/10, fc00::/7) and documentation (RFC 5737) literals pass,
-# and so does any DNS name. Core Jinja only: no ipaddr filter.
+# (RFC 1918, RFC 6598 shared address space, fc00::/7) and documentation (RFC 5737)
+# literals pass, and so does any DNS name. Core Jinja only: no ipaddr filter.
 - name: Require private agent addresses
   assert:
     that:

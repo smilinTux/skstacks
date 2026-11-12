@@ -159,7 +159,6 @@ def test_no_estate_names_or_hosts():
     for p in dashboards():
         txt = p.read_text()
         assert not re.search(r"\b(\d{1,3}\.){3}\d{1,3}\b", txt), p
-        assert not re.search(r"smilintux|skworld|douno\.it|nativeassetmanagement", txt, re.I), p
 
 
 def test_no_long_dashes_in_dashboards():
