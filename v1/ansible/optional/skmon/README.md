@@ -62,7 +62,7 @@ All keys live under the `skmon:` map of the instance vault. Required keys have n
 | `ALERT_ROUTING` | required | Map of `NAME: value` rendered into the bridge's `alert.env` (Docker secret). |
 | `ALERT_SECRETS` | required | Map of `NAME: value` rendered into `alert.secret` (Docker secret). |
 | `ALERT_TALK` | `false` | Pass `--talk` to `sk-alert`. There is no `--talk` unless this is true. |
-| `ALERT_OUT_OF_DOMAIN_CHANNEL` | required unless the next key is set | `telegram` or `talk-external`: a channel outside the monitored estate's failure domain for critical alerts. |
+| `ALERT_OUT_OF_DOMAIN_CHANNEL` | required unless the next key is set | Your declaration, `telegram` or `talk-external`, that the estate's critical route (in `ALERT_ROUTING` and `ALERT_SECRETS`) includes a channel that does not run on the monitored estate. The deploy guard checks only that this value is one of those two (or that in-domain only is accepted); it does not inspect the routing or send anything. |
 | `ALERT_ACCEPT_IN_DOMAIN_ONLY` | `false` | Accept in-domain delivery only. Needs the reason below. |
 | `ALERT_ACCEPT_IN_DOMAIN_ONLY_REASON` | empty | Why in-domain only is acceptable; required when the key above is true. |
 | `SKALERT_SCRIPT_SRC` | required | Path of the estate's own `sk-alert` on the controller. A relative path resolves against the directory of the vault file; an absolute path or `~/...` is used as given. |
@@ -93,19 +93,25 @@ Per-host inventory variables for the agent: `agent_mode` (`container` or `system
 
 The image defaults are the digest-pinned set in `src/config/skmon/pins.yml`. Override one only with an exact version and digest, never a floating tag.
 
-Example (fake values; the render gate uses `v1/tests/render/vars/skmon.example.yml`):
+Minimal vault, every key the deploy requires when unparked (placeholders; the render gate uses `v1/tests/render/vars/skmon.example.yml`):
 
 ```yaml
 skmon:
-  CLUSTERNAME: render
-  DOMAIN: example.test
-  ESTATE: example
-  DATA_NODE: node-1.render.example.test
+  CLUSTERNAME: "<cluster>"
+  DOMAIN: "example.test"
+  ESTATE: "<estate label>"
+  DATA_NODE: "<swarm node hostname>"
+  GRAFANA_ADMIN_USER: "admin"
+  GRAFANA_ADMIN_PASSWORD: "<placeholder>"
+  GRAFANA_SECRET_KEY: "<placeholder>"
+  GRAFANA_OIDC_CLIENT_ID: "<placeholder, 32+ characters>"
+  GRAFANA_OIDC_CLIENT_SECRET: "<placeholder, 32+ characters>"
+  AUTHENTIK_HOST: "sso.<cluster>.example.test"
   HEALTHZ_ALLOW: ["<outside monitor IPv4>"]
-  SKALERT_SCRIPT_SRC: sk-alert
+  SKALERT_SCRIPT_SRC: "sk-alert"
   SKALERT_SCRIPT_SHA256: "<sha256 of that script>"
-  ALERT_ROUTING: {TELEGRAM_CHAT_ID: "-1000000000"}
-  ALERT_SECRETS: {TELEGRAM_BOT_TOKEN: "<token>"}
+  ALERT_ROUTING: {TELEGRAM_CHAT_ID: "<placeholder>"}
+  ALERT_SECRETS: {TELEGRAM_BOT_TOKEN: "<placeholder>"}
   ALERT_OUT_OF_DOMAIN_CHANNEL: telegram
 ```
 
@@ -147,7 +153,7 @@ A firewall on every agent host and on `DATA_NODE` restricts the agent, Loki push
 
 ## Alert routing
 
-vmalert evaluates the rules, Alertmanager groups and inhibits, and the bridge runs the estate's own pinned `sk-alert` (`SKALERT_SCRIPT_SRC`, checked against `SKALERT_SCRIPT_SHA256` on every deploy). Its secrets are Docker secrets (`alert.env` from `ALERT_ROUTING`, `alert.secret` from `ALERT_SECRETS`), written shell-quoted, so a value with spaces or quotes is safe. `--talk` is passed only when `ALERT_TALK` is true. Critical alerts also go to `ALERT_OUT_OF_DOMAIN_CHANNEL`, a channel outside the monitored estate's failure domain.
+vmalert evaluates the rules, Alertmanager groups and inhibits, and the bridge runs the estate's own pinned `sk-alert` (`SKALERT_SCRIPT_SRC`, checked against `SKALERT_SCRIPT_SHA256` on every deploy). Its secrets are Docker secrets (`alert.env` from `ALERT_ROUTING`, `alert.secret` from `ALERT_SECRETS`), written shell-quoted, so a value with spaces or quotes is safe. `--talk` is passed only when `ALERT_TALK` is true. Delivery is `sk-alert`'s own routing, built from `ALERT_ROUTING` and `ALERT_SECRETS`, for the level the bridge passes; the bridge itself routes nothing to a particular channel. `ALERT_OUT_OF_DOMAIN_CHANNEL` is the operator's declaration that the estate's critical route includes a channel outside the estate's domain (`telegram` or `talk-external`), so storage alerts still get out when shared storage or the domain is down. The deploy guard only checks the declaration is one of those two values, or that `ALERT_ACCEPT_IN_DOMAIN_ONLY` is true with a written reason; it cannot see your `sk-alert` configuration, so keep the two in agreement.
 
 - A drained node raises a 30 m warning (`SwarmNodeNotReady`), and only critical node alerts (`NodeDown`, a critical `SwarmNodeNotReady`) mute the other alerts on that node, so a drain does not hide that node's storage, NFS or D-state alerts.
 - A firing storage alert mutes its consequences estate-wide; Authentik down mutes the probes of targets behind forward auth; a critical mutes the warning for the same alert and target.
@@ -196,7 +202,7 @@ Loki volume is the one number to measure on each estate. A 64 GB dedicated disk 
 4. Optional: copy the old Grafana database to `DATA_PATH/grafana` once, if anyone cares about saved prefs and annotations. Dashboards are provisioned, so nothing is lost without it.
 5. Prometheus history is not migrated. `vmctl` can import it if it is ever wanted.
 6. The retired Authentik tiles are removed by the play when `AUTHENTIK_PROVISION` is true (otherwise by hand). After a week, remove the old `/var/data/skmon-<env>` directories by hand.
-7. Verify: every node `up`, a test alert end to end (`amtool alert add` of a `severity=warning` test alert, seen in the room, then resolved), and an outside Kuma keyword monitor on `/healthz`, created by hand, green.
+7. Verify: every node `up`, a test alert end to end (run on `DATA_NODE`, see Verify: `amtool alert add` of a `severity=warning` alert, seen in the room, then resolved), and an outside Kuma keyword monitor on `/healthz`, created by hand, green.
 
 An estate is not done until the outside probe is green. On a single-host estate that probe is the only guaranteed signal for a whole-host failure, because the monitor shares the host's failure domain; the estate's runbook must say so.
 
@@ -204,8 +210,15 @@ An estate is not done until the outside probe is green. On a single-host estate 
 
 ```bash
 # Targets: open vmui (behind forward auth) and query `up`: every node is 1.
-# Rules and routing: a test alert, seen in the room, then resolved.
-amtool alert add skmon_test severity=warning --annotation=summary="skmon test"
+
+# Rules and routing: a test alert, from inside the Alertmanager container on DATA_NODE.
+AM=$(docker ps -q -f name=skmon-<env>_alertmanager)
+docker exec "$AM" amtool alert add SkmonTest severity=warning estate=<estate label> \
+  --annotation=summary="skmon test" --alertmanager.url=http://localhost:9093
+# Seen in the room. Resolve it by re-adding it with an end time in the past or now:
+docker exec "$AM" amtool alert add SkmonTest severity=warning estate=<estate label> \
+  --end="$(date -u +%Y-%m-%dT%H:%M:%SZ)" --alertmanager.url=http://localhost:9093
+
 # The dead-man path, from the outside monitor's address.
 curl -fsS "http://<DATA_NODE>:<HEALTHZ_PORT>/healthz"
 ```

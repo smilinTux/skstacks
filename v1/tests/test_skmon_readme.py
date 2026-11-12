@@ -84,3 +84,41 @@ def test_skhealth_and_backups_content():
 def test_readme_has_no_estate_identifiers_or_long_dashes():
     assert not re.search(r"\b(\d{1,3}\.){3}\d{1,3}\b", README)
     assert chr(0x2014) not in README and chr(0x2013) not in README
+
+
+def _example_vault_keys() -> set[str]:
+    block = re.search(r"```yaml\nskmon:\n(.*?)```", section("## Vault keys"), re.S).group(1)
+    return set(re.findall(r"^  ([A-Za-z_0-9]+):", block, re.M))
+
+
+def _guard_required_keys() -> set[str]:
+    """Keys the guard asserts require, unparked with defaults: asserts with no `when` or `when: not skmon_parked`."""
+    import yaml
+    keys: set[str] = set()
+    for t in yaml.safe_load((ROLE / "tasks/guards.yml").read_text()):
+        if "assert" not in t or t.get("when") not in (None, "not skmon_parked"):
+            continue
+        for cond in t["assert"]["that"]:
+            keys |= set(re.findall(r"\bskmon\.([A-Z][A-Z_0-9]+)", cond))
+    return keys
+
+
+def test_example_vault_has_every_required_key():
+    # ALERT_ACCEPT_IN_DOMAIN_ONLY is the alternative to ALERT_OUT_OF_DOMAIN_CHANNEL, not an addition.
+    # DATA_NODE is asserted through a derived fact, and the Grafana admin, CLUSTERNAME and DOMAIN are read by
+    # the env template with no guard: listed by hand.
+    required = (_guard_required_keys() - {"ALERT_ACCEPT_IN_DOMAIN_ONLY"}) | {
+        "DATA_NODE", "CLUSTERNAME", "DOMAIN", "GRAFANA_ADMIN_USER", "GRAFANA_ADMIN_PASSWORD", "GRAFANA_SECRET_KEY"}
+    assert {"HEALTHZ_ALLOW", "ESTATE", "ALERT_ROUTING", "GRAFANA_OIDC_CLIENT_ID"} <= required  # the derivation found keys
+    assert not sorted(required - _example_vault_keys())
+
+
+def test_out_of_domain_channel_is_described_as_a_declaration():
+    assert "does not inspect the routing" in section("## Vault keys")
+    assert "routes nothing" in section("## Alert routing")
+
+
+def test_amtool_runs_inside_the_alertmanager_container():
+    v = section("## Verify")
+    assert 'docker exec "$AM" amtool alert add' in v and "--alertmanager.url=http://localhost:9093" in v
+    assert "severity=warning" in v and "estate=" in v and "--end=" in v
