@@ -80,7 +80,7 @@ def test_multi_argument_host_rules_yield_a_probe_per_host():
 
 def test_hostregexp_and_hostsni_are_not_probed():
     rules = ["HostRegexp(`^.+\\.render\\.example\\.test$`)", "HostSNI(`sni.render.example.test`)",
-             "HostSNI(`*`)", "HostRegexp(`{sub:[a-z]+}.render.example.test`)"]
+             "HostSNI(`*`)", "HostRegexp(`^[a-z]+\\.render\\.example\\.test$`)"]
     assert s.probes_from([s._svc(f"r{i}", {f"traefik.http.routers.r{i}.rule": r}) for i, r in enumerate(rules)]) == []
     mixed = s.probes_from([s._svc("x", {"traefik.http.routers.x.rule": "HostSNI(`s.example.test`) || Host(`h.example.test`)"})])
     assert [p["name"] for p in mixed] == ["h.example.test"]

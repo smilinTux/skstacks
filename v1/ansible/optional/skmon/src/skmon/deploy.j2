@@ -67,9 +67,11 @@ sleep 10
 {% if not skmon_parked %}
 # Force update services to pull latest images
 echo -e "${YELLOW}🔄 Forcing service updates to pull latest images...${NC}"
-{% for svc in ['victoriametrics', 'grafana', 'loki', 'alertmanager'] %}
-preexisted ${STACK_NAME}_{{ svc }} && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_{{ svc }} || true
-{% endfor %}
+# One line per service (not a loop): the framework scanners read these lines raw.
+preexisted ${STACK_NAME}_victoriametrics && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_victoriametrics || true
+preexisted ${STACK_NAME}_grafana && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_grafana || true
+preexisted ${STACK_NAME}_loki && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_loki || true
+preexisted ${STACK_NAME}_alertmanager && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_alertmanager || true
 
 # Wait for services to stabilize
 echo -e "${YELLOW}⏳ Waiting for services to stabilize...${NC}"
