@@ -40,6 +40,8 @@ name: "skmon_{{ env }}_{{ key }}_{{ (skmon_secrets[key] | hash('sha256'))[:12] }
 {% set pve_on = (pve.enabled | default(false) | bool) if pve is mapping else false %}
 {% set pve_uid = skmon.PVE_UID | default(65534) %}
 {% set swarm_uid = skmon.SKSWARM_UID | default(65534) %}
+{% set pyro_on = skmon_profiling_enabled | default(false) %}{# derived in tasks/facts.yml #}
+{% set pyro_port = skmon.PYROSCOPE_PORT | default(4040) %}
 
 services:
   victoriametrics:
@@ -422,6 +424,57 @@ services:
         reservations:
           cpus: '{{ skmon.PVE_EXPORTER_CPU_RESERVATION | default("0.05") }}'
           memory: {{ skmon.PVE_EXPORTER_MEMORY_RESERVATION | default("32M") }}
+
+  # Optional continuous profiling (PROFILING.enabled): profiles pushed by the eBPF profiler of the
+  # listed agents, shown in Grafana's profiles drilldown. Always present in the stack so a toggle is
+  # one redeploy; replicas 0 when profiling is off or skmon is parked, and then it has no router. The
+  # image runs as uid 10001 (the data directory's owner) and keeps its blocks under /data.
+  # -compactor.blocks-retention-period is the v1 storage flag, -retention-period the v2 one (both
+  # exist in the pinned release; Pyroscope reads the one that matches its storage).
+  pyroscope:
+    image: {{ skmon.PYROSCOPE_IMAGE | default('grafana/pyroscope:2.4.2@sha256:ef9b48976386aa2781e84664dfdba7cc33a1b6793c0cc9d130812173a926ca1f') }}
+    command:
+      - '-config.file=/etc/pyroscope/config.yaml'
+      - '-server.http-listen-port={{ pyro_port }}'
+      - '-compactor.blocks-retention-period={{ skmon.PROFILES_RETENTION | default("14d") }}'
+      - '-retention-period={{ skmon.PROFILES_RETENTION | default("14d") }}'
+    volumes:
+      - {{ data }}/pyroscope:/data
+    ports:
+      # Agents push profiles here. Published on DATA_NODE (target equals published, see
+      # tasks/port_allowlist.yml: only the profiling agents' addresses are let in).
+      - target: {{ pyro_port }}
+        published: {{ pyro_port }}
+        protocol: tcp
+        mode: host
+    networks:
+      - skmon-{{ env }}
+      - cloud-public-{{ env }}
+    deploy:
+      mode: replicated
+      replicas: {{ 1 if (pyro_on and not (skmon_parked | default(false))) else 0 }}
+      placement:
+        constraints:
+          - node.hostname == {{ node }}
+      resources:
+        limits:
+          cpus: '{{ skmon.PYROSCOPE_CPU_LIMIT | default("0.5") }}'
+          memory: {{ skmon.PYROSCOPE_MEMORY_LIMIT | default("1G") }}
+        reservations:
+          cpus: '{{ skmon.PYROSCOPE_CPU_RESERVATION | default("0.1") }}'
+          memory: {{ skmon.PYROSCOPE_MEMORY_RESERVATION | default("256M") }}
+{% if pyro_on %}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.routers.pyroscope{{ sfx }}-secure.rule=Host(`pyroscope{{ sfx }}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}`)"
+        - "traefik.http.routers.pyroscope{{ sfx }}-secure.entrypoints=websecure"
+        - "traefik.http.routers.pyroscope{{ sfx }}-secure.tls=true"
+        - "traefik.http.routers.pyroscope{{ sfx }}-secure.tls.certresolver=main"
+        - "traefik.http.routers.pyroscope{{ sfx }}-secure.service=pyroscope{{ sfx }}"
+        - "traefik.http.services.pyroscope{{ sfx }}.loadbalancer.server.port={{ pyro_port }}"
+        - "traefik.http.routers.pyroscope{{ sfx }}-secure.middlewares=default-security-headers@file,gzip@file,{{ fwd }}"
+{% endif %}
 
 {% if skmon_secrets | default({}) %}
 secrets:

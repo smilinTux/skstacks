@@ -22,7 +22,7 @@ iptables-restore -w --noflush <<'SKMON_RULES'
 :{{ chain }} - [0:0]
 -F {{ chain }}
 {% for name, port in skmon_fw_ports.items() %}
-{% for src in (healthz_allow if name == 'healthz' else estate) %}
+{% for src in (healthz_allow if name == 'healthz' else (skmon_fw_profiling_addrs if name == 'pyroscope' else estate)) %}
 -A {{ chain }} -p tcp -m conntrack --ctorigdstport {{ port }} --ctdir ORIGINAL -s {{ src }} -j RETURN
 {% endfor %}
 {% if name == 'agent' and skmon_fw_is_data_node %}

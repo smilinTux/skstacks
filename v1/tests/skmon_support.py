@@ -70,7 +70,8 @@ def render(tpl: pathlib.Path, env: str = "prod", extra_ctx: dict | None = None, 
     jenv.undefined = jinja2.StrictUndefined
     jenv.filters["quote"] = lambda v: shlex.quote(str(v))  # Ansible's quote filter
     facts = guard_facts(env=env, **dict(skmon))
-    derived = {k: facts[k] for k in ("skmon_data_node", "skmon_data_path", "skmon_parked", "skmon_pve_enabled", "skmon_grafana_url")}
+    derived = {k: facts[k] for k in ("skmon_data_node", "skmon_data_path", "skmon_parked", "skmon_pve_enabled",
+                                     "skmon_profiling_enabled", "skmon_grafana_url")}
     ctx = {"app": "skmon", "env": env, "skmon": {**BASE, **skmon}, **derived, **(extra_ctx or {})}
     return jenv.from_string(tpl.read_text()).render(**ctx)
 
@@ -301,6 +302,7 @@ AGENT_CTX = {
     "agent_is_storage": False,
     "agent_profiling": False,
     "loki_push_url": "http://192.0.2.1:3100/loki/api/v1/push",
+    "pyroscope_push_url": "http://192.0.2.1:4040",
     "probes": [],
 }
 # What the run script additionally reads (agent.yml sets these facts).
@@ -312,9 +314,33 @@ RUN_CTX = {
 
 def _split(kw: dict) -> tuple[dict, dict]:
     """Split keyword overrides into (top-level template context, vault keys)."""
-    known = set(AGENT_CTX) | set(RUN_CTX) | {"skmon_parked", "skmon_pve_enabled", "skmon_data_node", "skmon_data_path"}
+    known = set(AGENT_CTX) | set(RUN_CTX) | {"skmon_parked", "skmon_pve_enabled", "skmon_profiling_enabled",
+                                             "skmon_data_node", "skmon_data_path"}
     top = {k: kw.pop(k) for k in list(kw) if k in known}
     return top, kw
+
+
+def agent_ctx(host: str, agent_mode: str | None = None, agent_light: bool | None = None, env: str = "prod", **skmon) -> dict:
+    """The agent template context for one inventory host, as agent.yml derives it (R75, R76).
+
+    Evaluates the "Derive this host's profiling settings" task over a fake inventory that holds
+    `host` (RFC 5737 address) next to the two fixture nodes; agent_mode and agent_light are the
+    host's hostvars. Returns AGENT_CTX overrides plus the vault keys, ready for cfg(), render_run_script().
+    """
+    hostvars = {**FAKE_HOSTVARS, host: {"ansible_host": "192.0.2.50", **FAKE_HOSTVARS.get(host, {})}}
+    if agent_mode is not None:
+        hostvars[host]["agent_mode"] = agent_mode
+    if agent_light is not None:
+        hostvars[host]["agent_light"] = agent_light
+    targets = agent_targets(hostvars, **skmon)
+    ctx = {**guard_facts(env=env, **skmon), "inventory_hostname": host, "skmon_agent_targets": targets,
+           "skmon_agent_self": next(t for t in targets if t["node"] == host), "skmon_agent_mode": None}
+    ctx["skmon_agent_mode"] = ctx["skmon_agent_self"]["agent_mode"]
+    jenv = ansible_environment()
+    for name, value in task_named(AGENT_PLAY, "Derive this host's profiling settings")["set_fact"].items():
+        ctx[name] = _eval_value(jenv, value, ctx)
+    return {"inventory_hostname": host, "agent_mode": ctx["skmon_agent_mode"], "agent_light": ctx["skmon_agent_self"]["light"],
+            "agent_profiling": ctx["skmon_agent_profiling"], "pyroscope_push_url": ctx["skmon_pyroscope_push_url"], **skmon}
 
 
 def cfg(env: str = "prod", **kw) -> str:

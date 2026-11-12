@@ -20,7 +20,7 @@ def test_parked_render_gives_zero_everywhere():
 
 def test_unparked_render_gives_one_everywhere_except_the_optional_pve_exporter():
     assert {n: v["deploy"]["replicas"] for n, v in s.services().items()} == {
-        **{n: 1 for n in s.services()}, "pve-exporter": 0}
+        **{n: 1 for n in s.services()}, "pve-exporter": 0, "pyroscope": 0}
 
 
 def test_parked_agent_runs_no_container():

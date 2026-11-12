@@ -175,6 +175,15 @@ scrape_configs:
       - targets: ['skmon-{{ env }}_bridge:8080']
         labels:
           estate: '{{ estate }}'
+{% if skmon_profiling_enabled | default(false) %}
+  # Pyroscope (PROFILING.enabled).
+  - job_name: pyroscope
+    scrape_interval: {{ normal }}
+    static_configs:
+      - targets: ['skmon-{{ env }}_pyroscope:{{ skmon.PYROSCOPE_PORT | default(4040) }}']
+        labels:
+          estate: '{{ estate }}'
+{% endif %}
   # Desired-versus-running Swarm state (spec 7.4).
   - job_name: skswarm
     scrape_interval: {{ fast }}

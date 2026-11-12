@@ -40,7 +40,8 @@ def test_tile_slugs_are_the_provisioners_slugs():
 
 def test_every_tile_has_an_icon_file_that_exists():
     for i in tile_items(PROFILING={"enabled": True}):
-        # pyroscope.png arrives with Task 22; until then the shared task falls back to the fa:// icon.
+        # The pinned dashboard-icons commit has no Pyroscope or Grafana Pyroscope icon, so the shared
+        # task keeps the fa:// fallback (no icon is invented; see shared/third_party/dashboard-icons/NOTICE.md).
         if i["key"] == "pyroscope":
             assert i["icon"].startswith("fa://")
             continue

@@ -86,7 +86,8 @@ docker service ls | grep "${STACK_NAME}"
 # Health check
 echo -e "${YELLOW}🏥 Checking service health...${NC}"
 {% set pve_on = skmon_pve_enabled | default(false) %}{# derived in tasks/facts.yml #}
-{% set waits = [('loki', 'LOKI', 'Loki'), ('grafana', 'GRAFANA', 'Grafana'), ('victoriametrics', 'VM', 'VictoriaMetrics'), ('alertmanager', 'ALERTMANAGER', 'Alertmanager'), ('vmalert', 'VMALERT', 'vmalert'), ('bridge', 'BRIDGE', 'skmon-bridge'), ('skswarm-exporter', 'SKSWARM', 'skswarm-exporter')] + ([('pve-exporter', 'PVE', 'pve-exporter')] if pve_on else []) %}
+{% set pyro_on = skmon_profiling_enabled | default(false) %}{# derived in tasks/facts.yml #}
+{% set waits = [('loki', 'LOKI', 'Loki'), ('grafana', 'GRAFANA', 'Grafana'), ('victoriametrics', 'VM', 'VictoriaMetrics'), ('alertmanager', 'ALERTMANAGER', 'Alertmanager'), ('vmalert', 'VMALERT', 'vmalert'), ('bridge', 'BRIDGE', 'skmon-bridge'), ('skswarm-exporter', 'SKSWARM', 'skswarm-exporter')] + ([('pve-exporter', 'PVE', 'pve-exporter')] if pve_on else []) + ([('pyroscope', 'PYROSCOPE', 'Pyroscope')] if pyro_on else []) %}
 {% for svc, var, label in waits %}
 
 # Check {{ label }}

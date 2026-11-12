@@ -95,6 +95,47 @@ prometheus.exporter.blackbox "probes" {
 }
 {% endif %}
 
+{% if container and not light and (agent_profiling | default(false) | bool) %}
+// Continuous profiling (opt-in per host, container mode only): the eBPF profiler samples every
+// container the Docker socket reports and pushes the profiles to Pyroscope on DATA_NODE.
+discovery.relabel "profiles" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_id"]
+    target_label  = "__container_id__"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_swarm_service_name"]
+    target_label  = "service_name"
+  }
+
+  rule {
+    source_labels = ["service_name", "__meta_docker_container_name"]
+    regex         = ";/?(.*)"
+    target_label  = "service_name"
+    replacement   = "$1"
+  }
+}
+
+pyroscope.write "estate" {
+  endpoint {
+    url = "{{ pyroscope_push_url }}"
+  }
+
+  external_labels = {
+    node   = "{{ inventory_hostname }}",
+    estate = {{ skmon.ESTATE | to_json }},
+  }
+}
+
+pyroscope.ebpf "containers" {
+  targets    = discovery.relabel.profiles.output
+  forward_to = [pyroscope.write.estate.receiver]
+}
+
+{% endif %}
 {% if not light %}
 // Logs: Docker container logs (container mode only) and the systemd journal, to Loki on DATA_NODE.
 loki.write "local" {

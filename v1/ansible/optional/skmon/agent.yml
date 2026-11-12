@@ -74,6 +74,16 @@
           {{ 'http://' ~ (skmon_agent_targets | selectattr('node', 'equalto', skmon_data_node) | first | default({'addr': skmon_data_node })).addr
              ~ ':' ~ (skmon.LOKI_PUSH_PORT | default(3100)) ~ '/loki/api/v1/push' }}
 
+    - name: Derive this host's profiling settings
+      # eBPF profiling: PROFILING.enabled, this host listed in PROFILING.hosts, container mode and
+      # not a light agent (R75; the guard fails a listed systemd host). Profiles are pushed to
+      # Pyroscope on DATA_NODE's agent address (its own name when DATA_NODE runs no agent), on PYROSCOPE_PORT.
+      set_fact:
+        skmon_agent_profiling: "{{ skmon_profiling_enabled and inventory_hostname in skmon_profiling_hosts and skmon_agent_mode == 'container' and not skmon_agent_self.light }}"
+        skmon_pyroscope_push_url: >-
+          {{ 'http://' ~ (skmon_agent_targets | selectattr('node', 'equalto', skmon_data_node) | first | default({'addr': skmon_data_node })).addr
+             ~ ':' ~ (skmon.PYROSCOPE_PORT | default(4040)) }}
+
     - name: Restrict the agent port (and DATA_NODE's published ports) to the estate addresses
       # Rules stay while parked; state absent on a systemd host removes unit, script, hooks and chain.
       include_tasks: "{{ playbook_dir }}/tasks/port_allowlist.yml"
@@ -89,7 +99,8 @@
         agent_light: "{{ skmon_agent_self.light }}"
         agent_is_data_node: "{{ inventory_hostname == skmon_data_node }}"
         agent_is_storage: "{{ skmon_agent_self.role == 'storage' }}"
-        agent_profiling: false
+        agent_profiling: "{{ skmon_agent_profiling }}"
+        pyroscope_push_url: "{{ skmon_pyroscope_push_url }}"
         loki_push_url: "{{ skmon_loki_push_url }}"
         probes: "{{ skmon_agent_probes }}"
 
@@ -99,7 +110,7 @@
         skmon_agent_config_hash: >-
           {{ (skmon_agent_config
               ~ lookup('template', playbook_dir + '/src/config/skmon/alloy/skmon-alloy-run.sh.j2',
-                       template_vars={'skmon_agent_config_hash': ''}))
+                       template_vars={'skmon_agent_config_hash': '', 'agent_profiling': skmon_agent_profiling}))
              | hash('sha256') }}
 
     - name: Create the agent config and state directories
@@ -140,6 +151,8 @@
         owner: root
         group: root
         mode: "0750"
+      vars:
+        agent_profiling: "{{ skmon_agent_profiling }}"
       when: skmon_agent_mode == 'container'
 
     - name: Start, replace or remove the agent container

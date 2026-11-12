@@ -34,6 +34,9 @@ docker rm -f skmon-{{ env }}-alloy >/dev/null 2>&1 || true
 # systemd collector (failed units) and carries no :ro, because :ro does not stop connect()
 # on a socket. The system bus is no alternative: on AppArmor hosts dbus-daemon refuses
 # docker-default peers.
+# Profiling hosts (PROFILING.hosts, container mode only, R75) add the three capabilities the
+# eBPF profiler needs and 640m of memory. Never --privileged.
+{% set profiling = agent_profiling | default(false) | bool %}
 docker run -d \
   --name skmon-{{ env }}-alloy \
   --label skmon.config-hash={{ skmon_agent_config_hash }} \
@@ -41,9 +44,14 @@ docker run -d \
   --pid host \
   --cgroupns host \
   --restart unless-stopped \
-  --memory 384m \
+  --memory {{ '640m' if profiling else '384m' }} \
   --memory-reservation 128m \
   --cpus 0.5 \
+{% if profiling %}
+  --cap-add BPF \
+  --cap-add PERFMON \
+  --cap-add SYS_ADMIN \
+{% endif %}
   -v /proc:/host/proc:ro \
   -v /sys:/host/sys:ro \
   -v /:/rootfs:ro \

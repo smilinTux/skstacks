@@ -27,12 +27,12 @@ datasources:
     editable: false
     jsonData:
       maxLines: 1000
-{% if (skmon.PROFILING | default({})).enabled | default(false) | bool %}
+{% if skmon_profiling_enabled | default(false) %}
 
   - name: Pyroscope
     uid: skmon-pyroscope
     type: grafana-pyroscope-datasource
     access: proxy
-    url: http://skmon-{{ env }}_pyroscope:4040
+    url: http://skmon-{{ env }}_pyroscope:{{ skmon.PYROSCOPE_PORT | default(4040) }}
     editable: false
 {% endif %}

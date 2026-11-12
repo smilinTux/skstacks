@@ -27,7 +27,7 @@ def walk(node):
 
 def test_service_set():
     assert set(services()) == {"victoriametrics", "loki", "grafana", "alertmanager", "vmalert", "bridge",
-                                  "socket-proxy", "skswarm-exporter", "pve-exporter"}
+                                  "socket-proxy", "skswarm-exporter", "pve-exporter", "pyroscope"}
 
 
 def test_alert_path_reads_nothing_from_var_data():
@@ -55,7 +55,7 @@ def test_local_volumes_under_data_path():
 
 
 def test_pinned_to_data_node():
-    for n in (*STATEFUL, "vmalert", "bridge"):
+    for n in (*STATEFUL, "vmalert", "bridge", "pyroscope"):
         assert f"node.hostname == {DATA_NODE}" in services()[n]["deploy"]["placement"]["constraints"], n
 
 
@@ -90,7 +90,7 @@ def test_limits_match_spec_13():
             "grafana": ("128M", "512M", "0.5"), "alertmanager": ("32M", "128M", "0.25"),
             "vmalert": ("32M", "128M", "0.25"), "bridge": ("16M", "64M", "0.1"),
             "socket-proxy": ("16M", "64M", "0.05"), "skswarm-exporter": ("16M", "64M", "0.05"),
-            "pve-exporter": ("32M", "128M", "0.1")}
+            "pve-exporter": ("32M", "128M", "0.1"), "pyroscope": ("256M", "1G", "0.5")}
     for n, (res, lim, cpu) in want.items():
         r = services()[n]["deploy"]["resources"]
         assert (r["reservations"]["memory"], r["limits"]["memory"], str(r["limits"]["cpus"])) == (res, lim, cpu), n
@@ -138,10 +138,10 @@ def test_replicas_string_zero_parks_everything(r):
     assert all(s["deploy"]["replicas"] == 0 for s in services(replicas=r).values())
 
 
-def test_default_is_one_replica_except_the_optional_pve_exporter():
+def test_default_is_one_replica_except_the_optional_pve_exporter_and_pyroscope():
     s = services()
-    assert s["pve-exporter"]["deploy"]["replicas"] == 0
-    assert all(v["deploy"]["replicas"] == 1 for n, v in s.items() if n != "pve-exporter")
+    assert s["pve-exporter"]["deploy"]["replicas"] == 0 and s["pyroscope"]["deploy"]["replicas"] == 0
+    assert all(v["deploy"]["replicas"] == 1 for n, v in s.items() if n not in ("pve-exporter", "pyroscope"))
 
 
 def test_grafana_plugins_default_empty_and_knob_works():

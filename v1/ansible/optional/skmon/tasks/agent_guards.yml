@@ -46,3 +46,22 @@
       inventory host to its Swarm hostname (keep the address in ansible_host).
   # Parking is the emergency stop and must stay usable on a mismatched inventory.
   when: not skmon_parked
+
+# eBPF profiling runs in the container-mode agent only (R75): a systemd-mode agent has no
+# capability set to add and light hosts run no profiler. Parking is the emergency stop and
+# is never blocked by this.
+- name: Require every PROFILING.hosts entry to be a container-mode agent
+  assert:
+    that:
+      - >-
+        skmon_agent_targets
+        | selectattr('agent_mode', 'equalto', 'systemd')
+        | map(attribute='node') | select('in', skmon_profiling_hosts) | list | length == 0
+    fail_msg: >-
+      PROFILING.hosts lists systemd-mode agent host(s)
+      {{ skmon_agent_targets | selectattr('agent_mode', 'equalto', 'systemd')
+         | map(attribute='node') | select('in', skmon_profiling_hosts) | join(', ') }}.
+      eBPF profiling runs only in a container-mode agent (the container gets CAP_BPF, CAP_PERFMON and
+      CAP_SYS_ADMIN, a systemd unit does not). Remove them from skmon.PROFILING.hosts, or set hostvar
+      agent_mode to container.
+  when: not skmon_parked and skmon_profiling_enabled

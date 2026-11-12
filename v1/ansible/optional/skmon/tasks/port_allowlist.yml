@@ -10,7 +10,7 @@
 #   skmon_fw_state  absent removes the unit, script, hooks and chain (default present)
 # Needs skmon_agent_targets (tasks/agent_targets.yml) and skmon_data_node (tasks/facts.yml).
 # Allowed sources are the agent addresses of skmon_agent_targets (estate addresses) for the
-# agent, Loki and Pyroscope ports, and skmon.HEALTHZ_ALLOW for /healthz. An address that is not
+# agent and Loki ports (Pyroscope: the profiling agents only), and skmon.HEALTHZ_ALLOW for /healthz. An address that is not
 # an IPv4 literal is refused here (iptables -s would resolve a name once at apply time): this
 # role refuses, it does not resolve. Parking leaves the rules in place. IPv4 only.
 - name: Require IPv4 literal sources for the skmon port allowlist
@@ -38,12 +38,21 @@
       {%- set out = {'agent': (skmon.AGENT_PORT | default(12345) | int)} -%}
       {%- if skmon_fw_is_data_node -%}
       {%- set _ = out.update({'loki': (skmon.LOKI_PUSH_PORT | default(3100) | int)}) -%}
-      {%- if (skmon.PROFILING | default({})).enabled | default(false) | bool -%}
+      {%- if skmon_profiling_enabled -%}
       {%- set _ = out.update({'pyroscope': (skmon.PYROSCOPE_PORT | default(4040) | int)}) -%}
       {%- endif -%}
       {%- set _ = out.update({'healthz': (skmon.HEALTHZ_PORT | default(9095) | int)}) -%}
       {%- endif -%}
       {{ out }}
+
+- name: Derive the addresses allowed to push profiles
+  # Pyroscope's port takes the profiling agents only (R76): PROFILING.hosts that run a full
+  # container-mode agent, the same hosts agent.yml gives the eBPF profiler.
+  set_fact:
+    skmon_fw_profiling_addrs: >-
+      {{ skmon_agent_targets | selectattr('node', 'in', skmon_profiling_hosts)
+         | selectattr('agent_mode', 'equalto', 'container') | rejectattr('light')
+         | map(attribute='addr') | unique | list }}
 
 - name: Check whether Docker is installed on the firewall node
   shell: command -v docker >/dev/null 2>&1 && echo yes || echo no
