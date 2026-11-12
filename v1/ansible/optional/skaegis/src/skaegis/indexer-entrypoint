@@ -1,0 +1,101 @@
+#!/bin/bash
+# indexer-entrypoint: the skaegis wrapper around the upstream wazuh-indexer
+# entrypoint. Installed by the skaegis deploy (copied verbatim) and set as the
+# indexer service's entrypoint; it ends by exec'ing the image's own
+# /entrypoint.sh with the original command, so the indexer itself runs exactly
+# as upstream ships it.
+#
+# What it adds, every start:
+#  1. internal_users.yml is generated from the vault (admin and kibanaserver
+#     only, no demo accounts), hashed with the image's own hash.sh from
+#     environment variables, so no password ever sits in a file or on argv.
+#  2. config.yml (auth domains, OIDC) and roles_mapping.yml (SSO admin
+#     groups) rendered by the play are copied into the security config dir.
+#  3. In the background, once the node answers, securityadmin.sh pushes that
+#     dir into the security index (SKAEGIS_SECURITYADMIN=1, the default), so
+#     a changed vault password or group mapping takes effect on the restart
+#     the deploy forces. The files are the source of truth: a change made in
+#     the dashboard's security UI is overwritten at the next start.
+set -euo pipefail
+
+INSTALL=/usr/share/wazuh-indexer
+# Where wazuh-indexer 4.14 keeps the security config it initializes the
+# security index from (allow_default_init_securityindex) on the first start.
+SEC_DIR="$INSTALL/config/opensearch-security"
+CERTS="$INSTALL/config/certs"
+SRC=/skaegis-config
+export JAVA_HOME="$INSTALL/jdk"
+
+log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) skaegis indexer-entrypoint: $*"; }
+
+hash_env() {  # hash_env VAR -> bcrypt hash of $VAR on stdout
+    local h
+    h=$(bash "$INSTALL/plugins/opensearch-security/tools/hash.sh" -env "$1" 2>/dev/null | grep -E '^\$2[aby]\$' | tail -n 1)
+    [ -n "$h" ] || { log "ERROR: hash.sh produced no hash for $1"; return 1; }
+    printf '%s' "$h"
+}
+
+for v in SKAEGIS_ADMIN_PASSWORD SKAEGIS_KIBANASERVER_PASSWORD; do
+    [ -n "${!v:-}" ] || { log "ERROR: $v is empty (indexer.env)"; exit 1; }
+done
+
+admin_hash=$(hash_env SKAEGIS_ADMIN_PASSWORD)
+kibana_hash=$(hash_env SKAEGIS_KIBANASERVER_PASSWORD)
+unset SKAEGIS_ADMIN_PASSWORD SKAEGIS_KIBANASERVER_PASSWORD
+
+umask 077
+tmp="$SEC_DIR/.internal_users.yml.new"
+cat >"$tmp" <<EOF
+---
+_meta:
+  type: "internalusers"
+  config_version: 2
+
+admin:
+  hash: "$admin_hash"
+  reserved: true
+  backend_roles:
+  - "admin"
+  description: "skaegis internal admin (manager filebeat, break-glass login)"
+
+kibanaserver:
+  hash: "$kibana_hash"
+  reserved: true
+  description: "skaegis dashboard server account"
+EOF
+mv -f "$tmp" "$SEC_DIR/internal_users.yml"
+# no -o/-g and no chown: the indexer runs as uid 1000 (wazuh-indexer), which
+# may not change ownership, and the files it writes are already its own
+install -m 0640 "$SRC/config.yml" "$SEC_DIR/config.yml"
+install -m 0640 "$SRC/roles_mapping.yml" "$SEC_DIR/roles_mapping.yml"
+chmod 0640 "$SEC_DIR/internal_users.yml"
+log "security config staged (internal users: admin, kibanaserver)"
+
+apply_security() {
+    local i
+    for i in $(seq 1 120); do
+        if curl -sk -o /dev/null --max-time 5 \
+            --cacert "$CERTS/root-ca.pem" --cert "$CERTS/admin.pem" --key "$CERTS/admin-key.pem" \
+            https://127.0.0.1:9200/_cluster/health; then
+            break
+        fi
+        sleep 5
+    done
+    for i in 1 2 3; do
+        if bash "$INSTALL/plugins/opensearch-security/tools/securityadmin.sh" \
+            -cd "$SEC_DIR/" -icl -nhnv -h 127.0.0.1 -p 9200 \
+            -cacert "$CERTS/root-ca.pem" -cert "$CERTS/admin.pem" -key "$CERTS/admin-key.pem" >/tmp/skaegis-securityadmin.log 2>&1; then
+            log "securityadmin applied the security config"
+            return 0
+        fi
+        sleep 20
+    done
+    log "ERROR: securityadmin failed 3 times, see /tmp/skaegis-securityadmin.log in this container"
+    return 1
+}
+
+if [ "${SKAEGIS_SECURITYADMIN:-1}" = 1 ]; then
+    apply_security &
+fi
+
+exec /entrypoint.sh "$@"

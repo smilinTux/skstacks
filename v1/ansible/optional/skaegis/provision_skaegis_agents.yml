@@ -1,0 +1,276 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# provision_skaegis_agents: install and enrol the upstream Wazuh agent on
+# Debian/Ubuntu hosts so skaegis can see their packages and CVEs. This is NOT
+# a swarm deploy: it runs against whatever inventory group holds the hosts an
+# instance's skaegis should watch, one estate at a time, with the same
+# inventory discipline as provision_skpatch_hosts_nodes.yml (limit with -l,
+# per-host opt-out in group_vars).
+#
+# Idempotent and reversible: rerun with the same vars to converge, or with
+# skaegis_agents_provision_state=absent to stop, purge and unregister the
+# agent package and the Wazuh apt source on every targeted host. The agent's
+# record on the manager is removed separately (SOP.md "Remove an agent").
+#
+# The agent package is pinned (AGENT_VERSION, default the manager's 4.14.10-1)
+# and held with apt-mark: an agent newer than the manager is unsupported, and
+# skpatch-hosts' nightly full-upgrade must not move it. Bump it together with
+# the manager images.
+#
+# Windows hosts take the MeshCentral (skrac) rail instead:
+# src/skaegis/windows/install-wazuh-agent.ps1, see SOP.md "Windows agents".
+#
+# Usage:
+#   ansible-playbook -i envs/prod/inventory.ini \
+#     framework/v1/ansible/optional/skaegis/provision_skaegis_agents.yml \
+#     -l <estate-inventory-group> \
+#     --vault-password-file ~/.vault_pass_env/.<instance>_prod_vault_pass
+#   # remove everywhere this played against:
+#   ansible-playbook ... -e skaegis_agents_provision_state=absent
+- hosts: "{{ skaegis_agents_provision_hosts | default('all') }}"
+  become: true
+  vars:
+    app: skaegis
+    env: "{{ skaegis_agents_provision_env | default('prod') }}"
+    service_name: skaegis
+    service_type: optional
+    # skaegis_agents_provision_state (not ska_agent_state) is the external
+    # override: a play var cannot default from itself.
+    ska_agent_state: "{{ skaegis_agents_provision_state | default('present') }}"
+    # Wazuh's package signing key (packages.wazuh.com/key/GPG-KEY-WAZUH),
+    # checked by fingerprint before apt trusts it.
+    ska_wazuh_signer_fpr: "0DCFCA5547B19D2A6099506096B3EE5F29111145"
+    ska_wazuh_key_url: "https://packages.wazuh.com/key/GPG-KEY-WAZUH"
+    ska_wazuh_apt: "https://packages.wazuh.com/4.x/apt/"
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Resolve the agent settings
+      set_fact:
+        ska_agent_skip: "{{ (skaegis_agent_enabled | default(true) | bool) == false }}"
+        ska_agent_version: "{{ skaegis.AGENT_VERSION | default('4.14.10-1', true) | string }}"
+        ska_agent_manager: "{{ skaegis.AGENT_MANAGER_ADDRESS | default('', true) | string }}"
+        ska_agent_port: "{{ skaegis.AGENT_PORT | default(1514, true) | int }}"
+        ska_enrol_port: "{{ skaegis.ENROLMENT_PORT | default(1515, true) | int }}"
+        # Per-host group (group_vars skaegis_agent_group) wins over the
+        # instance default.
+        ska_agent_group: "{{ skaegis_agent_group | default(skaegis.AGENT_GROUP | default('default', true)) }}"
+      tags: [config]
+
+    - name: Fail loudly on a vault that cannot enrol agents (state=present)
+      assert:
+        that:
+          - skaegis is defined and skaegis is mapping
+          - ska_agent_manager is match('^[A-Za-z0-9][A-Za-z0-9.:-]*$')
+          - (skaegis.ENROLMENT_PASSWORD | default('', true) | string | length) >= 16
+          - ska_agent_version is match('^4\.[0-9]+\.[0-9]+-[0-9]+$')
+          - ska_agent_group is match('^[A-Za-z0-9_.,-]+$')
+        fail_msg: >-
+          ERROR: skaegis.AGENT_MANAGER_ADDRESS (the address of a swarm node the
+          agents reach on 1514/1515, never a public edge), ENROLMENT_PASSWORD
+          (16+ characters, the same value the skaegis deploy writes to the
+          manager), a 4.x AGENT_VERSION like 4.14.10-1 and a plain AGENT_GROUP
+          are required. See README.md "Enrol hosts".
+        quiet: true
+      when: ska_agent_state == 'present' and not ska_agent_skip
+      tags: [config]
+
+    - name: Refuse anything but Debian/Ubuntu (apt)
+      assert:
+        that:
+          - ansible_facts['os_family'] == 'Debian'
+        fail_msg: >-
+          {{ inventory_hostname }} is {{ ansible_facts['os_family'] }}: this
+          playbook installs the agent from Wazuh's apt repository only. Exclude
+          the host (-l, or skaegis_agent_enabled: false in its group_vars).
+        quiet: true
+      when: not ska_agent_skip
+
+  tasks:
+    - name: Report the posture for this host
+      debug:
+        msg: >-
+          {{ inventory_hostname }}: skaegis agent {{ 'SKIPPED (skaegis_agent_enabled: false)' if ska_agent_skip else ska_agent_state }}{{ (', version ' ~ ska_agent_version ~ ', manager ' ~ ska_agent_manager ~ ':' ~ ska_agent_port ~ ', group ' ~ ska_agent_group) if (ska_agent_state == 'present' and not ska_agent_skip) else '' }}.
+
+    - name: Converge the agent (present)
+      when: ska_agent_state == 'present' and not ska_agent_skip
+      block:
+        - name: Install the prerequisites
+          apt:
+            name: [gnupg, ca-certificates, curl]
+            state: present
+            update_cache: true
+            cache_valid_time: 3600
+
+        - name: Fetch the Wazuh package signing key
+          get_url:
+            url: "{{ ska_wazuh_key_url }}"
+            dest: /usr/share/keyrings/wazuh.asc
+            owner: root
+            group: root
+            mode: '0644'
+
+        - name: Read the fingerprint of the downloaded key
+          command: gpg --show-keys --with-colons /usr/share/keyrings/wazuh.asc
+          register: ska_key_info
+          changed_when: false
+
+        - name: Refuse a key that is not Wazuh's
+          assert:
+            that:
+              - ska_wazuh_signer_fpr in ska_key_info.stdout
+            fail_msg: >-
+              ERROR: /usr/share/keyrings/wazuh.asc does not carry the Wazuh
+              signing key {{ ska_wazuh_signer_fpr }}; refusing to add the apt
+              source. Remove the file and investigate before rerunning.
+            quiet: true
+
+        - name: Add the Wazuh apt source (signed-by that key only)
+          copy:
+            dest: /etc/apt/sources.list.d/wazuh.list
+            content: "deb [signed-by=/usr/share/keyrings/wazuh.asc] {{ ska_wazuh_apt }} stable main\n"
+            owner: root
+            group: root
+            mode: '0644'
+          register: ska_apt_source
+
+        - name: Install the pinned agent
+          # The package's own postinst reads these on a first install and
+          # writes the server address, the group and the enrolment password;
+          # the tasks below converge the same settings on every run.
+          apt:
+            name: "wazuh-agent={{ ska_agent_version }}"
+            state: present
+            update_cache: "{{ ska_apt_source is changed }}"
+            allow_downgrade: false
+            # the package is held (below): a version bump must move it anyway
+            allow_change_held_packages: true
+          environment:
+            WAZUH_MANAGER: "{{ ska_agent_manager }}"
+            WAZUH_MANAGER_PORT: "{{ ska_agent_port }}"
+            WAZUH_REGISTRATION_SERVER: "{{ ska_agent_manager }}"
+            WAZUH_REGISTRATION_PORT: "{{ ska_enrol_port }}"
+            WAZUH_REGISTRATION_PASSWORD: "{{ skaegis.ENROLMENT_PASSWORD }}"
+            WAZUH_AGENT_GROUP: "{{ ska_agent_group }}"
+            WAZUH_AGENT_NAME: "{{ inventory_hostname }}"
+          no_log: true
+          register: ska_agent_pkg
+
+        - name: Hold the agent at the pinned version (skpatch-hosts must not move it)
+          dpkg_selections:
+            name: wazuh-agent
+            selection: hold
+
+        - name: Point the agent at the manager (server address)
+          replace:
+            path: /var/ossec/etc/ossec.conf
+            regexp: '<address>[^<]*</address>'
+            replace: "<address>{{ ska_agent_manager }}</address>"
+          register: ska_conf_addr
+
+        - name: Point the agent at the manager (event port)
+          replace:
+            path: /var/ossec/etc/ossec.conf
+            regexp: '(<server>(?:(?!</server>)[\s\S])*?<port>)[0-9]+(</port>)'
+            replace: '\g<1>{{ ska_agent_port }}\g<2>'
+          register: ska_conf_port
+
+        - name: Write the enrolment password (root and the wazuh group only)
+          copy:
+            content: "{{ skaegis.ENROLMENT_PASSWORD }}\n"
+            dest: /var/ossec/etc/authd.pass
+            owner: root
+            group: wazuh
+            mode: '0640'
+          no_log: true
+          register: ska_authd
+
+        - name: Enable and (re)start the agent
+          systemd:
+            name: wazuh-agent
+            enabled: true
+            daemon_reload: "{{ ska_agent_pkg is changed }}"
+            state: "{{ 'restarted' if (ska_agent_pkg is changed or ska_conf_addr is changed or ska_conf_port is changed or ska_authd is changed) else 'started' }}"
+
+        - name: Wait for the agent to enrol (client.keys written)
+          stat:
+            path: /var/ossec/etc/client.keys
+          register: ska_keys
+          until: ska_keys.stat.exists and ska_keys.stat.size > 0
+          retries: 24
+          delay: 5
+          failed_when: false
+
+        - name: Report enrolment
+          debug:
+            msg: >-
+              {{ inventory_hostname }}: {{ 'enrolled' if (ska_keys.stat.exists | default(false) and ska_keys.stat.size | default(0) > 0) else 'NOT ENROLLED after 2 minutes: check that ' ~ ska_agent_manager ~ ':' ~ ska_enrol_port ~ ' is reachable from this host and that ENROLMENT_PASSWORD matches the manager (journalctl -u wazuh-agent, /var/ossec/logs/ossec.log)' }}.
+
+        - name: Fail when the agent did not enrol
+          assert:
+            that:
+              - ska_keys.stat.exists | default(false)
+              - ska_keys.stat.size | default(0) > 0
+            fail_msg: "{{ inventory_hostname }}: the agent did not enrol, see the message above."
+            quiet: true
+
+    - name: Remove the agent (absent)
+      when: ska_agent_state == 'absent' and not ska_agent_skip
+      block:
+        - name: Stop and disable the agent (if installed)
+          systemd:
+            name: wazuh-agent
+            state: stopped
+            enabled: false
+          failed_when: false
+
+        - name: Release the hold
+          command: apt-mark unhold wazuh-agent
+          register: ska_unhold_absent
+          changed_when: "'Canceled hold' in ska_unhold_absent.stdout"
+          failed_when: false
+
+        - name: Purge the agent package
+          apt:
+            name: wazuh-agent
+            state: absent
+            purge: true
+
+        - name: Remove the agent's leftover state directory
+          file:
+            path: /var/ossec
+            state: absent
+
+        - name: Remove the Wazuh apt source and key
+          file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /etc/apt/sources.list.d/wazuh.list
+            - /usr/share/keyrings/wazuh.asc
+
+        - name: Remind the operator about the manager-side record
+          debug:
+            msg: >-
+              {{ inventory_hostname }}: agent removed from the host. Its record
+              on the manager stays until removed there (SOP.md "Remove an
+              agent"), and shows as disconnected until then.

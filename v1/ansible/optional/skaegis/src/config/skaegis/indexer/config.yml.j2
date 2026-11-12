@@ -1,0 +1,53 @@
+{# skaegis: OpenSearch security config.yml for the wazuh-indexer. Two auth
+   domains: the internal user database (HTTP basic, order 0; challenge off in
+   oidc mode so it never steals the browser flow) for kibanaserver, the
+   manager's admin user and the break-glass login, and OpenID Connect against
+   sksso (order 1, AUTH_MODE oidc only), whose groups claim becomes the
+   backend roles roles_mapping.yml maps. No secret here: the indexer only
+   validates tokens against the issuer's JWKS. bin/indexer-entrypoint applies
+   it at every indexer start (securityadmin.sh), so this file is the source of
+   truth. A Jinja comment, so none of this reaches the rendered file. #}
+---
+_meta:
+  type: "config"
+  config_version: 2
+
+config:
+  dynamic:
+    http:
+      anonymous_auth_enabled: false
+      xff:
+        enabled: false
+    authc:
+      basic_internal_auth_domain:
+        description: "HTTP basic against the internal user database"
+        http_enabled: true
+        transport_enabled: true
+        order: 0
+        http_authenticator:
+          type: basic
+          challenge: {{ 'false' if ska_auth_mode == 'oidc' else 'true' }}
+        authentication_backend:
+          type: intern
+{% if ska_auth_mode == 'oidc' %}
+      openid_auth_domain:
+        description: "OpenID Connect against sksso (Authentik)"
+        http_enabled: true
+        transport_enabled: true
+        order: 1
+        http_authenticator:
+          type: openid
+          challenge: false
+          config:
+            subject_key: {{ ska_oidc_subject_claim | to_json }}
+            roles_key: {{ ska_oidc_groups_claim | to_json }}
+            openid_connect_url: {{ ska_oidc_discovery_url | to_json }}
+            openid_connect_idp:
+              enable_ssl: true
+              verify_hostnames: true
+{% if ska_extra_ca %}
+              pemtrustedcas_filepath: /usr/share/wazuh-indexer/config/certs/extra-ca.pem
+{% endif %}
+        authentication_backend:
+          type: noop
+{% endif %}

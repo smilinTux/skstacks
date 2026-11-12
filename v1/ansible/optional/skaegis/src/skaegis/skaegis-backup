@@ -1,0 +1,124 @@
+#!/bin/sh
+# skaegis-backup: the skaegis backup sidecar. Installed by the skaegis deploy
+# (copied verbatim) and run by the stack's `backup` service, which uses the
+# wazuh-manager image (already pulled, has curl, tar and gzip). POSIX sh.
+#
+#   skaegis-backup loop   sleep BACKUP_START_DELAY, then one run every
+#                         BACKUP_FREQUENCY seconds (the service's command)
+#   skaegis-backup once   one run now (manual use, skbackup hooks)
+#
+# One run does two things:
+#  1. A tar.gz of the manager state that cannot be rebuilt: etc/ (client.keys,
+#     the key of every enrolled agent; sslmanager.*, authd.pass, rules,
+#     decoders, groups), the API configuration (RBAC database) and the stack's
+#     internal certificates. Lose client.keys and every agent must re-enrol.
+#     Written to a hidden temp file, checked, then renamed into place, so a
+#     failed run never replaces a good archive. Root only (umask 077).
+#  2. An OpenSearch snapshot of the indexer (alerts, the vulnerability state,
+#     dashboards) into the fs repository at /backup/snapshots, taken through the
+#     snapshot API with the admin client certificate, never by copying a live
+#     data dir.
+# Archives and snapshots older than BACKUP_KEEP_DAYS are pruned only after a
+# good one of that kind was written, so a run of failures never ages out the
+# last good copy.
+set -u
+umask 077
+
+OUT=${SKAEGIS_BACKUP_OUT:-/backup}
+KEEP_DAYS=${BACKUP_KEEP_DAYS:-7}
+FREQUENCY=${BACKUP_FREQUENCY:-86400}
+START_DELAY=${BACKUP_START_DELAY:-300}
+SNAPSHOTS=${SKAEGIS_BACKUP_SNAPSHOTS:-1}
+INDEXER=${SKAEGIS_INDEXER_URL:-https://wazuh.indexer:9200}
+CERTS=${SKAEGIS_CERTS:-/skaegis-certs}
+REPO=skaegis-backup
+# Inside the indexer container (the path.repo in opensearch.yml).
+REPO_PATH=/var/lib/wazuh-indexer-snapshots
+
+log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) skaegis-backup: $*"; }
+
+api() {  # api METHOD PATH [BODY] -> body on stdout, nonzero on HTTP >= 300
+    m=$1; p=$2; b=${3:-}
+    code=$(curl -s -o /tmp/skaegis-api.out -w '%{http_code}' --max-time 3600 -X "$m" \
+        --cacert "$CERTS/root-ca.pem" --cert "$CERTS/admin.pem" --key "$CERTS/admin-key.pem" \
+        -H 'Content-Type: application/json' ${b:+--data "$b"} "$INDEXER$p") || code=000
+    cat /tmp/skaegis-api.out 2>/dev/null
+    rm -f /tmp/skaegis-api.out
+    [ "$code" -ge 200 ] 2>/dev/null && [ "$code" -lt 300 ]
+}
+
+archive_manager() {
+    stamp=$(date -u +%Y%m%dT%H%M%SZ)
+    final="$OUT/skaegis-manager-$stamp.tar.gz"
+    tmp="$OUT/.skaegis-manager-$stamp.tar.gz.partial"
+    st="$OUT/.skaegis-manager-$stamp.status"
+    rm -f "$tmp" "$st"
+    # tar | gzip as an explicit pipeline (see skrac-backup for why); POSIX sh
+    # has no pipefail, so tar's exit status goes through a status file.
+    { tar -C /src -cf - manager-etc manager-api certs; echo $? >"$st"; } | gzip -c >"$tmp"
+    rc=$(cat "$st" 2>/dev/null || echo 1)
+    rm -f "$st"
+    if [ "$rc" = 0 ] && [ -s "$tmp" ] && gzip -t "$tmp" \
+        && tar -tzf "$tmp" manager-etc/ossec.conf >/dev/null 2>&1; then
+        mv -f "$tmp" "$final"
+        log "wrote $final ($(wc -c <"$final") bytes)"
+        find "$OUT" -maxdepth 1 -type f -name 'skaegis-manager-*.tar.gz' -mtime +"$KEEP_DAYS" -exec rm -f {} \;
+        return 0
+    fi
+    rm -f "$tmp"
+    log "ERROR: manager archive failed, kept the previous archives"
+    return 1
+}
+
+snapshot_indexer() {
+    [ "$SNAPSHOTS" = 1 ] || return 0
+    api PUT "/_snapshot/$REPO" "{\"type\":\"fs\",\"settings\":{\"location\":\"$REPO_PATH\",\"compress\":true}}" >/dev/null \
+        || { log "ERROR: cannot register the snapshot repository (is the indexer up?)"; return 1; }
+    name="skaegis-$(date -u +%Y%m%dt%H%M%Sz)"
+    # Capture first, then match: a failed call is reported, never read as a
+    # mere "no match".
+    out=$(api PUT "/_snapshot/$REPO/$name?wait_for_completion=true" '{"include_global_state":false}') \
+        || { log "ERROR: snapshot $name request failed, kept the previous snapshots"; return 1; }
+    case "$out" in
+    *'"state":"SUCCESS"'*) log "snapshot $name complete" ;;
+    *) log "ERROR: snapshot $name did not complete, kept the previous snapshots"; return 1 ;;
+    esac
+    cutoff=$(( $(date -u +%s) - KEEP_DAYS * 86400 ))
+    api GET "/_snapshot/$REPO/_all" \
+        | tr '{' '\n' | sed -n 's/.*"snapshot":"\(skaegis-[^"]*\)".*"start_time_in_millis":\([0-9]*\).*/\1 \2/p' \
+        | while read -r snap ms; do
+            [ "$snap" = "$name" ] && continue
+            if [ $(( ms / 1000 )) -lt "$cutoff" ]; then
+                api DELETE "/_snapshot/$REPO/$snap" >/dev/null && log "pruned snapshot $snap"
+            fi
+        done
+    return 0
+}
+
+backup_once() {
+    rc=0
+    archive_manager || rc=1
+    snapshot_indexer || rc=1
+    return $rc
+}
+
+case "${1:-loop}" in
+once)
+    backup_once
+    ;;
+loop)
+    trap 'exit 0' TERM INT
+    log "first run in ${START_DELAY}s, then every ${FREQUENCY}s, keeping ${KEEP_DAYS} days"
+    sleep "$START_DELAY" &
+    wait $!
+    while :; do
+        backup_once || true
+        sleep "$FREQUENCY" &
+        wait $!
+    done
+    ;;
+*)
+    echo "usage: skaegis-backup [loop|once]" >&2
+    exit 2
+    ;;
+esac

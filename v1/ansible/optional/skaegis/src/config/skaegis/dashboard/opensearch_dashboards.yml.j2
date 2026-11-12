@@ -1,0 +1,39 @@
+{# skaegis: wazuh-dashboard opensearch_dashboards.yml. Upstream
+   single-node/config/wazuh_dashboard/opensearch_dashboards.yml, except TLS on
+   5601 is off (Traefik terminates TLS at the edge and reaches the dashboard
+   over the internal overlay network) and, in AUTH_MODE oidc, the OpenID login
+   against sksso. The client secret is NOT in this file: the dashboard expands
+   ${SKAEGIS_OIDC_CLIENT_SECRET} from its environment (dashboard.env, root
+   only). Basic auth stays enabled next to OpenID as the break-glass login
+   (the internal admin user). #}
+server.host: 0.0.0.0
+server.port: 5601
+server.name: {{ ska_host | to_json }}
+server.ssl.enabled: false
+opensearch.hosts: https://wazuh.indexer:9200
+opensearch.ssl.verificationMode: certificate
+opensearch.requestHeadersWhitelist: ["securitytenant","Authorization"]
+opensearch.ssl.certificateAuthorities: ["/usr/share/wazuh-dashboard/certs/root-ca.pem"]
+opensearch_security.multitenancy.enabled: false
+opensearch_security.readonly_mode.roles: ["kibana_read_only"]
+opensearch_security.cookie.secure: true
+opensearch_security.cookie.ttl: {{ ska_session_ttl_ms }}
+opensearch_security.session.ttl: {{ ska_session_ttl_ms }}
+opensearch_security.session.keepalive: true
+uiSettings.overrides.defaultRoute: /app/wz-home
+{% if ska_auth_mode == 'oidc' %}
+opensearch_security.auth.type: ["basicauth", "openid"]
+opensearch_security.auth.multiple_auth_enabled: true
+opensearch_security.openid.connect_url: {{ ska_oidc_discovery_url | to_json }}
+opensearch_security.openid.client_id: {{ ska_oidc_client_id | to_json }}
+opensearch_security.openid.client_secret: "${SKAEGIS_OIDC_CLIENT_SECRET}"
+opensearch_security.openid.scope: {{ ska_oidc_scope | to_json }}
+opensearch_security.openid.base_redirect_url: {{ ('https://' ~ ska_host) | to_json }}
+opensearch_security.openid.logout_url: {{ ska_oidc_logout_url | to_json }}
+opensearch_security.openid.verify_hostnames: true
+{% if ska_extra_ca %}
+opensearch_security.openid.root_ca: /usr/share/wazuh-dashboard/certs/extra-ca.pem
+{% endif %}
+{% else %}
+opensearch_security.auth.type: "basicauth"
+{% endif %}

@@ -226,6 +226,18 @@
         - templates
         - deploy
 
+    - name: skaegis (Wazuh dashboard) OAuth2 blueprint (sksso.SKAEGIS_OIDC_CLIENT_SECRET)
+      include_tasks:
+        file: tasks/skaegis_blueprint.yml
+        apply:
+          tags:
+            - templates
+            - deploy
+      when: sksso.SKAEGIS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0
+      tags:
+        - templates
+        - deploy
+
     - name: Branding pack (sksso.branding), files only
       include_tasks:
         file: tasks/branding.yml
@@ -273,6 +285,23 @@
       include_tasks: ../../shared/tasks/create_networks.yml
       tags:
         - networks
+
+    - name: Refuse a Postgres data directory from another major (fail closed, before the deploy)
+      include_tasks:
+        file: ../../shared/tasks/postgres_major_guard.yml
+        apply:
+          tags:
+            - deploy
+            - postgres-major
+      vars:
+        pg_guard_app: sksso
+        pg_guard_image: "{{ sksso.POSTGRES_IMAGE | default('postgres:18') }}"
+        pg_guard_data_path: "{{ sksso_postgres_data_path }}"
+        pg_guard_pin_var: sksso.POSTGRES_IMAGE
+        pg_guard_node: "{{ (sksso.DATA_NODE | default('', true)) if not sksso_postgres_data_path.startswith('/var/data/') else '' }}"
+      tags:
+        - deploy
+        - postgres-major
 
     - name: Deploy {{ app }} stack
       shell: |

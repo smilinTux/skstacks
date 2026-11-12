@@ -1,0 +1,51 @@
+# sksso.SKAEGIS_OIDC_CLIENT_SECRET, before the stack deploy: render the
+# Authentik blueprint that gives skaegis (the Wazuh dashboard) its OpenID
+# login (skaegis.AUTH_MODE: oidc, the skaegis default). The blueprint lives in
+# /var/data/config/sksso-<env>/blueprints (mounted at /blueprints/custom in
+# server and worker); the worker applies it. The client secret reaches
+# Authentik as the SKAEGIS_OIDC_CLIENT_SECRET env var (see sksso.env.j2) and
+# is read with !Env, so it is not in the blueprint file. Unlike the
+# skpatch-hosts blueprint, this one also binds the application to skadmin:
+# skaegis is admin-only (APPLICATION_ACCESS_SSO_STANDARD) and must stay
+# closed even when its portal tile is switched off. See the README section
+# "skaegis (OIDC) login".
+
+- name: Resolve the skaegis OIDC settings
+  set_fact:
+    sksso_skaegis_base: "{{ sksso.DOMAIN if (sksso.CLOUDFLARED | default(false) | bool) else (sksso.CLUSTERNAME ~ '.' ~ sksso.DOMAIN) }}"
+    sksso_skaegis_client_id: "{{ sksso.SKAEGIS_OIDC_CLIENT_ID | default('skaegis' ~ ('' if env == 'prod' else '-' ~ env), true) }}"
+    sksso_skaegis_app_name: "{{ sksso.SKAEGIS_APP_NAME | default('skaegis', true) }}"
+  no_log: true
+
+- name: Resolve the skaegis public host
+  set_fact:
+    sksso_skaegis_host: "{{ sksso.SKAEGIS_HOST | default('skaegis' ~ ('' if env == 'prod' else '-' ~ env) ~ '.' ~ sksso_skaegis_base, true) }}"
+  no_log: true
+
+- name: Check the skaegis OIDC vault keys
+  assert:
+    that:
+      - "(sksso.SKAEGIS_OIDC_CLIENT_SECRET | default('') | string | length) >= 32"
+      - "sksso_skaegis_host is match('^[A-Za-z0-9][A-Za-z0-9.-]*$')"
+      - "sksso_skaegis_client_id is match('^[a-z0-9][a-z0-9-]*$')"
+    fail_msg: >-
+      sksso.SKAEGIS_OIDC_CLIENT_SECRET needs 32+ characters (openssl rand
+      -hex 32, the same value as skaegis.OIDC_CLIENT_SECRET), SKAEGIS_HOST
+      a plain host name and SKAEGIS_OIDC_CLIENT_ID a lowercase slug.
+    quiet: true
+
+- name: Create the Authentik blueprints directory
+  file:
+    path: /var/data/config/{{ app }}-{{ env }}/blueprints
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Render the skaegis-oidc blueprint (no secret inside)
+  template:
+    src: "{{ playbook_dir }}/src/config/{{ app }}/blueprints/skaegis-oidc.yaml.j2"
+    dest: /var/data/config/{{ app }}-{{ env }}/blueprints/skaegis-oidc.yaml
+    owner: root
+    group: root
+    mode: '0644'

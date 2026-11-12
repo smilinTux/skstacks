@@ -1,0 +1,45 @@
+{# skaegis: OpenSearch security roles_mapping.yml. The upstream wazuh-indexer
+   4.14.10 defaults minus every demo account (no kibanaro, logstash, readall
+   or snapshotrestore users exist here), plus the SSO admin mapping: the groups
+   in ska_admin_groups (ACCESS_MODE admin-only: skadmin, per
+   APPLICATION_ACCESS_SSO_STANDARD; never "authentik Admins") arrive as backend
+   roles through the OIDC groups claim and get all_access and wazuh_ui_admin.
+   A login that maps to no role gets nothing. #}
+---
+_meta:
+  type: "rolesmapping"
+  config_version: 2
+
+all_access:
+  reserved: false
+  backend_roles:
+  - "admin"
+{% for g in ska_admin_groups %}
+  - {{ g | to_json }}
+{% endfor %}
+  users:
+  - "admin"
+  description: "The internal admin user and the SSO admin groups"
+
+wazuh_ui_admin:
+  reserved: true
+  hidden: false
+  backend_roles:
+{% for g in ska_admin_groups %}
+  - {{ g | to_json }}
+{% endfor %}
+  hosts: []
+  users:
+  - "kibanaserver"
+  and_backend_roles: []
+
+kibana_server:
+  reserved: true
+  users:
+  - "kibanaserver"
+
+manage_ism:
+  reserved: true
+  hidden: false
+  users:
+  - "kibanaserver"

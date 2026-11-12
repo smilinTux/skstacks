@@ -55,7 +55,7 @@ def data_mount(svc, target):
 
 def test_default_keeps_nfs_paths_and_no_hostname_pin():
     s = services()
-    assert data_mount(s["postgres"], "/var/lib/postgresql/data") == ["/var/data/runtime/sksso-prod/postgres"]
+    assert data_mount(s["postgres"], "/var/lib/postgresql") == ["/var/data/runtime/sksso-prod/postgres"]
     assert data_mount(s["redis"], "/data") == ["/var/data/runtime/sksso-prod/redis"]
     for name, svc in s.items():
         assert not any(c.startswith("node.hostname ==") for c in constraints(svc)), name
@@ -77,7 +77,7 @@ def test_data_node_without_the_worker_constraint():
 
 def test_custom_paths_render():
     s = services(**LOCAL)
-    assert data_mount(s["postgres"], "/var/lib/postgresql/data") == ["/var/lib/sksso/postgres"]
+    assert data_mount(s["postgres"], "/var/lib/postgresql") == ["/var/lib/sksso/postgres"]
     assert data_mount(s["redis"], "/data") == ["/var/lib/sksso/redis"]
     assert "/var/data/runtime/sksso-prod/postgres" not in json.dumps(s)
 
