@@ -7,7 +7,7 @@ import pytest
 import yaml
 
 from skmon_support import (BASE, CFG, FAKE_SK_ALERT, GUARDS, PLAYS, ROLE, SECRET_TEMPLATES, compose, ctx_with_configs,
-                           eval_asserts, guard_facts, play_tasks, render, services, task_named)
+                           eval_asserts, guard_facts, all_play_tasks, load_tasks, play_tasks, render, services, task_named)
 
 facts = guard_facts
 UID = 65534
@@ -104,9 +104,28 @@ def test_plays_do_not_read_the_repo_root():
     assert "skstacks_repo_root" not in "".join(p.read_text() for p in PLAYS) + (ROLE / "tasks/facts.yml").read_text()
 
 
-@pytest.mark.parametrize("play", PLAYS, ids=lambda p: p.name)
+ROLE_PLAYS = sorted(ROLE.glob("*.yml"))
+
+
+def test_role_plays_are_the_env_plays_and_the_agent_play():
+    assert {p.name for p in ROLE_PLAYS} >= {*(p.name for p in PLAYS), "agent.yml"}
+
+
+@pytest.mark.parametrize("play", ROLE_PLAYS, ids=lambda p: p.name)
 def test_vault_load_is_no_log(play):
-    assert task_named(play, "Load vault file")["no_log"] is True
+    # every play file at the role root (env plays, agent.yml, any later one): include_vars returns
+    # the vault as ansible_facts, which -v prints, so every vault load is no_log
+    loads = [t for t in all_play_tasks(play) if "include_vars" in t and "vault" in str(t["include_vars"])]
+    assert loads, play.name
+    for t in loads:
+        assert t.get("no_log") is True, f"{play.name}: {t.get('name')}"
+
+
+def test_vault_load_in_a_task_file_is_no_log():
+    for f in sorted((ROLE / "tasks").glob("*.yml")):
+        for t in load_tasks(f):
+            if "include_vars" in t and "vault" in str(t["include_vars"]):
+                assert t.get("no_log") is True, f"{f.name}: {t.get('name')}"
 
 
 def test_the_fixture_stub_matches_the_base_pin():

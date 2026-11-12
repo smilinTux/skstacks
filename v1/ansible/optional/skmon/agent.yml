@@ -46,6 +46,7 @@
     - name: Load vault file
       include_vars: "{{ vault_file_path }}"
       when: vault_file_path is defined
+      no_log: true
 
     - name: Derive the skmon facts
       import_tasks: tasks/facts.yml

@@ -156,6 +156,13 @@ def play_tasks(path: pathlib.Path) -> list[dict]:
     raise LookupError(f"no skmon play in {path}")
 
 
+def all_play_tasks(path: pathlib.Path) -> list[dict]:
+    """Flat task list of every play in a playbook file (imports carry no tasks)."""
+    return [t for play in yaml.safe_load(path.read_text()) if isinstance(play, dict)
+            for t in _flatten([*(play.get("pre_tasks") or []), *(play.get("tasks") or []),
+                               *(play.get("post_tasks") or [])])]
+
+
 # --- guard evaluation (a small Ansible stand-in, not a full emulator) ---------
 
 FACTS_FILE = ROLE / "tasks/facts.yml"
