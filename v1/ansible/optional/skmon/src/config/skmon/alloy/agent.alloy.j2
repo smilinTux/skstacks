@@ -1,0 +1,177 @@
+// skmon {{ env }} agent for {{ inventory_hostname }}, rendered by agent.yml. Do not edit on the host.
+//
+// VictoriaMetrics pulls each exporter component at
+// /api/v0/component/<component id>/metrics on this agent's HTTP server (address and port
+// are command-line flags of the run script or unit). Series filters (systemd failed units,
+// container labels) are metric relabels on those scrape jobs in vm-scrape.yml, because a
+// relabel inside Alloy does not change what a component's own metrics path serves.
+// Logs are pushed to Loki on DATA_NODE through a write-ahead log.
+{% set container = agent_mode == 'container' %}
+{% set procfs = '/host/proc' if container else '/proc' %}
+{% set sysfs = '/host/sys' if container else '/sys' %}
+{% set rootfs = '/rootfs' if container else '/' %}
+{% set textfile_dir = (rootfs if container else '') ~ '/var/lib/node_exporter/textfile_collector' %}
+{% set collectors = ['cpu', 'diskstats', 'filesystem', 'loadavg', 'meminfo', 'netdev', 'netstat',
+                     'pressure', 'processes', 'stat', 'time', 'uname', 'vmstat', 'mountstats', 'nfs',
+                     'zfs', 'systemd', 'hwmon', 'textfile'] + (['nfsd'] if agent_is_storage else []) %}
+{% set cadvisor_off = ['disk', 'percpu', 'process', 'tcp', 'udp', 'advtcp', 'sched', 'hugetlb',
+                       'referenced_memory', 'cpu_topology', 'resctrl', 'memory_numa'] %}
+{% set swarm_labels = ['com.docker.stack.namespace', 'com.docker.swarm.service.name',
+                       'com.docker.swarm.task.name', 'com.docker.swarm.node.id'] %}
+
+// Host metrics. Everything not listed in set_collectors is off.
+prometheus.exporter.unix "host" {
+  set_collectors = [{% for c in collectors %}"{{ c }}"{{ ", " if not loop.last }}{% endfor %}]
+  procfs_path = "{{ procfs }}"
+  sysfs_path = "{{ sysfs }}"
+  rootfs_path = "{{ rootfs }}"
+
+  filesystem {
+    mount_timeout = "5s"
+  }
+
+  vmstat {
+    fields = "^(oom_kill|pgpg|pswp|pg.*fault).*"
+  }
+
+  // Unit state for every unit; vm-scrape.yml keeps only the state="failed" series.
+  systemd {
+  }
+
+  textfile {
+    directory = "{{ textfile_dir }}"
+  }
+}
+
+// Container metrics. Only the Swarm labels are kept as container_label_* series labels;
+// vm-scrape.yml renames them to stack, service and task_slot and drops the rest.
+prometheus.exporter.cadvisor "docker" {
+  docker_host = "unix:///var/run/docker.sock"
+  docker_only = true
+  housekeeping_interval = "15s"
+  disabled_metrics = [{% for m in cadvisor_off %}"{{ m }}"{{ ", " if not loop.last }}{% endfor %}]
+  store_container_labels = false
+  allowlisted_container_labels = [{% for l in swarm_labels %}"{{ l }}"{{ ", " if not loop.last }}{% endfor %}]
+}
+{% if agent_is_data_node %}
+
+// Probes, on the DATA_NODE agent only. A probe passes on 2xx or 3xx without following
+// redirects (a route behind forward auth stops at the login redirect), or on exactly 200
+// when the probe sets expect: 200.
+prometheus.exporter.blackbox "probes" {
+  config = {{ {"modules": {
+      "http_2xx_3xx": {"prober": "http", "timeout": "10s",
+                       "http": {"follow_redirects": false, "preferred_ip_protocol": "ip4",
+                                "valid_status_codes": [200, 201, 202, 203, 204, 206, 301, 302, 303, 307, 308]}},
+      "http_200": {"prober": "http", "timeout": "10s",
+                   "http": {"follow_redirects": false, "preferred_ip_protocol": "ip4",
+                            "valid_status_codes": [200]}}}} | to_json | to_json }}
+{% for p in probes %}
+
+  target {
+    name    = {{ p.name | to_json }}
+    address = {{ p.url | to_json }}
+    module  = "{{ 'http_200' if (p.expect | default('') | string) == '200' else 'http_2xx_3xx' }}"
+    labels  = {
+      severity = {{ p.severity | default('warning') | to_json }},
+    }
+  }
+{% endfor %}
+}
+{% endif %}
+
+// Logs: Docker container logs and the systemd journal, to Loki on DATA_NODE.
+loki.write "local" {
+  endpoint {
+    url = "{{ loki_push_url }}"
+  }
+
+  // Buffers pushes on local disk (under the agent's storage path) while Loki is unreachable.
+  wal {
+    enabled = true
+  }
+
+  external_labels = {
+    node   = "{{ inventory_hostname }}",
+    estate = {{ skmon.ESTATE | to_json }},
+  }
+}
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+// Container log streams get the same Swarm names as the container metrics.
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_stack_namespace"]
+    target_label  = "stack"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_swarm_service_name"]
+    target_label  = "service"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_swarm_task_name"]
+    regex         = "[^.]+\\.(\\d+)\\..+"
+    target_label  = "task_slot"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/?(.*)"
+    target_label  = "container"
+  }
+
+  rule {
+    target_label = "node"
+    replacement  = "{{ inventory_hostname }}"
+  }
+
+  rule {
+    target_label = "job"
+    replacement  = "docker"
+  }
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.relabel "journal" {
+  forward_to = []
+
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    target_label  = "unit"
+  }
+
+  rule {
+    source_labels = ["__journal_priority_keyword"]
+    target_label  = "level"
+  }
+
+  rule {
+    source_labels = ["__journal__transport"]
+    target_label  = "transport"
+  }
+}
+
+// The persistent journal. A host that keeps only the volatile journal (/run/log/journal)
+// ships no journal lines until journald storage is made persistent.
+loki.source.journal "journal" {
+  path          = "/var/log/journal"
+  max_age       = "12h"
+  relabel_rules = loki.relabel.journal.rules
+  labels        = {
+    job  = "journal",
+    node = "{{ inventory_hostname }}",
+  }
+  forward_to = [loki.write.local.receiver]
+}

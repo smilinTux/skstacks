@@ -1,0 +1,127 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# skmon agent play: one Grafana Alloy agent per agent host (spec 7.2). Imported last
+# by deploy_skmon-<env>.yml with `env` set; runs on group skmon_agent_hosts, which the
+# deploy play fills from skmon_agent_host_list when the inventory does not define it.
+#
+# Install mode per host: agent_mode (hostvar) container|systemd, default systemd for
+# skmon_extra_hosts members and container for every other host. Container mode keeps
+# one host container skmon-<env>-alloy running (config /etc/skmon-<env>/alloy, state
+# /var/lib/skmon-<env>/alloy, both local disk). Parked (skmon.replicas 0) removes the
+# container; the state directory and DATA_PATH are never deleted.
+- hosts: skmon_agent_hosts
+  become: true
+  gather_facts: false
+  vars:
+    app: skmon
+    service_name: skmon
+    service_type: optional
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Derive the skmon facts
+      import_tasks: tasks/facts.yml
+
+    - name: Derive the skmon agent targets
+      include_tasks: "{{ playbook_dir }}/tasks/agent_targets.yml"
+
+  tasks:
+    - name: Find this host's agent target
+      set_fact:
+        skmon_agent_self: "{{ skmon_agent_targets | selectattr('node', 'equalto', inventory_hostname) | first }}"
+
+    - name: Derive this host's agent settings
+      # probes: what the deploy play discovered on the selected manager (skmon_probes)
+      # when it ran in this run, else skmon.PROBES. Logs go to Loki on DATA_NODE's
+      # agent address (its own name when DATA_NODE runs no agent).
+      set_fact:
+        skmon_agent_mode: "{{ agent_mode | default('systemd' if inventory_hostname in (groups['skmon_extra_hosts'] | default([])) else 'container') }}"
+        skmon_agent_listen_addr: "{{ skmon_agent_self.addr }}"
+        skmon_agent_probes: >-
+          {{ hostvars[groups['selected_manager_group'][0]].skmon_probes
+             if (groups['selected_manager_group'] | default([])) and hostvars[groups['selected_manager_group'][0]].skmon_probes is defined
+             else (skmon.PROBES | default([])) }}
+        skmon_loki_push_url: >-
+          {{ 'http://' ~ (skmon_agent_targets | selectattr('node', 'equalto', skmon_data_node) | first | default({'addr': skmon_data_node })).addr
+             ~ ':' ~ (skmon.LOKI_PUSH_PORT | default(3100)) ~ '/loki/api/v1/push' }}
+
+    - name: Render the agent config
+      set_fact:
+        skmon_agent_config: "{{ lookup('template', playbook_dir + '/src/config/skmon/alloy/agent.alloy.j2') }}"
+      vars:
+        agent_mode: "{{ skmon_agent_mode }}"
+        agent_light: "{{ skmon_agent_self.light }}"
+        agent_is_data_node: "{{ inventory_hostname == skmon_data_node }}"
+        agent_is_storage: "{{ skmon_agent_self.role == 'storage' }}"
+        agent_profiling: false
+        loki_push_url: "{{ skmon_loki_push_url }}"
+        probes: "{{ skmon_agent_probes }}"
+
+    - name: Hash the agent config and run script
+      # The container is replaced only when this changes (label skmon.config-hash).
+      set_fact:
+        skmon_agent_config_hash: >-
+          {{ (skmon_agent_config
+              ~ lookup('template', playbook_dir + '/src/config/skmon/alloy/skmon-alloy-run.sh.j2',
+                       template_vars={'skmon_agent_config_hash': ''}))
+             | hash('sha256') }}
+
+    - name: Note hosts in systemd mode
+      debug:
+        msg: "{{ inventory_hostname }}: agent_mode systemd is not installed by this play yet, skipped"
+      when: skmon_agent_mode != 'container'
+
+    - name: Create the agent config and state directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+      loop:
+        - "/etc/skmon-{{ env }}/alloy"
+        - "/var/lib/skmon-{{ env }}/alloy"
+      when: skmon_agent_mode == 'container'
+
+    - name: Write the agent config
+      copy:
+        content: "{{ skmon_agent_config }}"
+        dest: "/etc/skmon-{{ env }}/alloy/config.alloy"
+        owner: root
+        group: root
+        mode: "0640"
+      when: skmon_agent_mode == 'container'
+
+    - name: Write the agent run script
+      template:
+        src: "{{ playbook_dir }}/src/config/skmon/alloy/skmon-alloy-run.sh.j2"
+        dest: "/usr/local/sbin/skmon-{{ env }}-alloy-run"
+        owner: root
+        group: root
+        mode: "0750"
+      when: skmon_agent_mode == 'container'
+
+    - name: Start, replace or remove the agent container
+      command: "/usr/local/sbin/skmon-{{ env }}-alloy-run"
+      register: skmon_agent_run
+      changed_when: "'changed' in skmon_agent_run.stdout_lines"
+      when: skmon_agent_mode == 'container'

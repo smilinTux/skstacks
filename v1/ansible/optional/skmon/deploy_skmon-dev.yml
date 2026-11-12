@@ -57,20 +57,7 @@
         - always
 
     - name: Derive the skmon agent scrape targets
-      # One item per agent host: node, addr (AGENT_LISTEN_ADDR override, else the
-      # inventory address), role (storage marks a storage host), light (SMART/NFS only).
-      set_fact:
-        skmon_agent_targets: >-
-          {%- set out = [] -%}
-          {%- for h in skmon_agent_host_list -%}
-          {%- set _ = out.append({
-                'node': h,
-                'addr': ((skmon.AGENT_LISTEN_ADDR | default({}))[h] | default(hostvars[h].ansible_host | default(h))),
-                'role': (hostvars[h].skmon_role | default('swarm')),
-                'light': (hostvars[h].agent_light | default(h in groups['skmon_extra_hosts'] | default([])) | bool)
-              }) -%}
-          {%- endfor -%}
-          {{ out }}
+      include_tasks: "{{ playbook_dir }}/tasks/agent_targets.yml"
       tags:
         - always
 
@@ -268,6 +255,17 @@
       tags:
         - deploy
 
+    - name: Put every skmon agent host in the agent play's group
+      # agent.yml runs on skmon_agent_hosts; an inventory without that group would
+      # otherwise match zero hosts and silently deploy no agent.
+      add_host:
+        name: "{{ item }}"
+        groups: skmon_agent_hosts
+      loop: "{{ skmon_agent_host_list }}"
+      changed_when: false
+      tags:
+        - always
+
     - name: Create or update the skmon portal tiles in Authentik
       # On by default (AUTHENTIK_TILE: true); opt out per instance with
       # AUTHENTIK_TILE: false. skmon bundles three separate web UIs
@@ -297,3 +295,8 @@
       tags:
         - config
         - authentik
+
+# Step 3: the Alloy agent on every agent host (a host container, or a systemd unit)
+- import_playbook: agent.yml
+  vars:
+    env: dev

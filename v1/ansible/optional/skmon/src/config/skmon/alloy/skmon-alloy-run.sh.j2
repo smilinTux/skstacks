@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# skmon {{ env }} agent container on {{ inventory_hostname }}, rendered by agent.yml.
+# Keeps one container skmon-{{ env }}-alloy running with the config in /etc/skmon-{{ env }}/alloy.
+# The container carries the hash of its config and of this script as a label, and is
+# replaced only when that hash changes (or the container is not running). Parked
+# (skmon.replicas 0): the container is removed. /var/lib/skmon-{{ env }}/alloy is never deleted.
+# Prints "changed" when it replaced or removed the container, "unchanged" otherwise.
+set -euo pipefail
+{% if skmon_parked %}
+
+if docker container inspect skmon-{{ env }}-alloy >/dev/null 2>&1; then
+  docker rm -f skmon-{{ env }}-alloy >/dev/null
+  echo changed
+else
+  echo unchanged
+fi
+exit 0
+{% else %}
+
+want='{{ skmon_agent_config_hash }}'
+have="$(docker container inspect -f '{% raw %}{{ index .Config.Labels "skmon.config-hash" }}{% endraw %}' skmon-{{ env }}-alloy 2>/dev/null || true)"
+running="$(docker container inspect -f '{% raw %}{{ .State.Running }}{% endraw %}' skmon-{{ env }}-alloy 2>/dev/null || true)"
+if [ "$have" = "$want" ] && [ "$running" = "true" ]; then
+  echo unchanged
+  exit 0
+fi
+
+docker rm -f skmon-{{ env }}-alloy >/dev/null 2>&1 || true
+# --cgroupns host: the cadvisor component reads every container's cgroup under /sys/fs/cgroup.
+# --stability.level experimental: the loki.write WAL block is experimental in Alloy.
+docker run -d \
+  --name skmon-{{ env }}-alloy \
+  --label skmon.config-hash={{ skmon_agent_config_hash }} \
+  --network host \
+  --pid host \
+  --cgroupns host \
+  --restart unless-stopped \
+  --memory 384m \
+  --memory-reservation 128m \
+  --cpus 0.5 \
+  -v /proc:/host/proc:ro \
+  -v /sys:/host/sys:ro \
+  -v /:/rootfs:ro \
+  -v /var/lib/docker/containers:/var/lib/docker/containers:ro \
+  -v /var/log:/var/log:ro \
+  -v /run/log/journal:/run/log/journal:ro \
+  -v /var/log/journal:/var/log/journal:ro \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  -v /etc/skmon-{{ env }}/alloy:/etc/alloy:ro \
+  -v /var/lib/skmon-{{ env }}/alloy:/var/lib/alloy \
+  {{ skmon.ALLOY_IMAGE | default('grafana/alloy:v1.21.3@sha256:8ab871206bd2d8f89277f53abffee5f452a293980788d52f85fa183a87a505a4') }} \
+  run \
+  --server.http.listen-addr={{ skmon_agent_listen_addr }}:{{ skmon.AGENT_PORT | default(12345) }} \
+  --storage.path=/var/lib/alloy \
+  --stability.level=experimental \
+  /etc/alloy/config.alloy
+echo changed
+{% endif %}

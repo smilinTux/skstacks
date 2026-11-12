@@ -1,0 +1,21 @@
+---
+# skmon agent targets, one item per agent host (skmon_agent_host_list, from facts.yml):
+#   node   inventory hostname (the `node` label on every series of that agent)
+#   addr   skmon.AGENT_LISTEN_ADDR[node] when set, else the inventory address
+#   role   hostvars skmon_role (storage marks a storage host), default swarm
+#   light  hostvars agent_light, default true for skmon_extra_hosts members
+# set_fact only, so the deploy plays (scrape targets) and agent.yml (listen and
+# Loki push addresses) derive it from this one place.
+- name: Derive the skmon agent scrape targets
+  set_fact:
+    skmon_agent_targets: >-
+      {%- set out = [] -%}
+      {%- for h in skmon_agent_host_list -%}
+      {%- set _ = out.append({
+            'node': h,
+            'addr': ((skmon.AGENT_LISTEN_ADDR | default({}))[h] | default(hostvars[h].ansible_host | default(h))),
+            'role': (hostvars[h].skmon_role | default('swarm')),
+            'light': (hostvars[h].agent_light | default(h in groups['skmon_extra_hosts'] | default([])) | bool)
+          }) -%}
+      {%- endfor -%}
+      {{ out }}

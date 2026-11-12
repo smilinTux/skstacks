@@ -81,7 +81,8 @@ def test_no_remote_write_or_federation():
 def test_only_keys_victoriametrics_accepts():
     doc = yaml.safe_load(render(SCRAPE, extra_ctx=CTX))
     assert set(doc) == {"global", "scrape_configs"} and set(doc["global"]) == {"scrape_interval"}
-    ok = {"job_name", "scrape_interval", "metrics_path", "static_configs", "dns_sd_configs", "relabel_configs"}
+    ok = {"job_name", "scrape_interval", "metrics_path", "static_configs", "dns_sd_configs", "relabel_configs",
+          "metric_relabel_configs"}
     assert all(set(j) <= ok for j in doc["scrape_configs"])
 
 
@@ -108,6 +109,8 @@ def test_agent_targets_derivation_rules():
 
 
 def test_plays_derive_targets_identically():
+    # the derivation lives in tasks/agent_targets.yml; every play includes that one file
     names = "Derive the skmon agent scrape targets"
-    sets = [next(t for t in play_tasks(p) if t.get("name") == names)["set_fact"] for p in PLAYS]
-    assert sets[0] == sets[1] == sets[2]
+    tasks = [next(t for t in play_tasks(p) if t.get("name") == names) for p in PLAYS]
+    assert tasks[0] == tasks[1] == tasks[2]
+    assert tasks[0]["include_tasks"] == "{{ playbook_dir }}/tasks/agent_targets.yml"

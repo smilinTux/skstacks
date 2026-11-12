@@ -57,8 +57,8 @@ FAKE_HOSTVARS = {
 
 
 def agent_targets(hostvars: dict = FAKE_HOSTVARS, **skmon) -> list[dict]:
-    """skmon_agent_targets as the plays derive it: evaluate the play's set_fact over a fake inventory."""
-    task = next(t for t in play_tasks(PLAYS[0]) if t.get("name") == "Derive the skmon agent scrape targets")
+    """skmon_agent_targets as the plays derive it: evaluate tasks/agent_targets.yml over a fake inventory."""
+    task = next(t for t in load_tasks(AGENT_TARGETS) if t.get("name") == "Derive the skmon agent scrape targets")
     groups = {"swarm_managers": list(hostvars)}
     facts = guard_facts(groups=groups, **skmon)
     jenv = ansible_environment()
@@ -200,3 +200,110 @@ def data_dir_items() -> list[dict]:
         for item in t.get("loop") or []:
             items.append({k: _eval_value(jenv, v, ctx) for k, v in item.items()})
     return items
+
+
+# --- the Alloy agent (agent.yml) ----------------------------------------------
+
+ALLOY = CFG / "alloy"
+AGENT_CONFIG = ALLOY / "agent.alloy.j2"
+AGENT_RUN = ALLOY / "skmon-alloy-run.sh.j2"
+AGENT_PLAY = ROLE / "agent.yml"
+AGENT_TARGETS = ROLE / "tasks/agent_targets.yml"
+
+# The agent template context agent.yml builds for one host (fake values only).
+AGENT_CTX = {
+    "inventory_hostname": "node-2.render.example.test",
+    "agent_mode": "container",
+    "agent_light": False,
+    "agent_is_data_node": False,
+    "agent_is_storage": False,
+    "agent_profiling": False,
+    "loki_push_url": "http://192.0.2.1:3100/loki/api/v1/push",
+    "probes": [],
+}
+# What the run script additionally reads (agent.yml sets these facts).
+RUN_CTX = {
+    "skmon_agent_listen_addr": "192.0.2.10",
+    "skmon_agent_config_hash": "0" * 64,
+}
+
+
+def _split(kw: dict) -> tuple[dict, dict]:
+    """Split keyword overrides into (top-level template context, vault keys)."""
+    known = set(AGENT_CTX) | set(RUN_CTX) | {"skmon_parked", "skmon_data_node", "skmon_data_path"}
+    top = {k: kw.pop(k) for k in list(kw) if k in known}
+    return top, kw
+
+
+def cfg(env: str = "prod", **kw) -> str:
+    """agent.alloy rendered for one host; overrides: AGENT_CTX keys or vault keys."""
+    top, vault = _split(dict(kw))
+    return render(AGENT_CONFIG, env=env, extra_ctx={**AGENT_CTX, **top}, **vault)
+
+
+def render_run_script(env: str = "prod", **kw) -> str:
+    """The rendered skmon-<env>-alloy-run script; overrides: context facts or vault keys."""
+    top, vault = _split(dict(kw))
+    return render(AGENT_RUN, env=env, extra_ctx={**AGENT_CTX, **RUN_CTX, **top}, **vault)
+
+
+class RunArgs:
+    """The options of a `docker run` command line: `a[flag]` is the last value,
+    `flag in a` tests presence, `a.getall(flag)` lists every value. A flag given
+    without a value (`--rm`) has the value True. Options after the image are the
+    container command's own (`--server.http.listen-addr=...`) and land here too."""
+
+    def __init__(self, pairs: list[tuple[str, object]], positional: list[str]):
+        self.pairs, self.positional = pairs, positional
+
+    def __getitem__(self, flag):
+        vals = self.getall(flag)
+        if not vals:
+            raise KeyError(flag)
+        return vals[-1]
+
+    def __contains__(self, flag) -> bool:
+        return any(f == flag for f, _ in self.pairs)
+
+    def getall(self, flag) -> list:
+        return [v for f, v in self.pairs if f == flag]
+
+
+# docker run options that take no value (everything else in the run line takes one).
+_DOCKER_BOOL_FLAGS = {"-d", "--detach", "--rm", "--privileged", "--init", "-i", "-t", "--read-only"}
+
+
+def _docker_run_tokens(script: str) -> list[str]:
+    import shlex
+    joined = script.replace("\\\n", " ")
+    lines = [l for l in joined.splitlines() if re.match(r"\s*docker run\b", l)]
+    if len(lines) != 1:
+        raise LookupError(f"expected exactly one `docker run` line, found {len(lines)}")
+    return shlex.split(lines[0])[2:]
+
+
+def run_script_args(**kw) -> RunArgs:
+    """Parse the rendered run script's `docker run` line (see RunArgs)."""
+    toks = _docker_run_tokens(render_run_script(**kw))
+    pairs, positional, i = [], [], 0
+    while i < len(toks):
+        t = toks[i]
+        if t.startswith("-") and "=" in t:
+            f, v = t.split("=", 1)
+            pairs.append((f, v))
+        elif t in _DOCKER_BOOL_FLAGS or not t.startswith("-"):
+            if t.startswith("-"):
+                pairs.append((t, True))
+            else:
+                positional.append(t)
+        else:
+            pairs.append((t, toks[i + 1]))
+            i += 1
+        i += 1
+    return RunArgs(pairs, positional)
+
+
+def mounts(**kw) -> list[str]:
+    """Every -v / --volume value of the rendered `docker run` line."""
+    a = run_script_args(**kw)
+    return [*a.getall("-v"), *a.getall("--volume")]

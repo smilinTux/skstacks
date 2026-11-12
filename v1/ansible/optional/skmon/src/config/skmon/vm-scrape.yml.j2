@@ -22,6 +22,19 @@ scrape_configs:
           role: '{{ t.role }}'
           estate: '{{ estate }}'
 {% endfor %}
+    # systemd: failed units only. The collector reports every unit in every state; mark
+    # the state="failed" series, drop the other node_systemd_unit_state series, then drop
+    # the mark. (A relabel inside Alloy would not change what this metrics path serves.)
+    metric_relabel_configs:
+      - source_labels: [__name__, state]
+        regex: 'node_systemd_unit_state;failed'
+        target_label: __tmp_systemd_keep
+        replacement: '1'
+      - source_labels: [__name__, __tmp_systemd_keep]
+        regex: 'node_systemd_unit_state;'
+        action: drop
+      - regex: __tmp_systemd_keep
+        action: labeldrop
 
   # Container metrics, every agent.
   - job_name: alloy-cadvisor
@@ -35,6 +48,19 @@ scrape_configs:
           role: '{{ t.role }}'
           estate: '{{ estate }}'
 {% endfor %}
+    # Container labels: the agent keeps only the Swarm ones; rename them to stack, service
+    # and task_slot (a replicated task's slot, from <service>.<slot>.<task id>) and drop every
+    # container_label_*. node is the target's own label above (the host's inventory name).
+    metric_relabel_configs:
+      - source_labels: [container_label_com_docker_stack_namespace]
+        target_label: stack
+      - source_labels: [container_label_com_docker_swarm_service_name]
+        target_label: service
+      - source_labels: [container_label_com_docker_swarm_task_name]
+        regex: '[^.]+\.(\d+)\..+'
+        target_label: task_slot
+      - regex: container_label_.*
+        action: labeldrop
 
   # The agents themselves (up, component health).
   - job_name: alloy-self
