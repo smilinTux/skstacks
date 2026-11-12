@@ -152,13 +152,13 @@ def test_authentik_host_knob_wins():
 
 def test_authentik_host_from_sksso_vault_like_sksso_routes():
     v = {"CLUSTERNAME": "c1", "DOMAIN": "example.test"}
-    assert _host(vault=v) == "sso.c1.example.test"
-    assert _host(env="dev", vault=v) == "sso-dev.c1.example.test"
-    assert _host(vault={**v, "CLOUDFLARED": True}) == "sso.example.test"
+    assert _host(vault=v, AUTHENTIK_HOST="") == "sso.c1.example.test"
+    assert _host(env="dev", vault=v, AUTHENTIK_HOST="") == "sso-dev.c1.example.test"
+    assert _host(vault={**v, "CLOUDFLARED": True}, AUTHENTIK_HOST="") == "sso.example.test"
 
 
 def test_authentik_host_empty_without_knob_or_vault():
-    assert _host() == ""
+    assert _host(AUTHENTIK_HOST="") == ""
 
 
 def test_authentik_probe_tasks_never_fail_the_deploy():
