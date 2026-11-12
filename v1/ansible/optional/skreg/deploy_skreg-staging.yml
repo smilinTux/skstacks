@@ -52,8 +52,10 @@
         attachable: true
         ipam_config:
           - subnet: "172.16.146.0/24"
-        driver_options:
-          encrypted: "false"
+        # No driver_options: an unencrypted overlay is the default, and a network
+        # created without the option (as on an existing instance) then reads as
+        # changed, so docker_network tries to recreate a network the registry is
+        # attached to and the deploy fails ("network ... is in use by service").
         scope: swarm
         state: present
       register: network_result
