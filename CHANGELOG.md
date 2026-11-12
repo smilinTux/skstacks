@@ -5,6 +5,16 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+### skhub: MariaDB buffer pool and memory limit are knobs
+
+- **skhub: `DB_INNODB_BUFFER_POOL_SIZE` and `DB_MEMORY_LIMIT`.** The db service took MariaDB's 128M
+  InnoDB buffer pool and a fixed 2G limit. On a hub with a large `oc_filecache` that cache misses
+  constantly, so authenticated WebDAV requests read from disk (found on a production estate with an
+  8 GB filecache table). Set `skhub.DB_INNODB_BUFFER_POOL_SIZE` (for example `1536M`) and, when it is
+  over about 1G, raise `skhub.DB_MEMORY_LIMIT` (default `2G`) to leave room for connections. Unset
+  keeps today's behaviour. Changing either restarts the db task on the next deploy. MariaDB can also
+  resize the pool online with `SET GLOBAL innodb_buffer_pool_size`, which a restart reverts.
+
 ### skmon v2, phase 1: VictoriaMetrics, Alloy agent, Loki and Grafana on local disk
 
 - **skmon: Prometheus, Promtail, node-exporter and cAdvisor are removed.** The stack is now

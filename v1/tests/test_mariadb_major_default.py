@@ -70,3 +70,24 @@ def test_db_stop_grace_period_is_a_knob():
 
 def test_db_stop_grace_period_empty_falls_back():
     assert _skhub_services(DB_STOP_GRACE_PERIOD="")["db"]["stop_grace_period"] == "120s"
+
+
+def _db_command(**skhub):
+    return _skhub_services(**skhub)["db"]["command"]
+
+
+def test_db_buffer_pool_defaults_to_mariadb_default():
+    assert not any(a.startswith("--innodb_buffer_pool_size") for a in _db_command())
+    assert not any(a.startswith("--innodb_buffer_pool_size") for a in _db_command(DB_INNODB_BUFFER_POOL_SIZE=""))
+
+
+def test_db_buffer_pool_is_a_knob():
+    assert "--innodb_buffer_pool_size=1536M" in _db_command(DB_INNODB_BUFFER_POOL_SIZE="1536M")
+    assert "--max_connections=500" in _db_command(DB_INNODB_BUFFER_POOL_SIZE="1536M")
+
+
+def test_db_memory_limit_is_a_knob():
+    db = lambda **k: _skhub_services(**k)["db"]["deploy"]["resources"]["limits"]["memory"]
+    assert db() == "2G"
+    assert db(DB_MEMORY_LIMIT="") == "2G"
+    assert db(DB_MEMORY_LIMIT="3G") == "3G"

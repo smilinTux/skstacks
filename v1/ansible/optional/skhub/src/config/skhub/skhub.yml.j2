@@ -172,6 +172,12 @@ services:
       - --wait_timeout=28800
       - --interactive_timeout=28800
       - --max_connections=500
+{% if skhub.DB_INNODB_BUFFER_POOL_SIZE | default('', true) %}
+      # The InnoDB cache. MariaDB's 128M default is far smaller than oc_filecache
+      # on a large hub (8 GB on one estate), and every PROPFIND then reads from disk.
+      # Keep it well under DB_MEMORY_LIMIT: connections need memory on top of it.
+      - --innodb_buffer_pool_size={{ skhub.DB_INNODB_BUFFER_POOL_SIZE }}
+{% endif %}
     networks:
       - skhub-{{ env }}
     volumes:
@@ -189,7 +195,7 @@ services:
           memory: 256M
           cpus: '.25'
         limits:
-          memory: 2G
+          memory: {{ skhub.DB_MEMORY_LIMIT | default('2G', true) }}
           cpus: '1.0'
     healthcheck:
       test: ["CMD-SHELL", "mariadb-admin ping -h localhost -u root -p\"$$MYSQL_ROOT_PASSWORD\""]
