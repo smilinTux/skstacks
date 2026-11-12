@@ -207,6 +207,27 @@
         - config
         - probes
 
+    # MonitorDiskFilling (rules/meta.yml.j2) watches the filesystem that holds DATA_PATH.
+    - name: Find the filesystem that holds DATA_PATH on the data node
+      command:
+        argv: ["findmnt", "-n", "-o", "TARGET", "-T", "{{ skmon_data_path }}"]
+      register: skmon_data_findmnt
+      delegate_to: "{{ skmon_data_node }}"
+      changed_when: false
+      failed_when: false
+      tags:
+        - config
+
+    - name: Set the DATA_PATH mountpoint
+      # The root filesystem when findmnt fails (DATA_PATH not created yet, findmnt missing).
+      set_fact:
+        skmon_data_mountpoint: >-
+          {{ (skmon_data_findmnt.stdout | default('', true) | trim)
+             if (skmon_data_findmnt.rc | default(1)) == 0 and (skmon_data_findmnt.stdout | default('', true) | trim) != ''
+             else '/' }}
+      tags:
+        - config
+
     - name: Render the {{ app }} Swarm config contents
       # Contents live in a variable (the compose template names each config after
       # the sha256 of its content) and are written to disk only so the docker CLI
@@ -216,6 +237,14 @@
           vm-scrape: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/vm-scrape.yml.j2') }}"
           loki: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/loki-config.yml.j2') }}"
           alertmanager: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/alertmanager-config.yml.j2') }}"
+          rules-node: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/rules/node.yml.j2') }}"
+          rules-storage: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/rules/storage.yml.j2') }}"
+          rules-http: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/rules/http.yml.j2') }}"
+          rules-cert: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/rules/cert.yml.j2') }}"
+          rules-capacity: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/rules/capacity.yml.j2') }}"
+          rules-container: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/rules/container.yml.j2') }}"
+          rules-meta: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/rules/meta.yml.j2') }}"
+          loki-rules: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/loki-rules/storage.yml.j2') }}"
       no_log: true
       tags:
         - config

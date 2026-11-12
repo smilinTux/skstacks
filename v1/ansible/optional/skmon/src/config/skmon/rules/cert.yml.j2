@@ -1,0 +1,30 @@
+# vmalert rules, class cert (spec 8). probe_ssl_earliest_cert_expiry is set by the
+# blackbox probes on https targets only.
+groups:
+  - name: skmon-cert
+    rules:
+      - alert: CertExpiringSoon
+        expr: probe_ssl_earliest_cert_expiry - time() < 14 * 86400
+        for: 10m
+        labels:
+          severity: warning
+          class: cert
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "The certificate of {{ $labels.instance }} expires in {{ $value | humanizeDuration }}."
+{% endraw %}
+          runbook: "Check why Traefik's ACME renewal has not replaced it (resolver logs, DNS challenge credentials)."
+
+      - alert: CertExpiringSoon
+        expr: probe_ssl_earliest_cert_expiry - time() < 3 * 86400
+        for: 10m
+        labels:
+          severity: critical
+          class: cert
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "The certificate of {{ $labels.instance }} expires in {{ $value | humanizeDuration }}."
+{% endraw %}
+          runbook: "Renew the certificate now: check Traefik's ACME resolver logs and its DNS challenge credentials."

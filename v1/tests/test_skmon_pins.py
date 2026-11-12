@@ -15,6 +15,7 @@ COMPOSE_KNOBS = {
     "GRAFANA_IMAGE": "grafana",
     "LOKI_IMAGE": "loki",
     "ALERTMANAGER_IMAGE": "alertmanager",
+    "VMALERT_IMAGE": "vmalert",
 }
 
 

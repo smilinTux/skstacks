@@ -133,6 +133,10 @@ services:
     configs:
       - source: loki
         target: /etc/loki/local-config.yaml
+      # The ruler's local storage reads <directory>/<tenant>/; auth_enabled is false, so
+      # the one tenant is "fake".
+      - source: loki-rules
+        target: /etc/loki/rules/fake/storage.yml
     ports:
       # Agents push logs here. The published port is the LOKI_PUSH_PORT knob, and
       # tasks/port_allowlist.yml restricts it to the estate addresses.
@@ -155,6 +159,47 @@ services:
         reservations:
           cpus: '{{ skmon.LOKI_CPU_RESERVATION | default("0.1") }}'
           memory: {{ skmon.LOKI_MEMORY_RESERVATION | default("384M") }}
+
+  # Evaluates the curated rules (spec 8) against VictoriaMetrics and sends to Alertmanager.
+  # Internal only: no router, no published port, no volume (rules are Swarm configs).
+  vmalert:
+    image: {{ skmon.VMALERT_IMAGE | default('victoriametrics/vmalert:v1.155.0@sha256:3256cba5ddaca5974eae6141105cec4ce37871f1c213f0a5c267ec0111bc68e1') }}
+    command:
+      - '-evaluationInterval=15s'
+      - '-datasource.url=http://victoriametrics:8428'
+      - '-notifier.url=http://alertmanager:9093'
+      - '-rule=/etc/vmalert/rules/*.yml'
+      - '-external.label=estate={{ skmon.ESTATE }}'
+      - '-httpListenAddr=:8880'
+    configs:
+{% for cls in ['node', 'storage', 'http', 'cert', 'capacity', 'container', 'meta'] %}
+      - source: rules-{{ cls }}
+        target: /etc/vmalert/rules/{{ cls }}.yml
+{% endfor %}
+    networks:
+      - skmon-{{ env }}
+    depends_on:
+      - victoriametrics
+      - alertmanager
+    deploy:
+      mode: replicated
+      replicas: {{ replicas }}
+      placement:
+        constraints:
+          - node.hostname == {{ node }}
+      resources:
+        limits:
+          cpus: '{{ skmon.VMALERT_CPU_LIMIT | default("0.25") }}'
+          memory: {{ skmon.VMALERT_MEMORY_LIMIT | default("128M") }}
+        reservations:
+          cpus: '{{ skmon.VMALERT_CPU_RESERVATION | default("0.05") }}'
+          memory: {{ skmon.VMALERT_MEMORY_RESERVATION | default("32M") }}
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8880/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   alertmanager:
     image: {{ skmon.ALERTMANAGER_IMAGE | default('prom/alertmanager:v0.34.2@sha256:39d8bb3966c694a124428a3a88fbcffd40bd069129ecd47c059f8a3f17c55f3b') }}

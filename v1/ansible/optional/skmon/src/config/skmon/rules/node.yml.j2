@@ -1,0 +1,20 @@
+# vmalert rules, class node (spec 8). Every rule carries severity, class and estate;
+# vmalert also adds estate as an external label. Annotations use vmalert's own template
+# syntax ($labels, $value), kept out of Jinja with raw blocks.
+groups:
+  - name: skmon-node
+    rules:
+      # The unix exporter job only: a wedged Docker daemon shows as CadvisorScrapeFailing
+      # (a warning), not as a node down that would mute the node's other alerts (spec 8.2).
+      - alert: NodeDown
+        expr: up{job="alloy-unix"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          class: node
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "Node {{ $labels.node }} is down: its agent has not answered a scrape for 30 s."
+{% endraw %}
+          runbook: "Check that the host is up and reachable on the agent port, then that the skmon-{{ env }}-alloy agent is running on it."

@@ -1,0 +1,89 @@
+# vmalert rules, class storage (spec 8). The client-side signals (NfsMountUnresponsive,
+# NfsMajorTimeouts, DStatePileUp) and StorageHostStalled are the primary storage alerts;
+# pool state alone has missed a real incident. Loki's ruler carries two log-based rules
+# for the same class (loki-rules/storage.yml.j2).
+{% set d_state = skmon.D_STATE_THRESHOLD | default(10) %}
+groups:
+  - name: skmon-storage
+    rules:
+      # Spec 8 also names "nfsd threads all busy". The node_exporter nfsd collector in the
+      # pinned Alloy exposes only node_nfsd_server_threads (the thread count, no busy or
+      # pool-full signal), so this rule is the D-state half. Blocked nfsd threads are in D
+      # state and are counted here.
+      - alert: StorageHostStalled
+        expr: node_processes_state{role="storage", state="D"} > {{ d_state }}
+        for: 30s
+        labels:
+          severity: critical
+          class: storage
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "Storage host {{ $labels.node }} is stalled: {{ $value }} processes in uninterruptible sleep."
+{% endraw %}
+          runbook: "On the storage host check zpool status, the nfsd threads and dmesg for hung tasks before touching any client."
+
+      - alert: ZfsPoolNotOnline
+        expr: node_zfs_zpool_state{state!="online"} == 1
+        for: 15s
+        labels:
+          severity: critical
+          class: storage
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "ZFS pool {{ $labels.zpool }} on {{ $labels.node }} is {{ $labels.state }}."
+{% endraw %}
+          runbook: "Run zpool status on the host and replace or bring back the failed device."
+
+      # node_filesystem_device_error is 1 when the stat timed out after mount_timeout (5 s).
+      - alert: NfsMountUnresponsive
+        expr: node_filesystem_device_error{fstype=~"nfs4?"} == 1
+        for: 15s
+        labels:
+          severity: critical
+          class: storage
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "NFS mount {{ $labels.mountpoint }} on {{ $labels.node }} does not answer a stat within 5 s."
+{% endraw %}
+          runbook: "Check the NFS server and its export first, since every client of that export is affected the same way."
+
+      - alert: NfsMajorTimeouts
+        expr: increase(node_mountstats_nfs_operations_major_timeouts_total[1m]) > 0
+        labels:
+          severity: critical
+          class: storage
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "NFS {{ $labels.operation }} calls to {{ $labels.export }} on {{ $labels.node }} hit major timeouts."
+{% endraw %}
+          runbook: "Check the NFS server for a stall (nfsd threads, pool state) and the network path between it and this client."
+
+      - alert: DStatePileUp
+        expr: node_processes_state{state="D"} > {{ d_state }}
+        for: 30s
+        labels:
+          severity: critical
+          class: storage
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "{{ $value }} processes on {{ $labels.node }} are stuck in uninterruptible sleep."
+{% endraw %}
+          runbook: "Look for a stalled NFS mount or disk on the host (ps -eo state,pid,wchan,cmd | grep ^D)."
+
+      - alert: IoPressureHigh
+        expr: rate(node_pressure_io_stalled_seconds_total[1m]) > 0.5
+        for: 30s
+        labels:
+          severity: warning
+          class: storage
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "I/O pressure on {{ $labels.node }}: all tasks stalled on I/O {{ $value | humanizePercentage }} of the time."
+{% endraw %}
+          runbook: "Find the process or mount the host is waiting on with iotop or pidstat -d, and check the storage alerts first."

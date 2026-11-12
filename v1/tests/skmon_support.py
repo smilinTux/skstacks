@@ -31,7 +31,15 @@ CONFIG_TEMPLATES = {
     "vm-scrape": "vm-scrape.yml.j2",
     "loki": "loki-config.yml.j2",
     "alertmanager": "alertmanager-config.yml.j2",
+    **{f"rules-{c}": f"rules/{c}.yml.j2" for c in ("node", "storage", "http", "cert", "capacity", "container", "meta")},
+    "loki-rules": "loki-rules/storage.yml.j2",
 }
+
+# vmalert rule classes (one rules/<class>.yml.j2 each, mounted at /etc/vmalert/rules/<class>.yml).
+RULE_CLASSES = tuple(k.removeprefix("rules-") for k in CONFIG_TEMPLATES if k.startswith("rules-"))
+RULES = CFG / "rules"
+# The DATA_PATH mountpoint the plays read with findmnt on DATA_NODE (a fake default for tests).
+DATA_MOUNTPOINT = "/srv/local"
 
 
 def render(tpl: pathlib.Path, env: str = "prod", extra_ctx: dict | None = None, **skmon) -> str:
@@ -68,9 +76,32 @@ def agent_targets(hostvars: dict = FAKE_HOSTVARS, **skmon) -> list[dict]:
 
 def ctx_with_configs(env: str = "prod", **skmon) -> dict:
     """Template context carrying `skmon_configs`: every config template rendered, as the plays do."""
-    extra = {"skmon_agent_targets": agent_targets(**skmon)}
+    extra = {"skmon_agent_targets": agent_targets(**skmon), "skmon_data_mountpoint": DATA_MOUNTPOINT}
     configs = {key: render(CFG / name, env=env, extra_ctx=extra, **skmon) for key, name in CONFIG_TEMPLATES.items()}
     return {"skmon_configs": configs, **extra}
+
+
+def render_rules(cls: str, env: str = "prod", mountpoint: str = DATA_MOUNTPOINT, **skmon) -> str:
+    """One rendered vmalert rule file (rules/<cls>.yml.j2), as the plays render it."""
+    return render(RULES / f"{cls}.yml.j2", env=env, extra_ctx={"skmon_data_mountpoint": mountpoint}, **skmon)
+
+
+def all_rules(**skmon) -> list[dict]:
+    """Every vmalert rule of every class file, rendered."""
+    return [r for c in RULE_CLASSES for g in yaml.safe_load(render_rules(c, **skmon))["groups"] for r in g["rules"]]
+
+
+def rules_named(name: str, **skmon) -> list[dict]:
+    """Every rendered rule with this alert name (CertExpiringSoon and DiskFilling have two)."""
+    return [r for r in all_rules(**skmon) if r.get("alert") == name]
+
+
+def rule(name: str, **skmon) -> dict:
+    """The first rendered rule with this alert name."""
+    found = rules_named(name, **skmon)
+    if not found:
+        raise LookupError(f"no rule named {name!r}")
+    return found[0]
 
 
 def compose(**skmon) -> dict:

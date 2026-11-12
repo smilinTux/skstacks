@@ -1,0 +1,34 @@
+# vmalert rules, class container (spec 8).
+groups:
+  - name: skmon-container
+    rules:
+      # The kernel's OOM kill counter, per host. Where cadvisor saw the container that was
+      # killed, that series (with stack, service and name) is reported instead of the host
+      # one: `or on(node)` keeps a host series only when no container series of that node fired.
+      - alert: OomKill
+        expr: >-
+          increase(container_oom_events_total[5m]) > 0
+          or on(node) increase(node_vmstat_oom_kill[5m]) > 0
+        labels:
+          severity: warning
+          class: container
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "The kernel killed a process for lack of memory on {{ $labels.node }}{{ if $labels.service }} (service {{ $labels.service }}){{ end }}."
+{% endraw %}
+          runbook: "Check the memory limit of the killed container against its usage, then the host's memory pressure."
+
+      # A wedged Docker daemon, or an agent that lost the Docker socket, ends here, not in NodeDown.
+      - alert: CadvisorScrapeFailing
+        expr: up{job="alloy-cadvisor"} == 0
+        for: 2m
+        labels:
+          severity: warning
+          class: container
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "Container metrics of {{ $labels.node }} cannot be scraped."
+{% endraw %}
+          runbook: "Check that the Docker daemon on the host answers (docker info) and that the agent can read the Docker socket."

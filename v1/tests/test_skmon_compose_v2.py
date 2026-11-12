@@ -9,6 +9,8 @@ from skmon_support import CFG, ROLE, compose, ctx_with_configs, play_tasks, PLAY
 
 DATA_NODE = "node-1.render.example.test"
 STATEFUL = ("victoriametrics", "loki", "grafana", "alertmanager")
+# Services on the alert path (spec 4, D13): nothing of theirs under /var/data.
+ALERT_PATH = ("victoriametrics", "vmalert", "alertmanager")
 
 
 def walk(node):
@@ -23,8 +25,15 @@ def walk(node):
         yield node
 
 
-def test_service_set_phase1():
-    assert set(services()) == {"victoriametrics", "loki", "grafana", "alertmanager"}
+def test_service_set():
+    assert set(services()) == {"victoriametrics", "loki", "grafana", "alertmanager", "vmalert"}
+
+
+def test_alert_path_reads_nothing_from_var_data():
+    for n in ALERT_PATH:
+        s = services()[n]
+        assert "env_file" not in s, n
+        assert not any(str(v).startswith("/var/data") for v in walk({k: s.get(k) for k in ("volumes", "command")})), n
 
 
 def test_no_var_data_bind_on_any_stateful_service():
@@ -45,7 +54,7 @@ def test_local_volumes_under_data_path():
 
 
 def test_pinned_to_data_node():
-    for n in STATEFUL:
+    for n in (*STATEFUL, "vmalert"):
         assert f"node.hostname == {DATA_NODE}" in services()[n]["deploy"]["placement"]["constraints"], n
 
 
@@ -77,7 +86,8 @@ def test_alertmanager_uses_forward_auth_not_basic_auth():
 
 def test_limits_match_spec_13():
     want = {"victoriametrics": ("256M", "1G", "1.0"), "loki": ("384M", "1G", "1.0"),
-            "grafana": ("128M", "512M", "0.5"), "alertmanager": ("32M", "128M", "0.25")}
+            "grafana": ("128M", "512M", "0.5"), "alertmanager": ("32M", "128M", "0.25"),
+            "vmalert": ("32M", "128M", "0.25")}
     for n, (res, lim, cpu) in want.items():
         r = services()[n]["deploy"]["resources"]
         assert (r["reservations"]["memory"], r["limits"]["memory"], str(r["limits"]["cpus"])) == (res, lim, cpu), n
@@ -91,7 +101,8 @@ def test_images_are_pinned_without_floating_tags():
 
 def test_configs_are_hash_named_and_change_with_content():
     a = compose()["configs"]; b = compose(METRICS_RETENTION="30d")["configs"]
-    assert set(a) == {"vm-scrape", "loki", "alertmanager"}
+    rule_keys = {f"rules-{c}" for c in ("node", "storage", "http", "cert", "capacity", "container", "meta")}
+    assert set(a) == {"vm-scrape", "loki", "alertmanager", "loki-rules"} | rule_keys
     assert all(re.fullmatch(r"skmon_prod_[a-z0-9_-]+_[0-9a-f]{12}", c["name"]) for c in a.values())
     assert a["vm-scrape"]["name"] == b["vm-scrape"]["name"]  # retention is a flag, not scrape content
     assert a["loki"]["name"] != compose(LOGS_RETENTION="7d")["configs"]["loki"]["name"]

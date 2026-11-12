@@ -1,0 +1,39 @@
+# vmalert rules, class meta (spec 8, 9.5): the monitor watching itself.
+groups:
+  - name: skmon-meta
+    rules:
+      # The dead-man's switch: always firing, routed only to the bridge's /watchdog path.
+      - alert: Watchdog
+        expr: vector(1)
+        labels:
+          severity: none
+          class: meta
+          estate: "{{ skmon.ESTATE }}"
+
+      # Delivered by the outside Kuma probe of the bridge's /healthz as well (spec 9.5).
+      - alert: AlertDeliveryFailing
+        expr: increase(skmon_bridge_delivery_failures_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+          class: meta
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+          summary: "skmon-bridge keeps failing to deliver alerts to sk-alert."
+          runbook: "Read the skmon-bridge service logs and check that sk-alert's endpoint and credentials still work."
+
+      # The filesystem that holds DATA_PATH on DATA_NODE (the plays read it with findmnt).
+      - alert: MonitorDiskFilling
+        expr: >-
+          100 * (1 - node_filesystem_avail_bytes{node="{{ skmon_data_node }}", mountpoint="{{ skmon_data_mountpoint }}"}
+          / node_filesystem_size_bytes{node="{{ skmon_data_node }}", mountpoint="{{ skmon_data_mountpoint }}"}) > 85
+        for: 10m
+        labels:
+          severity: warning
+          class: meta
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "The skmon data filesystem {{ $labels.mountpoint }} on {{ $labels.node }} is above 85 % used."
+{% endraw %}
+          runbook: "Lower METRICS_RETENTION or LOGS_RETENTION, or give DATA_PATH more space, before VictoriaMetrics and Loki stop writing."
