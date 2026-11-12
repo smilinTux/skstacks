@@ -1,0 +1,44 @@
+[
+  {
+    "ID": "n1",
+    "Description": {
+      "Hostname": "n1"
+    },
+    "Spec": {
+      "Role": "manager",
+      "Availability": "active"
+    },
+    "Status": {
+      "State": "ready",
+      "Addr": "192.0.2.1"
+    }
+  },
+  {
+    "ID": "n2",
+    "Description": {
+      "Hostname": "n2"
+    },
+    "Spec": {
+      "Role": "worker",
+      "Availability": "active"
+    },
+    "Status": {
+      "State": "ready",
+      "Addr": "192.0.2.2"
+    }
+  },
+  {
+    "ID": "n3",
+    "Description": {
+      "Hostname": "n3"
+    },
+    "Spec": {
+      "Role": "worker",
+      "Availability": "active"
+    },
+    "Status": {
+      "State": "ready",
+      "Addr": "192.0.2.3"
+    }
+  }
+]

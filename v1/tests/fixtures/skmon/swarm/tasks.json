@@ -1,0 +1,102 @@
+[
+  {
+    "ID": "t-web1",
+    "ServiceID": "s1",
+    "NodeID": "n1",
+    "DesiredState": "running",
+    "Status": {
+      "Timestamp": "2026-11-12T00:00:00.000000000Z",
+      "State": "running"
+    }
+  },
+  {
+    "ID": "t-web2",
+    "ServiceID": "s1",
+    "NodeID": "n2",
+    "DesiredState": "shutdown",
+    "Status": {
+      "Timestamp": "2026-11-12T00:00:00.000000000Z",
+      "State": "shutdown"
+    }
+  },
+  {
+    "ID": "t-agent1",
+    "ServiceID": "s2",
+    "NodeID": "n1",
+    "DesiredState": "running",
+    "Status": {
+      "Timestamp": "2026-11-12T00:00:00.000000000Z",
+      "State": "running"
+    }
+  },
+  {
+    "ID": "t-agent2",
+    "ServiceID": "s2",
+    "NodeID": "n2",
+    "DesiredState": "running",
+    "Status": {
+      "Timestamp": "2026-11-12T00:00:00.000000000Z",
+      "State": "running"
+    }
+  },
+  {
+    "ID": "t-agent3",
+    "ServiceID": "s2",
+    "NodeID": "n3",
+    "DesiredState": "running",
+    "Status": {
+      "Timestamp": "2026-11-12T00:00:00.000000000Z",
+      "State": "running"
+    }
+  },
+  {
+    "ID": "t-stuck1",
+    "ServiceID": "s4",
+    "NodeID": "n2",
+    "DesiredState": "running",
+    "Status": {
+      "Timestamp": "2026-11-12T00:00:00.000000000Z",
+      "State": "preparing"
+    }
+  },
+  {
+    "ID": "t-stuck2",
+    "ServiceID": "s4",
+    "NodeID": "n3",
+    "DesiredState": "running",
+    "Status": {
+      "Timestamp": "2026-11-12T00:01:40.123456789Z",
+      "State": "preparing"
+    }
+  },
+  {
+    "ID": "t-crash1",
+    "ServiceID": "s5",
+    "NodeID": "n1",
+    "DesiredState": "shutdown",
+    "Status": {
+      "Timestamp": "2026-11-12T00:00:00.000000000Z",
+      "State": "failed"
+    }
+  },
+  {
+    "ID": "t-crash2",
+    "ServiceID": "s5",
+    "NodeID": "n2",
+    "DesiredState": "shutdown",
+    "Status": {
+      "Timestamp": "2026-11-12T00:00:00.000000000Z",
+      "State": "rejected"
+    }
+  },
+  {
+    "ID": "t-crash3",
+    "ServiceID": "s5",
+    "NodeID": "n3",
+    "DesiredState": "running",
+    "Status": {
+      "Timestamp": "2026-11-12T00:00:00.000000000Z",
+      "State": "running"
+    }
+  }
+]

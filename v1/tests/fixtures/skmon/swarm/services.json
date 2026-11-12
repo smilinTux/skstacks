@@ -1,0 +1,70 @@
+[
+  {
+    "ID": "s1",
+    "Spec": {
+      "Name": "app_web",
+      "Labels": {
+        "com.docker.stack.namespace": "app"
+      },
+      "Mode": {
+        "Replicated": {
+          "Replicas": 2
+        }
+      }
+    }
+  },
+  {
+    "ID": "s2",
+    "Spec": {
+      "Name": "app_agent",
+      "Labels": {
+        "com.docker.stack.namespace": "app"
+      },
+      "Mode": {
+        "Global": {}
+      }
+    }
+  },
+  {
+    "ID": "s3",
+    "Spec": {
+      "Name": "app_parked",
+      "Labels": {
+        "com.docker.stack.namespace": "app"
+      },
+      "Mode": {
+        "Replicated": {
+          "Replicas": 0
+        }
+      }
+    }
+  },
+  {
+    "ID": "s4",
+    "Spec": {
+      "Name": "app_stuck",
+      "Labels": {
+        "com.docker.stack.namespace": "app"
+      },
+      "Mode": {
+        "Replicated": {
+          "Replicas": 2
+        }
+      }
+    }
+  },
+  {
+    "ID": "s5",
+    "Spec": {
+      "Name": "app_crashy",
+      "Labels": {
+        "com.docker.stack.namespace": "app"
+      },
+      "Mode": {
+        "Replicated": {
+          "Replicas": 1
+        }
+      }
+    }
+  }
+]

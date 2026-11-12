@@ -541,8 +541,10 @@ import pytest
 BRIDGE_DIR = SRC / "skmon/bridge"
 FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures/skmon"
 FAKE_SK_ALERT = FIXTURES / "fake_sk_alert"
-if str(BRIDGE_DIR) not in sys.path:
-    sys.path.insert(0, str(BRIDGE_DIR))
+SWARM_DIR = SRC / "skmon/swarm_exporter"
+for _d in (BRIDGE_DIR, SWARM_DIR):
+    if str(_d) not in sys.path:
+        sys.path.insert(0, str(_d))
 
 
 def load(name: str) -> dict:
