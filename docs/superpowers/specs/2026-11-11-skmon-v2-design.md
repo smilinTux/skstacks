@@ -689,11 +689,12 @@ The framework-level answers. Each estate's note records its own room name, recip
   measurement of its cost after install. It comes off with `state=absent` if that cost shows up
   on the host.
 - **Q3 Disk for `DATA_NODE`.** A dedicated virtual disk per stack (skmon and skaegis each get
-  their own), mounted on `DATA_NODE`. The disk is placed on a hypervisor pool that holds neither
-  the swarm VMs' root disks nor the estate's shared storage, so monitoring writes cannot slow
-  the workload and a shared-storage stall cannot take the alert path down. A single-device pool
-  is acceptable: monitoring data can be rebuilt, and configuration and secrets stay in the
-  stack's backups. Size it from section 13 (skmon 64 GB covers 30 d of metrics and 14 d of logs
+  their own), mounted on `DATA_NODE`. Never on the estate's shared storage, so a shared-storage stall
+  cannot take the alert path down. Prefer a hypervisor pool apart from the swarm VMs' root
+  disks. Sharing the root-disk pool is acceptable when that pool is redundant and has I/O
+  headroom: at this sizing skmon writes a few MB/s. Do not add these disks to a pool that is
+  mid-migration; wait for its end state. A single-device pool is acceptable for skmon alone:
+  monitoring data can be rebuilt, and configuration and secrets stay in the stack's backups. Size it from section 13 (skmon 64 GB covers 30 d of metrics and 14 d of logs
   with headroom).
 
 ## 19. Builder check
