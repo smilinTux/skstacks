@@ -193,7 +193,7 @@ PY
 # check_dashboards: promtool parse of every PromQL expression in the shipped dashboards.
 check_dashboards() {
   local dash="$HERE/../../ansible/optional/skmon/src/config/skmon/dashboards"
-  [ -d "$dash" ] || { echo "skip: dashboards not found"; return 0; }
+  [ -d "$dash" ] || { echo "FAIL: dashboards dir not found: $dash" >&2; exit 1; }
   local tmp; tmp="$(mktemp -d)"
   # The exprs are extracted on the host and parsed inside the pinned image (one container for all).
   python3 - "$dash" "$tmp" <<'PY'

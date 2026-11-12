@@ -159,3 +159,18 @@ def test_no_estate_names_or_hosts():
         txt = p.read_text()
         assert not re.search(r"\b(\d{1,3}\.){3}\d{1,3}\b", txt), p
         assert not re.search(r"smilintux|skworld|douno\.it|nativeassetmanagement", txt, re.I), p
+
+
+def test_no_long_dashes_in_dashboards():
+    # Project rule: no em or en dashes anywhere, vendored text included.
+    for p in DASH.rglob("*.json"):
+        t = p.read_text()
+        assert not any(c in t for c in ("—", "–", "\\u2014", "\\u2013")), p
+
+
+def test_loki_board_cluster_and_namespace_default_to_all():
+    # skmon's scrape config sets no cluster/namespace labels, so a fixed default shows nothing.
+    board = json.loads((DASH / "skmon internals/loki.json").read_text())
+    for name in ("cluster", "namespace"):
+        v = var(board, name)
+        assert v["includeAll"] is True and v["allValue"] == ".*" and v["current"]["value"] == "$__all"
