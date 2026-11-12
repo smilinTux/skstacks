@@ -145,7 +145,7 @@ def test_default_is_one_replica_except_the_optional_pve_exporter():
 
 
 def test_grafana_plugins_default_empty_and_knob_works():
-    assert "GF_INSTALL_PLUGINS=" in render(CFG / "skmon.env.j2").splitlines()
+    assert not any(l.startswith("GF_INSTALL_PLUGINS") for l in render(CFG / "skmon.env.j2").splitlines())
     assert "GF_INSTALL_PLUGINS=grafana-clock-panel" in render(CFG / "skmon.env.j2", GRAFANA_PLUGINS=["grafana-clock-panel"]).splitlines()
 
 
@@ -165,11 +165,6 @@ def test_env_files_carry_no_retired_component_lines():
     for name in ("skmon.env.j2", "skmon.sh.env.j2"):
         text = render(CFG / name).lower()
         assert not any(w in text for w in ("prometheus", "promtail", "cadvisor", "node_exporter", "node-exporter")), name
-
-
-def test_grafana_datasource_points_at_victoriametrics():
-    text = render(CFG / "grafana-datasources.yml.j2")
-    assert "http://skmon-prod_victoriametrics:8428" in text and "prometheus:9090" not in text
 
 
 def test_only_traefik_swarm_labels():

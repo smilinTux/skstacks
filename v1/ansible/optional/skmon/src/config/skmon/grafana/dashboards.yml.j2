@@ -1,0 +1,14 @@
+apiVersion: 1
+
+{# Layout: dashboards/<file>.json is the General folder (home: estate-overview.json);
+   dashboards/<folder>/<file>.json is a folder named after the directory. #}
+providers:
+  - name: 'SKMon Dashboards'
+    orgId: 1
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: true

@@ -1,0 +1,38 @@
+apiVersion: 1
+
+{# Fixed UIDs: dashboards reference them. Full service names (R46/R59): a short
+   alias can resolve to another stack's service on the shared overlay. #}
+{# The pre-v2 datasources had generated UIDs; delete them so the fixed-UID ones create cleanly. #}
+deleteDatasources:
+  - { name: Prometheus, orgId: 1 }
+  - { name: Loki, orgId: 1 }
+
+datasources:
+  - name: Prometheus
+    uid: skmon-vm
+    type: prometheus
+    access: proxy
+    url: http://skmon-{{ env }}_victoriametrics:8428
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: "30s"
+      httpMethod: POST
+
+  - name: Loki
+    uid: skmon-loki
+    type: loki
+    access: proxy
+    url: http://skmon-{{ env }}_loki:3100
+    editable: false
+    jsonData:
+      maxLines: 1000
+{% if (skmon.PROFILING | default({})).enabled | default(false) | bool %}
+
+  - name: Pyroscope
+    uid: skmon-pyroscope
+    type: grafana-pyroscope-datasource
+    access: proxy
+    url: http://skmon-{{ env }}_pyroscope:4040
+    editable: false
+{% endif %}

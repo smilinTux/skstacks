@@ -311,40 +311,36 @@
       loop:
         - datasources
         - dashboards
+        - dashboards/apps
+        - dashboards/skmon internals
+        - dashboards/infrastructure
       tags:
         - config
         - dashboards
 
     - name: Process Grafana provisioning templates on the data node
       template:
-        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
+        src: "{{ playbook_dir }}/src/config/{{ app }}/grafana/{{ item.src }}"
         dest: "{{ skmon_data_path }}/grafana-provisioning/{{ item.dest }}"
         owner: root
         group: root
         mode: '0644'
       delegate_to: "{{ skmon_data_node }}"
       loop:
-        - { src: "grafana-datasources.yml.j2", dest: "datasources/datasources.yml" }
-        - { src: "grafana-dashboards.yml.j2", dest: "dashboards/dashboards.yml" }
+        - { src: "datasources.yml.j2", dest: "datasources/datasources.yml" }
+        - { src: "dashboards.yml.j2", dest: "dashboards/dashboards.yml" }
       tags:
         - config
 
-    - name: Copy dashboard JSON files to the data node
+    - name: Copy the dashboards tree to the data node
       copy:
-        src: "{{ playbook_dir }}/src/config/{{ app }}/dashboards/{{ item }}"
-        dest: "{{ skmon_data_path }}/grafana-provisioning/dashboards/{{ item }}"
+        src: "{{ playbook_dir }}/src/config/{{ app }}/dashboards/"
+        dest: "{{ skmon_data_path }}/grafana-provisioning/dashboards/"
         owner: root
         group: root
         mode: '0644'
+        directory_mode: '0755'
       delegate_to: "{{ skmon_data_node }}"
-      loop:
-        - docker-swarm.json
-        - traefik.json
-        - prometheus.json
-        - grafana.json
-        - crowdsec.json
-        - qdrant.json
-        - forgejo.json
       tags:
         - dashboards
 

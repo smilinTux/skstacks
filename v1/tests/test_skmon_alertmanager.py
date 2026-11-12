@@ -87,6 +87,6 @@ def test_no_short_service_aliases_anywhere():
     """R46: on the shared overlay a short alias can resolve to another stack's service."""
     import re
     names = "victoriametrics|loki|alertmanager|vmalert|bridge|grafana"
-    for tpl in ("alertmanager-config.yml.j2", "vm-scrape.yml.j2", "loki-config.yml.j2", "grafana-datasources.yml.j2", "skmon.yml.j2"):
+    for tpl in ("alertmanager-config.yml.j2", "vm-scrape.yml.j2", "loki-config.yml.j2", "grafana/datasources.yml.j2", "skmon.yml.j2"):
         body = (CFG / tpl).read_text()
         assert not re.search(rf"http://(?:{names})[:/]", body), tpl
