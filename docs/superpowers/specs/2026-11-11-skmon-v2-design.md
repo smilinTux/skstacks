@@ -107,6 +107,11 @@ of failure within 60 seconds, on any estate, and must keep working while it is h
 - No secrets in argv (framework test). Secrets go in Docker secrets or env files.
 - A change bound for a client estate gets a full tier-2 lab run first (section 16).
 - The public framework carries no hostnames, IPs or estate names.
+- **Estates are completely separate (owner, 2026-11-12).** Each estate's skmon stores, routes and
+  shows only its own data. No metrics, logs, profiles or alert payloads cross to another estate's
+  storage, Grafana or chat room, and no estate's data is stored on another estate. The one
+  allowed crossing is a liveness probe of the bridge's `/healthz` from outside the failure domain
+  (9.5): it carries a status code, stores nothing about the monitored estate, and sends no data in.
 
 ## 6. Decisions
 
@@ -670,17 +675,26 @@ Lab harness (extend the existing `skmon` stage and its v2.22 checks, which today
 - **B9** Which existing roles' exporters to scrape by default beyond Traefik (CrowdSec, Forgejo,
   Qdrant boards exist today).
 
-## 18. Open questions for the owner
+## 18. Owner answers (2026-11-12)
 
-These change what gets built and only the owner can answer them. They are framework-level
-questions; the per-estate versions live in each estate's note.
+The framework-level answers. Each estate's note records its own room name, recipients and disks.
 
-- **Q1 Recipients and the out-of-domain channel.** Which room and people receive skmon alerts on
-  each estate, and which channel outside the monitored failure domain carries the critical ones
-  (9.2)? On a client estate, this includes whether the client's own operator receives them.
-- **Q2 Agent on the storage or hypervisor host.** May the play install the agent (systemd mode) on
-  a host outside the swarm that the client owns? Without it there is no storage-host signal
-  (`ZfsPoolNotOnline`, `StorageHostStalled`), only the client-side ones.
+- **Q1 Recipients and the out-of-domain channel.** Each estate gets its own dedicated status
+  room in its own chat, named for that estate, holding the operators who run it (on a client
+  estate, the client's operator and ours). Critical alerts also go to Telegram, which sits
+  outside every estate's failure domain. No estate's alerts go to another estate's room.
+- **Q2 Agent on the storage or hypervisor host.** Yes, in a light mode: systemd, host, ZFS,
+  SMART and NFS metrics only (no log shipping, no profiling), a 60 s scrape interval, and a
+  systemd cap of `MemoryMax=256M` and `CPUQuota=5%`. The estate note records a one-day
+  measurement of its cost after install. It comes off with `state=absent` if that cost shows up
+  on the host.
+- **Q3 Disk for `DATA_NODE`.** A dedicated virtual disk per stack (skmon and skaegis each get
+  their own), mounted on `DATA_NODE`. The disk is placed on a hypervisor pool that holds neither
+  the swarm VMs' root disks nor the estate's shared storage, so monitoring writes cannot slow
+  the workload and a shared-storage stall cannot take the alert path down. A single-device pool
+  is acceptable: monitoring data can be rebuilt, and configuration and secrets stay in the
+  stack's backups. Size it from section 13 (skmon 64 GB covers 30 d of metrics and 14 d of logs
+  with headroom).
 
 ## 19. Builder check
 
