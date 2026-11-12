@@ -27,7 +27,15 @@
 #            with the vmalert-rules directory mounted so `rule_files: [../<class>.yml]`
 #            resolves to the rendered rules (estate "example" is what render_rules.py
 #            renders with and what the deployed vmalert adds as its external label).
-# To add a kind (amtool, promtool): add a pin lookup and a
+#   amtool : files <anything>/configs/alertmanager -> amtool check-config (the Alertmanager
+#            image's own amtool, entrypoint overridden)
+#   alertmanager-inhibition : the first such file is also run for real: the pinned
+#            Alertmanager on a free loopback port, a ZfsPoolNotOnline (storage, critical)
+#            posted with a ServiceBelowReplicas and an HttpEndpointDown in the same estate,
+#            and both consequences must show a non-empty status.inhibitedBy within 30 s.
+#            The receivers point at a bridge that does not exist here: delivery fails,
+#            inhibition still computes. The container is removed on exit.
+# To add a kind (promtool): add a pin lookup and a
 # check_<kind> function below, then call it in the list at the bottom.
 set -euo pipefail
 
@@ -87,9 +95,83 @@ check_rule_tests() {
   done
 }
 
+# check_amtool: amtool check-config over each rendered Alertmanager config.
+check_amtool() {
+  local files=()
+  while IFS= read -r f; do files+=("$f"); done < <(find "$root" -path "$root/ansible" -prune -o -type f ! -name '*.j2' -path '*/configs/alertmanager' -print | sort)
+  if [ "${#files[@]}" -eq 0 ]; then echo "skip: amtool not rendered"; return 0; fi
+  local image; image="$(image_ref alertmanager)"
+  for f in "${files[@]}"; do
+    echo "check: amtool $f"
+    if ! docker run --rm --entrypoint amtool -v "$(dirname "$f"):/cfg:ro" "$image" check-config "/cfg/$(basename "$f")"; then
+      echo "FAIL: amtool check-config failed for $f" >&2
+      exit 1
+    fi
+  done
+}
+
+# check_inhibition: see the header. Runs once, on the first rendered Alertmanager config.
+check_inhibition() {
+  local f; f="$(find "$root" -path "$root/ansible" -prune -o -type f ! -name '*.j2' -path '*/configs/alertmanager' -print | sort | head -n 1)"
+  if [ -z "$f" ]; then echo "skip: alertmanager-inhibition not rendered"; return 0; fi
+  local image name port; image="$(image_ref alertmanager)"; name="skmon-inhibit-$$"
+  echo "check: alertmanager-inhibition $f"
+  trap 'docker rm -f "$name" >/dev/null 2>&1 || true' RETURN
+  docker run -d --name "$name" -p 127.0.0.1::9093 \
+    -v "$f:/etc/alertmanager/config.yml:ro" "$image" \
+    --config.file=/etc/alertmanager/config.yml --storage.path=/tmp/am >/dev/null
+  port="$(docker port "$name" 9093/tcp | head -n 1 | sed 's/.*://')"
+  if ! python3 - "$port" <<'PY'
+import json, sys, time, urllib.request
+
+base = f"http://127.0.0.1:{sys.argv[1]}/api/v2/alerts"
+base_labels = {"estate": "x"}
+alerts = [
+    {"alertname": "ZfsPoolNotOnline", "class": "storage", "severity": "critical", "node": "n1"},
+    {"alertname": "ServiceBelowReplicas", "class": "swarm", "severity": "warning", "service": "s1"},
+    {"alertname": "HttpEndpointDown", "class": "http", "severity": "critical", "probe": "p1",
+     "instance": "https://example.test", "forward_auth": "false"},
+]
+body = json.dumps([{"labels": {**base_labels, **a}} for a in alerts]).encode()
+
+
+def call(data=None):
+    req = urllib.request.Request(base, data=data, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=5) as r:
+        return json.load(r) if data is None else None
+
+
+deadline = time.time() + 30
+while True:
+    try:
+        call(body)
+        break
+    except OSError:
+        if time.time() > deadline:
+            sys.exit("alertmanager did not come up")
+        time.sleep(0.5)
+want = {"ServiceBelowReplicas", "HttpEndpointDown"}
+while True:
+    got = {a["labels"]["alertname"]: a["status"]["inhibitedBy"] for a in call()}
+    if all(got.get(n) for n in want):
+        print("inhibited:", sorted(want))
+        sys.exit(0)
+    if time.time() > deadline:
+        sys.exit(f"not inhibited within 30 s: {got}")
+    time.sleep(1)
+PY
+  then
+    docker logs "$name" 2>&1 | tail -n 20 >&2 || true
+    echo "FAIL: inhibition check failed for $f" >&2
+    exit 1
+  fi
+}
+
 check_files alloy alloy -name 'agent.alloy' -- validate --stability.level=experimental @FILE@
 check_files loki loki -path '*/configs/loki' -- -verify-config -config.file=@FILE@
 check_files vmalert-rules vmalert -path '*/configs/rules-*' -- -dryRun -rule=@FILE@
 check_files vmalert-rules vmalert -path '*/vmalert-rules/*.yml' ! -path '*/tests/*' -- -dryRun -rule=@FILE@
 check_rule_tests
+check_amtool
+check_inhibition
 echo "ok: all rendered configs validated"
