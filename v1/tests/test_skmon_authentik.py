@@ -471,6 +471,15 @@ def test_missing_group_is_an_error_and_never_created():
     assert fake.groups == {}
 
 
+def test_missing_group_exits_nonzero_before_any_write(monkeypatch):
+    fake = FakeAuthentik()
+    fake.groups.clear()
+    monkeypatch.setattr(ap, "Api", lambda url, host, token: fake)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(input_for())))
+    assert ap.main() == 1
+    assert fake.writes == 0 and fake.apps == {} and fake.providers == {}
+
+
 def test_extra_bindings_on_owned_apps_are_removed_and_others_untouched(capsys):
     fake = FakeAuthentik()
     run_provisioner(fake, input_for())

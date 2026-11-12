@@ -309,6 +309,9 @@ def ensure_outpost(api, slugs):
 def provision(api, cfg):
     group = cfg.get("group") or DEFAULT_GROUP
     print(f"authentik: {api.get('/admin/version/')['version_current']}")
+    # Resolve the group before any write: an application created without its binding is open.
+    if find_one(api, "group", "/core/groups/", "name", group, name=group) is None:
+        raise ApiError(f"group '{group}' not found in Authentik (it is created by sksso, not here)")
     proxies = []
     for app in cfg["apps"]:
         print(ensure_oidc(api, app) if app["kind"] == "oidc" else ensure_proxy(api, app))
