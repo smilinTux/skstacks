@@ -114,14 +114,19 @@ check_amtool() {
 check_inhibition() {
   local f; f="$(find "$root" -path "$root/ansible" -prune -o -type f ! -name '*.j2' -path '*/configs/alertmanager' -print | sort | head -n 1)"
   if [ -z "$f" ]; then echo "skip: alertmanager-inhibition not rendered"; return 0; fi
-  local image name port; image="$(image_ref alertmanager)"; name="skmon-inhibit-$$"
+  local image; image="$(image_ref alertmanager)"
   echo "check: alertmanager-inhibition $f"
-  trap 'docker rm -f "$name" >/dev/null 2>&1 || true' RETURN
-  docker run -d --name "$name" -p 127.0.0.1::9093 \
-    -v "$f:/etc/alertmanager/config.yml:ro" "$image" \
-    --config.file=/etc/alertmanager/config.yml --storage.path=/tmp/am >/dev/null
-  port="$(docker port "$name" 9093/tcp | head -n 1 | sed 's/.*://')"
-  if ! python3 - "$port" <<'PY'
+  # A subshell, so the EXIT trap fires on every way out (set -e abort, exit 1, normal
+  # return) and the container never outlives the check. Its status is the check's status.
+  if ! (
+    set -euo pipefail
+    name="skmon-inhibit-$$"
+    trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
+    timeout 120 docker run -d --name "$name" -p 127.0.0.1::9093 \
+      -v "$f:/etc/alertmanager/config.yml:ro" "$image" \
+      --config.file=/etc/alertmanager/config.yml --storage.path=/tmp/am >/dev/null
+    port="$(docker port "$name" 9093/tcp | head -n 1 | sed 's/.*://')"
+    if ! python3 - "$port" <<'PY'
 import json, sys, time, urllib.request
 
 base = f"http://127.0.0.1:{sys.argv[1]}/api/v2/alerts"
@@ -160,8 +165,11 @@ while True:
         sys.exit(f"not inhibited within 30 s: {got}")
     time.sleep(1)
 PY
-  then
-    docker logs "$name" 2>&1 | tail -n 20 >&2 || true
+    then
+      docker logs "$name" 2>&1 | tail -n 20 >&2 || true
+      exit 1
+    fi
+  ); then
     echo "FAIL: inhibition check failed for $f" >&2
     exit 1
   fi
