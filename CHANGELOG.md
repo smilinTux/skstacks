@@ -3,7 +3,21 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
-## Unreleased (v2.26.20)
+## Unreleased
+
+## skstacks-v2.26.20 - 2026-11-11
+
+### Known issues (fixed in the next release)
+
+- **skhub, MariaDB 10.11 to 12.3:** the first start's automatic upgrade fails with
+  `Unknown server host 'db'` and the db restarts in a loop. The db reads the env file
+  Nextcloud uses, which sets `MYSQL_HOST=db`, and the mariadb client honours it. Workaround:
+  `docker service update --env-rm MYSQL_HOST <stack>_db`. The upgrade then completes, and a
+  later deploy putting the variable back is harmless. A fresh 12.3 install is not affected.
+- **skreg:** on an instance whose `skreg-<env>` network was created without
+  `encrypted=false`, the deploy fails at "Ensure skreg-<env> overlay network exists" with
+  `network ... is in use by service`, before anything changes. Stay on registry 2 until the
+  next release, which drops that driver option.
 
 ### Upgrade notes (instances)
 
