@@ -1,0 +1,320 @@
+# vmalert-tool unit tests for the alerts built on skswarm-exporter's series (F3). They live
+# in four rendered class files (swarm, node, meta, container), so all four are loaded.
+rule_files:
+  - ../swarm.yml
+  - ../node.yml
+  - ../meta.yml
+  - ../container.yml
+evaluation_interval: 15s
+tests:
+  # SwarmNodeNotReady, not-ready branch: n1 is down (critical at 30 s). n2 is drained but ready
+  # (no critical at any time). n3 is healthy.
+  - interval: 15s
+    input_series:
+      - series: 'skswarm_node_info{job="skswarm",instance="x:9323",estate="example",node="n1",role="worker",availability="active",state="down",addr="192.0.2.10"}'
+        values: '1x10'
+      - series: 'skswarm_node_info{job="skswarm",instance="x:9323",estate="example",node="n2",role="worker",availability="drain",state="ready",addr="192.0.2.11"}'
+        values: '1x10'
+      - series: 'skswarm_node_info{job="skswarm",instance="x:9323",estate="example",node="n3",role="manager",availability="active",state="ready",addr="192.0.2.12"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 15s
+        groupname: skmon-node
+        alertname: SwarmNodeNotReady
+        exp_alerts: []
+      - eval_time: 1m
+        groupname: skmon-node
+        alertname: SwarmNodeNotReady
+        exp_alerts:
+          - exp_labels:
+              job: skswarm
+              instance: "x:9323"
+              estate: example
+              node: n1
+              role: worker
+              availability: active
+              state: down
+              addr: 192.0.2.10
+              severity: critical
+              class: node
+            exp_annotations:
+              summary: "Swarm node n1 is not ready (state down)."
+              runbook: "Check that the Docker daemon on the node is running and that it still reaches the managers."
+
+  # SwarmNodeNotReady, drain branch: a ready node drained for a long time is a warning only, and
+  # only after 30 m (not at 29 m); the node is never critical.
+  - interval: 1m
+    input_series:
+      - series: 'skswarm_node_info{job="skswarm",instance="x:9323",estate="example",node="n2",role="worker",availability="drain",state="ready",addr="192.0.2.11"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 29m
+        groupname: skmon-node
+        alertname: SwarmNodeNotReady
+        exp_alerts: []
+      - eval_time: 31m
+        groupname: skmon-node
+        alertname: SwarmNodeNotReady
+        exp_alerts:
+          - exp_labels:
+              job: skswarm
+              instance: "x:9323"
+              estate: example
+              node: n2
+              role: worker
+              availability: drain
+              state: ready
+              addr: 192.0.2.11
+              severity: warning
+              class: node
+            exp_annotations:
+              summary: "Swarm node n2 has been drained for over 30 minutes."
+              runbook: "Set the node back to active if the maintenance is finished, or leave it drained on purpose and silence this alert."
+
+  # AgentMissing: n1 and n2 are swarm nodes, only n1 has a host agent. Fires for n2 alone, after 5 m.
+  - interval: 15s
+    input_series:
+      - series: 'skswarm_node_info{job="skswarm",instance="x:9323",estate="example",node="n1",role="manager",availability="active",state="ready",addr="192.0.2.10"}'
+        values: '1x30'
+      - series: 'skswarm_node_info{job="skswarm",instance="x:9323",estate="example",node="n2",role="worker",availability="active",state="ready",addr="192.0.2.11"}'
+        values: '1x30'
+      - series: 'up{job="alloy-unix",instance="192.0.2.10:12345",node="n1",role="swarm",estate="example"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 4m
+        groupname: skmon-meta
+        alertname: AgentMissing
+        exp_alerts: []
+      - eval_time: 5m30s
+        groupname: skmon-meta
+        alertname: AgentMissing
+        exp_alerts:
+          - exp_labels:
+              job: skswarm
+              instance: "x:9323"
+              estate: example
+              node: n2
+              role: worker
+              availability: active
+              state: ready
+              addr: 192.0.2.11
+              severity: warning
+              class: meta
+            exp_annotations:
+              summary: "Swarm node n2 has no skmon agent reporting host metrics."
+              runbook: "Run the skmon agent play for the node, then check that its agent container or systemd unit is running and that the node label is its Swarm hostname."
+
+  # TasksStuckPreparing: fires at once for a task preparing for 3 m, not for one starting for 60 s
+  # or for a state outside the set.
+  - interval: 15s
+    input_series:
+      - series: 'skswarm_task_state_age_seconds{job="skswarm",instance="x:9323",estate="example",stack="app",service="app_web",state="preparing"}'
+        values: '180x4'
+      - series: 'skswarm_task_state_age_seconds{job="skswarm",instance="x:9323",estate="example",stack="app",service="app_db",state="starting"}'
+        values: '60x4'
+      - series: 'skswarm_task_state_age_seconds{job="skswarm",instance="x:9323",estate="example",stack="app",service="app_api",state="assigned"}'
+        values: '900x4'
+    alert_rule_test:
+      - eval_time: 15s
+        groupname: skmon-swarm
+        alertname: TasksStuckPreparing
+        exp_alerts:
+          - exp_labels:
+              job: skswarm
+              instance: "x:9323"
+              estate: example
+              stack: app
+              service: app_web
+              state: preparing
+              severity: critical
+              class: swarm
+            exp_annotations:
+              summary: "A task of app_web has been preparing for over 2 minutes."
+              runbook: "Read docker service ps --no-trunc for the service: a stuck task is usually an image pull, a mount that does not answer or a placement constraint nothing meets."
+
+  # SwarmApiUnresponsive (the exporter's own target is up in these three cases): skswarm_up 0 for 30 s fires; so does a call slower than 5 s. A healthy poll is quiet.
+  - interval: 15s
+    input_series:
+      - series: 'up{job="skswarm",instance="x:9323",estate="example"}'
+        values: '1x10'
+      - series: 'skswarm_up{job="skswarm",instance="x:9323",estate="example"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 15s
+        groupname: skmon-swarm
+        alertname: SwarmApiUnresponsive
+        exp_alerts: []
+      - eval_time: 1m
+        groupname: skmon-swarm
+        alertname: SwarmApiUnresponsive
+        exp_alerts:
+          - exp_labels:
+              job: skswarm
+              instance: "x:9323"
+              estate: example
+              severity: critical
+              class: swarm
+            exp_annotations:
+              summary: "The Docker Swarm API fails or answers slowly, or skswarm-exporter is down, so Swarm state is not being observed."
+              runbook: "Check the Docker daemon and the swarm quorum on the managers, then the skmon socket proxy and skswarm-exporter services and their placement on a manager."
+  - interval: 15s
+    input_series:
+      - series: 'up{job="skswarm",instance="x:9323",estate="example"}'
+        values: '1x10'
+      - series: 'skswarm_up{job="skswarm",instance="x:9323",estate="example"}'
+        values: '1x10'
+      - series: 'skswarm_api_duration_seconds{job="skswarm",instance="x:9323",estate="example",endpoint="/tasks"}'
+        values: '7x10'
+    alert_rule_test:
+      - eval_time: 1m
+        groupname: skmon-swarm
+        alertname: SwarmApiUnresponsive
+        exp_alerts:
+          - exp_labels:
+              job: skswarm
+              instance: "x:9323"
+              estate: example
+              endpoint: /tasks
+              severity: critical
+              class: swarm
+            exp_annotations:
+              summary: "The Docker Swarm API fails or answers slowly, or skswarm-exporter is down, so Swarm state is not being observed."
+              runbook: "Check the Docker daemon and the swarm quorum on the managers, then the skmon socket proxy and skswarm-exporter services and their placement on a manager."
+  - interval: 15s
+    input_series:
+      - series: 'up{job="skswarm",instance="x:9323",estate="example"}'
+        values: '1x10'
+      - series: 'skswarm_up{job="skswarm",instance="x:9323",estate="example"}'
+        values: '1x10'
+      - series: 'skswarm_api_duration_seconds{job="skswarm",instance="x:9323",estate="example",endpoint="/tasks"}'
+        values: '0.2x10'
+    alert_rule_test:
+      - eval_time: 1m
+        groupname: skmon-swarm
+        alertname: SwarmApiUnresponsive
+        exp_alerts: []
+
+  # SwarmApiUnresponsive when the exporter itself is gone: its scrape target is down (up 0), and
+  # with no skswarm series at all (absent). absent() carries only the label of its matcher (job),
+  # so estate comes from the rule labels.
+  - interval: 15s
+    input_series:
+      - series: 'up{job="skswarm",instance="x:9323",estate="example"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 15s
+        groupname: skmon-swarm
+        alertname: SwarmApiUnresponsive
+        exp_alerts: []
+      - eval_time: 1m
+        groupname: skmon-swarm
+        alertname: SwarmApiUnresponsive
+        exp_alerts:
+          - exp_labels:
+              job: skswarm
+              instance: "x:9323"
+              estate: example
+              severity: critical
+              class: swarm
+            exp_annotations:
+              summary: "The Docker Swarm API fails or answers slowly, or skswarm-exporter is down, so Swarm state is not being observed."
+              runbook: "Check the Docker daemon and the swarm quorum on the managers, then the skmon socket proxy and skswarm-exporter services and their placement on a manager."
+  - interval: 15s
+    input_series:
+      - series: 'up{job="alloy-unix",instance="192.0.2.10:12345",node="n1",estate="example"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 1m
+        groupname: skmon-swarm
+        alertname: SwarmApiUnresponsive
+        exp_alerts:
+          - exp_labels:
+              job: skswarm
+              estate: example
+              severity: critical
+              class: swarm
+            exp_annotations:
+              summary: "The Docker Swarm API fails or answers slowly, or skswarm-exporter is down, so Swarm state is not being observed."
+              runbook: "Check the Docker daemon and the swarm quorum on the managers, then the skmon socket proxy and skswarm-exporter services and their placement on a manager."
+
+  # ServiceBelowReplicas, after 2 m:
+  #   app_web: 2 of 3 running  -> warning only
+  #   app_db: 0 of 1 running   -> critical only (the warning excludes it)
+  #   app_ok: 2 of 2 running   -> quiet
+  #   app_parked: 0 of 0       -> quiet
+  - interval: 15s
+    input_series:
+      - series: 'skswarm_service_replicas_desired{job="skswarm",instance="x:9323",estate="example",stack="app",service="app_web",mode="replicated"}'
+        values: '3x20'
+      - series: 'skswarm_service_replicas_running{job="skswarm",instance="x:9323",estate="example",stack="app",service="app_web"}'
+        values: '2x20'
+      - series: 'skswarm_service_replicas_desired{job="skswarm",instance="x:9323",estate="example",stack="app",service="app_db",mode="replicated"}'
+        values: '1x20'
+      - series: 'skswarm_service_replicas_running{job="skswarm",instance="x:9323",estate="example",stack="app",service="app_db"}'
+        values: '0x20'
+      - series: 'skswarm_service_replicas_desired{job="skswarm",instance="x:9323",estate="example",stack="app",service="app_ok",mode="replicated"}'
+        values: '2x20'
+      - series: 'skswarm_service_replicas_running{job="skswarm",instance="x:9323",estate="example",stack="app",service="app_ok"}'
+        values: '2x20'
+      - series: 'skswarm_service_replicas_desired{job="skswarm",instance="x:9323",estate="example",stack="app",service="app_parked",mode="replicated"}'
+        values: '0x20'
+      - series: 'skswarm_service_replicas_running{job="skswarm",instance="x:9323",estate="example",stack="app",service="app_parked"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 1m
+        groupname: skmon-swarm
+        alertname: ServiceBelowReplicas
+        exp_alerts: []
+      - eval_time: 3m
+        groupname: skmon-swarm
+        alertname: ServiceBelowReplicas
+        exp_alerts:
+          - exp_labels:
+              job: skswarm
+              instance: "x:9323"
+              estate: example
+              stack: app
+              service: app_web
+              severity: warning
+              class: swarm
+            exp_annotations:
+              summary: "Service app_web runs fewer replicas than desired (2 running)."
+              runbook: "Read docker service ps --no-trunc for the service to see why its remaining tasks are not running."
+          - exp_labels:
+              job: skswarm
+              instance: "x:9323"
+              estate: example
+              stack: app
+              service: app_db
+              severity: critical
+              class: swarm
+            exp_annotations:
+              summary: "Service app_db has no running replica."
+              runbook: "Read docker service ps --no-trunc for the service to see why no task runs, then its logs."
+
+  # ContainerCrashloop: 4 failed tasks within 10 m fires at once; 2 does not; a counter that
+  # starts at 5 and stays flat does not.
+  - interval: 15s
+    input_series:
+      - series: 'skswarm_service_task_failures_total{job="skswarm",instance="x:9323",estate="example",stack="app",service="app_loop"}'
+        values: '0 0 0 1 2 3 4 4 4 4'
+      - series: 'skswarm_service_task_failures_total{job="skswarm",instance="x:9323",estate="example",stack="app",service="app_rare"}'
+        values: '0 0 0 1 2 2 2 2 2 2'
+      - series: 'skswarm_service_task_failures_total{job="skswarm",instance="x:9323",estate="example",stack="app",service="app_flat"}'
+        values: '5x10'
+    alert_rule_test:
+      - eval_time: 1m45s
+        groupname: skmon-container
+        alertname: ContainerCrashloop
+        exp_alerts:
+          - exp_labels:
+              job: skswarm
+              instance: "x:9323"
+              estate: example
+              stack: app
+              service: app_loop
+              severity: warning
+              class: container
+            exp_annotations:
+              summary: "Service app_loop had 4 failed tasks in 10 minutes."
+              runbook: "Read the logs of the failed tasks (docker service logs) and the exit code in docker service ps --no-trunc."

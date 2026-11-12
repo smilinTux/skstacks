@@ -1,0 +1,110 @@
+# skmon AUTHENTIK_PROVISION (default true). Create or update, idempotently, what skmon needs on
+# the cluster's sksso (Authentik), spec 10:
+#   - an OAuth2/OIDC provider and application for Grafana, with the vault's own
+#     GRAFANA_OIDC_CLIENT_ID/GRAFANA_OIDC_CLIENT_SECRET as the provider's client credentials, so
+#     the vault and Authentik cannot drift apart;
+#   - a forward-auth proxy provider and application for vmui, Alertmanager and (PROFILING.enabled)
+#     Pyroscope, attached to the embedded outpost;
+#   - each application bound to the group skadmin only (SSO standard, mode admin-only).
+# Uses the Authentik admin API with sksso's automation token (sksso.api_token in sksso's vault,
+# located like optional/skrac/tasks/authentik.yml). The provisioner runs in a throwaway
+# container on sksso's overlay network against sksso's server directly, so it needs neither
+# public DNS nor the edge certificate. Every secret goes in on stdin; nothing secret is logged.
+# The applications of the retired Jaeger and Prometheus UIs are deleted by slug (input `retire`).
+# Portal tiles are separate. Included only when not parked and
+# AUTHENTIK_PROVISION is true; set it false to create these objects by hand instead.
+
+- name: Locate sksso's vault (holds sksso.api_token)
+  set_fact:
+    skmon_sksso_vault_path: >-
+      {{ skmon.AUTHENTIK_VAULT_FILE | default((vault_file_path | dirname) ~ '/'
+         ~ (vault_file_path | basename | regex_replace('^skmon-', 'sksso-'))) }}
+
+- name: Load sksso's vault
+  include_vars:
+    file: "{{ skmon_sksso_vault_path }}"
+    name: skmon_sksso_token_vault
+  no_log: true
+
+- name: Check that sksso's vault carries the Authentik automation token
+  assert:
+    that:
+      - (skmon_sksso_token_vault.sksso.api_token | default('') | string | length) >= 32
+    fail_msg: >-
+      sksso.api_token (32+ chars) is missing from {{ skmon_sksso_vault_path }}.
+      Generate it (openssl rand -hex 32), add it to sksso's vault, and register it in
+      Authentik once with sksso's src/sksso/ensure-api-token.sh (see the sksso README).
+    quiet: true
+  no_log: true
+
+- name: Build the Authentik applications list
+  # Hosts are the existing router hosts of skmon.yml.j2 (launch_url and external_host are the
+  # same URL). Slugs carry the environment suffix, like the router names.
+  set_fact:
+    skmon_authentik_apps: >-
+      {{ [{'slug': 'skmon' ~ skmon_sfx, 'name': 'SKMon (Grafana)', 'kind': 'oidc',
+           'launch_url': skmon_grafana_url,
+           'redirect_uris': [skmon_grafana_url ~ '/login/generic_oauth'],
+           'client_id': skmon.GRAFANA_OIDC_CLIENT_ID,
+           'client_secret': skmon.GRAFANA_OIDC_CLIENT_SECRET},
+          {'slug': 'vmui' ~ skmon_sfx, 'name': 'VictoriaMetrics', 'kind': 'proxy',
+           'launch_url': 'https://vmui' ~ skmon_sfx ~ '.' ~ skmon.CLUSTERNAME ~ '.' ~ skmon.DOMAIN,
+           'external_host': 'https://vmui' ~ skmon_sfx ~ '.' ~ skmon.CLUSTERNAME ~ '.' ~ skmon.DOMAIN},
+          {'slug': 'alertmanager' ~ skmon_sfx, 'name': 'Alertmanager', 'kind': 'proxy',
+           'launch_url': 'https://alertmanager' ~ skmon_sfx ~ '.' ~ skmon.CLUSTERNAME ~ '.' ~ skmon.DOMAIN,
+           'external_host': 'https://alertmanager' ~ skmon_sfx ~ '.' ~ skmon.CLUSTERNAME ~ '.' ~ skmon.DOMAIN}]
+         + ([{'slug': 'pyroscope' ~ skmon_sfx, 'name': 'Pyroscope', 'kind': 'proxy',
+              'launch_url': 'https://pyroscope' ~ skmon_sfx ~ '.' ~ skmon.CLUSTERNAME ~ '.' ~ skmon.DOMAIN,
+              'external_host': 'https://pyroscope' ~ skmon_sfx ~ '.' ~ skmon.CLUSTERNAME ~ '.' ~ skmon.DOMAIN}]
+            if ((skmon.PROFILING | default({}, true)).enabled | default(false) | bool) else []) }}
+  no_log: true
+
+- name: Build the Authentik provisioner input
+  set_fact:
+    skmon_authentik_input:
+      url: "{{ skmon.AUTHENTIK_INTERNAL_URL | default('http://sksso-' ~ env ~ '_server:9000') }}"
+      host: "{{ skmon.AUTHENTIK_HOST }}"
+      token: "{{ skmon_sksso_token_vault.sksso.api_token }}"
+      group: skadmin
+      apps: "{{ skmon_authentik_apps }}"
+      retire: "{{ ['jaeger' ~ skmon_sfx, 'prometheus' ~ skmon_sfx] }}"
+  no_log: true
+
+- name: Stage the Authentik provisioner
+  copy:
+    src: "{{ playbook_dir }}/src/{{ app }}/authentik_provision.py"
+    dest: "/var/data/config/{{ app }}-{{ env }}/authentik_provision.py"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Create or update the skmon providers and applications in Authentik
+  command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - -i
+      - --network
+      - "{{ skmon.AUTHENTIK_NETWORK | default('sksso-' ~ env) }}"
+      - -v
+      - "/var/data/config/{{ app }}-{{ env }}/authentik_provision.py:/authentik_provision.py:ro"
+      - "{{ skmon.PROVISIONER_IMAGE | default('python:3.13.18-slim-bookworm@sha256:a5a7017efc5969e00ae2b91c8eb0631049a569652aa4ffc4501769049ae45c72') }}"
+      - python
+      - /authentik_provision.py
+    stdin: "{{ skmon_authentik_input | to_json }}"
+  register: skmon_authentik_provision
+  changed_when: "'created' in skmon_authentik_provision.stdout or 'updated (' in skmon_authentik_provision.stdout or 'attached' in skmon_authentik_provision.stdout"
+  failed_when: false
+  no_log: true
+
+# The provisioner prints status lines only (never a secret), so its output is safe to show; the
+# task above is no_log because its stdin is secret.
+- name: Show the Authentik provisioner result
+  debug:
+    msg: "{{ (skmon_authentik_provision.stdout_lines | default([])) + (skmon_authentik_provision.stderr_lines | default([])) }}"
+
+- name: Fail if Authentik provisioning failed
+  fail:
+    msg: "Authentik provisioning failed (rc={{ skmon_authentik_provision.rc | default('?') }}), see the lines above"
+  when: (skmon_authentik_provision.rc | default(1)) != 0

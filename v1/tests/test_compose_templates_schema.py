@@ -18,6 +18,7 @@ source rather than hand-listed, so a new service or a new flag on an existing
 one is covered with no edit to this file.
 """
 import base64
+import hashlib
 import json
 import pathlib
 import re
@@ -240,6 +241,7 @@ def make_environment():
     env.filters["to_nice_yaml"] = lambda v, indent=2, **_: yaml.safe_dump(v, indent=indent, default_flow_style=False)
     env.filters["regex_replace"] = lambda v, pattern, repl: re.sub(pattern, repl, str(v))
     env.filters["b64encode"] = lambda v: base64.b64encode(str(v).encode()).decode()
+    env.filters["hash"] = lambda v, algo="sha256": hashlib.new(algo, str(v).encode()).hexdigest()
     return env
 
 

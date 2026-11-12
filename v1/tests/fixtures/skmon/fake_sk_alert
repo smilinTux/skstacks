@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Stub with sk-alert's command-line shape for the skmon-bridge tests.
+# Records argv (NUL-separated, one file per call) under $FAKE_CALLS_DIR; sleeps $FAKE_SLEEP
+# seconds, then exits $FAKE_EXIT. Echoes the secret material it can see to stderr and stdout,
+# so a bridge that logs captured output would leak it.
+set -u
+if [ -n "${FAKE_CALLS_DIR:-}" ]; then
+  printf '%s\0' "$@" > "$FAKE_CALLS_DIR/call-$(date +%s%N)-$$.argv"
+fi
+# Like the real script: the config dir is $SKALERT_CONFIG_DIR, else $SKCAPSTONE_HOME/config.
+conf="${SKALERT_CONFIG_DIR:-${SKCAPSTONE_HOME:+$SKCAPSTONE_HOME/config}}"
+[ -n "$conf" ] && [ -r "$conf/alert.secret" ] && cat "$conf/alert.secret" >&2
+# Records the variables the bridge must pass through, and appends to $SKALERT_LOG when set.
+if [ -n "${FAKE_CALLS_DIR:-}" ]; then
+  printf 'SKCAPSTONE_HOME=%s\nSKALERT_LOG=%s\nSKALERT_ENV_FILE=%s\nSKALERT_STATE_DIR=%s\n' \
+    "${SKCAPSTONE_HOME:-}" "${SKALERT_LOG:-}" "${SKALERT_ENV_FILE:-}" "${SKALERT_STATE_DIR:-}" \
+    > "$FAKE_CALLS_DIR/env-$$.txt"
+fi
+[ -n "${SKALERT_LOG:-}" ] && echo "fake-sk-alert ran" >> "$SKALERT_LOG"
+echo "env-secret=${FAKE_SECRET_ENV:-}"
+sleep "${FAKE_SLEEP:-0}" >/dev/null 2>&1
+exit "${FAKE_EXIT:-0}"

@@ -1,0 +1,78 @@
+# vmalert-tool unit tests for rules/cert.yml.j2 (F3). vmalert-tool's test clock starts at
+# 2000-01-01T00:00:00Z (946684800), so an expiry value is that plus the seconds left. The
+# probe's own severity label is dropped by the rules (no exported_severity on the alert).
+rule_files:
+  - ../cert.yml
+evaluation_interval: 15s
+tests:
+  # Ten days left: the warning fires, the critical does not.
+  - interval: 15s
+    input_series:
+      - series: 'probe_ssl_earliest_cert_expiry{job="alloy-blackbox",instance="https://app.render.example.test",probe="app",severity="warning",forward_auth="true",node="node-1.render.example.test",role="swarm",estate="example"}'
+        values: '947548800x50'
+    alert_rule_test:
+      - eval_time: 10m15s
+        groupname: skmon-cert
+        alertname: CertExpiringSoon
+        exp_alerts:
+          - exp_labels:
+              job: alloy-blackbox
+              instance: https://app.render.example.test
+              probe: app
+              severity: warning
+              forward_auth: "true"
+              node: node-1.render.example.test
+              role: swarm
+              estate: example
+              class: cert
+            exp_annotations:
+              summary: "The certificate of https://app.render.example.test expires in 9d 23h 49m 45s."
+              runbook: "Check why Traefik's ACME renewal has not replaced it (resolver logs, DNS challenge credentials)."
+
+  # Two days left: both fire (Alertmanager's inhibition rule 4 keeps only the critical).
+  - interval: 15s
+    input_series:
+      - series: 'probe_ssl_earliest_cert_expiry{job="alloy-blackbox",instance="https://app.render.example.test",probe="app",severity="warning",forward_auth="true",node="node-1.render.example.test",role="swarm",estate="example"}'
+        values: '946857600x50'
+    alert_rule_test:
+      - eval_time: 10m15s
+        groupname: skmon-cert
+        alertname: CertExpiringSoon
+        exp_alerts:
+          - exp_labels:
+              job: alloy-blackbox
+              instance: https://app.render.example.test
+              probe: app
+              severity: warning
+              forward_auth: "true"
+              node: node-1.render.example.test
+              role: swarm
+              estate: example
+              class: cert
+            exp_annotations:
+              summary: "The certificate of https://app.render.example.test expires in 1d 23h 49m 45s."
+              runbook: "Check why Traefik's ACME renewal has not replaced it (resolver logs, DNS challenge credentials)."
+          - exp_labels:
+              job: alloy-blackbox
+              instance: https://app.render.example.test
+              probe: app
+              severity: critical
+              forward_auth: "true"
+              node: node-1.render.example.test
+              role: swarm
+              estate: example
+              class: cert
+            exp_annotations:
+              summary: "The certificate of https://app.render.example.test expires in 1d 23h 49m 45s."
+              runbook: "Renew the certificate now: check Traefik's ACME resolver logs and its DNS challenge credentials."
+
+  # Thirty days left stays quiet.
+  - interval: 15s
+    input_series:
+      - series: 'probe_ssl_earliest_cert_expiry{job="alloy-blackbox",instance="https://app.render.example.test",probe="app",severity="warning",forward_auth="true",node="node-1.render.example.test",role="swarm",estate="example"}'
+        values: '949276800x50'
+    alert_rule_test:
+      - eval_time: 10m15s
+        groupname: skmon-cert
+        alertname: CertExpiringSoon
+        exp_alerts: []

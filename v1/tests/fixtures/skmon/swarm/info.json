@@ -1,0 +1,8 @@
+{
+  "Swarm": {
+    "LocalNodeState": "active",
+    "ControlAvailable": true,
+    "Nodes": 3,
+    "Managers": 1
+  }
+}

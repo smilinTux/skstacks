@@ -15,68 +15,112 @@
 
 version: '3.8'
 
+{#- Swarm config helper: `swarm_config(key)` names a config after the sha256 of its
+    rendered content, so a content change rolls the service. The plays pass
+    skmon_configs (key -> rendered content) and write each to the file below
+    before `docker stack deploy`; the CLI reads it once and stores it in Raft. #}
+{% macro swarm_config(key) -%}
+name: "skmon_{{ env }}_{{ key }}_{{ (skmon_configs[key] | hash('sha256'))[:12] }}"
+    file: "/var/data/config/skmon-{{ env }}/configs/{{ key }}"
+{%- endmacro %}
+{#- Docker secret helper, same naming rule: skmon_secrets (key -> rendered content) is written
+    by the plays to /var/data/config/skmon-<env>/secrets/<key> (0600) before `docker stack deploy`. #}
+{% macro swarm_secret(key) -%}
+name: "skmon_{{ env }}_{{ key }}_{{ (skmon_secrets[key] | hash('sha256'))[:12] }}"
+    file: "/var/data/config/skmon-{{ env }}/secrets/{{ key }}"
+{%- endmacro %}
+{% set sfx = '' if env == 'prod' else '-' ~ env %}
+{% set replicas = 0 if skmon_parked | default(false) else 1 %}
+{% set fwd = skmon.FORWARD_AUTH_MIDDLEWARE | default('authentik@file') %}
+{% set bridge_uid = skmon.BRIDGE_UID | default(65534) %}
+{% set healthz_port = skmon.HEALTHZ_PORT | default(9095) %}
+{% set data = skmon_data_path | default('') %}
+{% set node = skmon_data_node | default('') %}
+{% set pve = skmon.PVE | default({}, true) %}
+{% set pve_on = (pve.enabled | default(false) | bool) if pve is mapping else false %}
+{% set pve_uid = skmon.PVE_UID | default(65534) %}
+{% set swarm_uid = skmon.SKSWARM_UID | default(65534) %}
+{% set pyro_on = skmon_profiling_enabled | default(false) %}{# derived in tasks/facts.yml #}
+{% set pyro_port = skmon.PYROSCOPE_PORT | default(4040) %}
+
 services:
-  prometheus:
-    image: prom/prometheus:v3.16.0
-    volumes:
-      - /var/data/config/skmon-{{ env }}/prometheus:/etc/prometheus:ro
-      - /var/data/skmon-{{ env }}/prometheus/data:/prometheus
+  victoriametrics:
+    image: {{ skmon.VICTORIAMETRICS_IMAGE | default('victoriametrics/victoria-metrics:v1.155.0@sha256:f60dc268b54ecf87f6e09d740c2b732838aa9193090cc741417c9f6386a130df') }}
     command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time={{ skmon.PROMETHEUS_RETENTION | default("30d") }}'
-      - '--web.enable-lifecycle'
+      - '-storageDataPath=/storage'
+      - '-retentionPeriod={{ skmon.METRICS_RETENTION | default("90d") }}'
+      - '-promscrape.config=/etc/skmon/vm-scrape.yml'
+      - '-promscrape.config.strictParse=true'
+      - '-selfScrapeInterval=30s'
+      - '-httpListenAddr=:8428'
+    volumes:
+      - {{ data }}/vm:/storage
+    configs:
+      - source: vm-scrape
+        target: /etc/skmon/vm-scrape.yml
     networks:
       - skmon-{{ env }}
       - cloud-public-{{ env }}
     deploy:
       mode: replicated
-      replicas: {{ skmon.replicas | default(1) | int }}
+      replicas: {{ replicas }}
+      placement:
+        constraints:
+          - node.hostname == {{ node }}
       resources:
         limits:
-          cpus: '{{ skmon.PROMETHEUS_CPU_LIMIT | default("0.5") }}'
-          memory: {{ skmon.PROMETHEUS_MEMORY_LIMIT | default("1024M") }}
+          cpus: '{{ skmon.VICTORIAMETRICS_CPU_LIMIT | default("1.0") }}'
+          memory: {{ skmon.VICTORIAMETRICS_MEMORY_LIMIT | default("1G") }}
         reservations:
-          cpus: '{{ skmon.PROMETHEUS_CPU_RESERVATION | default("0.1") }}'
-          memory: {{ skmon.PROMETHEUS_MEMORY_RESERVATION | default("128M") }}
+          cpus: '{{ skmon.VICTORIAMETRICS_CPU_RESERVATION | default("0.1") }}'
+          memory: {{ skmon.VICTORIAMETRICS_MEMORY_RESERVATION | default("256M") }}
       labels:
         - "traefik.enable=true"
         - "traefik.swarm.network=cloud-public-{{ env }}"
-        - "traefik.http.routers.prometheus{% if env != 'prod' %}-{{ env }}{% endif %}-secure.rule=Host(`prometheus{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}`)"
-        - "traefik.http.routers.prometheus{% if env != 'prod' %}-{{ env }}{% endif %}-secure.entrypoints=websecure"
-        - "traefik.http.routers.prometheus{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls=true"
-        - "traefik.http.routers.prometheus{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls.certresolver=main"
-        - "traefik.http.routers.prometheus{% if env != 'prod' %}-{{ env }}{% endif %}-secure.service=prometheus{% if env != 'prod' %}-{{ env }}{% endif %}"
-        - "traefik.http.services.prometheus{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=9090"
-        - "traefik.http.routers.prometheus{% if env != 'prod' %}-{{ env }}{% endif %}-secure.middlewares=default-security-headers@file,gzip@file,traefikAuth@file"
+        - "traefik.http.routers.vmui{{ sfx }}-secure.rule=Host(`vmui{{ sfx }}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}`)"
+        - "traefik.http.routers.vmui{{ sfx }}-secure.entrypoints=websecure"
+        - "traefik.http.routers.vmui{{ sfx }}-secure.tls=true"
+        - "traefik.http.routers.vmui{{ sfx }}-secure.tls.certresolver=main"
+        - "traefik.http.routers.vmui{{ sfx }}-secure.service=vmui{{ sfx }}"
+        - "traefik.http.services.vmui{{ sfx }}.loadbalancer.server.port=8428"
+        - "traefik.http.routers.vmui{{ sfx }}-secure.middlewares=default-security-headers@file,gzip@file,{{ fwd }}"
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9090/-/healthy || exit 1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8428/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
 
   grafana:
-    image: grafana/grafana:13.3.0
+    image: {{ skmon.GRAFANA_IMAGE | default('grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205') }}
     env_file:
       - /var/data/config/skmon-{{ env }}/skmon.env
+    secrets:
+      - source: grafana_oidc_client_secret
+        target: grafana_oidc_client_secret
+        uid: "472"
+        gid: "472"
+        mode: 0400
     environment:
       - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
       - GF_PATHS_DATA=/var/lib/grafana
       - GF_METRICS_ENABLED=true
       - GF_METRICS_BASIC_AUTH_ENABLED=false
     volumes:
-      - /var/data/skmon-{{ env }}/grafana/data:/var/lib/grafana
-      - /var/data/config/skmon-{{ env }}/grafana/provisioning:/etc/grafana/provisioning:ro
+      - {{ data }}/grafana:/var/lib/grafana
+      - {{ data }}/grafana-provisioning:/etc/grafana/provisioning:ro
     networks:
       - skmon-{{ env }}
       - cloud-public-{{ env }}
     depends_on:
-      - prometheus
+      - victoriametrics
       - loki
     deploy:
       mode: replicated
-      replicas: {{ skmon.replicas | default(1) | int }}
+      replicas: {{ replicas }}
+      placement:
+        constraints:
+          - node.hostname == {{ node }}
       resources:
         limits:
           cpus: '{{ skmon.GRAFANA_CPU_LIMIT | default("0.5") }}'
@@ -87,13 +131,13 @@ services:
       labels:
         - "traefik.enable=true"
         - "traefik.swarm.network=cloud-public-{{ env }}"
-        - "traefik.http.routers.grafana{% if env != 'prod' %}-{{ env }}{% endif %}-secure.rule=Host(`skmon{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}`)"
-        - "traefik.http.routers.grafana{% if env != 'prod' %}-{{ env }}{% endif %}-secure.entrypoints=websecure"
-        - "traefik.http.routers.grafana{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls=true"
-        - "traefik.http.routers.grafana{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls.certresolver=main"
-        - "traefik.http.routers.grafana{% if env != 'prod' %}-{{ env }}{% endif %}-secure.service=grafana{% if env != 'prod' %}-{{ env }}{% endif %}"
-        - "traefik.http.services.grafana{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=3000"
-        - "traefik.http.routers.grafana{% if env != 'prod' %}-{{ env }}{% endif %}-secure.middlewares=default-security-headers@file,gzip@file,traefikAuth@file"
+        - "traefik.http.routers.grafana{{ sfx }}-secure.rule=Host(`skmon{{ sfx }}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}`)"
+        - "traefik.http.routers.grafana{{ sfx }}-secure.entrypoints=websecure"
+        - "traefik.http.routers.grafana{{ sfx }}-secure.tls=true"
+        - "traefik.http.routers.grafana{{ sfx }}-secure.tls.certresolver=main"
+        - "traefik.http.routers.grafana{{ sfx }}-secure.service=grafana{{ sfx }}"
+        - "traefik.http.services.grafana{{ sfx }}.loadbalancer.server.port=3000"
+        - "traefik.http.routers.grafana{{ sfx }}-secure.middlewares=default-security-headers@file,gzip@file"
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1"]
       interval: 30s
@@ -102,147 +146,120 @@ services:
       start_period: {{ skmon.GRAFANA_HEALTH_START_PERIOD | default('60s') }}
 
   loki:
-    image: grafana/loki:3.7.9
+    image: {{ skmon.LOKI_IMAGE | default('grafana/loki:3.7.9@sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28') }}
     command: -config.file=/etc/loki/local-config.yaml
     volumes:
-      - /var/data/config/skmon-{{ env }}/loki:/etc/loki
-      - /var/data/skmon-{{ env }}/loki-data:/loki
-      - /var/data/skmon-{{ env }}/loki-data/tsdb-index:/loki/tsdb-index
-      - /var/data/skmon-{{ env }}/loki-data/tsdb-cache:/loki/tsdb-cache
+      - {{ data }}/loki:/loki
+    configs:
+      - source: loki
+        target: /etc/loki/local-config.yaml
+      # The ruler's local storage reads <directory>/<tenant>/; auth_enabled is false, so
+      # the one tenant is "fake".
+      - source: loki-rules
+        target: /etc/loki/rules/fake/storage.yml
+    ports:
+      # Agents push logs here. The published port is the LOKI_PUSH_PORT knob, and
+      # tasks/port_allowlist.yml restricts it to the estate addresses.
+      - target: 3100
+        published: {{ skmon.LOKI_PUSH_PORT | default(3100) }}
+        protocol: tcp
+        mode: host
     networks:
       - skmon-{{ env }}
     deploy:
       mode: replicated
-      replicas: {{ skmon.replicas | default(1) | int }}
+      replicas: {{ replicas }}
+      placement:
+        constraints:
+          - node.hostname == {{ node }}
       resources:
         limits:
-          cpus: '{{ skmon.LOKI_CPU_LIMIT | default("0.5") }}'
-          memory: {{ skmon.LOKI_MEMORY_LIMIT | default("512M") }}
+          cpus: '{{ skmon.LOKI_CPU_LIMIT | default("1.0") }}'
+          memory: {{ skmon.LOKI_MEMORY_LIMIT | default("1G") }}
         reservations:
           cpus: '{{ skmon.LOKI_CPU_RESERVATION | default("0.1") }}'
-          memory: {{ skmon.LOKI_MEMORY_RESERVATION | default("256M") }}
+          memory: {{ skmon.LOKI_MEMORY_RESERVATION | default("384M") }}
 
-  # Promtail is EOL upstream (2026-03-02): future work is a move to Grafana Alloy
-  # (`alloy convert --source-format=promtail` converts this config). 3.x needs Loki 3.x.
-  promtail:
-    image: grafana/promtail:3.6.11@sha256:a761cb834cfaeee29745440d4884d6748f0a08d8f68928db1d707018c1dcfbe9
-    command: -config.file=/etc/promtail/promtail-config.yaml
-    volumes:
-      - /var/data/config/skmon-{{ env }}/promtail:/etc/promtail
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
-      - /var/log:/var/log:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+  # Evaluates the curated rules (spec 8) against VictoriaMetrics and sends to Alertmanager.
+  # Internal only: no router, no published port, no volume (rules are Swarm configs).
+  vmalert:
+    image: {{ skmon.VMALERT_IMAGE | default('victoriametrics/vmalert:v1.155.0@sha256:3256cba5ddaca5974eae6141105cec4ce37871f1c213f0a5c267ec0111bc68e1') }}
+    command:
+      - '-evaluationInterval=15s'
+      - '-datasource.url=http://skmon-{{ env }}_victoriametrics:8428'
+      - '-notifier.url=http://skmon-{{ env }}_alertmanager:9093'
+      # ALERTS and ALERTS_FOR_STATE are written to VictoriaMetrics, and `for` state is read back after a restart.
+      - '-remoteWrite.url=http://skmon-{{ env }}_victoriametrics:8428'
+      - '-remoteRead.url=http://skmon-{{ env }}_victoriametrics:8428'
+      - '-rule=/etc/vmalert/rules/*.yml'
+      - '-external.label=estate={{ skmon.ESTATE }}'
+      - '-httpListenAddr=:8880'
+    configs:
+{% for cls in ['node', 'storage', 'http', 'cert', 'capacity', 'container', 'swarm', 'meta'] %}
+      - source: rules-{{ cls }}
+        target: /etc/vmalert/rules/{{ cls }}.yml
+{% endfor %}
     networks:
       - skmon-{{ env }}
+    depends_on:
+      - victoriametrics
+      - alertmanager
     deploy:
-      mode: global
-{% if (skmon.replicas | default(1) | int) == 0 %}
+      mode: replicated
+      replicas: {{ replicas }}
       placement:
         constraints:
-          # scaled to 0: no node has this id, mode stays global
-          - node.id == skmon-scaled-to-zero
-{% endif %}
+          - node.hostname == {{ node }}
       resources:
         limits:
-          cpus: '{{ skmon.PROMTAIL_CPU_LIMIT | default("0.25") }}'
-          memory: {{ skmon.PROMTAIL_MEMORY_LIMIT | default("256M") }}
+          cpus: '{{ skmon.VMALERT_CPU_LIMIT | default("0.25") }}'
+          memory: {{ skmon.VMALERT_MEMORY_LIMIT | default("128M") }}
         reservations:
-          cpus: '{{ skmon.PROMTAIL_CPU_RESERVATION | default("0.1") }}'
-          memory: {{ skmon.PROMTAIL_MEMORY_RESERVATION | default("64M") }}
-
-  cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.55.1
-    volumes:
-      - /:/rootfs:ro
-      - /var/run:/var/run:ro
-      - /sys:/sys:ro
-      - /var/lib/docker/:/var/lib/docker:ro
-      - /dev/disk/:/dev/disk:ro
-    networks:
-      - skmon-{{ env }}
-    deploy:
-      mode: global
-{% if (skmon.replicas | default(1) | int) == 0 %}
-      placement:
-        constraints:
-          # scaled to 0: no node has this id, mode stays global
-          - node.id == skmon-scaled-to-zero
-{% endif %}
-      resources:
-        limits:
-          cpus: '{{ skmon.CADVISOR_CPU_LIMIT | default("0.25") }}'
-          memory: {{ skmon.CADVISOR_MEMORY_LIMIT | default("256M") }}
-        reservations:
-          cpus: '{{ skmon.CADVISOR_CPU_RESERVATION | default("0.1") }}'
-          memory: {{ skmon.CADVISOR_MEMORY_RESERVATION | default("64M") }}
+          cpus: '{{ skmon.VMALERT_CPU_RESERVATION | default("0.05") }}'
+          memory: {{ skmon.VMALERT_MEMORY_RESERVATION | default("32M") }}
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/healthz || exit 1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8880/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
 
-  node-exporter:
-    image: prom/node-exporter:v1.12.1
-    command:
-      - '--path.procfs=/host/proc'
-      - '--path.sysfs=/host/sys'
-      - '--path.rootfs=/rootfs'
-      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
-    volumes:
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /:/rootfs:ro
-    networks:
-      - skmon-{{ env }}
-    deploy:
-      mode: global
-{% if (skmon.replicas | default(1) | int) == 0 %}
-      placement:
-        constraints:
-          # scaled to 0: no node has this id, mode stays global
-          - node.id == skmon-scaled-to-zero
-{% endif %}
-      resources:
-        limits:
-          cpus: '{{ skmon.NODE_EXPORTER_CPU_LIMIT | default("0.10") }}'
-          memory: {{ skmon.NODE_EXPORTER_MEMORY_LIMIT | default("128M") }}
-        reservations:
-          cpus: '{{ skmon.NODE_EXPORTER_CPU_RESERVATION | default("0.05") }}'
-          memory: {{ skmon.NODE_EXPORTER_MEMORY_RESERVATION | default("32M") }}
-
   alertmanager:
-    image: prom/alertmanager:{{ skmon.ALERTMANAGER_IMAGE_VERSION | default('v0.34.2') }}
-    user: "0:0"
+    image: {{ skmon.ALERTMANAGER_IMAGE | default('prom/alertmanager:v0.34.2@sha256:39d8bb3966c694a124428a3a88fbcffd40bd069129ecd47c059f8a3f17c55f3b') }}
     command:
       - '--config.file=/etc/alertmanager/config.yml'
       - '--storage.path=/alertmanager'
     volumes:
-      - /var/data/config/skmon-{{ env }}/alertmanager/config.yml:/etc/alertmanager/config.yml:ro
-      - /var/data/skmon-{{ env }}/alertmanager/data:/alertmanager
+      - {{ data }}/alertmanager:/alertmanager
+    configs:
+      - source: alertmanager
+        target: /etc/alertmanager/config.yml
     networks:
       - skmon-{{ env }}
       - cloud-public-{{ env }}
     deploy:
       mode: replicated
-      replicas: {{ skmon.replicas | default(1) | int }}
+      replicas: {{ replicas }}
+      placement:
+        constraints:
+          - node.hostname == {{ node }}
       resources:
         limits:
           cpus: '{{ skmon.ALERTMANAGER_CPU_LIMIT | default("0.25") }}'
-          memory: {{ skmon.ALERTMANAGER_MEMORY_LIMIT | default("256M") }}
+          memory: {{ skmon.ALERTMANAGER_MEMORY_LIMIT | default("128M") }}
         reservations:
           cpus: '{{ skmon.ALERTMANAGER_CPU_RESERVATION | default("0.1") }}'
-          memory: {{ skmon.ALERTMANAGER_MEMORY_RESERVATION | default("64M") }}
+          memory: {{ skmon.ALERTMANAGER_MEMORY_RESERVATION | default("32M") }}
       labels:
         - "traefik.enable=true"
         - "traefik.swarm.network=cloud-public-{{ env }}"
-        - "traefik.http.routers.alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}-secure.rule=Host(`alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}`)"
-        - "traefik.http.routers.alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}-secure.entrypoints=websecure"
-        - "traefik.http.routers.alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls=true"
-        - "traefik.http.routers.alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls.certresolver=main"
-        - "traefik.http.routers.alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}-secure.service=alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}"
-        - "traefik.http.services.alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=9093"
-        - "traefik.http.routers.alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}-secure.middlewares=default-security-headers@file,gzip@file,traefikAuth@file"
+        - "traefik.http.routers.alertmanager{{ sfx }}-secure.rule=Host(`alertmanager{{ sfx }}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}`)"
+        - "traefik.http.routers.alertmanager{{ sfx }}-secure.entrypoints=websecure"
+        - "traefik.http.routers.alertmanager{{ sfx }}-secure.tls=true"
+        - "traefik.http.routers.alertmanager{{ sfx }}-secure.tls.certresolver=main"
+        - "traefik.http.routers.alertmanager{{ sfx }}-secure.service=alertmanager{{ sfx }}"
+        - "traefik.http.services.alertmanager{{ sfx }}.loadbalancer.server.port=9093"
+        - "traefik.http.routers.alertmanager{{ sfx }}-secure.middlewares=default-security-headers@file,gzip@file,{{ fwd }}"
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9093/-/healthy || exit 1"]
       interval: 30s
@@ -250,48 +267,239 @@ services:
       retries: 3
       start_period: 30s
 
-  jaeger:
-    image: jaegertracing/all-in-one:{{ skmon.JAEGER_IMAGE_VERSION | default('1.76.0') }}
-    user: "0:0"
+  # Delivers Alertmanager notifications through the estate's own pinned sk-alert (spec 9.2).
+  # The script and its two secret files are mounted, never baked in or passed in argv or env.
+  # Joins the skmon overlay only: Alertmanager posts to skmon-<env>_bridge:8080, and the
+  # healthz port is published on DATA_NODE for the outside monitor (tasks/port_allowlist.yml
+  # filters it by the original destination port, so target equals published).
+  bridge:
+    image: {{ skmon.BRIDGE_IMAGE | default('python:3.13.18-bookworm@sha256:cc55e4ded9c95f6ce2133b3d096db43f214d280c2a8af65d83e246c8fa7d168c') }}
+    command: ["python3", "/opt/skmon/skmon_bridge.py"]
+    user: "{{ bridge_uid }}:{{ bridge_uid }}"
     environment:
-      - SPAN_STORAGE_TYPE=badger
-      - BADGER_EPHEMERAL=false
-      - BADGER_DIRECTORY_KEY=/badger/key
-      - BADGER_DIRECTORY_VALUE=/badger/value
+      - SKMON_ESTATE={{ skmon.ESTATE }}
+      - SKMON_GRAFANA_URL=https://skmon{{ sfx }}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}
+      - SKMON_AM_URL=http://skmon-{{ env }}_alertmanager:9093
+      - SKMON_SKALERT=/opt/sk-alert/sk-alert
+      - SKMON_TALK={{ 1 if (skmon.ALERT_TALK | default(false) | bool) else 0 }}
+      - SKMON_HEALTHZ_PORT={{ healthz_port }}
+      - SKCAPSTONE_HOME=/opt/sk-alert
+      - SKALERT_STATE_DIR=/state
+      - SKALERT_LOG=/state/skalert.log
+      - SKALERT_ENV_FILE=/dev/null
     volumes:
-      - /var/data/skmon-{{ env }}/jaeger/badger:/badger
+      - {{ data }}/bridge:/state
+    configs:
+      - source: skmon_bridge.py
+        target: /opt/skmon/skmon_bridge.py
+      - source: sk-alert
+        target: /opt/sk-alert/sk-alert
+        mode: 0555
+    secrets:
+      - source: alert_env
+        target: /opt/sk-alert/config/alert.env
+        uid: "{{ bridge_uid }}"
+        gid: "{{ bridge_uid }}"
+        mode: 0400
+      - source: alert_secret
+        target: /opt/sk-alert/config/alert.secret
+        uid: "{{ bridge_uid }}"
+        gid: "{{ bridge_uid }}"
+        mode: 0400
+    ports:
+      - target: {{ healthz_port }}
+        published: {{ healthz_port }}
+        protocol: tcp
+        mode: host
+    networks:
+      - skmon-{{ env }}
+    deploy:
+      mode: replicated
+      replicas: {{ replicas }}
+      placement:
+        constraints:
+          - node.hostname == {{ node }}
+      resources:
+        limits:
+          cpus: '{{ skmon.BRIDGE_CPU_LIMIT | default("0.1") }}'
+          memory: {{ skmon.BRIDGE_MEMORY_LIMIT | default("64M") }}
+        reservations:
+          cpus: '{{ skmon.BRIDGE_CPU_RESERVATION | default("0.05") }}'
+          memory: {{ skmon.BRIDGE_MEMORY_RESERVATION | default("16M") }}
+
+  # Swarm API access for skswarm-exporter: GET on services, tasks, nodes and info only
+  # (POST=0 and every other section left at the image default of denied). The docker socket
+  # is mounted read-only (that limits the filesystem object, the proxy's own filtering is what
+  # limits the API) and the proxy joins the internal docker-api overlay only: nothing but the
+  # exporter can reach it, and it publishes no port. Managers only: workers have no Swarm API.
+  socket-proxy:
+    image: {{ skmon.SOCKET_PROXY_IMAGE | default('tecnativa/docker-socket-proxy:v0.5.0@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459') }}
+    environment:
+      - SERVICES=1
+      - TASKS=1
+      - NODES=1
+      - INFO=1
+      - POST=0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - docker-api
+    deploy:
+      mode: replicated
+      replicas: {{ replicas }}
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: '{{ skmon.SOCKET_PROXY_CPU_LIMIT | default("0.05") }}'
+          memory: {{ skmon.SOCKET_PROXY_MEMORY_LIMIT | default("64M") }}
+        reservations:
+          cpus: '{{ skmon.SOCKET_PROXY_CPU_RESERVATION | default("0.05") }}'
+          memory: {{ skmon.SOCKET_PROXY_MEMORY_RESERVATION | default("16M") }}
+
+  # Desired-versus-running Swarm state as metrics (spec 7.4). The script is a Swarm config on
+  # a pinned Python base image. It joins docker-api (to reach the proxy) and the skmon overlay
+  # (VictoriaMetrics scrapes it on 9323), and publishes no port.
+  skswarm-exporter:
+    image: {{ skmon.SKSWARM_EXPORTER_IMAGE | default('python:3.13.18-slim-bookworm@sha256:a5a7017efc5969e00ae2b91c8eb0631049a569652aa4ffc4501769049ae45c72') }}
+    command: ["python3", "/opt/skmon/skswarm_exporter.py"]
+    user: "{{ swarm_uid }}:{{ swarm_uid }}"
+    environment:
+      - SKSWARM_DOCKER_HOST=http://skmon-{{ env }}_socket-proxy:2375
+      - SKSWARM_POLL_S=15
+      - SKSWARM_PORT=9323
+      - SKSWARM_TIMEOUT_S=10
+    configs:
+      - source: skswarm_exporter.py
+        target: /opt/skmon/skswarm_exporter.py
+    networks:
+      - docker-api
+      - skmon-{{ env }}
+    depends_on:
+      - socket-proxy
+    deploy:
+      mode: replicated
+      replicas: {{ replicas }}
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: '{{ skmon.SKSWARM_EXPORTER_CPU_LIMIT | default("0.05") }}'
+          memory: {{ skmon.SKSWARM_EXPORTER_MEMORY_LIMIT | default("64M") }}
+        reservations:
+          cpus: '{{ skmon.SKSWARM_EXPORTER_CPU_RESERVATION | default("0.05") }}'
+          memory: {{ skmon.SKSWARM_EXPORTER_MEMORY_RESERVATION | default("16M") }}
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9323/metrics', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Optional Proxmox exporter (PVE.enabled). It reads its API token from pve.yml, a Docker
+  # secret (never env or argv), and is scraped through /pve with each PVE.targets host as the
+  # target parameter. Always present in the stack so a toggle is one redeploy; replicas 0 when
+  # PVE is off or skmon is parked.
+  pve-exporter:
+    image: {{ skmon.PVE_EXPORTER_IMAGE | default('prompve/prometheus-pve-exporter:3.10.2@sha256:7ed5dbff1b145e62e94003cb78d70226d9a7c4d4d1c928b3c7daed21ae9a84d8') }}
+    command: ["--config.file=/etc/prometheus/pve.yml"]
+    user: "{{ pve_uid }}:{{ pve_uid }}"
+    secrets:
+      - source: pve_config
+        target: /etc/prometheus/pve.yml
+        uid: "{{ pve_uid }}"
+        gid: "{{ pve_uid }}"
+        mode: 0400
+    networks:
+      - skmon-{{ env }}
+    deploy:
+      mode: replicated
+      replicas: {{ 1 if (pve_on and not (skmon_parked | default(false))) else 0 }}
+      resources:
+        limits:
+          cpus: '{{ skmon.PVE_EXPORTER_CPU_LIMIT | default("0.1") }}'
+          memory: {{ skmon.PVE_EXPORTER_MEMORY_LIMIT | default("128M") }}
+        reservations:
+          cpus: '{{ skmon.PVE_EXPORTER_CPU_RESERVATION | default("0.05") }}'
+          memory: {{ skmon.PVE_EXPORTER_MEMORY_RESERVATION | default("32M") }}
+
+  # Optional continuous profiling (PROFILING.enabled): profiles pushed by the eBPF profiler of the
+  # listed agents, shown in Grafana's profiles drilldown. Always present in the stack so a toggle is
+  # one redeploy; replicas 0 when profiling is off or skmon is parked, and then it has no router. The
+  # image runs as uid 10001 (the data directory's owner) and keeps its blocks under /data.
+  # -compactor.blocks-retention-period is the v1 storage flag, -retention-period the v2 one (both
+  # exist in the pinned release; Pyroscope reads the one that matches its storage).
+  pyroscope:
+    image: {{ skmon.PYROSCOPE_IMAGE | default('grafana/pyroscope:2.4.2@sha256:ef9b48976386aa2781e84664dfdba7cc33a1b6793c0cc9d130812173a926ca1f') }}
+    command:
+      - '-config.file=/etc/pyroscope/config.yaml'
+      - '-server.http-listen-port={{ pyro_port }}'
+      - '-compactor.blocks-retention-period={{ skmon.PROFILES_RETENTION | default("14d") }}'
+      - '-retention-period={{ skmon.PROFILES_RETENTION | default("14d") }}'
+    volumes:
+      - {{ data }}/pyroscope:/data
+    ports:
+      # Agents push profiles here. Published on DATA_NODE (target equals published, see
+      # tasks/port_allowlist.yml: only the profiling agents' addresses are let in).
+      - target: {{ pyro_port }}
+        published: {{ pyro_port }}
+        protocol: tcp
+        mode: host
     networks:
       - skmon-{{ env }}
       - cloud-public-{{ env }}
     deploy:
       mode: replicated
-      replicas: {{ skmon.replicas | default(1) | int }}
+      replicas: {{ 1 if (pyro_on and not (skmon_parked | default(false))) else 0 }}
+      placement:
+        constraints:
+          - node.hostname == {{ node }}
       resources:
         limits:
-          cpus: '{{ skmon.JAEGER_CPU_LIMIT | default("0.5") }}'
-          memory: {{ skmon.JAEGER_MEMORY_LIMIT | default("512M") }}
+          cpus: '{{ skmon.PYROSCOPE_CPU_LIMIT | default("0.5") }}'
+          memory: {{ skmon.PYROSCOPE_MEMORY_LIMIT | default("1G") }}
         reservations:
-          cpus: '{{ skmon.JAEGER_CPU_RESERVATION | default("0.1") }}'
-          memory: {{ skmon.JAEGER_MEMORY_RESERVATION | default("128M") }}
+          cpus: '{{ skmon.PYROSCOPE_CPU_RESERVATION | default("0.1") }}'
+          memory: {{ skmon.PYROSCOPE_MEMORY_RESERVATION | default("256M") }}
+{% if pyro_on %}
       labels:
         - "traefik.enable=true"
         - "traefik.swarm.network=cloud-public-{{ env }}"
-        - "traefik.http.routers.jaeger{% if env != 'prod' %}-{{ env }}{% endif %}-secure.rule=Host(`jaeger{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}`)"
-        - "traefik.http.routers.jaeger{% if env != 'prod' %}-{{ env }}{% endif %}-secure.entrypoints=websecure"
-        - "traefik.http.routers.jaeger{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls=true"
-        - "traefik.http.routers.jaeger{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls.certresolver=main"
-        - "traefik.http.routers.jaeger{% if env != 'prod' %}-{{ env }}{% endif %}-secure.service=jaeger{% if env != 'prod' %}-{{ env }}{% endif %}"
-        - "traefik.http.services.jaeger{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=16686"
-        - "traefik.http.routers.jaeger{% if env != 'prod' %}-{{ env }}{% endif %}-secure.middlewares=default-security-headers@file,gzip@file,traefikAuth@file"
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:16686/ || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
+        - "traefik.http.routers.pyroscope{{ sfx }}-secure.rule=Host(`pyroscope{{ sfx }}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}`)"
+        - "traefik.http.routers.pyroscope{{ sfx }}-secure.entrypoints=websecure"
+        - "traefik.http.routers.pyroscope{{ sfx }}-secure.tls=true"
+        - "traefik.http.routers.pyroscope{{ sfx }}-secure.tls.certresolver=main"
+        - "traefik.http.routers.pyroscope{{ sfx }}-secure.service=pyroscope{{ sfx }}"
+        - "traefik.http.services.pyroscope{{ sfx }}.loadbalancer.server.port={{ pyro_port }}"
+        - "traefik.http.routers.pyroscope{{ sfx }}-secure.middlewares=default-security-headers@file,gzip@file,{{ fwd }}"
+{% endif %}
+
+{% if skmon_secrets | default({}) %}
+secrets:
+{% for key in skmon_secrets %}
+  {{ key }}:
+    {{ swarm_secret(key) }}
+{% endfor %}
+{% endif %}
+
+{% if skmon_configs | default({}) %}
+configs:
+{% for key in skmon_configs %}
+  {{ key }}:
+    {{ swarm_config(key) }}
+{% endfor %}
+{% endif %}
 
 networks:
   skmon-{{ env }}:
     external: true
   cloud-public-{{ env }}:
     external: true
+  # Created by the stack deploy (skmon-<env>_docker-api), not by the shared network task:
+  # internal, so nothing on it has a route out, and only the socket proxy and
+  # skswarm-exporter attach.
+  docker-api:
+    driver: overlay
+    internal: true

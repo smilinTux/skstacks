@@ -1,0 +1,205 @@
+---
+# skmon guards: fail early, before any host is touched, on vault values that
+# would put alert-path data in the wrong place or silently do nothing.
+- name: Derive the skmon facts
+  import_tasks: "{{ playbook_dir }}/tasks/facts.yml"
+
+- name: List the swarm nodes
+  command: docker node ls --format '{{ '{{' }}.Hostname{{ '}}' }}'
+  register: skmon_node_ls
+  changed_when: false
+  check_mode: false
+
+- name: Derive the swarm node list
+  set_fact:
+    skmon_swarm_nodes: "{{ skmon_node_ls.stdout_lines | default([]) }}"
+
+- name: Require ESTATE
+  assert:
+    that:
+      - skmon.ESTATE | default('', true) | length > 0
+    fail_msg: >-
+      skmon.ESTATE is required: set it in the skmon vault. Every metric target and
+      alert rule carries it as the `estate` label.
+
+- name: Require DATA_NODE
+  assert:
+    that:
+      - skmon_data_node | length > 0
+    fail_msg: >-
+      skmon.DATA_NODE is required: set it in the skmon vault to the swarm node
+      hostname that holds the Grafana data and the Loki data.
+
+- name: Require DATA_NODE to be a swarm node
+  assert:
+    that:
+      - skmon_data_node in skmon_swarm_nodes
+    fail_msg: >-
+      skmon.DATA_NODE '{{ skmon_data_node }}' is not a swarm node. Swarm nodes:
+      {{ skmon_swarm_nodes | join(', ') }}.
+
+- name: Reject relative segments in DATA_PATH
+  assert:
+    that:
+      - not ('..' in skmon_data_path.split('/') or '.' in skmon_data_path.split('/'))
+    fail_msg: >-
+      skmon.DATA_PATH '{{ skmon_data_path }}' must not contain '.' or '..' segments.
+
+- name: Keep DATA_PATH off the shared /var/data tree
+  assert:
+    that:
+      - skmon_data_path != '/var/data' and not skmon_data_path.startswith('/var/data/')
+    fail_msg: >-
+      skmon.DATA_PATH '{{ skmon_data_path }}' is under /var/data. skmon data lives on
+      local disk of DATA_NODE, never on the replicated /var/data tree: pick a
+      local path (default /srv/local/skmon-{{ env }}).
+
+- name: Reject vault keys removed in skmon v2
+  assert:
+    that:
+      - (skmon.keys() | select('match', '^(PROMETHEUS|NODE_EXPORTER|CADVISOR|PROMTAIL|JAEGER)_') | list) | length == 0
+    fail_msg: >-
+      These skmon vault keys were removed in v2, delete them:
+      {{ skmon.keys() | select('match', '^(PROMETHEUS|NODE_EXPORTER|CADVISOR|PROMTAIL|JAEGER)_') | list | join(', ') }}.
+
+# --- alert delivery (spec 9.2, 9.5): the estate's own pinned sk-alert and where it can reach ---
+
+- name: Require SKALERT_SCRIPT_SRC and SKALERT_SCRIPT_SHA256
+  assert:
+    that:
+      - skmon_skalert_src | length > 0
+      - skmon.SKALERT_SCRIPT_SHA256 | default('', true) | length > 0
+    fail_msg: >-
+      skmon.SKALERT_SCRIPT_SRC (a path to the estate's sk-alert script on the controller) and
+      skmon.SKALERT_SCRIPT_SHA256 (its pinned sha256) are both required. skmon-bridge runs that
+      exact script and never a copy kept in this repository.
+
+- name: Hash the sk-alert script on the controller
+  stat:
+    path: "{{ skmon_skalert_src }}"
+    checksum_algorithm: sha256
+  register: skalert_stat
+  delegate_to: localhost
+  become: false
+  changed_when: false
+
+- name: Derive the sk-alert script hash
+  set_fact:
+    skalert_actual_sha256: "{{ skalert_stat.stat.checksum | default('', true) if skalert_stat.stat.exists | default(false) else '' }}"
+
+- name: Require the sk-alert script to exist
+  assert:
+    that:
+      - skalert_actual_sha256 | length > 0
+    fail_msg: >-
+      skmon.SKALERT_SCRIPT_SRC '{{ skmon_skalert_src }}' is not a readable file on the controller.
+      Point SKALERT_SCRIPT_SRC at the estate's sk-alert script (an absolute path, or one relative
+      to the SKStacks repository root).
+
+- name: Require the sk-alert script to match its pinned hash
+  assert:
+    that:
+      - skalert_actual_sha256 == skmon.SKALERT_SCRIPT_SHA256 | default('', true)
+    fail_msg: >-
+      The sk-alert script at SKALERT_SCRIPT_SRC does not match SKALERT_SCRIPT_SHA256: the file
+      hashes to {{ skalert_actual_sha256[:12] }}... and the vault pins
+      {{ (skmon.SKALERT_SCRIPT_SHA256 | default('', true))[:12] }}.... Review the change to the
+      script, then update SKALERT_SCRIPT_SHA256 in the vault (or restore the pinned script).
+  when: skalert_actual_sha256 | length > 0
+
+- name: Require the alert routing and secrets
+  assert:
+    that:
+      - skmon.ALERT_ROUTING | default({}, true) | length > 0
+      - skmon.ALERT_SECRETS | default({}, true) | length > 0
+    fail_msg: >-
+      skmon.ALERT_ROUTING and skmon.ALERT_SECRETS (dicts of NAME: value, rendered one NAME=value
+      per line into sk-alert's alert.env and alert.secret) are both required and non-empty.
+
+- name: Keep alert routing and secrets to one line per entry
+  # Names only in the message: a value may be a secret.
+  assert:
+    that:
+      - ((skmon.ALERT_ROUTING | default({}, true)).keys() | list + (skmon.ALERT_SECRETS | default({}, true)).keys() | list) | reject('match', '^[A-Za-z_][A-Za-z0-9_]*$') | list | length == 0
+      - ((skmon.ALERT_ROUTING | default({}, true)).values() | list + (skmon.ALERT_SECRETS | default({}, true)).values() | list) | map('string') | select('regex', '[\r\n]') | list | length == 0
+    fail_msg: >-
+      Every skmon.ALERT_ROUTING and skmon.ALERT_SECRETS name must be a shell-style identifier
+      (letters, digits, underscore) and every value a single line: a newline would add a line
+      to alert.env or alert.secret. Check the entries by name, the values are not printed.
+
+- name: Require an out-of-domain alert channel
+  # An alert that only reaches a channel hosted on the estate it reports on is silent exactly
+  # when the estate is down (spec 9.5).
+  assert:
+    that:
+      - >-
+        (skmon.ALERT_OUT_OF_DOMAIN_CHANNEL | default('', true)) in ['telegram', 'talk-external']
+        or (skmon.ALERT_ACCEPT_IN_DOMAIN_ONLY | default(false) | bool)
+    fail_msg: >-
+      skmon.ALERT_OUT_OF_DOMAIN_CHANNEL must be 'telegram' or 'talk-external': a channel that
+      does not run on the estate being monitored, so an outage still pages. To accept
+      in-domain delivery only, set skmon.ALERT_ACCEPT_IN_DOMAIN_ONLY: true and give
+      skmon.ALERT_ACCEPT_IN_DOMAIN_ONLY_REASON.
+
+- name: Require a reason when only in-domain delivery is accepted
+  assert:
+    that:
+      - skmon.ALERT_ACCEPT_IN_DOMAIN_ONLY_REASON | default('', true) | length > 0
+    fail_msg: >-
+      skmon.ALERT_ACCEPT_IN_DOMAIN_ONLY is true: set skmon.ALERT_ACCEPT_IN_DOMAIN_ONLY_REASON
+      to why no out-of-domain channel is wanted (it is written down, not interpreted).
+  when: skmon.ALERT_ACCEPT_IN_DOMAIN_ONLY | default(false) | bool
+
+- name: Require HEALTHZ_ALLOW when skmon runs
+  # The bridge's /healthz is published on DATA_NODE and reachable only from these sources. Empty
+  # would publish nothing to the outside monitor that is the last line of defence (spec 9.5).
+  assert:
+    that:
+      - skmon.HEALTHZ_ALLOW | default([], true) | length > 0
+    fail_msg: >-
+      skmon.HEALTHZ_ALLOW is required (a list of IPv4 addresses or CIDRs of the outside monitor
+      that polls the bridge's /healthz on DATA_NODE).
+  when: not skmon_parked
+
+# --- optional Proxmox exporter (R54) ---
+
+- name: Require the Proxmox API token and targets when PVE is enabled
+  # Names only in the message: the token secret must never be printed.
+  assert:
+    that:
+      - skmon.PVE_TOKEN_ID | default('', true) | length > 0
+      - skmon.PVE_TOKEN_SECRET | default('', true) | length > 0
+      - (skmon.PVE | default({}, true)).targets | default([], true) | length > 0
+    fail_msg: >-
+      skmon.PVE.enabled is true, so skmon.PVE_TOKEN_ID (user@realm!tokenname),
+      skmon.PVE_TOKEN_SECRET and a non-empty skmon.PVE.targets (the Proxmox hostnames to
+      scrape) are all required. Set them in the skmon vault, or set skmon.PVE.enabled to false.
+  when: (skmon.PVE | default({}, true)).enabled | default(false) | bool
+
+# --- Grafana sign-in through Authentik (spec 10) ---
+
+- name: Require the Grafana OIDC client id and secret
+  # Names only in the message: the secret must never be printed. Both are operator-generated
+  # (openssl rand -hex 16 or longer) and are the client credentials both Grafana and the
+  # provisioned Authentik provider use, so the vault and Authentik cannot drift apart.
+  assert:
+    that:
+      - skmon.GRAFANA_OIDC_CLIENT_ID | default('', true) | string | length >= 32
+      - skmon.GRAFANA_OIDC_CLIENT_SECRET | default('', true) | string | length >= 32
+    fail_msg: >-
+      skmon.GRAFANA_OIDC_CLIENT_ID and skmon.GRAFANA_OIDC_CLIENT_SECRET are required and must be
+      32 or more characters each (generate each with openssl rand -hex 32). Grafana signs in
+      through Authentik, the local admin account is break-glass only.
+  when: not skmon_parked
+  no_log: true
+
+- name: Require AUTHENTIK_HOST
+  # Grafana's OIDC endpoints are built from it whether or not skmon provisions Authentik.
+  assert:
+    that:
+      - skmon.AUTHENTIK_HOST | default('', true) | string | length > 0
+    fail_msg: >-
+      skmon.AUTHENTIK_HOST (the public hostname of sksso, for example sso.<cluster>.<domain>)
+      is required: Grafana's OIDC endpoints are built from it. Set skmon.AUTHENTIK_PROVISION
+      to false to skip creating the Authentik objects (the host is still needed for the URLs).
+  when: not skmon_parked

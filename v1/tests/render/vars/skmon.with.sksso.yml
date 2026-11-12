@@ -2,3 +2,6 @@
 # automation token (render gate: staged as sksso-<env>_vault.yml).
 sksso:
   api_token: example-authentik-api-token-not-a-secret-0123456789
+  # Host derivation for the Authentik provisioner and health probe (example.test only).
+  CLUSTERNAME: render
+  DOMAIN: example.test

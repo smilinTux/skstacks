@@ -1,0 +1,105 @@
+# vmalert-tool unit tests for rules/meta.yml.j2 (F3), rendered with DATA_NODE
+# node-1.render.example.test and the DATA_PATH mountpoint /srv/local.
+rule_files:
+  - ../meta.yml
+evaluation_interval: 15s
+tests:
+  # Watchdog fires from the first evaluation with no input at all. It always fires, so it
+  # has no quiet case.
+  - interval: 15s
+    input_series:
+      - series: 'up{job="victoriametrics",instance="localhost:8428",estate="example"}'
+        values: '1x4'
+    alert_rule_test:
+      - eval_time: 15s
+        groupname: skmon-meta
+        alertname: Watchdog
+        exp_alerts:
+          - exp_labels:
+              severity: none
+              class: meta
+              estate: example
+
+  # The bridge keeps failing to deliver: fires after 5 m.
+  - interval: 15s
+    input_series:
+      - series: 'skmon_bridge_delivery_failures_total{job="skmon-bridge",instance="skmon-bridge:9095",estate="example"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 5m30s
+        groupname: skmon-meta
+        alertname: AlertDeliveryFailing
+        exp_alerts:
+          - exp_labels:
+              job: skmon-bridge
+              instance: skmon-bridge:9095
+              estate: example
+              severity: critical
+              class: meta
+            exp_annotations:
+              summary: "skmon-bridge keeps failing to deliver alerts to sk-alert."
+              runbook: "Read the skmon-bridge service logs and check that sk-alert's endpoint and credentials still work."
+
+  # No new delivery failures stays quiet, also while the old count is still in the window.
+  - interval: 15s
+    input_series:
+      - series: 'skmon_bridge_delivery_failures_total{job="skmon-bridge",instance="skmon-bridge:9095",estate="example"}'
+        values: '4x40'
+    alert_rule_test:
+      - eval_time: 5m
+        groupname: skmon-meta
+        alertname: AlertDeliveryFailing
+        exp_alerts: []
+      - eval_time: 5m30s
+        groupname: skmon-meta
+        alertname: AlertDeliveryFailing
+        exp_alerts: []
+
+  # DATA_PATH's filesystem on DATA_NODE 90 % used fires after 10 m.
+  - interval: 15s
+    input_series:
+      - series: 'node_filesystem_avail_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sdb1",fstype="ext4",mountpoint="/srv/local"}'
+        values: '100x50'
+      - series: 'node_filesystem_size_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sdb1",fstype="ext4",mountpoint="/srv/local"}'
+        values: '1000x50'
+    alert_rule_test:
+      - eval_time: 10m15s
+        groupname: skmon-meta
+        alertname: MonitorDiskFilling
+        exp_alerts:
+          - exp_labels:
+              job: alloy-unix
+              instance: 192.0.2.10:12345
+              node: node-1.render.example.test
+              role: swarm
+              estate: example
+              device: /dev/sdb1
+              fstype: ext4
+              mountpoint: /srv/local
+              severity: warning
+              class: meta
+            exp_annotations:
+              summary: "The skmon data filesystem /srv/local on node-1.render.example.test is above 85 % used."
+              runbook: "Lower METRICS_RETENTION or LOGS_RETENTION, or give DATA_PATH more space, before VictoriaMetrics and Loki stop writing."
+
+  # Another filesystem of DATA_NODE, or the same mountpoint on another node, at 90 % is not
+  # this alert's; DATA_PATH at half full stays quiet.
+  - interval: 15s
+    input_series:
+      - series: 'node_filesystem_avail_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sdb1",fstype="ext4",mountpoint="/srv/local"}'
+        values: '500x50'
+      - series: 'node_filesystem_size_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sdb1",fstype="ext4",mountpoint="/srv/local"}'
+        values: '1000x50'
+      - series: 'node_filesystem_avail_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sdb1",fstype="ext4",mountpoint="/"}'
+        values: '100x50'
+      - series: 'node_filesystem_size_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sdb1",fstype="ext4",mountpoint="/"}'
+        values: '1000x50'
+      - series: 'node_filesystem_avail_bytes{job="alloy-unix",instance="192.0.2.11:12345",node="node-2.render.example.test",role="swarm",estate="example",device="/dev/sdb1",fstype="ext4",mountpoint="/srv/local"}'
+        values: '100x50'
+      - series: 'node_filesystem_size_bytes{job="alloy-unix",instance="192.0.2.11:12345",node="node-2.render.example.test",role="swarm",estate="example",device="/dev/sdb1",fstype="ext4",mountpoint="/srv/local"}'
+        values: '1000x50'
+    alert_rule_test:
+      - eval_time: 10m15s
+        groupname: skmon-meta
+        alertname: MonitorDiskFilling
+        exp_alerts: []

@@ -1,0 +1,81 @@
+# Provenance of every dashboard under this directory. Third-party boards are vendored at the
+# recorded revision (grafana.com revision or git commit SHA) with the datasource rewrite applied.
+# Re-vendor by fetching the same source and re-running the rewrite; do not edit them by hand.
+apps/crowdsec.json:
+  source: carried-from-v1
+  revision: carried-from-v1
+  license: AGPL-3.0
+  rewritten:
+  - datasource
+apps/forgejo.json:
+  source: carried-from-v1
+  revision: carried-from-v1
+  license: AGPL-3.0
+  rewritten:
+  - datasource
+apps/qdrant.json:
+  source: carried-from-v1
+  revision: carried-from-v1
+  license: AGPL-3.0
+  rewritten:
+  - datasource
+infrastructure/node-exporter-full.json:
+  source: https://grafana.com/api/dashboards/1860/revisions/46/download
+  revision: '46'
+  license: Apache-2.0
+  rewritten:
+  - datasource
+infrastructure/traefik.json:
+  source: https://grafana.com/api/dashboards/17346/revisions/9/download
+  revision: '9'
+  license: MIT
+  rewritten:
+  - datasource
+skmon internals/alloy.json:
+  source: https://github.com/grafana/alloy/blob/f2108cd783accbd491b24843484c33abba6da52a/operations/alloy-mixin/rendered/dashboards/alloy-resources.json
+  revision: f2108cd783accbd491b24843484c33abba6da52a
+  license: Apache-2.0
+  rewritten:
+  - datasource
+skmon internals/loki.json:
+  source: https://github.com/grafana/loki/blob/d3b4a2f76bfc5625abee7ceb00b8896fa3c31549/production/loki-mixin-compiled/dashboards/loki-operational.json
+  revision: d3b4a2f76bfc5625abee7ceb00b8896fa3c31549
+  license: AGPL-3.0
+  rewritten:
+  - datasource
+skmon internals/victoriametrics.json:
+  source: https://grafana.com/api/dashboards/10229/revisions/61/download
+  revision: '61'
+  license: Apache-2.0
+  rewritten:
+  - datasource
+estate-overview.json:
+  source: built-here
+  revision: skmon-v2
+  license: AGPL-3.0
+  rewritten: []
+infrastructure/container.json:
+  source: built-here
+  revision: skmon-v2
+  license: AGPL-3.0
+  rewritten: []
+infrastructure/loki-logs.json:
+  source: built-here
+  revision: skmon-v2
+  license: AGPL-3.0
+  rewritten: []
+infrastructure/proxmox.json:
+  source: built-here
+  revision: skmon-v2
+  license: AGPL-3.0
+  rewritten: []
+infrastructure/swarm-services.json:
+  source: built-here
+  revision: skmon-v2
+  license: AGPL-3.0
+  rewritten: []
+infrastructure/zfs.json:
+  source: built-here
+  revision: skmon-v2
+  license: AGPL-3.0
+  rewritten: []

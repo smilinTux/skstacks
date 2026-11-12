@@ -1,0 +1,50 @@
+# vmalert rules, class node (spec 8). Every rule carries severity, class and estate;
+# vmalert also adds estate as an external label. Annotations use vmalert's own template
+# syntax ($labels, $value), kept out of Jinja with raw blocks.
+groups:
+  - name: skmon-node
+    rules:
+      # The unix exporter job only: a wedged Docker daemon shows as CadvisorScrapeFailing
+      # (a warning), not as a node down that would mute the node's other alerts (spec 8.2).
+      - alert: NodeDown
+        expr: up{job="alloy-unix"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          class: node
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "Node {{ $labels.node }} is down: its agent has not answered a scrape for 30 s."
+{% endraw %}
+          runbook: "Check that the host is up and reachable on the agent port, then that the skmon-{{ env }}-alloy agent is running on it."
+
+      # node is the Swarm hostname, which tasks/agent_guards.yml requires to equal the
+      # inventory name that labels the agent's own series. Two rules, one alert name: a node
+      # that is not ready pages at once; a planned drain is only a warning, and a node left
+      # drained past 30 m is the unexpected case. Only the critical one is an inhibition
+      # source (alertmanager-config.yml.j2, rule 1).
+      - alert: SwarmNodeNotReady
+        expr: skswarm_node_info{state!="ready"}
+        for: 30s
+        labels:
+          severity: critical
+          class: node
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "Swarm node {{ $labels.node }} is not ready (state {{ $labels.state }})."
+{% endraw %}
+          runbook: "Check that the Docker daemon on the node is running and that it still reaches the managers."
+      - alert: SwarmNodeNotReady
+        expr: skswarm_node_info{availability="drain", state="ready"}
+        for: 30m
+        labels:
+          severity: warning
+          class: node
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "Swarm node {{ $labels.node }} has been drained for over 30 minutes."
+{% endraw %}
+          runbook: "Set the node back to active if the maintenance is finished, or leave it drained on purpose and silence this alert."

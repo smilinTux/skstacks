@@ -1,0 +1,230 @@
+# vmalert-tool unit tests for rules/capacity.yml.j2 (F3).
+rule_files:
+  - ../capacity.yml
+evaluation_interval: 15s
+tests:
+  # Space 92 % used on a writable filesystem: the warning fires, the critical does not. An NFS
+  # client mount at 99 % is left to the server's own filesystem and stays quiet.
+  - interval: 15s
+    input_series:
+      - series: 'node_filesystem_avail_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sda1",mountpoint="/",fstype="ext4"}'
+        values: '80x30'
+      - series: 'node_filesystem_size_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sda1",mountpoint="/",fstype="ext4"}'
+        values: '1000x30'
+      - series: 'node_filesystem_files_free{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sda1",mountpoint="/",fstype="ext4"}'
+        values: '900x30'
+      - series: 'node_filesystem_files{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sda1",mountpoint="/",fstype="ext4"}'
+        values: '1000x30'
+      - series: 'node_filesystem_readonly{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sda1",mountpoint="/",fstype="ext4"}'
+        values: '0x30'
+      - series: 'node_filesystem_avail_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="192.0.2.20:/export",mountpoint="/mnt/shared",fstype="nfs4"}'
+        values: '10x30'
+      - series: 'node_filesystem_size_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="192.0.2.20:/export",mountpoint="/mnt/shared",fstype="nfs4"}'
+        values: '1000x30'
+    alert_rule_test:
+      - eval_time: 5m15s
+        groupname: skmon-capacity
+        alertname: DiskFilling
+        exp_alerts:
+          - exp_labels:
+              job: alloy-unix
+              instance: 192.0.2.10:12345
+              node: node-1.render.example.test
+              role: swarm
+              estate: example
+              device: /dev/sda1
+              mountpoint: /
+              fstype: ext4
+              severity: warning
+              class: capacity
+            exp_annotations:
+              summary: "Filesystem / on node-1.render.example.test is above 90 % used (space or inodes) or will fill within 24 h."
+              runbook: "Find what grows on that filesystem (du -xh --max-depth=1, df -i) and free or extend it."
+
+  # Inodes 97 % used, space fine: both severities fire (inhibition rule 4 keeps the critical).
+  - interval: 15s
+    input_series:
+      - series: 'node_filesystem_avail_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sda1",mountpoint="/",fstype="ext4"}'
+        values: '500x30'
+      - series: 'node_filesystem_size_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sda1",mountpoint="/",fstype="ext4"}'
+        values: '1000x30'
+      - series: 'node_filesystem_files_free{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sda1",mountpoint="/",fstype="ext4"}'
+        values: '30x30'
+      - series: 'node_filesystem_files{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sda1",mountpoint="/",fstype="ext4"}'
+        values: '1000x30'
+    alert_rule_test:
+      - eval_time: 5m15s
+        groupname: skmon-capacity
+        alertname: DiskFilling
+        exp_alerts:
+          - exp_labels:
+              job: alloy-unix
+              instance: 192.0.2.10:12345
+              node: node-1.render.example.test
+              role: swarm
+              estate: example
+              device: /dev/sda1
+              mountpoint: /
+              fstype: ext4
+              severity: warning
+              class: capacity
+            exp_annotations:
+              summary: "Filesystem / on node-1.render.example.test is above 90 % used (space or inodes) or will fill within 24 h."
+              runbook: "Find what grows on that filesystem (du -xh --max-depth=1, df -i) and free or extend it."
+          - exp_labels:
+              job: alloy-unix
+              instance: 192.0.2.10:12345
+              node: node-1.render.example.test
+              role: swarm
+              estate: example
+              device: /dev/sda1
+              mountpoint: /
+              fstype: ext4
+              severity: critical
+              class: capacity
+            exp_annotations:
+              summary: "Filesystem / on node-1.render.example.test is above 95 % used (space or inodes)."
+              runbook: "Free space on that filesystem now (du -xh --max-depth=1, df -i), before writes start to fail."
+
+  # Half full but losing 5 bytes every 15 s: full within 24 h, so the warning fires.
+  - interval: 15s
+    input_series:
+      - series: 'node_filesystem_avail_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sda1",mountpoint="/",fstype="ext4"}'
+        values: '500-5x30'
+      - series: 'node_filesystem_size_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sda1",mountpoint="/",fstype="ext4"}'
+        values: '1000x30'
+      - series: 'node_filesystem_files_free{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sda1",mountpoint="/",fstype="ext4"}'
+        values: '900x30'
+      - series: 'node_filesystem_files{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sda1",mountpoint="/",fstype="ext4"}'
+        values: '1000x30'
+    alert_rule_test:
+      - eval_time: 5m30s
+        groupname: skmon-capacity
+        alertname: DiskFilling
+        exp_alerts:
+          - exp_labels:
+              job: alloy-unix
+              instance: 192.0.2.10:12345
+              node: node-1.render.example.test
+              role: swarm
+              estate: example
+              device: /dev/sda1
+              mountpoint: /
+              fstype: ext4
+              severity: warning
+              class: capacity
+            exp_annotations:
+              summary: "Filesystem / on node-1.render.example.test is above 90 % used (space or inodes) or will fill within 24 h."
+              runbook: "Find what grows on that filesystem (du -xh --max-depth=1, df -i) and free or extend it."
+
+  # Half full and steady stays quiet.
+  - interval: 15s
+    input_series:
+      - series: 'node_filesystem_avail_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sda1",mountpoint="/",fstype="ext4"}'
+        values: '500x30'
+      - series: 'node_filesystem_size_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sda1",mountpoint="/",fstype="ext4"}'
+        values: '1000x30'
+      - series: 'node_filesystem_files_free{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sda1",mountpoint="/",fstype="ext4"}'
+        values: '900x30'
+      - series: 'node_filesystem_files{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sda1",mountpoint="/",fstype="ext4"}'
+        values: '1000x30'
+    alert_rule_test:
+      - eval_time: 5m30s
+        groupname: skmon-capacity
+        alertname: DiskFilling
+        exp_alerts: []
+
+  # 3 % of memory available fires.
+  - interval: 15s
+    input_series:
+      - series: 'node_memory_MemAvailable_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example"}'
+        values: '30x20'
+      - series: 'node_memory_MemTotal_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example"}'
+        values: '1000x20'
+      - series: 'node_pressure_memory_waiting_seconds_total{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 2m15s
+        groupname: skmon-capacity
+        alertname: MemoryPressure
+        exp_alerts:
+          - exp_labels:
+              job: alloy-unix
+              instance: 192.0.2.10:12345
+              node: node-1.render.example.test
+              role: swarm
+              estate: example
+              severity: warning
+              class: capacity
+            exp_annotations:
+              summary: "Memory pressure on node-1.render.example.test: tasks wait for memory or less than 5 % is available."
+              runbook: "Find the largest consumers on the host (top -o RES, the container memory board) and check their limits."
+
+  # Tasks waiting on memory 40 % of the time fires even with memory available.
+  - interval: 15s
+    input_series:
+      - series: 'node_memory_MemAvailable_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example"}'
+        values: '500x20'
+      - series: 'node_memory_MemTotal_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example"}'
+        values: '1000x20'
+      - series: 'node_pressure_memory_waiting_seconds_total{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example"}'
+        values: '0+6x20'
+    alert_rule_test:
+      - eval_time: 2m30s
+        groupname: skmon-capacity
+        alertname: MemoryPressure
+        exp_alerts:
+          - exp_labels:
+              job: alloy-unix
+              instance: 192.0.2.10:12345
+              node: node-1.render.example.test
+              role: swarm
+              estate: example
+              severity: warning
+              class: capacity
+            exp_annotations:
+              summary: "Memory pressure on node-1.render.example.test: tasks wait for memory or less than 5 % is available."
+              runbook: "Find the largest consumers on the host (top -o RES, the container memory board) and check their limits."
+
+  # Half the memory available and no waiting stays quiet.
+  - interval: 15s
+    input_series:
+      - series: 'node_memory_MemAvailable_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example"}'
+        values: '500x20'
+      - series: 'node_memory_MemTotal_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example"}'
+        values: '1000x20'
+      - series: 'node_pressure_memory_waiting_seconds_total{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 2m30s
+        groupname: skmon-capacity
+        alertname: MemoryPressure
+        exp_alerts: []
+
+  # A full read-only filesystem (an image mounted ro, space and inodes 100 %) and a full tmpfs
+  # stay quiet at both severities.
+  - interval: 15s
+    input_series:
+      - series: 'node_filesystem_avail_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/loop0",mountpoint="/srv/image",fstype="ext4"}'
+        values: '0x30'
+      - series: 'node_filesystem_size_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/loop0",mountpoint="/srv/image",fstype="ext4"}'
+        values: '1000x30'
+      - series: 'node_filesystem_files_free{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/loop0",mountpoint="/srv/image",fstype="ext4"}'
+        values: '0x30'
+      - series: 'node_filesystem_files{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/loop0",mountpoint="/srv/image",fstype="ext4"}'
+        values: '1000x30'
+      - series: 'node_filesystem_readonly{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/loop0",mountpoint="/srv/image",fstype="ext4"}'
+        values: '1x30'
+      - series: 'node_filesystem_avail_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="tmpfs",mountpoint="/run",fstype="tmpfs"}'
+        values: '0x30'
+      - series: 'node_filesystem_size_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="tmpfs",mountpoint="/run",fstype="tmpfs"}'
+        values: '1000x30'
+      - series: 'node_filesystem_files_free{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="tmpfs",mountpoint="/run",fstype="tmpfs"}'
+        values: '0x30'
+      - series: 'node_filesystem_files{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="tmpfs",mountpoint="/run",fstype="tmpfs"}'
+        values: '1000x30'
+    alert_rule_test:
+      - eval_time: 5m30s
+        groupname: skmon-capacity
+        alertname: DiskFilling
+        exp_alerts: []

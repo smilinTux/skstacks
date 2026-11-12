@@ -120,6 +120,9 @@ FAKE_STDOUT = {
     "actual_cert_dir": "/var/data/runtime/skfenceha-dev/certs/mail.example.test",
     "skfenceha_logrotate_nodes": "render-node-1",
     "skfence_logrotate_nodes": "render-node-1",
+    # DATA_NODE, plus the gate's own inventory host (tasks/agent_guards.yml: a swarm host's
+    # inventory name must be a Swarm hostname).
+    "skmon_node_ls": "node-1.render.example.test\nlocalhost",
     "garage_node": "render-node-1",
     "garage_replicas": "1/1",
     # skpayment: the controller-side app checkout (a fixture stand-in)
@@ -175,7 +178,7 @@ def fake_result(register: str) -> dict:
     out = FAKE_STDOUT.get(register, "")
     return {
         "changed": False, "failed": False, "skipped": False, "rc": 0,
-        "stdout": out, "stdout_lines": [out] if out else [],
+        "stdout": out, "stdout_lines": out.splitlines(),
         "stderr": "", "stderr_lines": [], "msg": "", "content": FAKE_CONTENT.get(register, ""),
         "exists": False, "stat": {"exists": False}, "results": [],
     }
@@ -623,6 +626,9 @@ def run_one(work: Path, stype: str, svc: str, env: str, pb: Path, pass_name: str
     vault_dir.mkdir(parents=True)
     (vault_dir / f"{svc}-{env}_vault.yml").write_text(yaml.dump(vault, Dumper=VarsDumper))
     stage_companion_vaults(svc, env, vault_dir, vaults_root=run_dir / "vaults")
+    if svc == "skmon":
+        # SKALERT_SCRIPT_SRC is relative to the vault file's directory: stage the test stub beside it.
+        shutil.copy(V1 / "tests/fixtures/skmon/fake_sk_alert", vault_dir / "fake_sk_alert")
     inv_dir = run_dir / "inventory"
     shutil.copytree(FIXTURES, inv_dir)
     target_group = "skfenceha_managers" if svc == "skfenceha" else "swarm_managers"

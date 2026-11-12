@@ -1,0 +1,36 @@
+# vmalert rules, class http (spec 8). Probe series come from the alloy-blackbox job and
+# carry probe (the name), severity, forward_auth and node (the probing DATA_NODE).
+groups:
+  - name: skmon-http
+    rules:
+      # Authentik's own health endpoint. HttpEndpointDown leaves it out, so an Authentik
+      # outage is reported once, here.
+      - alert: AuthentikDown
+        expr: probe_success{probe="authentik"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          class: http
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "Authentik health probe {{ $labels.instance }} fails, so every forward-auth route is down."
+{% endraw %}
+          runbook: "Check the sksso stack (server and worker tasks, its database and Redis) before any route behind forward auth."
+
+      # Severity is the probe's own label (PROBES severity, default warning); forward_auth
+      # stays on the alert from the series, for inhibition rule 3.
+      - alert: HttpEndpointDown
+        expr: probe_success{probe!="authentik"} == 0
+        for: 1m
+        labels:
+{% raw %}
+          severity: '{{ $labels.severity }}'
+{% endraw %}
+          class: http
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "Probe {{ $labels.probe }} fails: {{ $labels.instance }} does not answer as expected."
+{% endraw %}
+          runbook: "Open the URL, then check its Traefik router, the DNS record and the service's tasks in that order."

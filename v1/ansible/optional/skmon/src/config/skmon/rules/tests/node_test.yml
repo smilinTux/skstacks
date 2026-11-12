@@ -1,0 +1,42 @@
+# vmalert-tool unit tests for rules/node.yml.j2 (F3). The rule files are Jinja templates:
+# v1/tests/skmon/render_rules.py renders them next to a copy of this directory, so
+# rule_files names the rendered sibling (fake values: estate "example").
+rule_files:
+  - ../node.yml
+evaluation_interval: 15s
+tests:
+  # The unix exporter target of node-1 stops answering; a cadvisor target that also fails
+  # is a different alert (CadvisorScrapeFailing), not a node down.
+  - interval: 15s
+    input_series:
+      - series: 'up{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example"}'
+        values: '0x10'
+      - series: 'up{job="alloy-cadvisor",instance="192.0.2.11:12345",node="node-2.render.example.test",role="swarm",estate="example"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 45s
+        groupname: skmon-node
+        alertname: NodeDown
+        exp_alerts:
+          - exp_labels:
+              job: alloy-unix
+              instance: 192.0.2.10:12345
+              node: node-1.render.example.test
+              role: swarm
+              estate: example
+              severity: critical
+              class: node
+            exp_annotations:
+              summary: "Node node-1.render.example.test is down: its agent has not answered a scrape for 30 s."
+              runbook: "Check that the host is up and reachable on the agent port, then that the skmon-prod-alloy agent is running on it."
+
+  # A healthy node stays quiet.
+  - interval: 15s
+    input_series:
+      - series: 'up{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 45s
+        groupname: skmon-node
+        alertname: NodeDown
+        exp_alerts: []

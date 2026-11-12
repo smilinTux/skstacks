@@ -14,8 +14,8 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 ---
-# skmon: monitoring + tracing stack (Prometheus, Grafana, Loki, Promtail,
-# cAdvisor, node-exporter, Alertmanager, Jaeger) — adapted from
+# skmon: monitoring stack (VictoriaMetrics, Grafana, Loki,
+# Alertmanager), adapted from
 # optional/skgraph and optional/skmem-pg SOP.
 # TODO before deploy: register the skmon-{{ env }} overlay subnet in
 # shared/networks (pick a free /24 if these placeholders collide on your
@@ -35,7 +35,7 @@
       vars:
         target_group: "{{ target_manager_group | default('swarm_managers') }}"
 
-# Step 2: Deploy to selected manager
+# Step 2: the vault, the guards, the derived facts and the probe list on the selected manager
 - hosts: selected_manager_group
   become: true
   vars:
@@ -50,6 +50,34 @@
     - name: Load vault file
       include_vars: "{{ vault_file_path }}"
       when: vault_file_path is defined
+      no_log: true
+
+    - name: Check the skmon vault and derive the data facts
+      include_tasks: "{{ playbook_dir }}/tasks/guards.yml"
+      tags:
+        - always
+
+    - name: Derive the skmon agent scrape targets
+      include_tasks: "{{ playbook_dir }}/tasks/agent_targets.yml"
+      tags:
+        - always
+
+    - name: Check the skmon agent addresses
+      include_tasks: "{{ playbook_dir }}/tasks/agent_guards.yml"
+      tags:
+        - always
+
+    - name: Create the skmon local data directories
+      include_tasks: "{{ playbook_dir }}/tasks/data_dirs.yml"
+      tags:
+        - always
+
+    - name: Restrict the skmon agent, Loki push, Pyroscope and healthz ports on DATA_NODE
+      include_tasks: "{{ playbook_dir }}/tasks/port_allowlist.yml"
+      vars:
+        skmon_fw_node: "{{ skmon_data_node }}"
+      tags:
+        - always
 
     - name: Define network variables (⚠️ TODO register subnet in shared/networks — placeholder)
       # Networks are created idempotently by the create_networks.yml shared
@@ -78,30 +106,9 @@
         mode: "{{ item.mode }}"
       loop:
         - { path: "/var/data/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/{{ app }}-{{ env }}/prometheus/data", owner: "65534", group: "65534", mode: "0755" }
-        - { path: "/var/data/{{ app }}-{{ env }}/grafana/data", owner: "472", group: "472", mode: "0755" }
-        - { path: "/var/data/{{ app }}-{{ env }}/loki-data", owner: "10001", group: "10001", mode: "0755" }
-        - { path: "/var/data/{{ app }}-{{ env }}/loki-data/rules", owner: "10001", group: "10001", mode: "0755" }
-        - { path: "/var/data/{{ app }}-{{ env }}/loki-data/chunks", owner: "10001", group: "10001", mode: "0755" }
-        - { path: "/var/data/{{ app }}-{{ env }}/loki-data/tsdb-index", owner: "10001", group: "10001", mode: "0755" }
-        - { path: "/var/data/{{ app }}-{{ env }}/loki-data/tsdb-cache", owner: "10001", group: "10001", mode: "0755" }
         - { path: "/var/data/config/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/config/{{ app }}-{{ env }}/prometheus", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/config/{{ app }}-{{ env }}/grafana/provisioning/datasources", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/config/{{ app }}-{{ env }}/grafana/provisioning/dashboards", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/config/{{ app }}-{{ env }}/loki", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/config/{{ app }}-{{ env }}/promtail", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/config/{{ app }}-{{ env }}/alertmanager", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/{{ app }}-{{ env }}/alertmanager/data", owner: "root", group: "root", mode: "0777" }
-        - { path: "/var/data/{{ app }}-{{ env }}/jaeger/badger", owner: "root", group: "root", mode: "0777" }
-        - { path: "/var/data/{{ app }}-{{ env }}/jaeger/badger/key", owner: "root", group: "root", mode: "0777" }
-        - { path: "/var/data/{{ app }}-{{ env }}/jaeger/badger/value", owner: "root", group: "root", mode: "0777" }
-        - { path: "/var/data/logs/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/logs/{{ app }}-{{ env }}/prometheus", owner: "65534", group: "65534", mode: "0755" }
-        - { path: "/var/data/logs/{{ app }}-{{ env }}/grafana", owner: "472", group: "472", mode: "0755" }
-        - { path: "/var/data/logs/{{ app }}-{{ env }}/loki", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/logs/{{ app }}-{{ env }}/promtail", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/logs/{{ app }}-{{ env }}/cadvisor", owner: "root", group: "root", mode: "0755" }
+        - { path: "/var/data/config/{{ app }}-{{ env }}/configs", owner: "root", group: "root", mode: "0750" }
+        - { path: "/var/data/config/{{ app }}-{{ env }}/secrets", owner: "root", group: "root", mode: "0700" }
 
     - name: Process {{ app }} environment templates
       template:
@@ -116,38 +123,300 @@
       tags:
         - templates
 
-    - name: Process {{ app }} configuration templates
-      template:
-        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
-        dest: "{{ item.dest }}"
-        owner: root
-        group: '{{ item.group | default("root") }}'
-        mode: '{{ item.mode | default("0644") }}'
-      loop:
-        - { src: "prometheus.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/prometheus/prometheus.yml", group: "65534", mode: "0640" }
-        - { src: "grafana-datasources.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/grafana/provisioning/datasources/datasources.yml" }
-        - { src: "grafana-dashboards.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/grafana/provisioning/dashboards/dashboards.yml" }
-        - { src: "loki-config.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/loki/local-config.yaml" }
-        - { src: "promtail-config.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/promtail/promtail-config.yaml" }
-        - { src: "alertmanager-config.yml.j2", dest: "/var/data/config/{{ app }}-{{ env }}/alertmanager/config.yml" }
+    # --- probe list for the agent play (R9) -------------------------------------------
+    # skmon_probes is set here, on the selected manager, because agent.yml reads it from
+    # that host's hostvars; it comes before the config render because vm-scrape.yml.j2 turns
+    # it into the alloy-blackbox targets (the series labels probe, severity, forward_auth).
+    # On a first install the stack's own routers do not exist yet and appear on the next
+    # deploy. skmon.PROBES wins when set; otherwise one probe per Traefik
+    # router host on the estate, read from every service's labels, services scaled to 0 skipped (the parsing is the
+    # skmon_probes_from_services filter in filter_plugins/). The Authentik health probe is
+    # appended when skmon can tell the sksso host (skmon.AUTHENTIK_HOST, else sksso's
+    # vault); without either the entry is omitted and the deploy carries on.
+
+    - name: List the Swarm service IDs
+      command: docker service ls -q
+      register: skmon_service_ids
+      changed_when: false
+      when: not skmon_parked and (skmon.PROBES | default([], true) | length) == 0
+      tags:
+        - config
+        - probes
+
+    - name: Inspect every service for its Traefik router labels
+      command:
+        argv: "{{ ['docker', 'service', 'inspect'] + skmon_service_ids.stdout_lines }}"
+      register: skmon_service_inspect
+      changed_when: false
+      when:
+        - not skmon_parked
+        - (skmon.PROBES | default([], true) | length) == 0
+        - skmon_service_ids.stdout_lines | default([]) | length > 0
+      tags:
+        - config
+        - probes
+
+    - name: Locate sksso's vault (for the Authentik health probe host)
+      set_fact:
+        skmon_sksso_vault_file: >-
+          {{ (vault_file_path | dirname) ~ '/'
+             ~ (vault_file_path | basename | regex_replace('^skmon-', 'sksso-')) }}
+      when: vault_file_path is defined and (skmon.AUTHENTIK_HOST | default('', true)) == ''
+      tags:
+        - config
+        - probes
+
+    - name: Load sksso's vault when it exists
+      include_vars:
+        file: "{{ skmon_sksso_vault_file }}"
+        name: skmon_sksso_vault
+      when: skmon_sksso_vault_file is defined and (lookup('ansible.builtin.fileglob', skmon_sksso_vault_file) | length) > 0
+      no_log: true
+      tags:
+        - config
+        - probes
+
+    - name: Derive the Authentik host for the health probe
+      set_fact:
+        skmon_authentik_host: >-
+          {{ skmon.AUTHENTIK_HOST | default('', true)
+             or (('sso' ~ ('' if env == 'prod' else '-' ~ env) ~ '.'
+                  ~ ((skmon_sksso_vault.sksso.DOMAIN | string) if (skmon_sksso_vault.sksso.CLOUDFLARED | default(false) | bool)
+                     else ((skmon_sksso_vault.sksso.CLUSTERNAME | string) ~ '.' ~ (skmon_sksso_vault.sksso.DOMAIN | string))))
+                 if (skmon_sksso_vault is defined and (skmon_sksso_vault.sksso.DOMAIN | default('', true)) != '') else '') }}
+      tags:
+        - config
+        - probes
+
+    - name: Say that the Authentik health probe is left out
+      debug:
+        msg: >-
+          skmon cannot tell the sksso host (no skmon.AUTHENTIK_HOST and no sksso vault with
+          DOMAIN), so the authentik health probe is omitted. Set skmon.AUTHENTIK_HOST to add it.
+      when: skmon_authentik_host == ''
+      tags:
+        - config
+        - probes
+
+    - name: Set the skmon probe list
+      set_fact:
+        skmon_probes: >-
+          {{ ((skmon.PROBES | default([], true)) if (skmon.PROBES | default([], true) | length) > 0
+              else (skmon_service_inspect.stdout | default('[]', true) | from_json
+                    | skmon_probes_from_services(skmon.FORWARD_AUTH_MIDDLEWARE | default('authentik@file'))))
+             | skmon_with_authentik_probe(skmon_authentik_host) }}
+      tags:
+        - config
+        - probes
+
+    - name: Put every skmon agent host in the agent play's group
+      # agent.yml runs on skmon_agent_hosts; an inventory without that group would
+      # otherwise match zero hosts and silently deploy no agent.
+      add_host:
+        name: "{{ item }}"
+        groups: skmon_agent_hosts
+      loop: "{{ skmon_agent_host_list }}"
+      changed_when: false
+      tags:
+        - always
+
+# Step 3: when unparked, the agents converge BEFORE the stack deploy (R80), so vmalert never
+# evaluates a node whose agent is not running yet (NodeDown on every first install, v1
+# migration and unpark). agent.yml derives its facts in both phases and does its work in
+# this one only when unparked.
+- import_playbook: agent.yml
+  vars:
+    env: dev
+    skmon_agent_phase: pre
+
+# Step 4: configs, secrets, dashboards and the stack deploy on the selected manager. What the
+# Step 2 play derived (the vault, the guard facts, the probe list, app_networks) are host
+# facts and carry over to this play.
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skmon
+    env: dev
+    service_name: skmon
+    service_type: optional
+  tasks:
+    # MonitorDiskFilling (rules/meta.yml.j2) watches the filesystem that holds DATA_PATH.
+    - name: Find the filesystem that holds DATA_PATH on the data node
+      command:
+        argv: ["findmnt", "-n", "-o", "TARGET", "-T", "{{ skmon_data_path }}"]
+      register: skmon_data_findmnt
+      delegate_to: "{{ skmon_data_node }}"
+      changed_when: false
+      failed_when: false
       tags:
         - config
 
-    - name: Copy dashboard JSON files
+    - name: Set the DATA_PATH mountpoint
+      # The root filesystem when findmnt fails (DATA_PATH not created yet, findmnt missing).
+      set_fact:
+        skmon_data_mountpoint: >-
+          {{ (skmon_data_findmnt.stdout | default('', true) | trim)
+             if (skmon_data_findmnt.rc | default(1)) == 0 and (skmon_data_findmnt.stdout | default('', true) | trim) != ''
+             else '/' }}
+      tags:
+        - config
+
+    - name: Render the {{ app }} Swarm config contents
+      # Contents live in a variable (the compose template names each config after
+      # the sha256 of its content) and are written to disk only so the docker CLI
+      # can read them once at stack deploy; the running stack never reads /var/data.
+      set_fact:
+        skmon_configs:
+          vm-scrape: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/vm-scrape.yml.j2') }}"
+          loki: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/loki-config.yml.j2') }}"
+          alertmanager: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/alertmanager-config.yml.j2') }}"
+          rules-node: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/rules/node.yml.j2') }}"
+          rules-storage: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/rules/storage.yml.j2') }}"
+          rules-http: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/rules/http.yml.j2') }}"
+          rules-cert: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/rules/cert.yml.j2') }}"
+          rules-capacity: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/rules/capacity.yml.j2') }}"
+          rules-container: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/rules/container.yml.j2') }}"
+          rules-swarm: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/rules/swarm.yml.j2') }}"
+          rules-meta: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/rules/meta.yml.j2') }}"
+          loki-rules: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/loki-rules/storage.yml.j2') }}"
+          # The bridge script from this repository and the estate's sk-alert from the controller
+          # (SKALERT_SCRIPT_SRC, hash-checked by tasks/guards.yml). rstrip=False keeps the bytes exact.
+          skmon_bridge.py: "{{ lookup('ansible.builtin.file', playbook_dir + '/src/skmon/bridge/skmon_bridge.py', rstrip=False) }}"
+          sk-alert: "{{ lookup('ansible.builtin.file', skmon_skalert_src, rstrip=False) }}"
+          # The Swarm exporter script, delivered like the bridge script.
+          skswarm_exporter.py: "{{ lookup('ansible.builtin.file', playbook_dir + '/src/skmon/swarm_exporter/skswarm_exporter.py', rstrip=False) }}"
+      no_log: true
+      tags:
+        - config
+
+    - name: Write the {{ app }} Swarm config sources
       copy:
-        src: "{{ playbook_dir }}/src/config/{{ app }}/dashboards/{{ item }}"
-        dest: "/var/data/config/{{ app }}-{{ env }}/grafana/provisioning/dashboards/{{ item }}"
+        content: "{{ item.value }}"
+        dest: "/var/data/config/{{ app }}-{{ env }}/configs/{{ item.key }}"
+        owner: root
+        group: root
+        mode: '0640'
+      loop: "{{ skmon_configs | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      no_log: true
+      tags:
+        - config
+
+    - name: Render the {{ app }} Docker secret contents
+      # sk-alert's alert.env (ALERT_ROUTING) and alert.secret (ALERT_SECRETS), and pve.yml. Like the configs,
+      # the compose template names each secret after the sha256 of its content.
+      set_fact:
+        skmon_secrets:
+          alert_env: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/alert.env.j2') }}"
+          alert_secret: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/alert.secret.j2') }}"
+          # prometheus-pve-exporter's config with the API token. Rendered with empty values when
+          # PVE is off, so the stack stays valid at replicas 0.
+          pve_config: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/pve.yml.j2') }}"
+          # Grafana's OIDC client secret, mounted as a file (GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET__FILE).
+          grafana_oidc_client_secret: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/grafana_oidc_client_secret.j2') }}"
+      no_log: true
+      tags:
+        - config
+
+    - name: Write the {{ app }} Docker secret sources
+      copy:
+        content: "{{ item.value }}"
+        dest: "/var/data/config/{{ app }}-{{ env }}/secrets/{{ item.key }}"
+        owner: root
+        group: root
+        mode: '0600'
+      loop: "{{ skmon_secrets | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      no_log: true
+      tags:
+        - config
+
+    - name: Create the Grafana provisioning directories on the data node
+      file:
+        path: "{{ skmon_data_path }}/grafana-provisioning/{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      delegate_to: "{{ skmon_data_node }}"
+      loop:
+        - datasources
+        - dashboards
+        - dashboards/apps
+        - dashboards/skmon internals
+        - dashboards/infrastructure
+      tags:
+        - config
+        - dashboards
+
+    - name: Process Grafana provisioning templates on the data node
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/grafana/{{ item.src }}"
+        dest: "{{ skmon_data_path }}/grafana-provisioning/{{ item.dest }}"
         owner: root
         group: root
         mode: '0644'
+      delegate_to: "{{ skmon_data_node }}"
       loop:
-        - docker-swarm.json
-        - traefik.json
-        - prometheus.json
-        - grafana.json
-        - crowdsec.json
-        - qdrant.json
-        - forgejo.json
+        - { src: "datasources.yml.j2", dest: "datasources/datasources.yml" }
+        - { src: "dashboards.yml.j2", dest: "dashboards/dashboards.yml" }
+      tags:
+        - config
+
+    - name: Copy the dashboards tree to the data node
+      copy:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/dashboards/"
+        dest: "{{ skmon_data_path }}/grafana-provisioning/dashboards/"
+        owner: root
+        group: root
+        mode: '0644'
+        directory_mode: '0755'
+      delegate_to: "{{ skmon_data_node }}"
+      tags:
+        - dashboards
+
+    # The dashboards tree is two levels deep by design (dashboards/<folder>/<file>.json), so both
+    # listings are a bounded, read-only find (-maxdepth 2), never a recursive walk (R84).
+    - name: List the dashboards the role ships (controller)
+      command:
+        argv: ["find", "{{ playbook_dir }}/src/config/{{ app }}/dashboards", "-maxdepth", "2", "-type", "f", "-name", "*.json"]
+      delegate_to: localhost
+      become: false
+      register: skmon_dashboards_shipped
+      changed_when: false
+      check_mode: false
+      tags:
+        - dashboards
+
+    - name: List the dashboards present on the data node
+      command:
+        argv: ["find", "{{ skmon_data_path }}/grafana-provisioning/dashboards", "-maxdepth", "2", "-type", "f", "-name", "*.json"]
+      delegate_to: "{{ skmon_data_node }}"
+      register: skmon_dashboards_present
+      changed_when: false
+      check_mode: false
+      tags:
+        - dashboards
+
+    - name: Work out the stale dashboards (present on the data node, not shipped at the same relative path)
+      set_fact:
+        skmon_dashboards_stale: >-
+          {%- set src = playbook_dir ~ '/src/config/' ~ app ~ '/dashboards/' -%}
+          {%- set dst = skmon_data_path ~ '/grafana-provisioning/dashboards/' -%}
+          {%- set wanted = [] -%}
+          {%- for f in skmon_dashboards_shipped.stdout_lines | default([]) -%}{%- if f[src | length:] not in (skmon_dashboards_unwanted | default([])) and wanted.append(dst ~ f[src | length:]) -%}{%- endif -%}{%- endfor -%}
+          {{ skmon_dashboards_present.stdout_lines | default([]) | reject('in', wanted) | list }}
+      tags:
+        - dashboards
+
+    - name: Prune stale dashboards from the data node
+      file:
+        path: "{{ item }}"
+        state: absent
+      delegate_to: "{{ skmon_data_node }}"
+      loop: "{{ skmon_dashboards_stale }}"
       tags:
         - dashboards
 
@@ -157,7 +426,7 @@
         dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
         owner: root
         group: root
-        mode: '0644'
+        mode: '0600'  # names the Docker secrets, so not world-readable
       tags:
         - compose
 
@@ -217,33 +486,72 @@
       tags:
         - deploy
 
-    - name: Create or update the skmon portal tiles in Authentik
-      # On by default (AUTHENTIK_TILE: true); opt out per instance with
-      # AUTHENTIK_TILE: false. skmon bundles four separate web UIs
-      # (Grafana, Prometheus, Alertmanager, Jaeger), each behind the
-      # cluster's domain-wide Traefik ForwardAuth catch-all already; each
-      # gets its own bookmark tile, bound to one group, with no provider.
-      # See shared/tasks/authentik_portal_tile.yml.
-      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
-      vars:
-        portal_tile:
-          enabled: "{{ skmon.AUTHENTIK_TILE | default(true) | bool }}"
-          slug: "{{ item.key }}{{ '' if env == 'prod' else '-' + env }}"
-          name: "{{ item.name }}"
-          launch_url: "https://{{ item.host_prefix }}{{ '' if env == 'prod' else '-' + env }}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}"
-          group: "{{ skmon.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
-          icon: "{{ item.icon }}"
-          icon_file: "icons/{{ item.icon_file }}"
-          icon_name: "{{ item.icon_name }}"
-          open_in_new_tab: true
-          description: ""
-      loop:
-        - { key: "skmon", host_prefix: "skmon", name: "SKMon (Grafana)", icon: "fa://fa-chart-line", icon_file: "grafana.png", icon_name: "grafana" }
-        - { key: "prometheus", host_prefix: "prometheus", name: "Prometheus", icon: "fa://fa-fire", icon_file: "prometheus.png", icon_name: "prometheus" }
-        - { key: "alertmanager", host_prefix: "alertmanager", name: "Alertmanager", icon: "fa://fa-bell", icon_file: "alertmanager.png", icon_name: "alertmanager" }
-        - { key: "jaeger", host_prefix: "jaeger", name: "Jaeger", icon: "fa://fa-diagram-project", icon_file: "jaeger.png", icon_name: "jaeger" }
-      loop_control:
-        label: "{{ item.key }}"
+# Step 5: when parking, the agents are removed AFTER the stack is at 0 (R80), so vmalert is
+# gone before they disappear. agent.yml does its work in this phase only when parked.
+- import_playbook: agent.yml
+  vars:
+    env: dev
+    skmon_agent_phase: post
+
+# Step 6: Authentik provisioning and the portal tiles, last (R81). The alert path (stack and
+# agents) has already converged, so an absent or failing sksso cannot hold it back.
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skmon
+    env: dev
+    service_name: skmon
+    service_type: optional
+  tasks:
+    - name: Check that sksso's network exists (Authentik provisioning and the tiles need it)
+      # The provisioner and the tile task join this overlay network to reach Authentik. sksso may
+      # not be deployed on this cluster (yet): skip both with a warning instead of failing.
+      command:
+        argv: ["docker", "network", "inspect", "{{ skmon.AUTHENTIK_NETWORK | default('sksso-' ~ env) }}"]
+      register: skmon_sksso_network
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: not skmon_parked
+      tags:
+        - config
+        - authentik
+
+    - name: Decide whether sksso is there to provision
+      set_fact:
+        skmon_sksso_present: "{{ (not skmon_parked) and (skmon_sksso_network.rc | default(1)) == 0 }}"
+      tags:
+        - config
+        - authentik
+
+    - name: Say that the Authentik provisioning and the tiles are skipped without sksso
+      debug:
+        msg: >-
+          WARNING: network {{ skmon.AUTHENTIK_NETWORK | default('sksso-' ~ env) }} not found, so sksso
+          is not deployed on this cluster. Skipping the skmon Authentik provisioning (Grafana's OIDC
+          provider and application, the vmui, Alertmanager and Pyroscope forward-auth providers, the
+          skadmin bindings, the retired applications' removal) and the portal tiles. Grafana's OIDC
+          sign-in does not work until then; redeploy skmon after sksso.
+      when: not skmon_parked and not (skmon_sksso_present | bool)
+      tags:
+        - config
+        - authentik
+
+    - name: Create or update the skmon providers and applications in Authentik
+      # On by default; AUTHENTIK_PROVISION: false skips it (the Grafana OIDC env still renders
+      # from the vault values). Skipped while parked. See tasks/authentik.yml.
+      include_tasks: "{{ playbook_dir }}/tasks/authentik.yml"
+      when: not skmon_parked and (skmon_sksso_present | bool) and (skmon.AUTHENTIK_PROVISION | default(true) | bool)
+      tags:
+        - config
+        - authentik
+
+    - name: Create or update the skmon portal tiles and remove the retired ones in Authentik
+      # Tiles are the applications tasks/authentik.yml owns (same slugs); this adds icons and
+      # deletes the tiles of the retired UIs. Opt out with AUTHENTIK_TILE: false.
+      # Skipped while parked. See tasks/tiles.yml.
+      include_tasks: "{{ playbook_dir }}/tasks/tiles.yml"
+      when: not skmon_parked and (skmon_sksso_present | bool)
       tags:
         - config
         - authentik

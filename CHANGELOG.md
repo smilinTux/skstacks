@@ -5,6 +5,54 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+### skmon v2, phase 1: VictoriaMetrics, Alloy agent, Loki and Grafana on local disk
+
+- **skmon: Prometheus, Promtail, node-exporter and cAdvisor are removed.** The stack is now
+  `victoriametrics` (metrics, vmui at `vmui[-env].<cluster>.<domain>`), `loki`, `grafana` and
+  `alertmanager`, all pinned by digest and placed on `DATA_NODE`. One Grafana Alloy agent per host
+  (a host container, or a systemd unit on storage and hypervisor hosts) replaces the three global
+  services: node metrics, container metrics, Docker and journal logs to Loki, and blackbox probes. The
+  next deploy's `docker stack deploy --prune` removes the retired services. Needs the operator: set
+  `skmon.DATA_NODE` (a swarm node, required) and `skmon.DATA_PATH` (local disk, default
+  `/srv/local/skmon-<env>`, never under `/var/data`) and create nothing else by hand; the deploy makes
+  the directories. Any `PROMETHEUS_*`, `NODE_EXPORTER_*`, `CADVISOR_*`, `PROMTAIL_*` or `JAEGER_*` vault
+  key now fails the deploy with a message naming it: delete those keys. `skmon.replicas: 0` still
+  parks everything, agents included, keeps `DATA_PATH`, and the deploy script no longer force-updates
+  parked services.
+- **skmon: default probes.** The blackbox probes default to one per Traefik router host found on the
+  estate at deploy time (every `traefik.http.routers.<name>.rule` Host on every service), severity
+  `critical`, pass on 2xx or 3xx, with the labels `probe`, `severity` and `forward_auth` (true when the
+  router carries `skmon.FORWARD_AUTH_MIDDLEWARE`, default `authentik@file`). `skmon.PROBES` replaces
+  discovery. An `authentik` health probe is added when the sksso host is known (`skmon.AUTHENTIK_HOST`,
+  else derived from sksso's vault); without either it is left out and the deploy carries on.
+  `skmon.HEALTHZ_ALLOW` lists the addresses allowed to reach the bridge `/healthz`.
+
+### Upgrade notes (instances)
+
+- **skmon v2: the first v2 deploy restarts every skmon service and replaces the stack.** Plan for a short
+  gap in metrics, logs and alerting, and run the migration runbook in the skmon README ("Migration from
+  skmon v1"). `docker stack deploy --prune` removes `prometheus`, `node-exporter`, `cadvisor`, `promtail`
+  and `jaeger`; `/var/data` is untouched, and the old `/var/data/skmon-<env>` directories can be removed
+  by hand after a week. Set `skmon.DATA_NODE` and `skmon.DATA_PATH` (a dedicated local disk, never shared
+  storage). New required keys: `skmon.ESTATE`, `GRAFANA_OIDC_CLIENT_ID`, `GRAFANA_OIDC_CLIENT_SECRET`,
+  `AUTHENTIK_HOST`, `HEALTHZ_ALLOW`, `SKALERT_SCRIPT_SRC`, `SKALERT_SCRIPT_SHA256`, `ALERT_ROUTING`,
+  `ALERT_SECRETS` and `ALERT_OUT_OF_DOMAIN_CHANNEL` (or an explicit `ALERT_ACCEPT_IN_DOMAIN_ONLY` with
+  its reason). `AUTHENTIK_TILE_GROUP` and `GRAFANA_BASIC_AUTH` are retired: Grafana signs in through OIDC,
+  and vmui and Alertmanager use forward auth (`FORWARD_AUTH_MIDDLEWARE`, default `authentik@file`). On
+  the Authentik applications skmon owns, `skadmin` is the only binding and any other is removed on every
+  deploy. The retired `jaeger` and `prometheus` applications are removed only when `AUTHENTIK_PROVISION`
+  is true; otherwise remove them by hand. Inventory hostnames of swarm hosts must equal their Swarm
+  hostnames (the agent's `node` label). Finish with the outside Kuma monitor on `/healthz`: an estate
+  is not done until it is green.
+
+- **skmon: Jaeger removed** (carried from #368, closed as superseded by the skmon v2 design). Jaeger had
+  no trace producers: its service, Traefik router, Prometheus job, deploy health wait, icon and portal
+  tile entry are gone, and `JAEGER_*` knobs no longer exist. The next deploy's `docker stack deploy --prune`
+  removes the service. Left for the operator: an existing Jaeger portal tile (slug `jaeger`,
+  `jaeger-<env>` off prod) is not deleted automatically, so delete it once in the admin UI or with
+  `ak shell`; `/var/data/skmon-<env>/jaeger/` is left on disk. The v2 skmon descriptor, service page and
+  STACK-MAP now name Loki as the log store.
+
 ### New
 
 - **`optional/skaegis`: continuous CVE detection for every host (upstream Wazuh 4.14.10).** Opt in. The

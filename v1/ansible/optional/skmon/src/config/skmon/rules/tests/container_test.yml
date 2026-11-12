@@ -1,0 +1,95 @@
+# vmalert-tool unit tests for rules/container.yml.j2 (F3).
+rule_files:
+  - ../container.yml
+evaluation_interval: 15s
+tests:
+  # node-1: cadvisor saw the killed container, so its series is reported (with service);
+  # the host counter of node-1 is not reported twice. node-2: no container series, so the
+  # host counter is reported.
+  - interval: 15s
+    input_series:
+      - series: 'container_oom_events_total{job="alloy-cadvisor",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",name="app_web.1.abc",stack="app",service="app_web",task_slot="1"}'
+        values: '0 0 0 0 1 1 1 1 1 1'
+      - series: 'node_vmstat_oom_kill{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example"}'
+        values: '0 0 0 0 1 1 1 1 1 1'
+      - series: 'node_vmstat_oom_kill{job="alloy-unix",instance="192.0.2.11:12345",node="node-2.render.example.test",role="swarm",estate="example"}'
+        values: '0 0 0 0 1 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 1m15s
+        groupname: skmon-container
+        alertname: OomKill
+        exp_alerts:
+          - exp_labels:
+              job: alloy-cadvisor
+              instance: 192.0.2.10:12345
+              node: node-1.render.example.test
+              role: swarm
+              estate: example
+              name: app_web.1.abc
+              stack: app
+              service: app_web
+              task_slot: "1"
+              severity: warning
+              class: container
+            exp_annotations:
+              summary: "The kernel killed a process for lack of memory on node-1.render.example.test (service app_web)."
+              runbook: "Check the memory limit of the killed container against its usage, then the host's memory pressure."
+          - exp_labels:
+              job: alloy-unix
+              instance: 192.0.2.11:12345
+              node: node-2.render.example.test
+              role: swarm
+              estate: example
+              severity: warning
+              class: container
+            exp_annotations:
+              summary: "The kernel killed a process for lack of memory on node-2.render.example.test."
+              runbook: "Check the memory limit of the killed container against its usage, then the host's memory pressure."
+
+  # Flat counters stay quiet, also when the host counter first appears with old kills on it.
+  - interval: 15s
+    input_series:
+      - series: 'container_oom_events_total{job="alloy-cadvisor",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",name="app_web.1.abc",stack="app",service="app_web",task_slot="1"}'
+        values: '0x10'
+      - series: 'node_vmstat_oom_kill{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example"}'
+        values: '3x10'
+    alert_rule_test:
+      - eval_time: 1m15s
+        groupname: skmon-container
+        alertname: OomKill
+        exp_alerts: []
+
+  # A failing cadvisor scrape fires after 2 m.
+  - interval: 15s
+    input_series:
+      - series: 'up{job="alloy-cadvisor",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 2m15s
+        groupname: skmon-container
+        alertname: CadvisorScrapeFailing
+        exp_alerts:
+          - exp_labels:
+              job: alloy-cadvisor
+              instance: 192.0.2.10:12345
+              node: node-1.render.example.test
+              role: swarm
+              estate: example
+              severity: warning
+              class: container
+            exp_annotations:
+              summary: "Container metrics of node-1.render.example.test cannot be scraped."
+              runbook: "Check that the Docker daemon on the host answers (docker info) and that the agent can read the Docker socket."
+
+  # A failing unix scrape is NodeDown's, not this alert's; a healthy cadvisor stays quiet.
+  - interval: 15s
+    input_series:
+      - series: 'up{job="alloy-cadvisor",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example"}'
+        values: '1x20'
+      - series: 'up{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 2m15s
+        groupname: skmon-container
+        alertname: CadvisorScrapeFailing
+        exp_alerts: []

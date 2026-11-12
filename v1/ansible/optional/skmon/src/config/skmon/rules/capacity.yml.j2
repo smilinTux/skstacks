@@ -1,0 +1,61 @@
+# vmalert rules, class capacity (spec 8). DiskFilling leaves out network mounts (the server
+# reports its own filesystems, and every client would repeat the same alert) and pseudo or
+# image filesystems, stated here instead of relying on the collector's defaults, and never
+# fires for a read-only filesystem (a full read-only image is not filling).
+{% set fs = 'fstype!~"nfs4?|cifs|smb3|tmpfs|ramfs|overlay|squashfs|nsfs|erofs|iso9660|fuse\\\\..*|devtmpfs|autofs|proc|sysfs"' %}
+{% set ro = 'unless on(node, device, mountpoint) node_filesystem_readonly == 1' %}
+groups:
+  - name: skmon-capacity
+    rules:
+      # Space or inodes above 90 %, or either predicted to run out within 24 h.
+      - alert: DiskFilling
+        expr: >-
+          (
+            100 * (1 - node_filesystem_avail_bytes{ {{- fs -}} } / node_filesystem_size_bytes{ {{- fs -}} }) > 90
+            or predict_linear(node_filesystem_avail_bytes{ {{- fs -}} }[6h], 24 * 3600) < 0
+            or 100 * (1 - node_filesystem_files_free{ {{- fs -}} } / node_filesystem_files{ {{- fs -}} }) > 90
+            or predict_linear(node_filesystem_files_free{ {{- fs -}} }[6h], 24 * 3600) < 0
+          ) {{ ro }}
+        for: 5m
+        labels:
+          severity: warning
+          class: capacity
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "Filesystem {{ $labels.mountpoint }} on {{ $labels.node }} is above 90 % used (space or inodes) or will fill within 24 h."
+{% endraw %}
+          runbook: "Find what grows on that filesystem (du -xh --max-depth=1, df -i) and free or extend it."
+
+      # Space or inodes above 95 %.
+      - alert: DiskFilling
+        expr: >-
+          (
+            100 * (1 - node_filesystem_avail_bytes{ {{- fs -}} } / node_filesystem_size_bytes{ {{- fs -}} }) > 95
+            or 100 * (1 - node_filesystem_files_free{ {{- fs -}} } / node_filesystem_files{ {{- fs -}} }) > 95
+          ) {{ ro }}
+        for: 5m
+        labels:
+          severity: critical
+          class: capacity
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "Filesystem {{ $labels.mountpoint }} on {{ $labels.node }} is above 95 % used (space or inodes)."
+{% endraw %}
+          runbook: "Free space on that filesystem now (du -xh --max-depth=1, df -i), before writes start to fail."
+
+      - alert: MemoryPressure
+        expr: >-
+          rate(node_pressure_memory_waiting_seconds_total[2m]) > 0.2
+          or node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.05
+        for: 2m
+        labels:
+          severity: warning
+          class: capacity
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "Memory pressure on {{ $labels.node }}: tasks wait for memory or less than 5 % is available."
+{% endraw %}
+          runbook: "Find the largest consumers on the host (top -o RES, the container memory board) and check their limits."

@@ -22,6 +22,7 @@ preexisted() {
 }
 
 APP="skmon"
+{% set sfx = '' if env == 'prod' else '-' ~ env %}
 STACK_NAME="{{ app }}-{{ env }}"
 CONFIG_DIR="/var/data/config/${APP}-{{ env }}"
 COMPOSE_FILE="${CONFIG_DIR}/docker-compose.yml"
@@ -32,7 +33,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-echo -e "${GREEN}🚀 Deploying ${APP} stack (Monitoring & Tracing)...${NC}"
+echo -e "${GREEN}🚀 Deploying ${APP} stack (Monitoring)...${NC}"
 
 # Source environment variables
 if [ -f "${CONFIG_DIR}/${APP}.sh.env" ]; then
@@ -51,7 +52,9 @@ fi
 
 # Deploy stack with prune and registry auth
 echo -e "${YELLOW}📝 Deploying stack configuration...${NC}"
-record_preexisting "${STACK_NAME}_prometheus" "${STACK_NAME}_grafana" "${STACK_NAME}_loki" "${STACK_NAME}_promtail" "${STACK_NAME}_node-exporter" "${STACK_NAME}_cadvisor" "${STACK_NAME}_alertmanager" "${STACK_NAME}_jaeger"
+{% if not skmon_parked %}
+record_preexisting "${STACK_NAME}_victoriametrics" "${STACK_NAME}_grafana" "${STACK_NAME}_loki" "${STACK_NAME}_alertmanager"
+{% endif %}
 docker stack deploy \
     -c "${COMPOSE_FILE}" \
     --prune \
@@ -61,109 +64,55 @@ docker stack deploy \
 # Wait a moment for services to register
 sleep 10
 
+{% if not skmon_parked %}
 # Force update services to pull latest images
 echo -e "${YELLOW}🔄 Forcing service updates to pull latest images...${NC}"
-preexisted ${STACK_NAME}_prometheus && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_prometheus || true
+# One line per service (not a loop): the framework scanners read these lines raw.
+preexisted ${STACK_NAME}_victoriametrics && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_victoriametrics || true
 preexisted ${STACK_NAME}_grafana && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_grafana || true
 preexisted ${STACK_NAME}_loki && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_loki || true
-preexisted ${STACK_NAME}_promtail && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_promtail || true
-preexisted ${STACK_NAME}_node-exporter && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_node-exporter || true
-preexisted ${STACK_NAME}_cadvisor && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_cadvisor || true
 preexisted ${STACK_NAME}_alertmanager && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_alertmanager || true
-preexisted ${STACK_NAME}_jaeger && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_jaeger || true
 
 # Wait for services to stabilize
 echo -e "${YELLOW}⏳ Waiting for services to stabilize...${NC}"
 sleep 30
+{% endif %}
 
 # Show service status
 echo -e "${GREEN}📊 Service Status:${NC}"
 docker service ls | grep "${STACK_NAME}"
 
-{% if (skmon.replicas | default(1) | int) > 0 %}
+{% if not skmon_parked %}
 # Health check
 echo -e "${YELLOW}🏥 Checking service health...${NC}"
+{% set pve_on = skmon_pve_enabled | default(false) %}{# derived in tasks/facts.yml #}
+{% set pyro_on = skmon_profiling_enabled | default(false) %}{# derived in tasks/facts.yml #}
+{% set waits = [('loki', 'LOKI', 'Loki'), ('grafana', 'GRAFANA', 'Grafana'), ('victoriametrics', 'VM', 'VictoriaMetrics'), ('alertmanager', 'ALERTMANAGER', 'Alertmanager'), ('vmalert', 'VMALERT', 'vmalert'), ('bridge', 'BRIDGE', 'skmon-bridge'), ('skswarm-exporter', 'SKSWARM', 'skswarm-exporter')] + ([('pve-exporter', 'PVE', 'pve-exporter')] if pve_on else []) + ([('pyroscope', 'PYROSCOPE', 'Pyroscope')] if pyro_on else []) %}
+{% for svc, var, label in waits %}
 
-# Check Loki
+# Check {{ label }}
 for _ in $(seq 1 36); do
-    LOKI_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_loki" --format "{{ '{{.Replicas}}' }}")
-    [[ "$LOKI_REPLICAS" == "1/1" ]] && break
+    {{ var }}_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_{{ svc }}" --format "{{ '{{.Replicas}}' }}")
+    [[ "${{ '{' ~ var ~ '_REPLICAS}' }}" == "1/1" ]] && break
     sleep 5
 done
-if [[ "$LOKI_REPLICAS" == "1/1" ]]; then
-    echo -e "${GREEN}✅ Loki is healthy and running!${NC}"
+if [[ "${{ '{' ~ var ~ '_REPLICAS}' }}" == "1/1" ]]; then
+    echo -e "${GREEN}✅ {{ label }} is healthy and running!${NC}"
 else
-    echo -e "${RED}⚠️  Loki health check: ${LOKI_REPLICAS}${NC}"
+    echo -e "${RED}⚠️  {{ label }} health check: ${{ '{' ~ var ~ '_REPLICAS}' }}${NC}"
     echo -e "${YELLOW}📋 Recent logs:${NC}"
-    docker service logs --tail 20 ${STACK_NAME}_loki
+    docker service logs --tail 20 ${STACK_NAME}_{{ svc }}
 fi
-
-# Check Grafana
-for _ in $(seq 1 36); do
-    GRAFANA_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_grafana" --format "{{ '{{.Replicas}}' }}")
-    [[ "$GRAFANA_REPLICAS" == "1/1" ]] && break
-    sleep 5
-done
-if [[ "$GRAFANA_REPLICAS" == "1/1" ]]; then
-    echo -e "${GREEN}✅ Grafana is healthy and running!${NC}"
-else
-    echo -e "${RED}⚠️  Grafana health check: ${GRAFANA_REPLICAS}${NC}"
-    echo -e "${YELLOW}📋 Recent logs:${NC}"
-    docker service logs --tail 20 ${STACK_NAME}_grafana
-fi
-
-# Check Prometheus
-for _ in $(seq 1 36); do
-    PROM_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_prometheus" --format "{{ '{{.Replicas}}' }}")
-    [[ "$PROM_REPLICAS" == "1/1" ]] && break
-    sleep 5
-done
-if [[ "$PROM_REPLICAS" == "1/1" ]]; then
-    echo -e "${GREEN}✅ Prometheus is healthy and running!${NC}"
-else
-    echo -e "${RED}⚠️  Prometheus health check: ${PROM_REPLICAS}${NC}"
-    echo -e "${YELLOW}📋 Recent logs:${NC}"
-    docker service logs --tail 20 ${STACK_NAME}_prometheus
-fi
-
-# Check Alertmanager
-for _ in $(seq 1 36); do
-    ALERTMANAGER_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_alertmanager" --format "{{ '{{.Replicas}}' }}")
-    [[ "$ALERTMANAGER_REPLICAS" == "1/1" ]] && break
-    sleep 5
-done
-if [[ "$ALERTMANAGER_REPLICAS" == "1/1" ]]; then
-    echo -e "${GREEN}✅ Alertmanager is healthy and running!${NC}"
-else
-    echo -e "${RED}⚠️  Alertmanager health check: ${ALERTMANAGER_REPLICAS}${NC}"
-    echo -e "${YELLOW}📋 Recent logs:${NC}"
-    docker service logs --tail 20 ${STACK_NAME}_alertmanager
-fi
-
-# Check Jaeger
-for _ in $(seq 1 36); do
-    JAEGER_REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_jaeger" --format "{{ '{{.Replicas}}' }}")
-    [[ "$JAEGER_REPLICAS" == "1/1" ]] && break
-    sleep 5
-done
-if [[ "$JAEGER_REPLICAS" == "1/1" ]]; then
-    echo -e "${GREEN}✅ Jaeger is healthy and running!${NC}"
-else
-    echo -e "${RED}⚠️  Jaeger health check: ${JAEGER_REPLICAS}${NC}"
-    echo -e "${YELLOW}📋 Recent logs:${NC}"
-    docker service logs --tail 20 ${STACK_NAME}_jaeger
-fi
+{% endfor %}
 
 {% else %}
 echo -e "${YELLOW}skmon.replicas is 0: stack deployed scaled to 0, skipping health waits${NC}"
 {% endif %}
 echo -e "${GREEN}✨ Deployment complete!${NC}"
 echo -e "${GREEN}🌐 Access URLs:${NC}"
-echo -e "${GREEN}   - Grafana: https://skmon{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}${NC}"
-echo -e "${GREEN}   - Prometheus: https://prometheus{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}${NC}"
-echo -e "${GREEN}   - Alertmanager: https://alertmanager{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}${NC}"
-echo -e "${GREEN}   - Jaeger: https://jaeger{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}${NC}"
+echo -e "${GREEN}   - Grafana: https://skmon{{ sfx }}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}${NC}"
+echo -e "${GREEN}   - vmui (VictoriaMetrics): https://vmui{{ sfx }}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}${NC}"
+echo -e "${GREEN}   - Alertmanager: https://alertmanager{{ sfx }}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}${NC}"
 echo -e "${YELLOW}📋 Useful commands:${NC}"
-echo -e "  - View Loki health: curl http://localhost:3100/ready"
 echo -e "  - View service logs: docker service logs ${STACK_NAME}_<service>"
-echo -e "  - Check metrics: curl http://localhost:9090/metrics"
+echo -e "  - View service status: docker service ls --filter name=${STACK_NAME}"

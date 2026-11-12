@@ -1,0 +1,235 @@
+# VictoriaMetrics scrape config (read with -promscrape.config.strictParse=true:
+# only keys VictoriaMetrics accepts). One Alloy agent per inventory host, pulled
+# on AGENT_PORT; the agent exposes each exporter component at
+# /api/v0/component/<component id>/metrics. Pull only (nothing is pushed or federated).
+{% set agent_port = skmon.AGENT_PORT | default(12345) %}
+{% set fast = skmon.SCRAPE_INTERVAL_FAST | default('15s') %}
+{% set normal = skmon.SCRAPE_INTERVAL | default('30s') %}
+{% set estate = skmon.ESTATE %}
+global:
+  scrape_interval: {{ normal }}
+
+scrape_configs:
+{% set full_targets = skmon_agent_targets | rejectattr('light') | list %}
+{% set cadvisor_targets = full_targets | selectattr('agent_mode', 'defined') | selectattr('agent_mode', 'equalto', 'container') | list
+                          + full_targets | rejectattr('agent_mode', 'defined') | list %}
+{% set light_targets = skmon_agent_targets | selectattr('light') | list %}
+{# The systemd collector reports every unit in every state; keep the state="failed" series only.
+   Shared by the full and the light host job. #}
+{% macro systemd_failed_only() %}
+    # systemd: failed units only. The collector reports every unit in every state; mark
+    # the state="failed" series, drop the other node_systemd_unit_state series, then drop
+    # the mark. (A relabel inside Alloy would not change what this metrics path serves.)
+    metric_relabel_configs:
+      - source_labels: [__name__, state]
+        regex: 'node_systemd_unit_state;failed'
+        target_label: __tmp_systemd_keep
+        replacement: '1'
+      - source_labels: [__name__, __tmp_systemd_keep]
+        regex: 'node_systemd_unit_state;'
+        action: drop
+      - regex: __tmp_systemd_keep
+        action: labeldrop
+{% endmacro %}
+{% if full_targets %}
+  # Host metrics, every full agent (light hosts are the alloy-unix-light job below).
+  - job_name: alloy-unix
+    scrape_interval: {{ fast }}
+    metrics_path: /api/v0/component/prometheus.exporter.unix.host/metrics
+    static_configs:
+{% for t in full_targets %}
+      - targets: ['{{ t.addr }}:{{ agent_port }}']
+        labels:
+          node: '{{ t.node }}'
+          role: '{{ t.role }}'
+          estate: '{{ estate }}'
+{% endfor %}
+{{ systemd_failed_only() }}
+{% endif %}
+{% if light_targets %}
+  # Host metrics, light agents (storage and hypervisor hosts, spec 18 Q2): 60 s. job is
+  # relabeled to alloy-unix so NodeDown and every board that selects job="alloy-unix"
+  # cover these hosts too (job names must be unique, so this is a second job).
+  - job_name: alloy-unix-light
+    scrape_interval: 60s
+    metrics_path: /api/v0/component/prometheus.exporter.unix.host/metrics
+    static_configs:
+{% for t in light_targets %}
+      - targets: ['{{ t.addr }}:{{ agent_port }}']
+        labels:
+          node: '{{ t.node }}'
+          role: '{{ t.role }}'
+          estate: '{{ estate }}'
+{% endfor %}
+    relabel_configs:
+      - target_label: job
+        replacement: alloy-unix
+{{ systemd_failed_only() }}
+{% endif %}
+{% if cadvisor_targets %}
+  # Container metrics, container-mode agents only (a light or systemd agent runs no cadvisor).
+  - job_name: alloy-cadvisor
+    scrape_interval: {{ normal }}
+    metrics_path: /api/v0/component/prometheus.exporter.cadvisor.docker/metrics
+    static_configs:
+{% for t in cadvisor_targets %}
+      - targets: ['{{ t.addr }}:{{ agent_port }}']
+        labels:
+          node: '{{ t.node }}'
+          role: '{{ t.role }}'
+          estate: '{{ estate }}'
+{% endfor %}
+    # Container labels: the agent keeps only the Swarm ones; rename them to stack, service
+    # and task_slot (a replicated task's slot, from <service>.<slot>.<task id>) and drop every
+    # container_label_*. node is the target's own label above (the host's inventory name).
+    metric_relabel_configs:
+      - source_labels: [container_label_com_docker_stack_namespace]
+        target_label: stack
+      - source_labels: [container_label_com_docker_swarm_service_name]
+        target_label: service
+      - source_labels: [container_label_com_docker_swarm_task_name]
+        regex: '[^.]+\.(\d+)\..+'
+        target_label: task_slot
+      - regex: container_label_.*
+        action: labeldrop
+{% endif %}
+
+  # The agents themselves (up, component health).
+  - job_name: alloy-self
+    scrape_interval: {{ normal }}
+    metrics_path: /metrics
+    static_configs:
+{% for t in skmon_agent_targets %}
+      - targets: ['{{ t.addr }}:{{ agent_port }}']
+        labels:
+          node: '{{ t.node }}'
+          role: '{{ t.role }}'
+          estate: '{{ estate }}'
+{% endfor %}
+
+{% set blackbox = skmon_agent_targets | selectattr('node', 'equalto', skmon_data_node) | list %}
+{% if blackbox and (skmon_probes | default([]) | length) > 0 %}
+  # Blackbox probes run on the DATA_NODE agent only. The agent's exporter component takes
+  # target and module as URL parameters, so each probe is one target here (the standard
+  # blackbox relabeling) and the series carry probe (the name), severity and forward_auth:
+  # alert rules select probe="authentik" and inhibition matches forward_auth="true".
+  - job_name: alloy-blackbox
+    scrape_interval: {{ fast }}
+    metrics_path: /api/v0/component/prometheus.exporter.blackbox.probes/metrics
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [__tmp_module]
+        target_label: __param_module
+      - target_label: __address__
+        replacement: '{{ blackbox[0].addr }}:{{ agent_port }}'
+    static_configs:
+{% for p in skmon_probes %}
+      - targets: [{{ p.url | to_json }}]
+        labels:
+          __tmp_module: '{{ "http_200" if (p.expect | default("") | string) == "200" else "http_2xx_3xx" }}'
+          probe: {{ p.name | to_json }}
+          severity: {{ p.severity | default('warning') | to_json }}
+          forward_auth: '{{ "true" if (p.forward_auth | default(false) | bool) else "false" }}'
+          node: '{{ blackbox[0].node }}'
+          role: '{{ blackbox[0].role }}'
+          estate: '{{ estate }}'
+{% endfor %}
+{% elif blackbox %}
+  # No alloy-blackbox job: there are no probes (skmon.PROBES is empty and no router host was found).
+{% else %}
+  # No alloy-blackbox job: DATA_NODE '{{ skmon_data_node }}' is not an agent host.
+{% endif %}
+
+  # Self-monitoring of the stack (addressed by full Swarm service name).
+  - job_name: victoriametrics
+    scrape_interval: {{ normal }}
+    static_configs:
+      - targets: ['localhost:8428']
+        labels:
+          estate: '{{ estate }}'
+  - job_name: loki
+    scrape_interval: {{ normal }}
+    static_configs:
+      - targets: ['skmon-{{ env }}_loki:3100']
+        labels:
+          estate: '{{ estate }}'
+  - job_name: alertmanager
+    scrape_interval: {{ normal }}
+    static_configs:
+      - targets: ['skmon-{{ env }}_alertmanager:9093']
+        labels:
+          estate: '{{ estate }}'
+  - job_name: vmalert
+    scrape_interval: {{ normal }}
+    static_configs:
+      - targets: ['skmon-{{ env }}_vmalert:8880']
+        labels:
+          estate: '{{ estate }}'
+  # The bridge's own counters (skmon_bridge_*), which AlertDeliveryFailing reads.
+  - job_name: bridge
+    scrape_interval: {{ normal }}
+    static_configs:
+      - targets: ['skmon-{{ env }}_bridge:8080']
+        labels:
+          estate: '{{ estate }}'
+{% if skmon_profiling_enabled | default(false) %}
+  # Pyroscope (PROFILING.enabled).
+  - job_name: pyroscope
+    scrape_interval: {{ normal }}
+    static_configs:
+      - targets: ['skmon-{{ env }}_pyroscope:{{ skmon.PYROSCOPE_PORT | default(4040) }}']
+        labels:
+          estate: '{{ estate }}'
+{% endif %}
+  # Desired-versus-running Swarm state (spec 7.4).
+  - job_name: skswarm
+    scrape_interval: {{ fast }}
+    static_configs:
+      - targets: ['skmon-{{ env }}_skswarm-exporter:9323']
+        labels:
+          estate: '{{ estate }}'
+{% set pve = skmon.PVE | default({}, true) %}
+{% if pve is mapping and (pve.enabled | default(false) | bool) %}
+
+  # Proxmox: the exporter is multi-target, so each PVE.targets host is the `target` URL
+  # parameter of one scrape through /pve (the standard relabeling, as for alloy-blackbox).
+  - job_name: pve
+    scrape_interval: {{ normal }}
+    metrics_path: /pve
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__address__]
+        target_label: instance
+      - target_label: __address__
+        replacement: 'skmon-{{ env }}_pve-exporter:9221'
+    static_configs:
+      - targets: {{ pve.targets | default([]) | to_json }}
+        labels:
+          estate: '{{ estate }}'
+{% endif %}
+
+  # Traefik: Swarm DNS service discovery on the metrics entrypoint, as the estate
+  # scraped it before v2. Name the Traefik stack service with skmon.TRAEFIK_SCRAPE_NAME
+  # if it is not skfence-<env>_traefik. An estate that already scrapes Traefik through
+  # EXTRA_SCRAPE_CONFIGS should drop that job, the names would collide.
+  - job_name: traefik
+    scrape_interval: {{ fast }}
+    metrics_path: /metrics
+    dns_sd_configs:
+      - names:
+          - '{{ skmon.TRAEFIK_SCRAPE_NAME | default('tasks.skfence-' ~ env ~ '_traefik') }}'
+        type: A
+        port: 8082
+    relabel_configs:
+      - target_label: estate
+        replacement: '{{ estate }}'
+{% if skmon.EXTRA_SCRAPE_CONFIGS | default([]) %}
+
+  # Full scrape_config entries (DNS service discovery, relabelling, ...),
+  # rendered as given from skmon.EXTRA_SCRAPE_CONFIGS.
+  {{ skmon.EXTRA_SCRAPE_CONFIGS | to_nice_yaml(indent=2) | indent(2) }}
+{% endif %}

@@ -1,0 +1,11 @@
+# skmon {{ env }} SMART textfile timer on {{ inventory_hostname }}, rendered by agent.yml. Do not edit on the host.
+[Unit]
+Description=skmon {{ env }} SMART textfile writer, every 5 minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

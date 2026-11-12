@@ -1,0 +1,8 @@
+# skmon {{ env }} SMART textfile writer on {{ inventory_hostname }}, rendered by agent.yml. Do not edit on the host.
+# One run writes smart.prom for the Alloy textfile collector; skmon-smart.timer starts it.
+[Unit]
+Description=skmon {{ env }} SMART textfile writer
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/skmon-{{ env }}-smart-textfile /var/lib/skmon-{{ env }}/alloy/textfile
