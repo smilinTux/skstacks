@@ -35,7 +35,14 @@
 #            and both consequences must show a non-empty status.inhibitedBy within 30 s.
 #            The receivers point at a bridge that does not exist here: delivery fails,
 #            inhibition still computes. The container is removed on exit.
-# To add a kind (promtool): add a pin lookup and a
+#   promtool : the dashboards shipped under src/config/skmon/dashboards (not the rendered tree; they
+#            are static files): every panel PromQL expression (targets[].expr, and the PromQL inside
+#            label_values()/query_result() templating queries) is parsed with the pinned promtool,
+#            `promtool --experimental promql format`, after replacing $__rate_interval, $__interval and
+#            $__range with 5m and every other $var / ${var} with x (a variable inside a [range]
+#            or [range:step] selector also becomes 5m, since x is not a duration). Targets of a Loki datasource
+#            (uid skmon-loki, panel-level or target-level) are LogQL and are skipped.
+# To add a kind: add a pin lookup and a
 # check_<kind> function below, then call it in the list at the bottom.
 set -euo pipefail
 
@@ -183,6 +190,82 @@ PY
   fi
 }
 
+# check_dashboards: promtool parse of every PromQL expression in the shipped dashboards.
+check_dashboards() {
+  local dash="$HERE/../../ansible/optional/skmon/src/config/skmon/dashboards"
+  [ -d "$dash" ] || { echo "skip: dashboards not found"; return 0; }
+  local tmp; tmp="$(mktemp -d)"
+  # The exprs are extracted on the host and parsed inside the pinned image (one container for all).
+  python3 - "$dash" "$tmp" <<'PY'
+import json, pathlib, re, sys
+
+dash, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+n = 0
+
+
+def subst(e):
+    e = re.sub(r"\$(__rate_interval|__interval|__range)\b|\$\{(__rate_interval|__interval|__range)(:[^}]*)?\}", "5m", e)
+    # A variable that is a whole range or subquery selector ([$interval], [$__range:$step]) must be a
+    # duration to parse, so it becomes 5m as well; "x" is not a duration.
+    e = re.sub(r"\[[^\]]*\$[^\]]*\]", lambda m: re.sub(r"\$\{[^}]*\}|\$\w+", "5m", m.group(0)), e)
+    return re.sub(r"\$\{[^}]*\}|\$\w+", "x", e)
+
+
+def uid_of(ds):
+    return ds.get("uid", "") if isinstance(ds, dict) else (ds or "")
+
+
+def emit(where, expr):
+    global n
+    n += 1
+    (out / f"{n}.promql").write_text(subst(expr))
+    (out / f"{n}.src").write_text(where)
+
+
+def walk_panels(panels, rel, inherited=""):
+    for p in panels or []:
+        ds = uid_of(p.get("datasource")) or inherited
+        for t in p.get("targets") or []:
+            uid = uid_of(t.get("datasource")) or ds
+            if "expr" in t and uid != "skmon-loki" and t["expr"].strip():
+                emit(f"{rel} :: {p.get('title', '?')} :: {t.get('refId', '?')}", t["expr"])
+        walk_panels(p.get("panels"), rel, ds)
+
+
+for f in sorted(dash.rglob("*.json")):
+    d = json.loads(f.read_text())
+    rel = str(f.relative_to(dash))
+    walk_panels(d.get("panels"), rel)
+    for v in d.get("templating", {}).get("list", []):
+        if v.get("type") != "query" or uid_of(v.get("datasource")) == "skmon-loki":
+            continue
+        q = v.get("query")
+        q = q.get("query", "") if isinstance(q, dict) else (q or "")
+        m = re.fullmatch(r"\s*label_values\((.*),\s*[\w$.{}]+\s*\)\s*", q, re.S) or re.fullmatch(r"\s*query_result\((.*)\)\s*", q, re.S)
+        if m and re.search(r"[({]", m.group(1)):
+            emit(f"{rel} :: variable {v['name']}", m.group(1))
+print(f"extracted {n} expressions", file=sys.stderr)
+if n == 0:
+    sys.exit("no PromQL expressions found in the dashboards")
+PY
+  chmod -R a+rX "$tmp"  # the image runs as an unprivileged user
+  local image rc=0; image="$(image_ref promtool)"
+  echo "check: dashboards (promtool) $dash"
+  docker run --rm --entrypoint sh -v "$tmp:/exprs:ro" "$image" -c '
+    bad=0; n=0
+    for f in /exprs/*.promql; do
+      [ -r "$f" ] || { echo "FAIL: cannot read $f"; bad=1; continue; }
+      n=$((n+1))
+      if ! out=$(promtool --experimental promql format "$(cat "$f")" 2>&1); then
+        echo "FAIL: $(cat "${f%.promql}.src")"; echo "  expr: $(cat "$f")"; echo "  $out"; bad=1
+      fi
+    done
+    echo "parsed $n expressions"
+    exit $bad' || rc=$?
+  rm -rf "$tmp"
+  if [ "$rc" -ne 0 ]; then echo "FAIL: PromQL parse failed in the dashboards" >&2; exit 1; fi
+}
+
 check_files alloy alloy -name 'agent.alloy' -- validate --stability.level=experimental @FILE@
 check_files loki loki -path '*/configs/loki' -- -verify-config -config.file=@FILE@
 check_files vmalert-rules vmalert -path '*/configs/rules-*' -- -dryRun -rule=@FILE@
@@ -190,4 +273,5 @@ check_files vmalert-rules vmalert -path '*/vmalert-rules/*.yml' ! -path '*/tests
 check_rule_tests
 check_amtool
 check_inhibition
+check_dashboards
 echo "ok: all rendered configs validated"

@@ -536,12 +536,12 @@
       },
       "targets": [
         {
-          "expr": "rate((forgejo_actions_completed_total{job=\"forgejo\"} or gitea_actions_completed_total{job=\"forgejo\"})[5m])",
+          "expr": "rate(forgejo_actions_completed_total{job=\"forgejo\"}[5m]) or rate(gitea_actions_completed_total{job=\"forgejo\"}[5m])",
           "legendFormat": "Completed Actions",
           "refId": "A"
         },
         {
-          "expr": "rate((forgejo_actions_failed_total{job=\"forgejo\"} or gitea_actions_failed_total{job=\"forgejo\"})[5m])",
+          "expr": "rate(forgejo_actions_failed_total{job=\"forgejo\"}[5m]) or rate(gitea_actions_failed_total{job=\"forgejo\"}[5m])",
           "legendFormat": "Failed Actions",
           "refId": "B"
         }
@@ -616,12 +616,12 @@
       },
       "targets": [
         {
-          "expr": "rate((forgejo_repositories_created_total{job=\"forgejo\"} or gitea_repositories_created_total{job=\"forgejo\"})[5m])",
+          "expr": "rate(forgejo_repositories_created_total{job=\"forgejo\"}[5m]) or rate(gitea_repositories_created_total{job=\"forgejo\"}[5m])",
           "legendFormat": "Repositories Created",
           "refId": "A"
         },
         {
-          "expr": "rate((forgejo_repositories_deleted_total{job=\"forgejo\"} or gitea_repositories_deleted_total{job=\"forgejo\"})[5m])",
+          "expr": "rate(forgejo_repositories_deleted_total{job=\"forgejo\"}[5m]) or rate(gitea_repositories_deleted_total{job=\"forgejo\"}[5m])",
           "legendFormat": "Repositories Deleted",
           "refId": "B"
         }
@@ -696,12 +696,12 @@
       },
       "targets": [
         {
-          "expr": "rate((forgejo_issues_created_total{job=\"forgejo\"} or gitea_issues_created_total{job=\"forgejo\"})[5m])",
+          "expr": "rate(forgejo_issues_created_total{job=\"forgejo\"}[5m]) or rate(gitea_issues_created_total{job=\"forgejo\"}[5m])",
           "legendFormat": "Issues Created",
           "refId": "A"
         },
         {
-          "expr": "rate((forgejo_issues_closed_total{job=\"forgejo\"} or gitea_issues_closed_total{job=\"forgejo\"})[5m])",
+          "expr": "rate(forgejo_issues_closed_total{job=\"forgejo\"}[5m]) or rate(gitea_issues_closed_total{job=\"forgejo\"}[5m])",
           "legendFormat": "Issues Closed",
           "refId": "B"
         }

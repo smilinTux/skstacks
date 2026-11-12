@@ -71,6 +71,13 @@ images:
     digest: sha256:a5a7017efc5969e00ae2b91c8eb0631049a569652aa4ffc4501769049ae45c72
     released: "2026-10-25"
     source: https://www.python.org/downloads/release/python-31318/
+  # CI validator only (validate_configs.sh parses every dashboard PromQL expression with it); never deployed.
+  promtool:
+    repo: prom/prometheus
+    tag: v3.15.1
+    digest: sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
+    released: "2026-10-21"
+    source: https://github.com/prometheus/prometheus/releases/tag/v3.15.1
   socket_proxy:
     repo: tecnativa/docker-socket-proxy
     tag: v0.5.0

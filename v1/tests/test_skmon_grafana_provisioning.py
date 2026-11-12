@@ -140,3 +140,9 @@ def test_stale_expression_removes_stale_root_file_keeps_wanted(play):
     assert sorted(stale) == [f"{dst}/apps/removed.json", f"{dst}/forgejo.json"]
     ctx["skmon_dashboards_present"] = {"files": []}
     assert ast.literal_eval(ansible_environment().from_string(expr).render(**ctx).strip()) == []
+
+
+def test_vm_datasource_is_named_victoriametrics_and_old_name_is_deleted():
+    d = ds()
+    assert by_uid()["skmon-vm"]["name"] == "VictoriaMetrics"
+    assert {"name": "Prometheus", "orgId": 1} in d["deleteDatasources"]

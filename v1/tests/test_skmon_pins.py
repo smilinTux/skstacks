@@ -25,7 +25,7 @@ COMPOSE_KNOBS = {
 def test_pin_table_has_every_key():
     assert set(PINS["images"]) == {
         "victoriametrics", "vmalert", "vmalert_tool", "alertmanager", "alloy", "loki",
-        "grafana", "pyroscope", "pve_exporter", "python", "python_slim", "socket_proxy"}
+        "grafana", "pyroscope", "pve_exporter", "python", "python_slim", "socket_proxy", "promtool"}
     for k, p in PINS["images"].items():
         assert p["repo"] and p["source"].startswith("https://"), k
 
