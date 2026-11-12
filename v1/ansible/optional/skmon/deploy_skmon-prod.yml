@@ -346,24 +346,26 @@
       tags:
         - dashboards
 
+    # The dashboards tree is two levels deep by design (dashboards/<folder>/<file>.json), so both
+    # listings are a bounded, read-only find (-maxdepth 2), never a recursive walk (R84).
     - name: List the dashboards the role ships (controller)
-      find:
-        paths: "{{ playbook_dir }}/src/config/{{ app }}/dashboards"
-        patterns: "*.json"
-        recurse: true
+      command:
+        argv: ["find", "{{ playbook_dir }}/src/config/{{ app }}/dashboards", "-maxdepth", "2", "-type", "f", "-name", "*.json"]
       delegate_to: localhost
       become: false
       register: skmon_dashboards_shipped
+      changed_when: false
+      check_mode: false
       tags:
         - dashboards
 
     - name: List the dashboards present on the data node
-      find:
-        paths: "{{ skmon_data_path }}/grafana-provisioning/dashboards"
-        patterns: "*.json"
-        recurse: true
+      command:
+        argv: ["find", "{{ skmon_data_path }}/grafana-provisioning/dashboards", "-maxdepth", "2", "-type", "f", "-name", "*.json"]
       delegate_to: "{{ skmon_data_node }}"
       register: skmon_dashboards_present
+      changed_when: false
+      check_mode: false
       tags:
         - dashboards
 
@@ -373,8 +375,8 @@
           {%- set src = playbook_dir ~ '/src/config/' ~ app ~ '/dashboards/' -%}
           {%- set dst = skmon_data_path ~ '/grafana-provisioning/dashboards/' -%}
           {%- set wanted = [] -%}
-          {%- for f in skmon_dashboards_shipped.get('files', []) -%}{%- if f.path[src | length:] not in (skmon_dashboards_unwanted | default([])) and wanted.append(dst ~ f.path[src | length:]) -%}{%- endif -%}{%- endfor -%}
-          {{ skmon_dashboards_present.get('files', []) | map(attribute='path') | reject('in', wanted) | list }}
+          {%- for f in skmon_dashboards_shipped.stdout_lines | default([]) -%}{%- if f[src | length:] not in (skmon_dashboards_unwanted | default([])) and wanted.append(dst ~ f[src | length:]) -%}{%- endif -%}{%- endfor -%}
+          {{ skmon_dashboards_present.stdout_lines | default([]) | reject('in', wanted) | list }}
       tags:
         - dashboards
 

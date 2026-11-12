@@ -137,8 +137,8 @@ def copied_dashboards(shipped=None, **skmon):
     for play in PLAYS:
         expr = _task(play, "Work out the stale")["set_fact"]["skmon_dashboards_stale"]
         ctx = {**facts, "playbook_dir": "/ctl/role", "app": "skmon", "skmon_data_path": "/srv/x",
-               "skmon_dashboards_shipped": {"files": [{"path": src + r} for r in shipped]},
-               "skmon_dashboards_present": {"files": [{"path": dst + r} for r in shipped]}}
+               "skmon_dashboards_shipped": {"stdout_lines": [src + r for r in shipped]},
+               "skmon_dashboards_present": {"stdout_lines": [dst + r for r in shipped]}}
         stale = ast.literal_eval(jenv.from_string(expr).render(**ctx).strip())
         outs.append(sorted(r for r in shipped if dst + r not in stale))
     assert outs[0] == outs[1] == outs[2]
