@@ -193,7 +193,8 @@
   when: not skmon_parked
   no_log: true
 
-- name: Require AUTHENTIK_HOST when skmon provisions Authentik
+- name: Require AUTHENTIK_HOST
+  # Grafana's OIDC endpoints are built from it whether or not skmon provisions Authentik.
   assert:
     that:
       - skmon.AUTHENTIK_HOST | default('', true) | string | length > 0
@@ -201,4 +202,4 @@
       skmon.AUTHENTIK_HOST (the public hostname of sksso, for example sso.<cluster>.<domain>)
       is required: Grafana's OIDC endpoints are built from it. Set skmon.AUTHENTIK_PROVISION
       to false to skip creating the Authentik objects (the host is still needed for the URLs).
-  when: not skmon_parked and (skmon.AUTHENTIK_PROVISION | default(true) | bool)
+  when: not skmon_parked

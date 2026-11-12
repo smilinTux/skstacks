@@ -499,6 +499,9 @@
         - { key: "alertmanager", host_prefix: "alertmanager", name: "Alertmanager", icon: "fa://fa-bell", icon_file: "alertmanager.png", icon_name: "alertmanager" }
       loop_control:
         label: "{{ item.key }}"
+      # skmon, vmui, alertmanager and pyroscope are provider-backed applications owned by
+      # tasks/authentik.yml (bound to skadmin only): no tile is created or bound for them here.
+      when: item.key not in ['skmon', 'vmui', 'alertmanager', 'pyroscope']
       tags:
         - config
         - authentik

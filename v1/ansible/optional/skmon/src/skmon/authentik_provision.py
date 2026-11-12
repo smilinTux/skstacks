@@ -76,9 +76,15 @@ class Api:
         q = ("?" + urllib.parse.urlencode(params)) if params else ""
         return self.call("GET", path + q)
 
-    def first(self, path, **params):
-        res = self.get(path, **params).get("results", [])
-        return res[0] if res else None
+    def pages(self, path, **params):
+        """Every result of a list endpoint, following `pagination.next` (the next page number,
+        0 on the last page)."""
+        page, out = 1, []
+        while page:
+            body = self.get(path, **{**params, "page": page})
+            out += body.get("results", [])
+            page = (body.get("pagination") or {}).get("next") or 0
+        return out
 
 
 def version_tuple(v):
@@ -131,8 +137,19 @@ def get_application(api, slug):
         raise
 
 
+def find_one(api, kind, path, field, value, **params):
+    """The one object of `path` whose `field` equals `value` exactly. The query filter only
+    narrows the listing (Authentik silently ignores a filter its viewset does not declare), so
+    the exact match is re-checked client-side across every page. None when there is no match;
+    more than one is an error naming the kind and the pks."""
+    hits = [r for r in api.pages(path, **params) if r.get(field) == value]
+    if len(hits) > 1:
+        raise ApiError(f"{kind} '{value}' matches {len(hits)} objects (pk {', '.join(str(h.get('pk')) for h in hits)})")
+    return hits[0] if hits else None
+
+
 def flow_pk(api, slug):
-    flow = api.first("/flows/instances/", slug=slug)
+    flow = find_one(api, "flow", "/flows/instances/", "slug", slug, slug=slug)
     if flow is None:
         raise ApiError(f"flow '{slug}' not found in Authentik")
     return flow["pk"]
@@ -142,7 +159,8 @@ def scope_mappings(api, modern):
     path = "/propertymappings/provider/scope/" if modern else "/propertymappings/scope/"
     pks = []
     for scope, managed in MANAGED_SCOPES.items():
-        m = api.first(path, managed=managed) or api.first(path, scope_name=scope)
+        m = find_one(api, "scope mapping", path, "managed", managed, managed=managed) \
+            or find_one(api, "scope mapping", path, "scope_name", scope, scope_name=scope)
         if m is None:
             raise ApiError(f"scope mapping for '{scope}' ({managed}) not found")
         pks.append(m["pk"])
@@ -150,8 +168,9 @@ def scope_mappings(api, modern):
 
 
 def signing_key(api, name):
-    kp = api.first("/crypto/certificatekeypairs/", name=name, has_key="true") \
-        or api.first("/crypto/certificatekeypairs/", has_key="true")
+    kp = find_one(api, "certificate keypair", "/crypto/certificatekeypairs/", "name", name, name=name, has_key="true")
+    if kp is None:
+        kp = next(iter(api.pages("/crypto/certificatekeypairs/", has_key="true")), None)
     if kp is None:
         raise ApiError("no certificate keypair with a private key to sign tokens")
     return kp["pk"]
@@ -170,6 +189,11 @@ def ensure_application(api, app, provider_pk):
     _, verb = ensure(api, "/core/applications/", lambda: get_application(api, app["slug"]),
                      fields, app["slug"], key="slug")
     return verb
+
+
+def find_proxy(api, slug):
+    # ProxyProviderViewSet declares only name__iexact; a plain `name` would be ignored.
+    return find_one(api, "proxy provider", "/providers/proxy/", "name", slug, name__iexact=slug)
 
 
 def ensure_oidc(api, app):
@@ -198,7 +222,8 @@ def ensure_oidc(api, app):
     else:
         provider["redirect_uris"] = "\n".join(app["redirect_uris"])
     prov, pverb = ensure(api, "/providers/oauth2/",
-                         lambda: api.first("/providers/oauth2/", name=app["slug"]), provider, app["slug"])
+                         lambda: find_one(api, "oauth2 provider", "/providers/oauth2/", "name", app["slug"], name=app["slug"]),
+                         provider, app["slug"])
     averb = ensure_application(api, app, prov["pk"])
     return f"oidc {app['slug']}: provider {pverb}, application {averb}"
 
@@ -213,28 +238,46 @@ def ensure_proxy(api, app):
         "external_host": app["external_host"],
     }
     prov, pverb = ensure(api, "/providers/proxy/",
-                         lambda: api.first("/providers/proxy/", name=app["slug"]), provider, app["slug"])
+                         lambda: find_proxy(api, app["slug"]), provider, app["slug"])
     averb = ensure_application(api, app, prov["pk"])
     return f"proxy {app['slug']}: provider {pverb}, application {averb}"
 
 
 def ensure_group_binding(api, app_slug, group):
-    """Bind the application to `group` by a policy binding (order 0). Existing
-    bindings are additive, so none is removed. The group must already exist."""
+    """Make the `group` binding the ONLY policy binding of the application (admin-only):
+    create it when missing and delete every other binding, reporting deletions by pk only.
+    The group must already exist (sksso creates it, never this script)."""
     app = get_application(api, app_slug)
     if app is None:
         raise ApiError(f"application '{app_slug}' not found")
-    grp = api.first("/core/groups/", name=group)
+    grp = find_one(api, "group", "/core/groups/", "name", group, name=group)
     if grp is None:
         raise ApiError(f"group '{group}' not found in Authentik (it is created by sksso, not here)")
-    bindings = api.get("/policies/bindings/", target=app["pk"]).get("results", [])
-    if any(b.get("group") == grp["pk"] for b in bindings):
-        return f"binding {app_slug} -> {group}: unchanged"
-    api.call("POST", "/policies/bindings/", {
-        "target": app["pk"], "group": grp["pk"], "order": 0, "enabled": True,
-        "negate": False, "timeout": 30,
-    })
-    return f"binding {app_slug} -> {group}: created"
+    bindings = [b for b in api.pages("/policies/bindings/", target=app["pk"]) if b.get("target") == app["pk"]]
+    keep = next((b for b in bindings if b.get("group") == grp["pk"]), None)
+    lines = []
+    if keep is None:
+        api.call("POST", "/policies/bindings/", {
+            "target": app["pk"], "group": grp["pk"], "order": 0, "enabled": True,
+            "negate": False, "timeout": 30,
+        })
+        lines.append(f"binding {app_slug} -> {group}: created")
+    for b in bindings:
+        if b is not keep:
+            api.call("DELETE", f"/policies/bindings/{b['pk']}/")
+            lines.append(f"binding {app_slug}: deleted extra binding {b['pk']}")
+    return "\n".join(lines) or f"binding {app_slug} -> {group}: unchanged"
+
+
+def embedded_outpost(api):
+    # OutpostFilter declares managed__iexact; select client-side by the exact value as well.
+    hits = [o for o in api.pages("/outposts/instances/", managed__iexact=EMBEDDED_OUTPOST)
+            if o.get("managed") == EMBEDDED_OUTPOST]
+    if not hits:
+        raise ApiError("the embedded outpost was not found in Authentik")
+    if len(hits) > 1:
+        raise ApiError(f"{len(hits)} embedded outposts found (pk {', '.join(str(o.get('pk')) for o in hits)})")
+    return hits[0]
 
 
 def ensure_outpost(api, slugs):
@@ -242,12 +285,10 @@ def ensure_outpost(api, slugs):
     only what is missing; every other provider stays attached."""
     if not slugs:
         return "outpost: no proxy providers"
-    outpost = api.first("/outposts/instances/", managed=EMBEDDED_OUTPOST)
-    if outpost is None:
-        raise ApiError("the embedded outpost was not found in Authentik")
+    outpost = embedded_outpost(api)
     wanted = []
     for slug in slugs:
-        prov = api.first("/providers/proxy/", name=slug)
+        prov = find_proxy(api, slug)
         if prov is None:
             raise ApiError(f"proxy provider '{slug}' not found")
         wanted.append(prov["pk"])
@@ -265,6 +306,7 @@ def provision(api, cfg):
     proxies = []
     for app in cfg["apps"]:
         print(ensure_oidc(api, app) if app["kind"] == "oidc" else ensure_proxy(api, app))
+        # Bound to skadmin before any proxy provider is attached to the outpost below.
         print(ensure_group_binding(api, app["slug"], group))
         if app["kind"] == "proxy":
             proxies.append(app["slug"])

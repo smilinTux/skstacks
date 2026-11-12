@@ -13,7 +13,7 @@ import authentik_provision as ap  # noqa: E402
 
 AUTHENTIK_TASKS = ROLE / "tasks/authentik.yml"
 MARKER = "SECRET-MARKER"
-PRIORITY = {"OTHER-PROVIDER": 4242}
+FOREIGN_PROVIDER_PK = 4242
 
 
 def env_lines(**kw):
@@ -109,11 +109,11 @@ def test_32_char_credentials_pass():
     assert eval_asserts(GUARDS, guard_facts(GRAFANA_OIDC_CLIENT_SECRET="x" * 32, GRAFANA_OIDC_CLIENT_ID="y" * 32)) == []
 
 
-def test_authentik_host_required_only_when_provisioning():
-    assert any("AUTHENTIK_HOST" in m for m in eval_asserts(GUARDS, guard_facts(AUTHENTIK_HOST="")))
-    assert any("AUTHENTIK_HOST" in m for m in eval_asserts(GUARDS, guard_facts(AUTHENTIK_HOST="", AUTHENTIK_PROVISION=True)))
-    assert eval_asserts(GUARDS, guard_facts(AUTHENTIK_HOST="", AUTHENTIK_PROVISION=False)) == []
-    assert eval_asserts(GUARDS, guard_facts(AUTHENTIK_HOST="", AUTHENTIK_PROVISION="false")) == []
+def test_authentik_host_required_whenever_unparked():
+    for prov in (None, True, False, "false"):
+        kw = {} if prov is None else {"AUTHENTIK_PROVISION": prov}
+        assert any("AUTHENTIK_HOST" in m for m in eval_asserts(GUARDS, guard_facts(AUTHENTIK_HOST="", **kw))), prov
+        assert not any("AUTHENTIK_HOST" in m for m in eval_asserts(GUARDS, guard_facts(**kw))), prov
 
 
 def test_guards_skipped_when_parked():
@@ -192,56 +192,91 @@ def test_provisioner_task_keeps_secrets_off_argv_and_out_of_logs():
 # --- the provisioner, against an in-process fake Authentik --------------------------------------
 
 class FakeAuthentik:
-    """Enough of the Authentik admin API for the provisioner; records what it was asked to write."""
+    """Enough of the Authentik admin API for the provisioner, behaving like the real one where it
+    matters: a query parameter the viewset does not declare is IGNORED (everything is returned),
+    and lists are paginated (page size 2). Records what it was asked to write."""
+
+    PAGE = 2
+    pages = ap.Api.pages  # the real client paging logic runs against this fake
+    # Filters the real viewsets declare (upstream filterset_fields), per list endpoint.
+    FILTERS = {
+        "/providers/proxy/": {"name__iexact"},
+        "/providers/oauth2/": {"name"},
+        "/flows/instances/": {"slug"},
+        "/propertymappings/provider/scope/": {"managed", "scope_name"},
+        "/crypto/certificatekeypairs/": {"name", "has_key"},
+        "/core/groups/": {"name"},
+        "/policies/bindings/": {"target"},
+        "/outposts/instances/": {"managed__iexact", "managed__icontains"},
+    }
 
     def __init__(self, version="2026.8.5"):
         self.version = version
         self.writes = 0
+        self.deleted = []
         self.apps, self.providers, self.groups = {}, {}, {"skadmin": "grp-skadmin"}
         self._app_pk, self._rows = {}, []
         self._next = 100
-        self.outpost = {"pk": "outpost-1", "managed": ap.EMBEDDED_OUTPOST, "type": "proxy",
-                        "providers": [PRIORITY["OTHER-PROVIDER"]]}
+        self.outposts = [{"pk": "outpost-1", "managed": ap.EMBEDDED_OUTPOST, "type": "proxy",
+                          "providers": [FOREIGN_PROVIDER_PK]}]
+
+    @property
+    def outpost(self):
+        return next(o for o in self.outposts if o["managed"] == ap.EMBEDDED_OUTPOST)
+
+    def add_provider(self, kind, name, key=None, **fields):
+        self._next += 1
+        self.providers[key or name] = {"pk": self._next, "type": kind, "name": name, **fields}
+        return self._next
 
     # views the tests assert on
     @property
     def bindings(self):
         by_pk = {v: k for k, v in self.groups.items()}
         slug = {pk: s for s, pk in self._app_pk.items()}
-        return {slug[r["target"]]: by_pk[r["group"]] for r in self._rows}
+        return {slug[r["target"]]: by_pk[r["group"]] for r in self._rows if r["target"] in slug}
 
     @property
     def outpost_providers(self):
         return list(self.outpost["providers"])
 
-    def _provider(self, kind, name):
-        return next((p for p in self.providers.values() if p["type"] == kind and p["name"] == name), None)
-
     def get(self, path, **q):
         if path == "/admin/version/":
             return {"version_current": self.version}
-        return {"results": self._results(path, q)}
+        page = int(q.pop("page", 1))
+        supported = self.FILTERS.get(path, set())
+        rows = self._rows_for(path, {k: v for k, v in q.items() if k in supported})
+        chunk = rows[(page - 1) * self.PAGE: page * self.PAGE]
+        more = page * self.PAGE < len(rows)
+        return {"pagination": {"next": page + 1 if more else 0, "current": page}, "results": chunk}
 
-    def first(self, path, **q):
-        res = self.get(path, **q)["results"]
-        return res[0] if res else None
-
-    def _results(self, path, q):
+    def _rows_for(self, path, q):
         if path == "/flows/instances/":
-            return [{"pk": "flow-" + q["slug"]}]
+            return [{"pk": "flow-" + q["slug"], "slug": q["slug"]}]
         if path.startswith("/propertymappings/"):
-            return [{"pk": "pm-" + q.get("scope_name", q.get("managed", "")).rsplit("-", 1)[-1]}]
+            key, val = next(iter(q.items()))
+            return [{"pk": "pm-" + val.rsplit("-", 1)[-1], "managed": val if key == "managed" else None, "scope_name": val}]
         if path == "/crypto/certificatekeypairs/":
-            return [{"pk": "keypair-1"}]
+            return [{"pk": "keypair-1", "name": "authentik Self-signed Certificate"}]
         if path in ("/providers/oauth2/", "/providers/proxy/"):
-            p = self._provider(path.split("/")[2].replace("oauth2", "oauth2"), q["name"])
-            return [dict(p)] if p else []
+            kind = path.split("/")[2]
+            rows = sorted((p for p in self.providers.values() if p["type"] == kind), key=lambda p: p["name"])
+            if "name" in q:
+                rows = [p for p in rows if p["name"] == q["name"]]
+            if "name__iexact" in q:
+                rows = [p for p in rows if p["name"].lower() == q["name__iexact"].lower()]
+            return [dict(p) for p in rows]
         if path == "/core/groups/":
-            return [{"pk": self.groups[q["name"]], "name": q["name"]}] if q["name"] in self.groups else []
+            rows = [{"pk": v, "name": k} for k, v in sorted(self.groups.items())]
+            return [r for r in rows if r["name"] == q["name"]] if "name" in q else rows
         if path == "/policies/bindings/":
-            return [dict(r) for r in self._rows if r["target"] == q["target"]]
+            rows = [dict(r) for r in self._rows]
+            return [r for r in rows if r["target"] == q["target"]] if "target" in q else rows
         if path == "/outposts/instances/":
-            return [dict(self.outpost)] if q.get("managed") == self.outpost["managed"] else []
+            rows = sorted(self.outposts, key=lambda o: o["managed"] or "")
+            if "managed__iexact" in q:
+                rows = [o for o in rows if (o["managed"] or "").lower() == q["managed__iexact"].lower()]
+            return [dict(o) for o in rows]
         raise AssertionError(f"unexpected GET {path} {q}")
 
     def call(self, method, path, body=None, ok=None):
@@ -252,9 +287,8 @@ class FakeAuthentik:
             return dict(self.apps[slug])
         self.writes += 1
         if path in ("/providers/oauth2/", "/providers/proxy/") and method == "POST":
-            self._next += 1
-            kind = path.split("/")[2]
-            self.providers[body["name"]] = {"pk": self._next, "type": kind, **body}
+            assert not any(p["type"] == path.split("/")[2] and p["name"] == body["name"] for p in self.providers.values()), "duplicate provider"
+            self.add_provider(path.split("/")[2], **body)
             return dict(self.providers[body["name"]])
         if path.startswith("/providers/") and method == "PATCH":
             pk = int(path.rstrip("/").rsplit("/", 1)[1])
@@ -270,11 +304,17 @@ class FakeAuthentik:
             return {}
         if path == "/policies/bindings/" and method == "POST":
             assert not any(r["target"] == body["target"] and r["group"] == body["group"] for r in self._rows), "duplicate binding"
-            self._rows.append(dict(body))
+            self._rows.append({"pk": f"b{len(self._rows) + len(self.deleted) + 1}", **body})
             return dict(body)
+        if path.startswith("/policies/bindings/") and method == "DELETE":
+            pk = path.rstrip("/").rsplit("/", 1)[1]
+            self._rows = [r for r in self._rows if r["pk"] != pk]
+            self.deleted.append(pk)
+            return None
         if path.startswith("/outposts/instances/") and method == "PATCH":
-            self.outpost.update(body)
-            return dict(self.outpost)
+            pk = path.rstrip("/").rsplit("/", 1)[1]
+            next(o for o in self.outposts if o["pk"] == pk).update(body)
+            return {}
         raise AssertionError(f"unexpected {method} {path}")
 
 
@@ -339,7 +379,7 @@ def test_embedded_outpost_gains_proxy_providers_and_keeps_others():
     fake = FakeAuthentik()
     run_provisioner(fake, input_for())
     proxies = {fake.providers[s]["pk"] for s in ("vmui", "alertmanager", "pyroscope")}
-    assert set(fake.outpost_providers) == proxies | {PRIORITY["OTHER-PROVIDER"]}
+    assert set(fake.outpost_providers) == proxies | {FOREIGN_PROVIDER_PK}
     assert fake.providers["skmon"]["pk"] not in fake.outpost_providers
     before = fake.outpost_providers
     writes = fake.writes
@@ -351,14 +391,71 @@ def test_outpost_attach_is_incremental():
     fake = FakeAuthentik()
     run_provisioner(fake, input_for(profiling=False))
     run_provisioner(fake, input_for())
-    assert fake.providers["pyroscope"]["pk"] in fake.outpost_providers and PRIORITY["OTHER-PROVIDER"] in fake.outpost_providers
+    assert fake.providers["pyroscope"]["pk"] in fake.outpost_providers and FOREIGN_PROVIDER_PK in fake.outpost_providers
     assert len(fake.outpost_providers) == 4
+
+
+def test_each_ui_gets_its_own_provider_beside_a_catch_all_and_foreign_providers():
+    fake = FakeAuthentik()
+    # Sorts before vmui and alertmanager: a first-result lookup would pick these up and rewrite them.
+    catch_all = fake.add_provider("proxy", "aaa-domain-catch-all", mode="forward_domain",
+                                  external_host="https://auth.example.test", cookie_domain="example.test")
+    other = fake.add_provider("proxy", "another-role", mode="forward_single", external_host="https://other.example.test")
+    oidc = fake.add_provider("oauth2", "aaa-other-oidc", client_id="other")
+    snapshot = {k: dict(v) for k, v in fake.providers.items()}
+    run_provisioner(fake, input_for())
+    for k, v in snapshot.items():
+        assert fake.providers[k] == v, k
+    pks = {fake.providers[s]["pk"] for s in ("vmui", "alertmanager", "pyroscope")}
+    assert len(pks) == 3 and not pks & {catch_all, other, oidc}
+    assert fake.providers["vmui"]["external_host"] == "https://vmui.c1.example.test"
+    assert fake.providers["alertmanager"]["external_host"] == "https://alertmanager.c1.example.test"
+    assert fake.apps["vmui"]["provider"] == fake.providers["vmui"]["pk"] != fake.apps["alertmanager"]["provider"]
+    assert not {catch_all, other} & set(fake.outpost_providers)
+
+
+def test_lookup_follows_every_page():
+    fake = FakeAuthentik()
+    for i in range(5):
+        fake.add_provider("proxy", f"aa-filler-{i}", mode="forward_single")
+    fake.add_provider("proxy", "zzz-last", mode="forward_single")
+    run_provisioner(fake, input_for())
+    n = fake.writes
+    run_provisioner(fake, input_for())
+    assert fake.writes == n
+
+
+def test_duplicate_exact_match_fails_nonzero_and_names_kind_and_pk(capsys, monkeypatch):
+    fake = FakeAuthentik()
+    first = fake.add_provider("proxy", "vmui", key="vmui")
+    second = fake.add_provider("proxy", "vmui", key="vmui#2")
+    monkeypatch.setattr(ap, "Api", lambda url, host, token: fake)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(input_for())))
+    assert ap.main() == 1
+    err = capsys.readouterr().err
+    assert "proxy provider 'vmui'" in err and str(first) in err and str(second) in err
+
+
+def test_embedded_outpost_is_picked_by_managed_among_several():
+    fake = FakeAuthentik()
+    fake.outposts.insert(0, {"pk": "outpost-0", "managed": None, "type": "ldap", "providers": []})
+    fake.outposts.append({"pk": "outpost-2", "managed": "other/managed", "type": "proxy", "providers": []})
+    run_provisioner(fake, input_for())
+    assert len(fake.outpost_providers) == 4
+    assert all(o["providers"] == [] for o in fake.outposts if o["pk"] != "outpost-1")
 
 
 def test_missing_embedded_outpost_is_an_error():
     fake = FakeAuthentik()
-    fake.outpost["managed"] = "something-else"
+    fake.outposts[0]["managed"] = "something-else"
     with pytest.raises(ap.ApiError, match="embedded outpost"):
+        run_provisioner(fake, input_for())
+
+
+def test_several_embedded_outposts_are_an_error():
+    fake = FakeAuthentik()
+    fake.outposts.append({"pk": "outpost-9", "managed": ap.EMBEDDED_OUTPOST, "type": "proxy", "providers": []})
+    with pytest.raises(ap.ApiError, match="2 embedded outposts"):
         run_provisioner(fake, input_for())
 
 
@@ -370,13 +467,49 @@ def test_missing_group_is_an_error_and_never_created():
     assert fake.groups == {}
 
 
-def test_existing_bindings_are_left_alone():
+def test_extra_bindings_on_owned_apps_are_removed_and_others_untouched(capsys):
     fake = FakeAuthentik()
     run_provisioner(fake, input_for())
-    fake._rows.append({"target": "app-vmui", "group": "grp-other", "order": 5})
+    fake.apps["unrelated"] = {"pk": "app-unrelated", "slug": "unrelated"}
+    fake._app_pk["unrelated"] = "app-unrelated"
+    fake._rows += [{"pk": "x1", "target": "app-vmui", "group": "grp-other", "order": 5},
+                   {"pk": "x2", "target": "app-skmon", "user": 7, "order": 1},
+                   {"pk": "keep1", "target": "app-unrelated", "group": "grp-other", "order": 0}]
+    capsys.readouterr()
+    run_provisioner(fake, input_for())
+    out = capsys.readouterr().out
+    assert sorted(fake.deleted) == ["x1", "x2"]
+    assert "deleted extra binding x1" in out and "grp-other" not in out
+    assert [r["pk"] for r in fake._rows if r["target"] == "app-unrelated"] == ["keep1"]
+    owned = [r for r in fake._rows if r["target"] != "app-unrelated"]
+    assert len(owned) == 4 and all(r["group"] == "grp-skadmin" for r in owned)
     n = fake.writes
     run_provisioner(fake, input_for())
-    assert fake.writes == n and len(fake._rows) == len(fake.apps) + 1
+    assert fake.writes == n
+
+
+def test_binding_exists_before_the_provider_is_attached_to_the_outpost():
+    fake = FakeAuthentik()
+    order = []
+    orig = fake.call
+
+    def spy(method, path, body=None, ok=None):
+        if method in ("POST", "PATCH", "DELETE"):
+            order.append((method, path))
+        return orig(method, path, body, ok)
+    fake.call = spy
+    run_provisioner(fake, input_for())
+    last_binding = max(i for i, (m, p) in enumerate(order) if p == "/policies/bindings/")
+    first_attach = min(i for i, (m, p) in enumerate(order) if p.startswith("/outposts/instances/"))
+    assert last_binding < first_attach
+
+
+def test_tile_loop_skips_the_provider_backed_slugs():
+    jenv = ansible_environment()
+    for p in PLAYS:
+        t = task_named(p, "Create or update the skmon portal tiles in Authentik")
+        kept = [i["key"] for i in t["loop"] if jenv.compile_expression(t["when"])(item=i)]
+        assert not {"skmon", "vmui", "alertmanager", "pyroscope"} & set(kept), p
 
 
 def test_provisioner_never_prints_secret(capsys, monkeypatch):
