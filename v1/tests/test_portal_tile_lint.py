@@ -110,7 +110,9 @@ def test_explicit_opt_out_role_is_covered():
 # --- edge case: a multi-sub-service tile declared inside a loop: ---------
 
 def test_multi_service_role_loop_tile_is_covered():
-    text = prod_playbook_text("optional", "skmon")
+    # skmon's tile loop lives in the role task file the play includes (tasks/tiles.yml).
+    assert "tasks/tiles.yml" in prod_playbook_text("optional", "skmon")
+    text = (ROOT / "optional" / "skmon" / "tasks" / "tiles.yml").read_text()
     assert "authentik_portal_tile.yml" in text
     assert "loop:" in text
     assert is_covered("optional", "skmon")

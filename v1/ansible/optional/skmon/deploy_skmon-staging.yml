@@ -473,35 +473,12 @@
         - config
         - authentik
 
-    - name: Create or update the skmon portal tiles in Authentik
-      # On by default (AUTHENTIK_TILE: true); opt out per instance with
-      # AUTHENTIK_TILE: false. skmon bundles three separate web UIs
-      # (Grafana, Prometheus, Alertmanager), each behind the
-      # cluster's domain-wide Traefik ForwardAuth catch-all already; each
-      # gets its own bookmark tile, bound to one group, with no provider.
-      # See shared/tasks/authentik_portal_tile.yml.
-      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
-      vars:
-        portal_tile:
-          enabled: "{{ skmon.AUTHENTIK_TILE | default(true) | bool }}"
-          slug: "{{ item.key }}{{ '' if env == 'prod' else '-' + env }}"
-          name: "{{ item.name }}"
-          launch_url: "https://{{ item.host_prefix }}{{ '' if env == 'prod' else '-' + env }}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}"
-          group: "{{ skmon.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
-          icon: "{{ item.icon }}"
-          icon_file: "icons/{{ item.icon_file }}"
-          icon_name: "{{ item.icon_name }}"
-          open_in_new_tab: true
-          description: ""
-      loop:
-        - { key: "skmon", host_prefix: "skmon", name: "SKMon (Grafana)", icon: "fa://fa-chart-line", icon_file: "grafana.png", icon_name: "grafana" }
-        - { key: "prometheus", host_prefix: "prometheus", name: "Prometheus", icon: "fa://fa-fire", icon_file: "prometheus.png", icon_name: "prometheus" }
-        - { key: "alertmanager", host_prefix: "alertmanager", name: "Alertmanager", icon: "fa://fa-bell", icon_file: "alertmanager.png", icon_name: "alertmanager" }
-      loop_control:
-        label: "{{ item.key }}"
-      # skmon, vmui, alertmanager and pyroscope are provider-backed applications owned by
-      # tasks/authentik.yml (bound to skadmin only): no tile is created or bound for them here.
-      when: item.key not in ['skmon', 'vmui', 'alertmanager', 'pyroscope']
+    - name: Create or update the skmon portal tiles and remove the retired ones in Authentik
+      # Tiles are the applications tasks/authentik.yml owns (same slugs); this adds icons and
+      # deletes the tiles of the retired UIs. Opt out with AUTHENTIK_TILE: false.
+      # Skipped while parked. See tasks/tiles.yml.
+      include_tasks: "{{ playbook_dir }}/tasks/tiles.yml"
+      when: not skmon_parked
       tags:
         - config
         - authentik

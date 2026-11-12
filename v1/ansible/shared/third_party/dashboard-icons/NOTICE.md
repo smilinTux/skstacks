@@ -33,7 +33,6 @@ These PNGs are taken as-is from the `png/` directory of:
 | `nextcloud.png` | `optional/skhub/src/config/skhub/icon.png` | skhub |
 | `plex.png` | `optional/skstream/src/config/skstream/icon.png` | skstream |
 | `portainer.png` | `optional/skport/src/config/skport/icon.png` | skport |
-| `prometheus.png` | `optional/skmon/src/config/skmon/icons/prometheus.png` | skmon (Prometheus tile) |
 | `prowlarr.png` | `optional/skfetch/src/config/skfetch/icons/prowlarr.png` | skfetch (Prowlarr tile) |
 | `qdrant.png` | `optional/skvector/src/config/skvector/icon.png` | skvector |
 | `radarr.png` | `optional/skfetch/src/config/skfetch/icons/radarr.png` | skfetch (Radarr tile) |
@@ -43,6 +42,7 @@ These PNGs are taken as-is from the `png/` directory of:
 | `syncthing.png` | `optional/sksync/src/config/sksync/icon.png` | sksync |
 | `traefik.png` | `core/skfence/src/config/skfence/icon.png`, `core/skfenceha/src/config/skfenceha/icon.png` | skfence, skfenceha |
 | `uptime-kuma.png` | `optional/skpulse/src/config/skpulse/icon.png` | skpulse |
+| `victoriametrics.png` | `optional/skmon/src/config/skmon/icons/victoriametrics.png` | skmon (VictoriaMetrics tile) |
 | `windmill.png` | `optional/skflow/src/config/skflow/icon.png` | skflow |
 
 Not included (no checked entry in the upstream catalog for this exact

@@ -1,0 +1,76 @@
+# skmon portal tiles. Included by the three env plays right after tasks/authentik.yml.
+#
+# The tiles ARE the applications tasks/authentik.yml owns (same env-suffixed slugs), so this file
+# only adds what the provisioner does not: the icon (copied into sksso's media by the shared
+# task) and the portal label. The shared task keeps an existing provider (it never clears
+# `provider` on a provider-backed application) and binds only the group it is given, which is
+# fixed to skadmin here: skmon is admin-only (SSO standard). There is no per-instance group knob.
+# See shared/tasks/authentik_portal_tile.yml.
+#
+# Needs: skmon, skmon_sfx, env, vault_file_path (play facts). Opt out of the tiles with
+# AUTHENTIK_TILE: false.
+
+- name: List the skmon portal tiles
+  # key is the Authentik application slug before the environment suffix; icon_file lives under
+  # src/config/skmon/icons/. The pyroscope tile exists only while profiling is on.
+  set_fact:
+    skmon_tile_items: >-
+      {{ [{'key': 'skmon', 'host_prefix': 'skmon', 'name': 'SKMon (Grafana)', 'icon': 'fa://fa-chart-line',
+           'icon_file': 'grafana.png', 'icon_name': 'grafana'},
+          {'key': 'vmui', 'host_prefix': 'vmui', 'name': 'VictoriaMetrics', 'icon': 'fa://fa-database',
+           'icon_file': 'victoriametrics.png', 'icon_name': 'victoriametrics'},
+          {'key': 'alertmanager', 'host_prefix': 'alertmanager', 'name': 'Alertmanager', 'icon': 'fa://fa-bell',
+           'icon_file': 'alertmanager.png', 'icon_name': 'alertmanager'}]
+         + ([{'key': 'pyroscope', 'host_prefix': 'pyroscope', 'name': 'Pyroscope', 'icon': 'fa://fa-fire',
+              'icon_file': 'pyroscope.png', 'icon_name': 'pyroscope'}]
+            if ((skmon.PROFILING | default({}, true)).enabled | default(false) | bool) else []) }}
+
+- name: Create or update the skmon portal tiles
+  include_tasks: "{{ playbook_dir }}/../../shared/tasks/authentik_portal_tile.yml"
+  vars:
+    portal_tile:
+      enabled: "{{ skmon.AUTHENTIK_TILE | default(true) | bool }}"
+      slug: "{{ item.key }}{{ skmon_sfx }}"
+      name: "{{ item.name }}"
+      launch_url: "https://{{ item.host_prefix }}{{ skmon_sfx }}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}"
+      group: skadmin
+      icon: "{{ item.icon }}"
+      icon_file: "icons/{{ item.icon_file }}"
+      icon_name: "{{ item.icon_name }}"
+      open_in_new_tab: true
+      description: ""
+  loop: "{{ skmon_tile_items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+# The old Jaeger and Prometheus UIs are gone, so their tiles are removed. One DELETE per slug
+# (204 when removed, 404 when already gone), with the same token, Host header and no_log as the
+# shared tile task. Skipped when both the tiles and the provisioner are switched off.
+- name: Locate sksso's vault for the retired-tile cleanup (holds sksso.api_token)
+  set_fact:
+    skmon_sksso_vault_path: >-
+      {{ skmon.AUTHENTIK_VAULT_FILE | default((vault_file_path | dirname) ~ '/'
+         ~ (vault_file_path | basename | regex_replace('^skmon-', 'sksso-'))) }}
+  when: (skmon.AUTHENTIK_TILE | default(true) | bool) or (skmon.AUTHENTIK_PROVISION | default(true) | bool)
+
+- name: Load sksso's vault for the retired-tile cleanup
+  include_vars:
+    file: "{{ skmon_sksso_vault_path }}"
+    name: skmon_sksso_token_vault
+  no_log: true
+  when: (skmon.AUTHENTIK_TILE | default(true) | bool) or (skmon.AUTHENTIK_PROVISION | default(true) | bool)
+
+- name: Remove retired skmon tiles
+  uri:
+    url: "{{ skmon.AUTHENTIK_INTERNAL_URL | default('http://sksso-' ~ env ~ '_server:9000') }}/api/v3/core/applications/{{ item }}{{ skmon_sfx }}/"
+    method: DELETE
+    headers:
+      Authorization: "Bearer {{ skmon_sksso_token_vault.sksso.api_token }}"
+      Accept: application/json
+      Host: "{{ skmon.AUTHENTIK_HOST }}"
+    status_code: [204, 404]
+  loop:
+    - jaeger
+    - prometheus
+  no_log: true
+  when: (skmon.AUTHENTIK_TILE | default(true) | bool) or (skmon.AUTHENTIK_PROVISION | default(true) | bool)

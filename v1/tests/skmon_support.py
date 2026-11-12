@@ -168,6 +168,26 @@ _TOP_LEVEL_FACTS = {"swarm_nodes", "env", "groups", "vault_file_path"}
 _TOP_LEVEL_PREFIXES = ("skmon_", "skalert_")
 
 
+TILES = ROLE / "tasks/tiles.yml"
+
+
+def tile_items(env: str = "prod", **skmon) -> list[dict]:
+    """The portal tile list tasks/tiles.yml computes (facts evaluated over BASE plus overrides)."""
+    ctx = guard_facts(env=env, **skmon)
+    value = task_named(TILES, "List the skmon portal tiles")["set_fact"]["skmon_tile_items"]
+    return _eval_value(ansible_environment(), value, ctx)
+
+
+def router_hosts(svcs: dict[str, dict]) -> set[str]:
+    """Every host named by a Traefik router rule label across the rendered services."""
+    hosts = set()
+    for svc in svcs.values():
+        for label in (svc.get("deploy") or {}).get("labels") or []:
+            if ".rule=" in label:
+                hosts.update(re.findall(r"Host\(`([^`]+)`\)", label))
+    return hosts
+
+
 def load_tasks(path: pathlib.Path) -> list[dict]:
     """Flat task list of a role task file."""
     return list(_flatten(yaml.safe_load(path.read_text())))

@@ -534,14 +534,6 @@ def test_binding_exists_before_the_provider_is_attached_to_the_outpost():
     assert last_binding < first_attach
 
 
-def test_tile_loop_skips_the_provider_backed_slugs():
-    jenv = ansible_environment()
-    for p in PLAYS:
-        t = task_named(p, "Create or update the skmon portal tiles in Authentik")
-        kept = [i["key"] for i in t["loop"] if jenv.compile_expression(t["when"])(item=i)]
-        assert not {"skmon", "vmui", "alertmanager", "pyroscope"} & set(kept), p
-
-
 def test_provisioner_never_prints_secret(capsys, monkeypatch):
     fake = FakeAuthentik()
     run_provisioner(fake, input_for())
