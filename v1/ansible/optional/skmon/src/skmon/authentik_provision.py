@@ -45,7 +45,9 @@ SECRET_FIELDS = ("client_secret",)
 
 
 class ApiError(Exception):
-    pass
+    def __init__(self, message, status=None):
+        super().__init__(message)
+        self.status = status
 
 
 class Api:
@@ -71,7 +73,7 @@ class Api:
         if status not in ok:
             # Authentik error bodies name fields, they do not echo the token
             # or the client secret we may have just sent.
-            raise ApiError(f"{method} {path}: HTTP {status}: {raw[:400].decode(errors='replace')}")
+            raise ApiError(f"{method} {path}: HTTP {status}: {raw[:400].decode(errors='replace')}", status=status)
         return json.loads(raw) if raw else None
 
     def get(self, path, **params):
@@ -127,7 +129,8 @@ def ensure(api, path, lookup, desired, label, key="pk"):
 
 
 def _not_found(exc):
-    return "HTTP 404" in str(exc)
+    # The status, not the message: an error body may itself contain "HTTP 404".
+    return getattr(exc, "status", None) == 404
 
 
 def get_application(api, slug):
@@ -331,7 +334,7 @@ def retire_application(api, slug):
     try:
         api.call("DELETE", f"/core/applications/{urllib.parse.quote(slug, safe='')}/", ok=(204,))
     except ApiError as exc:
-        if "HTTP 404" not in str(exc):
+        if not _not_found(exc):
             raise
         return f"retired {slug}: absent"
     return f"retired {slug}: deleted"

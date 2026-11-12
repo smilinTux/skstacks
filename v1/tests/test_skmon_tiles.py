@@ -155,7 +155,7 @@ class RetireFake(TileFake):
             slug = path.removeprefix("/core/applications/").rstrip("/")
             status = 500 if self.fail else (204 if slug in self.apps else 404)
             if status not in (ok or (200, 201, 204)):
-                raise ap.ApiError(f"DELETE {path}: HTTP {status}: ")
+                raise ap.ApiError(f"DELETE {path}: HTTP {status}: ", status=status)
             if status == 204:
                 self.writes += 1
                 self.apps.pop(slug)
@@ -207,3 +207,15 @@ def test_main_exits_nonzero_on_a_failed_retire(monkeypatch, capsys):
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(input_for(retire=["jaeger"]))))
     assert ap.main() == 1
     assert "HTTP 500" in capsys.readouterr().err
+
+
+def test_a_500_whose_body_mentions_http_404_is_still_an_error():
+    class Body404(RetireFake):
+        def call(self, method, path, body=None, ok=None):
+            if method == "DELETE":
+                raise ap.ApiError(f"DELETE {path}: HTTP 500: upstream said HTTP 404 earlier", status=500)
+            return super().call(method, path, body, ok)
+
+    fake = Body404()
+    with pytest.raises(ap.ApiError, match="HTTP 500"):
+        run_provisioner(fake, input_for(retire=["jaeger"]))

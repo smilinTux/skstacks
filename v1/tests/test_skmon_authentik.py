@@ -8,8 +8,14 @@ import pytest
 from skmon_support import (BASE, CFG, GUARDS, PLAYS, ROLE, ansible_environment, eval_asserts, guard_facts,
                            load_tasks, render, services, task_named)
 
-sys.path.insert(0, str(ROLE / "src/skmon"))
-import authentik_provision as ap  # noqa: E402
+# Loaded under its own module name: skrac ships an `authentik_provision` too, and a plain
+# import would hand whichever loaded first to both test files in one pytest process.
+import importlib.util  # noqa: E402
+
+_spec = importlib.util.spec_from_file_location("skmon_authentik_provision", ROLE / "src/skmon/authentik_provision.py")
+ap = importlib.util.module_from_spec(_spec)
+sys.modules["skmon_authentik_provision"] = ap
+_spec.loader.exec_module(ap)
 
 AUTHENTIK_TASKS = ROLE / "tasks/authentik.yml"
 MARKER = "SECRET-MARKER"
@@ -283,7 +289,7 @@ class FakeAuthentik:
         if method == "GET":
             slug = path.removeprefix("/core/applications/").rstrip("/")
             if slug not in self.apps:
-                raise ap.ApiError(f"GET {path}: HTTP 404")
+                raise ap.ApiError(f"GET {path}: HTTP 404", status=404)
             return dict(self.apps[slug])
         self.writes += 1
         if path in ("/providers/oauth2/", "/providers/proxy/") and method == "POST":

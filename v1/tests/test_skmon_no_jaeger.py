@@ -2,7 +2,7 @@
 from skmon_support import ANSIBLE, CFG, ROLE, services
 
 # Files that later tasks add and that must name Jaeger as retired (operator cleanup notes).
-RETIREMENT_REFERENCES = {"tasks/guards.yml", "tasks/tiles.yml", "tasks/authentik.yml", "src/skmon/authentik_provision.py", "README.md"}
+RETIREMENT_REFERENCES = {"tasks/guards.yml", "tasks/tiles.yml", "tasks/authentik.yml", "README.md"}
 
 
 def test_no_jaeger_anywhere_in_role():
