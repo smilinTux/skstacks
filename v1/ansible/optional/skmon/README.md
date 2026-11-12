@@ -54,7 +54,7 @@ All keys live under the `skmon:` map of the instance vault. Required keys have n
 | `HEALTHZ_PORT` | `9095` | Host-mode port on `DATA_NODE` serving only `/healthz`. |
 | `LOKI_PUSH_PORT` | `3100` | Host-mode port on `DATA_NODE` where agents push logs, allowed from estate hosts only. |
 | `PYROSCOPE_PORT` | `4040` | Pyroscope port, allowed from profiling agents only. |
-| `PROBES` | every Traefik router host | Blackbox targets, a list of `{name, url, severity}`. Setting it replaces discovery. |
+| `PROBES` | every Traefik router host of a service with at least one desired replica (or global) | Blackbox targets, a list of `{name, url, severity}`. Setting it replaces discovery. |
 | `PROFILING` | `{enabled: false, hosts: []}` | Continuous profiling, `{enabled, hosts: [...]}`. See Install modes. |
 | `PVE` | `{enabled: false}` | Proxmox metrics, `{enabled, targets: [...], verify_ssl}`. `verify_ssl` defaults to `true`. Needs `PVE_TOKEN_ID`, `PVE_TOKEN_SECRET` and a non-empty `targets`. |
 | `PVE_TOKEN_ID`, `PVE_TOKEN_SECRET` | empty | Proxmox API token, `user@realm!tokenname` and its value. Rendered into a Docker secret. |

@@ -26,12 +26,22 @@ _ARG_RE = re.compile(r"`([^`]+)`")
 _RULE_RE = re.compile(r"^traefik\.http\.routers\.([^.]+)\.rule$")
 
 
+def _parked(spec):
+    """True when a service spec is replicated with 0 desired replicas."""
+    replicated = (spec.get("Mode") or {}).get("Replicated")
+    return isinstance(replicated, dict) and str(replicated.get("Replicas", 1)).strip() == "0"
+
+
 def skmon_probes_from_services(inspect, forward_auth_middleware):
     """One probe per distinct Host() in the Traefik router rules of the inspected services.
 
+    A replicated service with 0 desired replicas (Spec.Mode.Replicated.Replicas) is parked
+    and contributes no host (spec 7.4); a host another live service still routes is kept.
+    Global services and services without a mode are live.
+
     Args:
         inspect: parsed `docker service inspect` output, a list of service objects
-            (labels under Spec.Labels).
+            (labels under Spec.Labels, mode under Spec.Mode).
         forward_auth_middleware: middleware name that marks a router as behind
             forward auth (skmon.FORWARD_AUTH_MIDDLEWARE).
 
@@ -41,7 +51,10 @@ def skmon_probes_from_services(inspect, forward_auth_middleware):
     """
     hosts = {}
     for svc in inspect or []:
-        labels = ((svc or {}).get("Spec") or {}).get("Labels") or {}
+        spec = (svc or {}).get("Spec") or {}
+        if _parked(spec):
+            continue
+        labels = spec.get("Labels") or {}
         for key, rule in labels.items():
             m = _RULE_RE.match(key)
             if not m:

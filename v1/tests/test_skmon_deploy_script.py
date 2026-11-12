@@ -99,6 +99,33 @@ def test_forward_auth_follows_the_knob():
     assert not next(p for p in s.probes_from(s.FAKE_SERVICE_INSPECT, "other@file") if p["name"] == "app.render.example.test")["forward_auth"]
 
 
+def _routed(name: str, host: str, mode: dict | None) -> dict:
+    svc = s._svc(name, {f"traefik.http.routers.{name}.rule": f"Host(`{host}`)"})
+    if mode is not None:
+        svc["Spec"]["Mode"] = mode
+    return svc
+
+
+def test_zero_replica_service_yields_no_probe():
+    # spec 7.4: a parked service (scaled to 0, labels intact) alerts on nothing (R83)
+    for replicas in (0, "0"):
+        assert s.probes_from([_routed("parked", "parked.render.example.test", {"Replicated": {"Replicas": replicas}})]) == []
+
+
+def test_one_replica_and_global_services_are_probed():
+    got = s.probes_from([_routed("one", "one.render.example.test", {"Replicated": {"Replicas": 1}}),
+                         _routed("glob", "glob.render.example.test", {"Global": {}}),
+                         _routed("nomode", "nomode.render.example.test", None)])
+    assert [p["name"] for p in got] == ["glob.render.example.test", "nomode.render.example.test", "one.render.example.test"]
+
+
+def test_host_kept_while_any_live_service_serves_it():
+    shared = "shared.render.example.test"
+    got = s.probes_from([_routed("old", shared, {"Replicated": {"Replicas": 0}}),
+                         _routed("new", shared, {"Replicated": {"Replicas": 2}})])
+    assert [p["name"] for p in got] == [shared]
+
+
 def test_discovery_ignores_other_labels_and_empty_input():
     assert s.probes_from([]) == [] and s.probes_from(None) == []
     assert s.probes_from([{"Spec": {}}, {"ID": "x"}]) == []

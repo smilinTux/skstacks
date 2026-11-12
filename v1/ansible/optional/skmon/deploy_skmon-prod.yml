@@ -129,7 +129,7 @@
     # it into the alloy-blackbox targets (the series labels probe, severity, forward_auth).
     # On a first install the stack's own routers do not exist yet and appear on the next
     # deploy. skmon.PROBES wins when set; otherwise one probe per Traefik
-    # router host on the estate, read from every service's labels (the parsing is the
+    # router host on the estate, read from every service's labels, services scaled to 0 skipped (the parsing is the
     # skmon_probes_from_services filter in filter_plugins/). The Authentik health probe is
     # appended when skmon can tell the sksso host (skmon.AUTHENTIK_HOST, else sksso's
     # vault); without either the entry is omitted and the deploy carries on.
