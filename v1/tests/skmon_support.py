@@ -434,7 +434,7 @@ PROBES_PLUGIN = ROLE / "filter_plugins/skmon_probes.py"
 V2_SERVICES = ("victoriametrics", "loki", "grafana", "alertmanager")
 # Every service whose replica count the deploy script waits for (the bridge and vmalert roll
 # themselves: their configs are hash-named, so a change is a new service spec).
-WAITED_SERVICES = (*V2_SERVICES, "vmalert", "bridge")
+WAITED_SERVICES = (*V2_SERVICES, "vmalert", "bridge", "skswarm-exporter")
 
 
 def render_deploy(env: str = "prod", **skmon) -> str:
