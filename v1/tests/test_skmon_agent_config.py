@@ -66,7 +66,9 @@ def test_filesystem_mount_timeout_5s():
 
 def test_host_paths_follow_the_install_mode():
     c = cfg()
-    for arg, path in (("procfs_path", "/host/proc"), ("sysfs_path", "/host/sys"), ("rootfs_path", "/rootfs")):
+    for arg, path in (("procfs_path", "/host/proc"), ("sysfs_path", "/host/sys"), ("rootfs_path", "/rootfs"),
+                      ("udev_data_path", "/rootfs/run/udev/data"),
+                      ("directory", "/rootfs/var/lib/node_exporter/textfile_collector")):
         assert re.search(rf'{arg}\s*=\s*"{path}"', c), arg
     assert 'procfs_path = "/proc"' in cfg(agent_mode="systemd")
 
@@ -74,7 +76,10 @@ def test_host_paths_follow_the_install_mode():
 def test_cadvisor_settings():
     c = cfg()
     assert disabled_cadvisor_metrics(c) == CADVISOR_OFF
-    assert 'housekeeping_interval = "15s"' in c and "docker_only = true" in c
+    assert "docker_only = true" in c
+    # spec 7.1 asks for housekeeping_interval 15s, but the pinned Alloy (v1.21.3) has no such
+    # argument on prometheus.exporter.cadvisor and `alloy validate` rejects it, so it is not set
+    assert not re.search(r"housekeeping_interval\s*=", c)
 
 
 def test_cadvisor_keeps_only_swarm_container_labels():

@@ -4,12 +4,18 @@
 #
 # usage: validate_configs.sh <rendered_dir>
 #   <rendered_dir> is the tree `render_playbooks.py --service skmon --keep <dir>`
-#   writes. The script searches the whole tree and validates a kind of file only
-#   when files of that kind are present; otherwise it prints "skip: <kind> not
-#   rendered". It exits non-zero on the first failure and names the file.
+#   writes, plus what `render_alloy_variants.py <dir>` adds (the render gate does
+#   not render agent.yml, an imported playbook). The script searches the tree and
+#   validates a kind of file only when files of that kind are present; otherwise
+#   it prints "skip: <kind> not rendered". It exits non-zero on the first failure
+#   and names the file.
+#
+# Only rendered output is validated: the source tree the render gate keeps under
+# <rendered_dir>/ansible/, and any *.j2 template anywhere, are never fed to a tool.
 #
 # File-discovery rules (one `find` pattern per kind; later tasks append kinds):
-#   alloy  : files named agent.alloy*       -> alloy validate <file>
+#   alloy  : files named agent.alloy        -> alloy validate --stability.level=experimental <file>
+#            (the agent runs at that level for the loki.write WAL block)
 #   loki   : files <anything>/configs/loki  -> loki -verify-config -config.file=<file>
 #            (Swarm config source files are written under a configs/ directory,
 #            named after the config key)
@@ -45,7 +51,7 @@ check_files() {  # check_files <kind> <pin key> <find args...> -- <tool args wit
   while [ "$1" != "--" ]; do find_args+=("$1"); shift; done
   shift; tool_args=("$@")
   local files=()
-  while IFS= read -r f; do files+=("$f"); done < <(find "$root" -type f "${find_args[@]}" | sort)
+  while IFS= read -r f; do files+=("$f"); done < <(find "$root" -path "$root/ansible" -prune -o -type f ! -name '*.j2' "${find_args[@]}" -print | sort)
   if [ "${#files[@]}" -eq 0 ]; then echo "skip: $kind not rendered"; return 0; fi
   local image; image="$(image_ref "$key")"
   for f in "${files[@]}"; do
@@ -57,6 +63,6 @@ check_files() {  # check_files <kind> <pin key> <find args...> -- <tool args wit
   done
 }
 
-check_files alloy alloy -name 'agent.alloy*' -- validate @FILE@
+check_files alloy alloy -name 'agent.alloy' -- validate --stability.level=experimental @FILE@
 check_files loki loki -path '*/configs/loki' -- -verify-config -config.file=@FILE@
 echo "ok: all rendered configs validated"

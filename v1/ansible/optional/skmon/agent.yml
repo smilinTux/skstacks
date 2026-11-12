@@ -102,6 +102,16 @@
         - "/var/lib/skmon-{{ env }}/alloy"
       when: skmon_agent_mode == 'container'
 
+    - name: Create the textfile collector directory
+      # node_exporter's conventional path: *.prom files dropped here are exported.
+      file:
+        path: /var/lib/node_exporter/textfile_collector
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      when: skmon_agent_mode == 'container'
+
     - name: Write the agent config
       copy:
         content: "{{ skmon_agent_config }}"

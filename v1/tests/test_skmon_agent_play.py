@@ -22,6 +22,11 @@ def test_cgroup_namespace_is_the_hosts():
     assert run_script_args()["--cgroupns"] == "host"
 
 
+def test_systemd_collector_reaches_systemd():
+    # the system bus refuses AppArmor docker-default peers, so systemd's private socket is mounted
+    assert "/run/systemd/private:/run/systemd/private:ro" in mounts() and "-e" not in run_script_args()
+
+
 def test_resource_caps():
     a = run_script_args()
     assert (a["--memory"], a["--memory-reservation"], a["--cpus"]) == ("384m", "128m", "0.5")
@@ -96,7 +101,8 @@ def test_play_loads_the_vault_and_imports_facts_only():
 
 def test_container_tasks_only_in_container_mode():
     tasks = play_tasks(AGENT_PLAY)
-    names = ("Create the agent config and state directories", "Write the agent config",
+    names = ("Create the agent config and state directories", "Create the textfile collector directory",
+             "Write the agent config",
              "Write the agent run script", "Start, replace or remove the agent container")
     for name in names:
         t = next(t for t in tasks if t.get("name") == name)

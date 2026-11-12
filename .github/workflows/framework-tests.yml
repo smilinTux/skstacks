@@ -56,6 +56,7 @@ jobs:
         with: { python-version: '3.12' }
       - run: pip install 'ansible-core==2.21.3' pyyaml jsonschema pytest
       - run: python v1/tests/render/render_playbooks.py --service skmon --keep "$RUNNER_TEMP/skmon"
+      - run: python v1/tests/skmon/render_alloy_variants.py "$RUNNER_TEMP/skmon"
       - run: bash v1/tests/skmon/validate_configs.sh "$RUNNER_TEMP/skmon"
 
   tofu:

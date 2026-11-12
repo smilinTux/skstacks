@@ -10,6 +10,7 @@
 {% set procfs = '/host/proc' if container else '/proc' %}
 {% set sysfs = '/host/sys' if container else '/sys' %}
 {% set rootfs = '/rootfs' if container else '/' %}
+{# The node_exporter convention, so existing *.prom writers (SMART, backup jobs) are picked up. #}
 {% set textfile_dir = (rootfs if container else '') ~ '/var/lib/node_exporter/textfile_collector' %}
 {% set collectors = ['cpu', 'diskstats', 'filesystem', 'loadavg', 'meminfo', 'netdev', 'netstat',
                      'pressure', 'processes', 'stat', 'time', 'uname', 'vmstat', 'mountstats', 'nfs',
@@ -25,6 +26,7 @@ prometheus.exporter.unix "host" {
   procfs_path = "{{ procfs }}"
   sysfs_path = "{{ sysfs }}"
   rootfs_path = "{{ rootfs }}"
+  udev_data_path = "{{ (rootfs if container else '') ~ '/run/udev/data' }}"
 
   filesystem {
     mount_timeout = "5s"
@@ -34,7 +36,8 @@ prometheus.exporter.unix "host" {
     fields = "^(oom_kill|pgpg|pswp|pg.*fault).*"
   }
 
-  // Unit state for every unit; vm-scrape.yml keeps only the state="failed" series.
+  // Unit state for every unit; vm-scrape.yml keeps only the state="failed" series. Reads
+  // systemd over its private socket (/run/systemd/private, mounted in container mode).
   systemd {
   }
 
@@ -45,10 +48,12 @@ prometheus.exporter.unix "host" {
 
 // Container metrics. Only the Swarm labels are kept as container_label_* series labels;
 // vm-scrape.yml renames them to stack, service and task_slot and drops the rest.
+// The housekeeping interval is not an argument of this component in Alloy v1.21 (cadvisor
+// keeps its own default, 1 s with dynamic backoff to 60 s); the disabled groups below,
+// above all disk, are what keep its cost down.
 prometheus.exporter.cadvisor "docker" {
   docker_host = "unix:///var/run/docker.sock"
   docker_only = true
-  housekeeping_interval = "15s"
   disabled_metrics = [{% for m in cadvisor_off %}"{{ m }}"{{ ", " if not loop.last }}{% endfor %}]
   store_container_labels = false
   allowlisted_container_labels = [{% for l in swarm_labels %}"{{ l }}"{{ ", " if not loop.last }}{% endfor %}]
