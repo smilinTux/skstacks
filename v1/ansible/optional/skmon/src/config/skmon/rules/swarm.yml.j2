@@ -18,15 +18,20 @@ groups:
           runbook: "Read docker service ps --no-trunc for the service: a stuck task is usually an image pull, a mount that does not answer or a placement constraint nothing meets."
 
       - alert: SwarmApiUnresponsive
-        expr: skswarm_up == 0 or skswarm_api_duration_seconds > 5
+        # up{job="skswarm"} and absent() also cover a dead, unscheduled or unscraped exporter,
+        # which has no skswarm_up series. absent() has no labels of its own: estate comes from
+        # the rule labels, as for every other rule.
+        expr: >-
+          skswarm_up == 0 or skswarm_api_duration_seconds > 5
+          or up{job="skswarm"} == 0 or absent(up{job="skswarm"})
         for: 30s
         labels:
           severity: critical
           class: swarm
           estate: "{{ skmon.ESTATE }}"
         annotations:
-          summary: "The Docker Swarm API fails or answers slowly, so Swarm state is not being observed."
-          runbook: "Check the Docker daemon and the swarm quorum on the managers, then the skmon socket proxy and skswarm-exporter services."
+          summary: "The Docker Swarm API fails or answers slowly, or skswarm-exporter is down, so Swarm state is not being observed."
+          runbook: "Check the Docker daemon and the swarm quorum on the managers, then the skmon socket proxy and skswarm-exporter services and their placement on a manager."
 
       # One alert, two severities. The warning excludes a service with no running replica at
       # all, so a fully down service raises the critical alone. Both expressions return the

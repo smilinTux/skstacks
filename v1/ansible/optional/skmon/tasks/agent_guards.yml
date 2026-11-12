@@ -44,3 +44,5 @@
       `node` label is the inventory name and must equal the Swarm hostname, because AgentMissing
       and the node inhibitions join the agents' series to skswarm-exporter's on `node`. Rename the
       inventory host to its Swarm hostname (keep the address in ansible_host).
+  # Parking is the emergency stop and must stay usable on a mismatched inventory.
+  when: not skmon_parked

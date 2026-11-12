@@ -20,9 +20,12 @@ groups:
           runbook: "Check that the host is up and reachable on the agent port, then that the skmon-{{ env }}-alloy agent is running on it."
 
       # node is the Swarm hostname, which tasks/agent_guards.yml requires to equal the
-      # inventory name that labels the agent's own series.
+      # inventory name that labels the agent's own series. Two rules, one alert name: a node
+      # that is not ready pages at once; a planned drain is only a warning, and a node left
+      # drained past 30 m is the unexpected case. Only the critical one is an inhibition
+      # source (alertmanager-config.yml.j2, rule 1).
       - alert: SwarmNodeNotReady
-        expr: skswarm_node_info{state!="ready"} or skswarm_node_info{availability="drain"}
+        expr: skswarm_node_info{state!="ready"}
         for: 30s
         labels:
           severity: critical
@@ -30,6 +33,18 @@ groups:
           estate: "{{ skmon.ESTATE }}"
         annotations:
 {% raw %}
-          summary: "Swarm node {{ $labels.node }} is not ready or is drained (state {{ $labels.state }}, availability {{ $labels.availability }})."
+          summary: "Swarm node {{ $labels.node }} is not ready (state {{ $labels.state }})."
 {% endraw %}
-          runbook: "Check that the Docker daemon on the node is running and that it still reaches the managers, or set it back to active if the drain was a mistake."
+          runbook: "Check that the Docker daemon on the node is running and that it still reaches the managers."
+      - alert: SwarmNodeNotReady
+        expr: skswarm_node_info{availability="drain", state="ready"}
+        for: 30m
+        labels:
+          severity: warning
+          class: node
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "Swarm node {{ $labels.node }} has been drained for over 30 minutes."
+{% endraw %}
+          runbook: "Set the node back to active if the maintenance is finished, or leave it drained on purpose and silence this alert."

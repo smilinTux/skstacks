@@ -102,8 +102,7 @@ def test_exporter_scraped_every_15s_with_estate_label():
 
 def test_swarm_rule_table():
     want = {"TasksStuckPreparing": ("0s", "critical", "swarm"), "SwarmApiUnresponsive": ("30s", "critical", "swarm"),
-            "ContainerCrashloop": ("0s", "warning", "container"), "AgentMissing": ("5m", "warning", "meta"),
-            "SwarmNodeNotReady": ("30s", "critical", "node")}
+            "ContainerCrashloop": ("0s", "warning", "container"), "AgentMissing": ("5m", "warning", "meta")}
     for n, t in want.items():
         r = rule(n)
         assert (r.get("for", "0s"), r["labels"]["severity"], r["labels"]["class"]) == t, n
@@ -111,7 +110,8 @@ def test_swarm_rule_table():
 
 def test_rule_expressions_follow_the_spec():
     assert rule("AgentMissing")["expr"] == 'skswarm_node_info unless on(node) up{job="alloy-unix"}'
-    assert rule("SwarmApiUnresponsive")["expr"] == "skswarm_up == 0 or skswarm_api_duration_seconds > 5"
+    assert rule("SwarmApiUnresponsive")["expr"] == (
+        'skswarm_up == 0 or skswarm_api_duration_seconds > 5 or up{job="skswarm"} == 0 or absent(up{job="skswarm"})')
     assert rule("TasksStuckPreparing")["expr"] == 'skswarm_task_state_age_seconds{state=~"preparing|starting|pending"} > 120'
     assert "increase_prometheus(skswarm_service_task_failures_total[10m]) >= 3" == rule("ContainerCrashloop")["expr"]
 
@@ -159,6 +159,19 @@ def test_extra_hosts_are_exempt_and_non_swarm_hosts_are_not_checked():
     g = {"swarm_managers": [A], "skmon_extra_hosts": [B]}
     assert agent_msgs(g, [A]) == []
     assert agent_msgs({"skmon_agent_hosts": ["somewhere"], "swarm_managers": [A]}, [A]) == []
+
+
+def test_parking_skips_the_hostname_guard():
+    g = {"swarm_managers": [A], "swarm_workers": ["inv-name-2"]}
+    assert agent_msgs(g, [A, B]) != []
+    parked = eval_asserts(AGENT_GUARDS, guard_facts(groups=g, swarm_nodes=[A, B], replicas=0))
+    assert parked == []
+    assert eval_asserts(AGENT_GUARDS, guard_facts(groups=g, swarm_nodes=[A, B], replicas="0")) == []
+
+
+def test_only_a_critical_node_alert_inhibits_other_alerts_on_its_node():
+    src = yaml.safe_load(render(CFG / "alertmanager-config.yml.j2"))["inhibit_rules"][0]["source_matchers"]
+    assert 'severity="critical"' in src
 
 
 def pve_msgs(**kw):

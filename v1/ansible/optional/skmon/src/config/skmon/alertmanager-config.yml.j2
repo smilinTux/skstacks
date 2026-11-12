@@ -30,7 +30,9 @@ route:
 inhibit_rules:
   # 1. A down node mutes every other alert on that node. The catch-all target is safe:
   #    an alert never inhibits itself.
-  - source_matchers: ['alertname=~"NodeDown|SwarmNodeNotReady"']
+  #    Critical only: a drain warning (SwarmNodeNotReady, 30 m) must not mute the node's
+  #    storage, NFS or D-state alerts.
+  - source_matchers: ['alertname=~"NodeDown|SwarmNodeNotReady"', 'severity="critical"']
     target_matchers: ['alertname=~".+"']
     equal: [node]
   # 2. A firing storage alert mutes its consequences estate-wide. IoPressureHigh is a

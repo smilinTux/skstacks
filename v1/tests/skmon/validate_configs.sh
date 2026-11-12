@@ -134,6 +134,12 @@ base_labels = {"estate": "x"}
 alerts = [
     {"alertname": "ZfsPoolNotOnline", "class": "storage", "severity": "critical", "node": "n1"},
     {"alertname": "ServiceBelowReplicas", "class": "swarm", "severity": "warning", "service": "s1"},
+    # Rule 1 needs a critical source: a drain warning on n2 must not mute n2's storage alert,
+    # the not-ready critical on n3 must mute n3's.
+    {"alertname": "SwarmNodeNotReady", "class": "node", "severity": "warning", "node": "n2"},
+    {"alertname": "ZfsPoolNotOnline", "class": "storage", "severity": "critical", "node": "n2", "pool": "p2"},
+    {"alertname": "SwarmNodeNotReady", "class": "node", "severity": "critical", "node": "n3"},
+    {"alertname": "ZfsPoolNotOnline", "class": "storage", "severity": "critical", "node": "n3", "pool": "p3"},
     {"alertname": "HttpEndpointDown", "class": "http", "severity": "critical", "probe": "p1",
      "instance": "https://example.test", "forward_auth": "false"},
 ]
@@ -157,9 +163,11 @@ while True:
         time.sleep(0.5)
 want = {"ServiceBelowReplicas", "HttpEndpointDown"}
 while True:
-    got = {a["labels"]["alertname"]: a["status"]["inhibitedBy"] for a in call()}
-    if all(got.get(n) for n in want):
-        print("inhibited:", sorted(want))
+    cur = call()
+    got = {a["labels"]["alertname"]: a["status"]["inhibitedBy"] for a in cur}
+    by_pool = {a["labels"].get("pool"): a["status"]["inhibitedBy"] for a in cur if a["labels"]["alertname"] == "ZfsPoolNotOnline"}
+    if all(got.get(n) for n in want) and by_pool.get("p3") and by_pool.get("p2") == []:
+        print("inhibited:", sorted(want), "and the critical node alert's storage alert, not the drain warning's")
         sys.exit(0)
     if time.time() > deadline:
         sys.exit(f"not inhibited within 30 s: {got}")

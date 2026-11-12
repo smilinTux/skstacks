@@ -59,7 +59,7 @@ def test_route_for_honours_continue_and_inheritance():
 def test_inhibition_tree_spec_8_2():
     ir = am()["inhibit_rules"]
     assert len(ir) == 4
-    assert ir[0]["source_matchers"] == ['alertname=~"NodeDown|SwarmNodeNotReady"'] and ir[0]["equal"] == ["node"]
+    assert ir[0]["source_matchers"] == ['alertname=~"NodeDown|SwarmNodeNotReady"', 'severity="critical"'] and ir[0]["equal"] == ["node"]
     assert ir[0]["target_matchers"] == ['alertname=~".+"']
     assert ir[1]["source_matchers"] == ['class="storage"', 'alertname!="IoPressureHigh"']
     assert set(ir[1]["target_matchers"][0].split('"')[1].split("|")) == {
