@@ -5,10 +5,13 @@ groups:
       # The kernel's OOM kill counter, per host. Where cadvisor saw the container that was
       # killed, that series (with stack, service and name) is reported instead of the host
       # one: `or on(node)` keeps a host series only when no container series of that node fired.
+      # increase_prometheus, not increase: MetricsQL's increase counts the first sample of a
+      # series it has just started seeing as an increase from 0 when the value is small, so
+      # an agent restart on a host with a few old OOM kills would fire this alert.
       - alert: OomKill
         expr: >-
-          increase(container_oom_events_total[5m]) > 0
-          or on(node) increase(node_vmstat_oom_kill[5m]) > 0
+          increase_prometheus(container_oom_events_total[5m]) > 0
+          or on(node) increase_prometheus(node_vmstat_oom_kill[5m]) > 0
         labels:
           severity: warning
           class: container

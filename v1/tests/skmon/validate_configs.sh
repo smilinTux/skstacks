@@ -19,7 +19,15 @@
 #   loki   : files <anything>/configs/loki  -> loki -verify-config -config.file=<file>
 #            (Swarm config source files are written under a configs/ directory,
 #            named after the config key)
-# To add a kind (vmalert rules, amtool, promtool): add a pin lookup and a
+#   vmalert-rules : files <anything>/configs/rules-<class> (the render gate) and
+#            <anything>/vmalert-rules/<class>.yml (render_rules.py)
+#            -> vmalert -dryRun -rule=<file>
+#   vmalert-tests : files <anything>/vmalert-rules/tests/*_test.yml (render_rules.py)
+#            -> vmalert-tool unittest --files=<file> --external.label=estate=example,
+#            with the vmalert-rules directory mounted so `rule_files: [../<class>.yml]`
+#            resolves to the rendered rules (estate "example" is what render_rules.py
+#            renders with and what the deployed vmalert adds as its external label).
+# To add a kind (amtool, promtool): add a pin lookup and a
 # check_<kind> function below, then call it in the list at the bottom.
 set -euo pipefail
 
@@ -63,6 +71,25 @@ check_files() {  # check_files <kind> <pin key> <find args...> -- <tool args wit
   done
 }
 
+# check_rule_tests: vmalert-tool unit tests, with the rendered rules one directory up.
+check_rule_tests() {
+  local files=()
+  while IFS= read -r f; do files+=("$f"); done < <(find "$root" -path "$root/ansible" -prune -o -type f -path '*/vmalert-rules/tests/*_test.yml' -print | sort)
+  if [ "${#files[@]}" -eq 0 ]; then echo "skip: vmalert-tests not rendered"; return 0; fi
+  local image; image="$(image_ref vmalert_tool)"
+  for f in "${files[@]}"; do
+    echo "check: vmalert-tests $f"
+    if ! docker run --rm -v "$(dirname "$(dirname "$f")"):/cfg:ro" "$image" \
+        unittest --files="/cfg/tests/$(basename "$f")" --external.label=estate=example; then
+      echo "FAIL: vmalert-tests failed for $f" >&2
+      exit 1
+    fi
+  done
+}
+
 check_files alloy alloy -name 'agent.alloy' -- validate --stability.level=experimental @FILE@
 check_files loki loki -path '*/configs/loki' -- -verify-config -config.file=@FILE@
+check_files vmalert-rules vmalert -path '*/configs/rules-*' -- -dryRun -rule=@FILE@
+check_files vmalert-rules vmalert -path '*/vmalert-rules/*.yml' ! -path '*/tests/*' -- -dryRun -rule=@FILE@
+check_rule_tests
 echo "ok: all rendered configs validated"

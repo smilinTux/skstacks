@@ -1,0 +1,224 @@
+# vmalert-tool unit tests for rules/storage.yml.j2 (F3), rendered with D_STATE_THRESHOLD 10.
+rule_files:
+  - ../storage.yml
+evaluation_interval: 15s
+tests:
+  # Twelve D-state processes on the storage host (node-2) and on a swarm node (node-1):
+  # StorageHostStalled fires for the storage host only, DStatePileUp for both.
+  - interval: 15s
+    input_series:
+      - series: 'node_processes_state{job="alloy-unix",instance="192.0.2.11:12345",node="node-2.render.example.test",role="storage",estate="example",state="D"}'
+        values: '12x10'
+      - series: 'node_processes_state{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",state="D"}'
+        values: '12x10'
+    alert_rule_test:
+      - eval_time: 45s
+        groupname: skmon-storage
+        alertname: StorageHostStalled
+        exp_alerts:
+          - exp_labels:
+              job: alloy-unix
+              instance: 192.0.2.11:12345
+              node: node-2.render.example.test
+              role: storage
+              estate: example
+              state: D
+              severity: critical
+              class: storage
+            exp_annotations:
+              summary: "Storage host node-2.render.example.test is stalled: 12 processes in uninterruptible sleep."
+              runbook: "On the storage host check zpool status, the nfsd threads and dmesg for hung tasks before touching any client."
+      - eval_time: 45s
+        groupname: skmon-storage
+        alertname: DStatePileUp
+        exp_alerts:
+          - exp_labels:
+              job: alloy-unix
+              instance: 192.0.2.11:12345
+              node: node-2.render.example.test
+              role: storage
+              estate: example
+              state: D
+              severity: critical
+              class: storage
+            exp_annotations:
+              summary: "12 processes on node-2.render.example.test are stuck in uninterruptible sleep."
+              runbook: "Look for a stalled NFS mount or disk on the host (ps -eo state,pid,wchan,cmd | grep ^D)."
+          - exp_labels:
+              job: alloy-unix
+              instance: 192.0.2.10:12345
+              node: node-1.render.example.test
+              role: swarm
+              estate: example
+              state: D
+              severity: critical
+              class: storage
+            exp_annotations:
+              summary: "12 processes on node-1.render.example.test are stuck in uninterruptible sleep."
+              runbook: "Look for a stalled NFS mount or disk on the host (ps -eo state,pid,wchan,cmd | grep ^D)."
+
+  # A few D-state processes (at or under the threshold) stay quiet.
+  - interval: 15s
+    input_series:
+      - series: 'node_processes_state{job="alloy-unix",instance="192.0.2.11:12345",node="node-2.render.example.test",role="storage",estate="example",state="D"}'
+        values: '10x10'
+    alert_rule_test:
+      - eval_time: 45s
+        groupname: skmon-storage
+        alertname: StorageHostStalled
+        exp_alerts: []
+      - eval_time: 45s
+        groupname: skmon-storage
+        alertname: DStatePileUp
+        exp_alerts: []
+
+  # A suspended pool fires; its online series (0) does not.
+  - interval: 15s
+    input_series:
+      - series: 'node_zfs_zpool_state{job="alloy-unix",instance="192.0.2.11:12345",node="node-2.render.example.test",role="storage",estate="example",zpool="tank",state="suspended"}'
+        values: '1x10'
+      - series: 'node_zfs_zpool_state{job="alloy-unix",instance="192.0.2.11:12345",node="node-2.render.example.test",role="storage",estate="example",zpool="tank",state="online"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 30s
+        groupname: skmon-storage
+        alertname: ZfsPoolNotOnline
+        exp_alerts:
+          - exp_labels:
+              job: alloy-unix
+              instance: 192.0.2.11:12345
+              node: node-2.render.example.test
+              role: storage
+              estate: example
+              zpool: tank
+              state: suspended
+              severity: critical
+              class: storage
+            exp_annotations:
+              summary: "ZFS pool tank on node-2.render.example.test is suspended."
+              runbook: "Run zpool status on the host and replace or bring back the failed device."
+
+  # An online pool stays quiet.
+  - interval: 15s
+    input_series:
+      - series: 'node_zfs_zpool_state{job="alloy-unix",instance="192.0.2.11:12345",node="node-2.render.example.test",role="storage",estate="example",zpool="tank",state="online"}'
+        values: '1x10'
+      - series: 'node_zfs_zpool_state{job="alloy-unix",instance="192.0.2.11:12345",node="node-2.render.example.test",role="storage",estate="example",zpool="tank",state="suspended"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 30s
+        groupname: skmon-storage
+        alertname: ZfsPoolNotOnline
+        exp_alerts: []
+
+  # An NFS mount whose stat times out fires; a local filesystem with a device error does not.
+  - interval: 15s
+    input_series:
+      - series: 'node_filesystem_device_error{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="192.0.2.20:/export",mountpoint="/mnt/shared",fstype="nfs4"}'
+        values: '1x10'
+      - series: 'node_filesystem_device_error{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sdb1",mountpoint="/srv/local",fstype="ext4"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 30s
+        groupname: skmon-storage
+        alertname: NfsMountUnresponsive
+        exp_alerts:
+          - exp_labels:
+              job: alloy-unix
+              instance: 192.0.2.10:12345
+              node: node-1.render.example.test
+              role: swarm
+              estate: example
+              device: 192.0.2.20:/export
+              mountpoint: /mnt/shared
+              fstype: nfs4
+              severity: critical
+              class: storage
+            exp_annotations:
+              summary: "NFS mount /mnt/shared on node-1.render.example.test does not answer a stat within 5 s."
+              runbook: "Check the NFS server and its export first, since every client of that export is affected the same way."
+
+  # A responsive NFS mount stays quiet.
+  - interval: 15s
+    input_series:
+      - series: 'node_filesystem_device_error{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="192.0.2.20:/export",mountpoint="/mnt/shared",fstype="nfs"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 30s
+        groupname: skmon-storage
+        alertname: NfsMountUnresponsive
+        exp_alerts: []
+
+  # A major timeout fires at once (no for).
+  - interval: 15s
+    input_series:
+      - series: 'node_mountstats_nfs_operations_major_timeouts_total{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",export="192.0.2.20:/export",protocol="tcp",mountaddr="192.0.2.20",operation="READ"}'
+        values: '0 0 0 0 1 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 1m15s
+        groupname: skmon-storage
+        alertname: NfsMajorTimeouts
+        exp_alerts:
+          - exp_labels:
+              job: alloy-unix
+              instance: 192.0.2.10:12345
+              node: node-1.render.example.test
+              role: swarm
+              estate: example
+              export: 192.0.2.20:/export
+              protocol: tcp
+              mountaddr: 192.0.2.20
+              operation: READ
+              severity: critical
+              class: storage
+            exp_annotations:
+              summary: "NFS READ calls to 192.0.2.20:/export on node-1.render.example.test hit major timeouts."
+              runbook: "Check the NFS server for a stall (nfsd threads, pool state) and the network path between it and this client."
+
+  # A flat counter stays quiet, also when it first appears with old timeouts on it.
+  - interval: 15s
+    input_series:
+      - series: 'node_mountstats_nfs_operations_major_timeouts_total{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",export="192.0.2.20:/export",protocol="tcp",mountaddr="192.0.2.20",operation="READ"}'
+        values: '3x10'
+    alert_rule_test:
+      - eval_time: 15s
+        groupname: skmon-storage
+        alertname: NfsMajorTimeouts
+        exp_alerts: []
+      - eval_time: 1m15s
+        groupname: skmon-storage
+        alertname: NfsMajorTimeouts
+        exp_alerts: []
+
+  # Every task stalled on I/O 80 % of the time fires.
+  - interval: 15s
+    input_series:
+      - series: 'node_pressure_io_stalled_seconds_total{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example"}'
+        values: '0+12x20'
+    alert_rule_test:
+      - eval_time: 1m30s
+        groupname: skmon-storage
+        alertname: IoPressureHigh
+        exp_alerts:
+          - exp_labels:
+              job: alloy-unix
+              instance: 192.0.2.10:12345
+              node: node-1.render.example.test
+              role: swarm
+              estate: example
+              severity: warning
+              class: storage
+            exp_annotations:
+              summary: "I/O pressure on node-1.render.example.test: all tasks stalled on I/O 80% of the time."
+              runbook: "Find the process or mount the host is waiting on with iotop or pidstat -d, and check the storage alerts first."
+
+  # Light I/O pressure (about 7 %) stays quiet.
+  - interval: 15s
+    input_series:
+      - series: 'node_pressure_io_stalled_seconds_total{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 1m30s
+        groupname: skmon-storage
+        alertname: IoPressureHigh
+        exp_alerts: []

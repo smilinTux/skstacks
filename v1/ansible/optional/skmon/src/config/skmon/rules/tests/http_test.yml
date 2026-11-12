@@ -1,0 +1,95 @@
+# vmalert-tool unit tests for rules/http.yml.j2 (F3). Probe series carry the labels the
+# alloy-blackbox job sets: probe, severity, forward_auth, and node (the probing DATA_NODE).
+rule_files:
+  - ../http.yml
+evaluation_interval: 15s
+tests:
+  # Authentik's health probe fails: AuthentikDown fires, HttpEndpointDown stays out of it.
+  - interval: 15s
+    input_series:
+      - series: 'probe_success{job="alloy-blackbox",instance="https://sso.render.example.test/-/health/live/",probe="authentik",severity="critical",forward_auth="false",node="node-1.render.example.test",role="swarm",estate="example"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 1m15s
+        groupname: skmon-http
+        alertname: AuthentikDown
+        exp_alerts:
+          - exp_labels:
+              job: alloy-blackbox
+              instance: https://sso.render.example.test/-/health/live/
+              probe: authentik
+              severity: critical
+              forward_auth: "false"
+              node: node-1.render.example.test
+              role: swarm
+              estate: example
+              class: http
+            exp_annotations:
+              summary: "Authentik health probe https://sso.render.example.test/-/health/live/ fails, so every forward-auth route is down."
+              runbook: "Check the sksso stack (server and worker tasks, its database and Redis) before any route behind forward auth."
+      - eval_time: 1m15s
+        groupname: skmon-http
+        alertname: HttpEndpointDown
+        exp_alerts: []
+
+  # A healthy Authentik stays quiet.
+  - interval: 15s
+    input_series:
+      - series: 'probe_success{job="alloy-blackbox",instance="https://sso.render.example.test/-/health/live/",probe="authentik",severity="critical",forward_auth="false",node="node-1.render.example.test",role="swarm",estate="example"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 1m15s
+        groupname: skmon-http
+        alertname: AuthentikDown
+        exp_alerts: []
+
+  # Two failing probes: each alert takes its severity from the probe's own label and keeps
+  # forward_auth from the series.
+  - interval: 15s
+    input_series:
+      - series: 'probe_success{job="alloy-blackbox",instance="https://app.render.example.test",probe="app",severity="warning",forward_auth="true",node="node-1.render.example.test",role="swarm",estate="example"}'
+        values: '0x10'
+      - series: 'probe_success{job="alloy-blackbox",instance="https://www.render.example.test",probe="site",severity="critical",forward_auth="false",node="node-1.render.example.test",role="swarm",estate="example"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 1m15s
+        groupname: skmon-http
+        alertname: HttpEndpointDown
+        exp_alerts:
+          - exp_labels:
+              job: alloy-blackbox
+              instance: https://app.render.example.test
+              probe: app
+              severity: warning
+              forward_auth: "true"
+              node: node-1.render.example.test
+              role: swarm
+              estate: example
+              class: http
+            exp_annotations:
+              summary: "Probe app fails: https://app.render.example.test does not answer as expected."
+              runbook: "Open the URL, then check its Traefik router, the DNS record and the service's tasks in that order."
+          - exp_labels:
+              job: alloy-blackbox
+              instance: https://www.render.example.test
+              probe: site
+              severity: critical
+              forward_auth: "false"
+              node: node-1.render.example.test
+              role: swarm
+              estate: example
+              class: http
+            exp_annotations:
+              summary: "Probe site fails: https://www.render.example.test does not answer as expected."
+              runbook: "Open the URL, then check its Traefik router, the DNS record and the service's tasks in that order."
+
+  # A healthy endpoint stays quiet.
+  - interval: 15s
+    input_series:
+      - series: 'probe_success{job="alloy-blackbox",instance="https://app.render.example.test",probe="app",severity="warning",forward_auth="true",node="node-1.render.example.test",role="swarm",estate="example"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 1m15s
+        groupname: skmon-http
+        alertname: HttpEndpointDown
+        exp_alerts: []

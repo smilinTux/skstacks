@@ -50,8 +50,11 @@ groups:
 {% endraw %}
           runbook: "Check the NFS server and its export first, since every client of that export is affected the same way."
 
+      # increase_prometheus, not increase: MetricsQL's increase counts the first sample of a
+      # series it has just started seeing as an increase from 0 when the value is small, so
+      # an agent restart on a host with a few old timeouts would fire this alert.
       - alert: NfsMajorTimeouts
-        expr: increase(node_mountstats_nfs_operations_major_timeouts_total[1m]) > 0
+        expr: increase_prometheus(node_mountstats_nfs_operations_major_timeouts_total[1m]) > 0
         labels:
           severity: critical
           class: storage

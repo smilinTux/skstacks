@@ -11,8 +11,11 @@ groups:
           estate: "{{ skmon.ESTATE }}"
 
       # Delivered by the outside Kuma probe of the bridge's /healthz as well (spec 9.5).
+      # increase_prometheus, as in the other counter rules: MetricsQL's increase counts the
+      # first sample of a series it has just started seeing as an increase from 0 when the
+      # value is small (here for: 5m outlasts that blip, but the rules stay uniform).
       - alert: AlertDeliveryFailing
-        expr: increase(skmon_bridge_delivery_failures_total[5m]) > 0
+        expr: increase_prometheus(skmon_bridge_delivery_failures_total[5m]) > 0
         for: 5m
         labels:
           severity: critical

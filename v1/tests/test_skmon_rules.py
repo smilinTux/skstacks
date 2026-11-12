@@ -10,7 +10,8 @@ import pytest
 import yaml
 
 from skmon_support import (CFG, DATA_MOUNTPOINT, PLAYS, RULE_CLASSES, all_rules, compose, ctx_with_configs,
-                           play_tasks, render, render_rules, rule, rules_named, services, task_named)
+                           eval_play_fact, play_tasks, render, render_rules, rule, rules_named, services,
+                           task_named)
 
 DATA_NODE = "node-1.render.example.test"
 
@@ -101,8 +102,15 @@ def test_storage_host_stalled_is_storage_hosts_only():
 def test_spec_8_storage_signals():
     assert 'node_zfs_zpool_state{state!="online"} == 1' in rule("ZfsPoolNotOnline")["expr"]
     assert 'node_filesystem_device_error{fstype=~"nfs4?"} == 1' in rule("NfsMountUnresponsive")["expr"]
-    assert "increase(node_mountstats_nfs_operations_major_timeouts_total[1m]) > 0" in rule("NfsMajorTimeouts")["expr"]
+    # increase_prometheus: see the rule's comment (MetricsQL's increase counts a new series from 0).
+    assert ("increase_prometheus(node_mountstats_nfs_operations_major_timeouts_total[1m]) > 0"
+            in rule("NfsMajorTimeouts")["expr"])
     assert "rate(node_pressure_io_stalled_seconds_total[1m]) > 0.5" in rule("IoPressureHigh")["expr"]
+
+
+def test_counter_increases_never_count_a_new_series_from_zero():
+    for r in all_rules():
+        assert not re.search(r"(?<![_a-z])increase\(", r["expr"]), r["alert"]
 
 
 def test_no_rule_keys_on_collector_success():
@@ -237,3 +245,12 @@ def test_plays_render_every_rule_config(play):
     assert {f"rules-{c}" for c in RULE_CLASSES} | {"loki-rules"} <= set(configs)
     for c in RULE_CLASSES:
         assert f"/rules/{c}.yml.j2" in configs[f"rules-{c}"]
+
+
+@pytest.mark.parametrize("probe, want", [
+    ({"rc": 0, "stdout": "/srv/local\n"}, "/srv/local"),
+    ({"rc": 1, "stdout": ""}, "/"),
+    ({"rc": 0, "stdout": ""}, "/"),
+])
+def test_data_path_mountpoint_falls_back_to_root(probe, want):
+    assert eval_play_fact("Set the DATA_PATH mountpoint", "skmon_data_mountpoint", skmon_data_findmnt=probe) == want
