@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# skmon {{ env }} port allowlist on {{ skmon_fw_node }}, rendered by tasks/port_allowlist.yml.
+# One chain, {{ 'SKMON-' ~ (env | upper) }}, holds the whole ruleset: for every protected port one RETURN per
+# allowed source address, then a DROP. It is flushed and rebuilt in a single iptables-restore
+# --noflush of the filter table (atomic: no window without rules), then hooked from INPUT (the
+# agent runs on the host network) and from DOCKER-USER (host-mode published Swarm ports are
+# DNATed and pass FORWARD), each hook inserted only when missing. Re-running changes nothing.
+# Sources are IPv4 literals: iptables resolves a name once, at apply time, so the task refuses
+# names. IPv6 is not filtered here: the agent and the published ports are reached over IPv4.
+set -euo pipefail
+{% set chain = 'SKMON-' ~ (env | upper) %}
+{% set estate = skmon_agent_targets | map(attribute='addr') | unique | list %}
+{% set healthz_allow = skmon.HEALTHZ_ALLOW | default([]) %}
+
+iptables-restore -w --noflush <<'SKMON_RULES'
+*filter
+:{{ chain }} - [0:0]
+-F {{ chain }}
+{% for name, port in skmon_fw_ports.items() %}
+{% for src in (healthz_allow if name == 'healthz' else estate) %}
+-A {{ chain }} -p tcp --dport {{ port }} -s {{ src }} -j RETURN
+{% endfor %}
+{% if name == 'agent' and skmon_fw_is_data_node %}
+-A {{ chain }} -i docker_gwbridge -p tcp --dport {{ port }} -j RETURN
+{% endif %}
+-A {{ chain }} -p tcp --dport {{ port }} -j DROP
+{% endfor %}
+COMMIT
+SKMON_RULES
+
+iptables -w -C INPUT -j {{ chain }} 2>/dev/null || iptables -w -I INPUT -j {{ chain }}
+{% if skmon_fw_docker %}
+iptables -w -N DOCKER-USER 2>/dev/null || true
+iptables -w -C DOCKER-USER -j {{ chain }} 2>/dev/null || iptables -w -I DOCKER-USER -j {{ chain }}
+{% endif %}

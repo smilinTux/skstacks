@@ -1,0 +1,14 @@
+[Unit]
+Description=skmon {{ env }} port allowlist
+After=docker.service network-online.target
+{% if skmon_fw_docker %}
+PartOf=docker.service
+{% endif %}
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/skmon-{{ env }}-fw
+
+[Install]
+WantedBy=multi-user.target

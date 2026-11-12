@@ -323,3 +323,50 @@ def mounts(**kw) -> list[str]:
     """Every -v / --volume value of the rendered `docker run` line."""
     a = run_script_args(**kw)
     return [*a.getall("-v"), *a.getall("--volume")]
+
+
+# --- the port allowlist (tasks/port_allowlist.yml, R36) -------------------------
+
+PORT_ALLOWLIST = ROLE / "tasks/port_allowlist.yml"
+FW_SCRIPT = CFG / "firewall/skmon-fw.sh.j2"
+FW_UNIT = CFG / "firewall/skmon-fw.service.j2"
+
+
+def fw_context(node: str | None = None, docker: bool = True, ports: dict | None = None, **skmon) -> dict:
+    """Template context of the allowlist script: the set_fact tasks of port_allowlist.yml evaluated.
+
+    node defaults to DATA_NODE (the host the env plays delegate to); docker stands for the
+    install probe; ports, when given, replaces the derived protected-ports dict.
+    """
+    node = node or BASE["DATA_NODE"]
+    facts = guard_facts(**skmon)
+    ctx = {**facts, "skmon_agent_targets": agent_targets(**skmon), "skmon_fw_node": node,
+           "skmon_fw_docker_probe": {"stdout": "yes" if docker else "no"}, "inventory_hostname": node}
+    jenv = ansible_environment()
+    for t in load_tasks(PORT_ALLOWLIST):
+        for name, value in (t.get("set_fact") or {}).items():
+            val = _eval_value(jenv, value, ctx)
+            if isinstance(val, str) and val.startswith(("{", "[")):
+                val = ast.literal_eval(val)  # a multi-statement block renders to a literal, as in Ansible
+            ctx[name] = val
+    if ports is not None:
+        ctx["skmon_fw_ports"] = ports
+    return ctx
+
+
+def shell_body(env: str = "prod", **kw) -> str:
+    """The rendered port allowlist script (see fw_context for the overrides)."""
+    vault = {k: v for k, v in kw.items() if k not in ("node", "docker", "ports")}
+    ctx = fw_context(env=env, **kw)
+    return render(FW_SCRIPT, env=env, extra_ctx=ctx, **vault)
+
+
+def rules(env: str = "prod", **kw) -> str:
+    """The iptables ruleset text of the allowlist: the whole rendered script."""
+    return shell_body(env=env, **kw)
+
+
+def fw_unit(env: str = "prod", **kw) -> str:
+    """The rendered skmon-<env>-fw.service unit."""
+    vault = {k: v for k, v in kw.items() if k not in ("node", "docker", "ports")}
+    return render(FW_UNIT, env=env, extra_ctx=fw_context(env=env, **kw), **vault)

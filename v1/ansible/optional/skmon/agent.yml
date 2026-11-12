@@ -74,6 +74,13 @@
           {{ 'http://' ~ (skmon_agent_targets | selectattr('node', 'equalto', skmon_data_node) | first | default({'addr': skmon_data_node })).addr
              ~ ':' ~ (skmon.LOKI_PUSH_PORT | default(3100)) ~ '/loki/api/v1/push' }}
 
+    - name: Restrict the agent port (and DATA_NODE's published ports) to the estate addresses
+      # Rules stay while parked; state absent on a systemd host removes unit, script, hooks and chain.
+      include_tasks: "{{ playbook_dir }}/tasks/port_allowlist.yml"
+      vars:
+        skmon_fw_node: "{{ inventory_hostname }}"
+        skmon_fw_state: "{{ 'absent' if (skmon_agent_mode == 'systemd' and skmon_agent_state == 'absent') else 'present' }}"
+
     - name: Render the agent config
       set_fact:
         skmon_agent_config: "{{ lookup('template', playbook_dir + '/src/config/skmon/alloy/agent.alloy.j2') }}"

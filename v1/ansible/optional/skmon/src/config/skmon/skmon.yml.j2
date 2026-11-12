@@ -134,9 +134,10 @@ services:
       - source: loki
         target: /etc/loki/local-config.yaml
     ports:
-      # Agents push logs here. Allowlisting to node addresses comes with the firewall task.
+      # Agents push logs here. The published port is the LOKI_PUSH_PORT knob, and
+      # tasks/port_allowlist.yml restricts it to the estate addresses.
       - target: 3100
-        published: 3100
+        published: {{ skmon.LOKI_PUSH_PORT | default(3100) }}
         protocol: tcp
         mode: host
     networks:

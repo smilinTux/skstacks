@@ -10,3 +10,6 @@ skmon:
   GRAFANA_ADMIN_PASSWORD: example-grafana-admin-password-not-a-secret
   GRAFANA_SECRET_KEY: example-grafana-secret-key-not-a-secret
   GRAFANA_ROOT_URL: https://skmon.render.example.test
+  # The render inventory's only host has no address; the allowlist wants an IPv4 literal.
+  AGENT_LISTEN_ADDR:
+    localhost: 192.0.2.10

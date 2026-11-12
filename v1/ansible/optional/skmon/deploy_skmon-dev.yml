@@ -71,6 +71,13 @@
       tags:
         - always
 
+    - name: Restrict the skmon agent, Loki push, Pyroscope and healthz ports on DATA_NODE
+      include_tasks: "{{ playbook_dir }}/tasks/port_allowlist.yml"
+      vars:
+        skmon_fw_node: "{{ skmon_data_node }}"
+      tags:
+        - always
+
     - name: Define network variables (⚠️ TODO register subnet in shared/networks — placeholder)
       # Networks are created idempotently by the create_networks.yml shared
       # task below. Reference: See shared/networks for all registered
