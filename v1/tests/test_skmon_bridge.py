@@ -222,7 +222,17 @@ def test_invalid_json_400(server):
 
 
 def test_oversize_body_413(server):
-    assert post(server, "/alert", None, raw=b" " * (1024 * 1024 + 1)).status == 413
+    # Declare an oversize body but send none: the bridge answers 413 from the header
+    # alone and closes, so a client still streaming 1 MiB would race a reset.
+    import http.client
+    conn = http.client.HTTPConnection("127.0.0.1", server.main_port, timeout=10)
+    conn.putrequest("POST", "/alert")
+    conn.putheader("Content-Type", "application/json")
+    conn.putheader("Content-Length", str(sb.MAX_BODY_BYTES + 1))
+    conn.endheaders()
+    resp = conn.getresponse()
+    assert resp.status == 413
+    conn.close()
     assert server.calls() == []
 
 
