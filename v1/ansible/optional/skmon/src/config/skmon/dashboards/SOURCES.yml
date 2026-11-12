@@ -49,3 +49,33 @@ skmon internals/victoriametrics.json:
   license: Apache-2.0
   rewritten:
   - datasource
+estate-overview.json:
+  source: built-here
+  revision: skmon-v2
+  license: AGPL-3.0
+  rewritten: []
+infrastructure/container.json:
+  source: built-here
+  revision: skmon-v2
+  license: AGPL-3.0
+  rewritten: []
+infrastructure/loki-logs.json:
+  source: built-here
+  revision: skmon-v2
+  license: AGPL-3.0
+  rewritten: []
+infrastructure/proxmox.json:
+  source: built-here
+  revision: skmon-v2
+  license: AGPL-3.0
+  rewritten: []
+infrastructure/swarm-services.json:
+  source: built-here
+  revision: skmon-v2
+  license: AGPL-3.0
+  rewritten: []
+infrastructure/zfs.json:
+  source: built-here
+  revision: skmon-v2
+  license: AGPL-3.0
+  rewritten: []

@@ -1,0 +1,932 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Per-container deep view on cAdvisor series: CPU and throttling, memory against limit, OOM kills, starts, network, block IO, logs and flame graph.",
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "title": "Loki logs board",
+      "type": "link",
+      "url": "/d/loki-logs",
+      "icon": "doc",
+      "keepTime": true,
+      "includeVars": true,
+      "targetBlank": false,
+      "asDropdown": false,
+      "tags": []
+    }
+  ],
+  "liveNow": false,
+  "panels": [
+    {
+      "type": "row",
+      "title": "CPU",
+      "collapsed": false,
+      "panels": [],
+      "id": 1,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU usage (cores)",
+      "description": "Cores used. Data links open this service's logs and CPU flame graph for the same time range.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "skmon-vm"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "skmon-vm"
+          },
+          "expr": "sum by (service, task_slot, node) (rate(container_cpu_usage_seconds_total{image!=\"\", stack=~\"$stack\", service=~\"$service\", node=~\"$node\"}[$__rate_interval]))",
+          "legendFormat": "{{service}}.{{task_slot}} ({{node}})",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "links": [
+            {
+              "title": "Logs for this service (Loki)",
+              "url": "/explore?orgId=1&left=%7B%22datasource%22%3A%22skmon-loki%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22loki%22%2C%22uid%22%3A%22skmon-loki%22%7D%2C%22expr%22%3A%22%7Bjob%3D%5C%22docker%5C%22%2C%20stack%3D~%5C%22${stack:percentencode}%5C%22%2C%20service%3D~%5C%22${service:percentencode}%5C%22%7D%22%2C%22queryType%22%3A%22range%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D",
+              "targetBlank": true
+            },
+            {
+              "title": "CPU flame graph (Pyroscope)",
+              "url": "/explore?orgId=1&left=%7B%22datasource%22%3A%22skmon-pyroscope%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22grafana-pyroscope-datasource%22%2C%22uid%22%3A%22skmon-pyroscope%22%7D%2C%22queryType%22%3A%22profile%22%2C%22profileTypeId%22%3A%22process_cpu%3Acpu%3Ananoseconds%3Acpu%3Ananoseconds%22%2C%22labelSelector%22%3A%22%7Bservice_name%3D~%5C%22${service:percentencode}%5C%22%7D%22%2C%22groupBy%22%3A%5B%5D%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D",
+              "targetBlank": true
+            }
+          ],
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 2,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU throttling",
+      "description": "Share of CFS periods in which the container was throttled by its CPU limit.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "skmon-vm"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "skmon-vm"
+          },
+          "expr": "sum by (service, task_slot, node) (rate(container_cpu_cfs_throttled_periods_total{image!=\"\", stack=~\"$stack\", service=~\"$service\", node=~\"$node\"}[$__rate_interval])) / sum by (service, task_slot, node) (rate(container_cpu_cfs_periods_total{image!=\"\", stack=~\"$stack\", service=~\"$service\", node=~\"$node\"}[$__rate_interval]))",
+          "legendFormat": "{{service}}.{{task_slot}} ({{node}})",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0,
+          "max": 1,
+          "links": [
+            {
+              "title": "Logs for this service (Loki)",
+              "url": "/explore?orgId=1&left=%7B%22datasource%22%3A%22skmon-loki%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22loki%22%2C%22uid%22%3A%22skmon-loki%22%7D%2C%22expr%22%3A%22%7Bjob%3D%5C%22docker%5C%22%2C%20stack%3D~%5C%22${stack:percentencode}%5C%22%2C%20service%3D~%5C%22${service:percentencode}%5C%22%7D%22%2C%22queryType%22%3A%22range%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D",
+              "targetBlank": true
+            },
+            {
+              "title": "CPU flame graph (Pyroscope)",
+              "url": "/explore?orgId=1&left=%7B%22datasource%22%3A%22skmon-pyroscope%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22grafana-pyroscope-datasource%22%2C%22uid%22%3A%22skmon-pyroscope%22%7D%2C%22queryType%22%3A%22profile%22%2C%22profileTypeId%22%3A%22process_cpu%3Acpu%3Ananoseconds%3Acpu%3Ananoseconds%22%2C%22labelSelector%22%3A%22%7Bservice_name%3D~%5C%22${service:percentencode}%5C%22%7D%22%2C%22groupBy%22%3A%5B%5D%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D",
+              "targetBlank": true
+            }
+          ],
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 3,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      }
+    },
+    {
+      "type": "row",
+      "title": "Memory",
+      "collapsed": false,
+      "panels": [],
+      "id": 4,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory working set vs limit",
+      "description": "Working set against the container's memory limit (a container with no limit has no limit line).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "skmon-vm"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "skmon-vm"
+          },
+          "expr": "sum by (service, task_slot, node) (container_memory_working_set_bytes{image!=\"\", stack=~\"$stack\", service=~\"$service\", node=~\"$node\"})",
+          "legendFormat": "{{service}}.{{task_slot}} ({{node}}) working set",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "skmon-vm"
+          },
+          "expr": "max by (service, task_slot, node) (container_spec_memory_limit_bytes{image!=\"\", stack=~\"$stack\", service=~\"$service\", node=~\"$node\"} > 0)",
+          "legendFormat": "{{service}}.{{task_slot}} ({{node}}) limit",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "links": [
+            {
+              "title": "Logs for this service (Loki)",
+              "url": "/explore?orgId=1&left=%7B%22datasource%22%3A%22skmon-loki%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22loki%22%2C%22uid%22%3A%22skmon-loki%22%7D%2C%22expr%22%3A%22%7Bjob%3D%5C%22docker%5C%22%2C%20stack%3D~%5C%22${stack:percentencode}%5C%22%2C%20service%3D~%5C%22${service:percentencode}%5C%22%7D%22%2C%22queryType%22%3A%22range%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D",
+              "targetBlank": true
+            },
+            {
+              "title": "CPU flame graph (Pyroscope)",
+              "url": "/explore?orgId=1&left=%7B%22datasource%22%3A%22skmon-pyroscope%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22grafana-pyroscope-datasource%22%2C%22uid%22%3A%22skmon-pyroscope%22%7D%2C%22queryType%22%3A%22profile%22%2C%22profileTypeId%22%3A%22process_cpu%3Acpu%3Ananoseconds%3Acpu%3Ananoseconds%22%2C%22labelSelector%22%3A%22%7Bservice_name%3D~%5C%22${service:percentencode}%5C%22%7D%22%2C%22groupBy%22%3A%5B%5D%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D",
+              "targetBlank": true
+            }
+          ],
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 5,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 10
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory used of limit",
+      "description": "Working set divided by limit, only for containers that have a limit.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "skmon-vm"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "skmon-vm"
+          },
+          "expr": "sum by (service, task_slot, node) (container_memory_working_set_bytes{image!=\"\", stack=~\"$stack\", service=~\"$service\", node=~\"$node\"}) / max by (service, task_slot, node) (container_spec_memory_limit_bytes{image!=\"\", stack=~\"$stack\", service=~\"$service\", node=~\"$node\"} > 0)",
+          "legendFormat": "{{service}}.{{task_slot}} ({{node}})",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0,
+          "links": [
+            {
+              "title": "Logs for this service (Loki)",
+              "url": "/explore?orgId=1&left=%7B%22datasource%22%3A%22skmon-loki%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22loki%22%2C%22uid%22%3A%22skmon-loki%22%7D%2C%22expr%22%3A%22%7Bjob%3D%5C%22docker%5C%22%2C%20stack%3D~%5C%22${stack:percentencode}%5C%22%2C%20service%3D~%5C%22${service:percentencode}%5C%22%7D%22%2C%22queryType%22%3A%22range%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D",
+              "targetBlank": true
+            },
+            {
+              "title": "CPU flame graph (Pyroscope)",
+              "url": "/explore?orgId=1&left=%7B%22datasource%22%3A%22skmon-pyroscope%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22grafana-pyroscope-datasource%22%2C%22uid%22%3A%22skmon-pyroscope%22%7D%2C%22queryType%22%3A%22profile%22%2C%22profileTypeId%22%3A%22process_cpu%3Acpu%3Ananoseconds%3Acpu%3Ananoseconds%22%2C%22labelSelector%22%3A%22%7Bservice_name%3D~%5C%22${service:percentencode}%5C%22%7D%22%2C%22groupBy%22%3A%5B%5D%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D",
+              "targetBlank": true
+            }
+          ],
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 6,
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 10
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "OOM kills",
+      "description": "Out-of-memory kills of the container's processes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "skmon-vm"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "skmon-vm"
+          },
+          "expr": "sum by (service, task_slot, node) (increase(container_oom_events_total{image!=\"\", stack=~\"$stack\", service=~\"$service\", node=~\"$node\"}[$__rate_interval]))",
+          "legendFormat": "{{service}}.{{task_slot}} ({{node}})",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0,
+          "links": [
+            {
+              "title": "Logs for this service (Loki)",
+              "url": "/explore?orgId=1&left=%7B%22datasource%22%3A%22skmon-loki%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22loki%22%2C%22uid%22%3A%22skmon-loki%22%7D%2C%22expr%22%3A%22%7Bjob%3D%5C%22docker%5C%22%2C%20stack%3D~%5C%22${stack:percentencode}%5C%22%2C%20service%3D~%5C%22${service:percentencode}%5C%22%7D%22%2C%22queryType%22%3A%22range%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D",
+              "targetBlank": true
+            },
+            {
+              "title": "CPU flame graph (Pyroscope)",
+              "url": "/explore?orgId=1&left=%7B%22datasource%22%3A%22skmon-pyroscope%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22grafana-pyroscope-datasource%22%2C%22uid%22%3A%22skmon-pyroscope%22%7D%2C%22queryType%22%3A%22profile%22%2C%22profileTypeId%22%3A%22process_cpu%3Acpu%3Ananoseconds%3Acpu%3Ananoseconds%22%2C%22labelSelector%22%3A%22%7Bservice_name%3D~%5C%22${service:percentencode}%5C%22%7D%22%2C%22groupBy%22%3A%5B%5D%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D",
+              "targetBlank": true
+            }
+          ],
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 7,
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 10
+      }
+    },
+    {
+      "type": "row",
+      "title": "Restarts",
+      "collapsed": false,
+      "panels": [],
+      "id": 8,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Container starts in range",
+      "description": "Containers (including replacements) that started inside the selected time range.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "skmon-vm"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "skmon-vm"
+          },
+          "expr": "count(container_start_time_seconds{image!=\"\", stack=~\"$stack\", service=~\"$service\", node=~\"$node\"} > time() - $__range_s) or vector(0)",
+          "legendFormat": "starts",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 3
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "id": 9,
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 19
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Task failures (Swarm)",
+      "description": "Tasks Swarm saw reach failed or rejected.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "skmon-vm"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "skmon-vm"
+          },
+          "expr": "sum by (stack, service) (increase(skswarm_service_task_failures_total{stack=~\"$stack\", service=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "{{stack}}/{{service}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0,
+          "links": [
+            {
+              "title": "Logs for this service (Loki)",
+              "url": "/explore?orgId=1&left=%7B%22datasource%22%3A%22skmon-loki%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22loki%22%2C%22uid%22%3A%22skmon-loki%22%7D%2C%22expr%22%3A%22%7Bjob%3D%5C%22docker%5C%22%2C%20stack%3D~%5C%22${stack:percentencode}%5C%22%2C%20service%3D~%5C%22${service:percentencode}%5C%22%7D%22%2C%22queryType%22%3A%22range%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D",
+              "targetBlank": true
+            },
+            {
+              "title": "CPU flame graph (Pyroscope)",
+              "url": "/explore?orgId=1&left=%7B%22datasource%22%3A%22skmon-pyroscope%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22grafana-pyroscope-datasource%22%2C%22uid%22%3A%22skmon-pyroscope%22%7D%2C%22queryType%22%3A%22profile%22%2C%22profileTypeId%22%3A%22process_cpu%3Acpu%3Ananoseconds%3Acpu%3Ananoseconds%22%2C%22labelSelector%22%3A%22%7Bservice_name%3D~%5C%22${service:percentencode}%5C%22%7D%22%2C%22groupBy%22%3A%5B%5D%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D",
+              "targetBlank": true
+            }
+          ],
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 10,
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 19
+      }
+    },
+    {
+      "type": "row",
+      "title": "Network and block IO",
+      "collapsed": false,
+      "panels": [],
+      "id": 11,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 25
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Network",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "skmon-vm"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "skmon-vm"
+          },
+          "expr": "sum by (service, task_slot, node) (rate(container_network_receive_bytes_total{image!=\"\", stack=~\"$stack\", service=~\"$service\", node=~\"$node\"}[$__rate_interval]))",
+          "legendFormat": "{{service}}.{{task_slot}} ({{node}}) rx",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "skmon-vm"
+          },
+          "expr": "sum by (service, task_slot, node) (rate(container_network_transmit_bytes_total{image!=\"\", stack=~\"$stack\", service=~\"$service\", node=~\"$node\"}[$__rate_interval]))",
+          "legendFormat": "{{service}}.{{task_slot}} ({{node}}) tx",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "links": [
+            {
+              "title": "Logs for this service (Loki)",
+              "url": "/explore?orgId=1&left=%7B%22datasource%22%3A%22skmon-loki%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22loki%22%2C%22uid%22%3A%22skmon-loki%22%7D%2C%22expr%22%3A%22%7Bjob%3D%5C%22docker%5C%22%2C%20stack%3D~%5C%22${stack:percentencode}%5C%22%2C%20service%3D~%5C%22${service:percentencode}%5C%22%7D%22%2C%22queryType%22%3A%22range%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D",
+              "targetBlank": true
+            },
+            {
+              "title": "CPU flame graph (Pyroscope)",
+              "url": "/explore?orgId=1&left=%7B%22datasource%22%3A%22skmon-pyroscope%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22grafana-pyroscope-datasource%22%2C%22uid%22%3A%22skmon-pyroscope%22%7D%2C%22queryType%22%3A%22profile%22%2C%22profileTypeId%22%3A%22process_cpu%3Acpu%3Ananoseconds%3Acpu%3Ananoseconds%22%2C%22labelSelector%22%3A%22%7Bservice_name%3D~%5C%22${service:percentencode}%5C%22%7D%22%2C%22groupBy%22%3A%5B%5D%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D",
+              "targetBlank": true
+            }
+          ],
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 12,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 26
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Block IO",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "skmon-vm"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "skmon-vm"
+          },
+          "expr": "sum by (service, task_slot, node) (rate(container_fs_reads_bytes_total{image!=\"\", stack=~\"$stack\", service=~\"$service\", node=~\"$node\"}[$__rate_interval]))",
+          "legendFormat": "{{service}}.{{task_slot}} ({{node}}) read",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "skmon-vm"
+          },
+          "expr": "sum by (service, task_slot, node) (rate(container_fs_writes_bytes_total{image!=\"\", stack=~\"$stack\", service=~\"$service\", node=~\"$node\"}[$__rate_interval]))",
+          "legendFormat": "{{service}}.{{task_slot}} ({{node}}) write",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "links": [
+            {
+              "title": "Logs for this service (Loki)",
+              "url": "/explore?orgId=1&left=%7B%22datasource%22%3A%22skmon-loki%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22loki%22%2C%22uid%22%3A%22skmon-loki%22%7D%2C%22expr%22%3A%22%7Bjob%3D%5C%22docker%5C%22%2C%20stack%3D~%5C%22${stack:percentencode}%5C%22%2C%20service%3D~%5C%22${service:percentencode}%5C%22%7D%22%2C%22queryType%22%3A%22range%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D",
+              "targetBlank": true
+            },
+            {
+              "title": "CPU flame graph (Pyroscope)",
+              "url": "/explore?orgId=1&left=%7B%22datasource%22%3A%22skmon-pyroscope%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22grafana-pyroscope-datasource%22%2C%22uid%22%3A%22skmon-pyroscope%22%7D%2C%22queryType%22%3A%22profile%22%2C%22profileTypeId%22%3A%22process_cpu%3Acpu%3Ananoseconds%3Acpu%3Ananoseconds%22%2C%22labelSelector%22%3A%22%7Bservice_name%3D~%5C%22${service:percentencode}%5C%22%7D%22%2C%22groupBy%22%3A%5B%5D%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22${__from}%22%2C%22to%22%3A%22${__to}%22%7D%7D",
+              "targetBlank": true
+            }
+          ],
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 13,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 26
+      }
+    },
+    {
+      "type": "row",
+      "title": "Logs and profile",
+      "collapsed": false,
+      "panels": [],
+      "id": 14,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      }
+    },
+    {
+      "type": "logs",
+      "title": "Container logs",
+      "datasource": {
+        "type": "loki",
+        "uid": "skmon-loki"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "skmon-loki"
+          },
+          "expr": "{job=\"docker\", stack=~\"$stack\", service=~\"$service\", node=~\"$node\"}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "prettifyLogMessage": false,
+        "showLabels": false,
+        "showCommonLabels": false
+      },
+      "description": "Docker log streams for the selected stack, service and node.",
+      "id": 15,
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 35
+      }
+    },
+    {
+      "type": "flamegraph",
+      "title": "CPU flame graph",
+      "datasource": {
+        "type": "grafana-pyroscope-datasource",
+        "uid": "skmon-pyroscope"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-pyroscope-datasource",
+            "uid": "skmon-pyroscope"
+          },
+          "queryType": "profile",
+          "profileTypeId": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+          "labelSelector": "{service_name=~\"$service\"}",
+          "groupBy": [],
+          "refId": "A"
+        }
+      ],
+      "options": {},
+      "description": "Continuous CPU profile of the selected service. Needs profiling enabled (skmon-pyroscope); otherwise Grafana shows No data source.",
+      "id": 16,
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 45
+      }
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "tags": [
+    "skmon",
+    "container",
+    "swarm"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "stack",
+        "label": "stack",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "skmon-vm"
+        },
+        "query": {
+          "query": "label_values(container_last_seen, stack)",
+          "refId": "stack-var"
+        },
+        "definition": "label_values(container_last_seen, stack)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "hide": 0,
+        "options": [],
+        "regex": "",
+        "skipUrlSync": false,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      },
+      {
+        "name": "service",
+        "label": "service",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "skmon-vm"
+        },
+        "query": {
+          "query": "label_values(container_last_seen{stack=~\"$stack\"}, service)",
+          "refId": "service-var"
+        },
+        "definition": "label_values(container_last_seen{stack=~\"$stack\"}, service)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "hide": 0,
+        "options": [],
+        "regex": "",
+        "skipUrlSync": false,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      },
+      {
+        "name": "node",
+        "label": "node",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "skmon-vm"
+        },
+        "query": {
+          "query": "label_values(container_last_seen{stack=~\"$stack\", service=~\"$service\"}, node)",
+          "refId": "node-var"
+        },
+        "definition": "label_values(container_last_seen{stack=~\"$stack\", service=~\"$service\"}, node)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "hide": 0,
+        "options": [],
+        "regex": "",
+        "skipUrlSync": false,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Container",
+  "uid": "container",
+  "version": 1
+}

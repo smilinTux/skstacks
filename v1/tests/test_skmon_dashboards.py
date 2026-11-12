@@ -146,7 +146,8 @@ def copied_dashboards(shipped=None, **skmon):
 
 
 def test_proxmox_only_with_pve():
-    shipped = [*(rel(p) for p in dashboards()), "infrastructure/proxmox.json"]
+    shipped = [rel(p) for p in dashboards()]
+    assert "infrastructure/proxmox.json" in shipped
     assert "infrastructure/proxmox.json" not in copied_dashboards(shipped)
     assert "infrastructure/proxmox.json" not in copied_dashboards(shipped, PVE={"enabled": "false"})
     assert "infrastructure/proxmox.json" in copied_dashboards(shipped, PVE={"enabled": True})
