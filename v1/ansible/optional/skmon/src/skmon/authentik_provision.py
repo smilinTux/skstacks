@@ -14,7 +14,9 @@ Input: one JSON object on stdin (secrets included, so nothing is on a command
 line or in a process environment):
   {"host", "url"?, "token", "group": "skadmin", "apps": [{"slug", "name",
    "kind": "oidc"|"proxy", "launch_url", "redirect_uris"?, "client_id"?,
-   "client_secret"?, "external_host"?}]}
+   "client_secret"?, "external_host"?}], "retire"?: ["slug", ...]}
+`retire` names applications of retired UIs: each is deleted by slug (a DELETE needs no lookup;
+204 and 404 both succeed).
 Output: one status line per object, never a secret. Exit non-zero on any API
 error.
 
@@ -320,6 +322,19 @@ def provision(api, cfg):
         if app["kind"] == "proxy":
             proxies.append(app["slug"])
     print(ensure_outpost(api, proxies))
+    for slug in cfg.get("retire") or []:
+        print(retire_application(api, slug))
+
+
+def retire_application(api, slug):
+    """Delete the application `slug`; an absent one (404) is already retired."""
+    try:
+        api.call("DELETE", f"/core/applications/{urllib.parse.quote(slug, safe='')}/", ok=(204,))
+    except ApiError as exc:
+        if "HTTP 404" not in str(exc):
+            raise
+        return f"retired {slug}: absent"
+    return f"retired {slug}: deleted"
 
 
 def validate(cfg):

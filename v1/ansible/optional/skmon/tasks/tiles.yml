@@ -43,34 +43,5 @@
   loop_control:
     label: "{{ item.key }}"
 
-# The old Jaeger and Prometheus UIs are gone, so their tiles are removed. One DELETE per slug
-# (204 when removed, 404 when already gone), with the same token, Host header and no_log as the
-# shared tile task. Skipped when both the tiles and the provisioner are switched off.
-- name: Locate sksso's vault for the retired-tile cleanup (holds sksso.api_token)
-  set_fact:
-    skmon_sksso_vault_path: >-
-      {{ skmon.AUTHENTIK_VAULT_FILE | default((vault_file_path | dirname) ~ '/'
-         ~ (vault_file_path | basename | regex_replace('^skmon-', 'sksso-'))) }}
-  when: (skmon.AUTHENTIK_TILE | default(true) | bool) or (skmon.AUTHENTIK_PROVISION | default(true) | bool)
-
-- name: Load sksso's vault for the retired-tile cleanup
-  include_vars:
-    file: "{{ skmon_sksso_vault_path }}"
-    name: skmon_sksso_token_vault
-  no_log: true
-  when: (skmon.AUTHENTIK_TILE | default(true) | bool) or (skmon.AUTHENTIK_PROVISION | default(true) | bool)
-
-- name: Remove retired skmon tiles
-  uri:
-    url: "{{ skmon.AUTHENTIK_INTERNAL_URL | default('http://sksso-' ~ env ~ '_server:9000') }}/api/v3/core/applications/{{ item }}{{ skmon_sfx }}/"
-    method: DELETE
-    headers:
-      Authorization: "Bearer {{ skmon_sksso_token_vault.sksso.api_token }}"
-      Accept: application/json
-      Host: "{{ skmon.AUTHENTIK_HOST }}"
-    status_code: [204, 404]
-  loop:
-    - jaeger
-    - prometheus
-  no_log: true
-  when: (skmon.AUTHENTIK_TILE | default(true) | bool) or (skmon.AUTHENTIK_PROVISION | default(true) | bool)
+# The retired Jaeger and Prometheus applications are deleted by the provisioner (`retire` in its
+# input, tasks/authentik.yml), which already runs on sksso's network with the token.

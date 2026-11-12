@@ -10,6 +10,7 @@
 # located like optional/skrac/tasks/authentik.yml). The provisioner runs in a throwaway
 # container on sksso's overlay network against sksso's server directly, so it needs neither
 # public DNS nor the edge certificate. Every secret goes in on stdin; nothing secret is logged.
+# The applications of the retired Jaeger and Prometheus UIs are deleted by slug (input `retire`).
 # Portal tiles are separate. Included only when not parked and
 # AUTHENTIK_PROVISION is true; set it false to create these objects by hand instead.
 
@@ -66,6 +67,7 @@
       token: "{{ skmon_sksso_token_vault.sksso.api_token }}"
       group: skadmin
       apps: "{{ skmon_authentik_apps }}"
+      retire: "{{ ['jaeger' ~ skmon_sfx, 'prometheus' ~ skmon_sfx] }}"
   no_log: true
 
 - name: Stage the Authentik provisioner
