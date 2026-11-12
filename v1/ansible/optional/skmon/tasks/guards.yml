@@ -14,6 +14,14 @@
   set_fact:
     skmon_swarm_nodes: "{{ skmon_node_ls.stdout_lines | default([]) }}"
 
+- name: Require ESTATE
+  assert:
+    that:
+      - skmon.ESTATE | default('', true) | length > 0
+    fail_msg: >-
+      skmon.ESTATE is required: set it in the skmon vault. Every metric target and
+      alert rule carries it as the `estate` label.
+
 - name: Require DATA_NODE
   assert:
     that:

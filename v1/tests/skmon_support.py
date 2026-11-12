@@ -106,6 +106,7 @@ def play_tasks(path: pathlib.Path) -> list[dict]:
 FACTS_FILE = ROLE / "tasks/facts.yml"
 GUARDS = ROLE / "tasks/guards.yml"
 DATA_DIRS = ROLE / "tasks/data_dirs.yml"
+AGENT_GUARDS = ROLE / "tasks/agent_guards.yml"
 
 # Override keys that are top-level facts rather than vault keys. Anything else
 # passed to guard_facts() is a vault key and lands in the `skmon` mapping.

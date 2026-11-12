@@ -74,6 +74,11 @@
       tags:
         - always
 
+    - name: Check the skmon agent addresses
+      include_tasks: "{{ playbook_dir }}/tasks/agent_guards.yml"
+      tags:
+        - always
+
     - name: Create the skmon local data directories
       include_tasks: "{{ playbook_dir }}/tasks/data_dirs.yml"
       tags:

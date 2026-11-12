@@ -1,7 +1,7 @@
 """skmon guards: DATA_NODE, local DATA_PATH, retired vault keys, swarm membership, data dir ownership."""
 import pytest
 
-from skmon_support import DATA_DIRS, GUARDS, data_dir_items, eval_asserts, guard_facts, load_tasks
+from skmon_support import AGENT_GUARDS, DATA_DIRS, GUARDS, data_dir_items, eval_asserts, guard_facts, load_tasks
 
 facts = guard_facts
 tasks = load_tasks
@@ -63,3 +63,31 @@ def test_data_dirs_owners_match_spec_7_5():
 def test_data_dirs_delegate_to_data_node():
     file_tasks = [t for t in tasks(DATA_DIRS) if "file" in t]
     assert file_tasks and all(t.get("delegate_to") == "{{ skmon_data_node }}" for t in file_tasks)
+
+
+def test_estate_required():
+    for v in ("", None):
+        assert any("ESTATE" in m for m in eval_asserts(GUARDS, facts(ESTATE=v)))
+
+
+def _agent_msgs(*addrs):
+    t = [{"node": f"h{i}", "addr": a, "role": "swarm", "light": False} for i, a in enumerate(addrs)]
+    return eval_asserts(AGENT_GUARDS, facts(skmon_agent_targets=t))
+
+
+def test_public_agent_address_fails_naming_the_host():
+    msgs = _agent_msgs("10.1.2.3", "8.8.8.8", "172.32.0.1", "2001:db8::1")
+    assert len(msgs) == 1 and "h1" in msgs[0] and "h2" in msgs[0] and "h3" in msgs[0]
+    assert "h0" not in msgs[0] and "AGENT_LISTEN_ADDR" in msgs[0]
+
+
+@pytest.mark.parametrize("addr", [
+    "10.0.0.1", "10.255.255.254", "172.16.0.1", "172.31.255.1", "192.168.1.1", "100.64.0.1", "100.127.255.1",
+    "fc00::1", "fd12:3456::1", "192.0.2.10", "198.51.100.7", "203.0.113.9", "node-1.render.example.test", "host"])
+def test_private_documentation_and_dns_addresses_pass(addr):
+    assert _agent_msgs(addr) == []
+
+
+@pytest.mark.parametrize("addr", ["100.63.0.1", "100.128.0.1", "172.15.0.1", "11.0.0.1", "192.169.0.1"])
+def test_just_outside_private_ranges_fails(addr):
+    assert _agent_msgs(addr)
