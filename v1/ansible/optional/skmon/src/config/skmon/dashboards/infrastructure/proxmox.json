@@ -50,7 +50,7 @@
             "type": "prometheus",
             "uid": "skmon-vm"
           },
-          "expr": "count(pve_up{id=~\"node/.*\"} * on (id) group_left (name) pve_node_info{name=~\"$node\"} == 1) or vector(0)",
+          "expr": "count(pve_up{id=~\"node/.*\"} * on (id, instance) group_left (name) pve_node_info{name=~\"$node\"} == 1) or vector(0)",
           "legendFormat": "",
           "refId": "A",
           "instant": true,
@@ -115,7 +115,7 @@
             "type": "prometheus",
             "uid": "skmon-vm"
           },
-          "expr": "count(pve_up{id=~\"node/.*\"} * on (id) group_left (name) pve_node_info{name=~\"$node\"} == 0) or vector(0)",
+          "expr": "count(pve_up{id=~\"node/.*\"} * on (id, instance) group_left (name) pve_node_info{name=~\"$node\"} == 0) or vector(0)",
           "legendFormat": "",
           "refId": "A",
           "instant": true,
@@ -180,7 +180,7 @@
             "type": "prometheus",
             "uid": "skmon-vm"
           },
-          "expr": "count(pve_up{id=~\"qemu/.*|lxc/.*\"} * on (id) group_left (name, node, type) pve_guest_info{node=~\"$node\"} == 1) or vector(0)",
+          "expr": "count(pve_up{id=~\"qemu/.*|lxc/.*\"} * on (id, instance) group_left (name, node, type) pve_guest_info{node=~\"$node\"} == 1) or vector(0)",
           "legendFormat": "",
           "refId": "A",
           "instant": true,
@@ -241,7 +241,7 @@
             "type": "prometheus",
             "uid": "skmon-vm"
           },
-          "expr": "count(pve_up{id=~\"qemu/.*|lxc/.*\"} * on (id) group_left (name, node, type) pve_guest_info{node=~\"$node\"} == 0) or vector(0)",
+          "expr": "count(pve_up{id=~\"qemu/.*|lxc/.*\"} * on (id, instance) group_left (name, node, type) pve_guest_info{node=~\"$node\"} == 0) or vector(0)",
           "legendFormat": "",
           "refId": "A",
           "instant": true,
@@ -306,7 +306,7 @@
             "type": "prometheus",
             "uid": "skmon-vm"
           },
-          "expr": "pve_cpu_usage_ratio{id=~\"node/.*\"} * on (id) group_left (name) pve_node_info{name=~\"$node\"}",
+          "expr": "pve_cpu_usage_ratio{id=~\"node/.*\"} * on (id, instance) group_left (name) pve_node_info{name=~\"$node\"}",
           "legendFormat": "{{name}}",
           "refId": "A"
         }
@@ -364,7 +364,7 @@
             "type": "prometheus",
             "uid": "skmon-vm"
           },
-          "expr": "pve_memory_usage_bytes{id=~\"node/.*\"} / pve_memory_size_bytes{id=~\"node/.*\"} * on (id) group_left (name) pve_node_info{name=~\"$node\"}",
+          "expr": "pve_memory_usage_bytes{id=~\"node/.*\"} / pve_memory_size_bytes{id=~\"node/.*\"} * on (id, instance) group_left (name) pve_node_info{name=~\"$node\"}",
           "legendFormat": "{{name}}",
           "refId": "A"
         }
@@ -435,7 +435,7 @@
             "type": "prometheus",
             "uid": "skmon-vm"
           },
-          "expr": "topk(10, pve_cpu_usage_ratio{id=~\"qemu/.*|lxc/.*\"} * on (id) group_left (name, node, type) pve_guest_info{node=~\"$node\"})",
+          "expr": "topk(10, pve_cpu_usage_ratio{id=~\"qemu/.*|lxc/.*\"} * on (id, instance) group_left (name, node, type) pve_guest_info{node=~\"$node\"})",
           "legendFormat": "{{name}} ({{node}})",
           "refId": "A"
         }
@@ -492,7 +492,7 @@
             "type": "prometheus",
             "uid": "skmon-vm"
           },
-          "expr": "topk(10, pve_memory_usage_bytes{id=~\"qemu/.*|lxc/.*\"} * on (id) group_left (name, node, type) pve_guest_info{node=~\"$node\"})",
+          "expr": "topk(10, pve_memory_usage_bytes{id=~\"qemu/.*|lxc/.*\"} * on (id, instance) group_left (name, node, type) pve_guest_info{node=~\"$node\"})",
           "legendFormat": "{{name}} ({{node}}) used",
           "refId": "A"
         },
@@ -501,7 +501,7 @@
             "type": "prometheus",
             "uid": "skmon-vm"
           },
-          "expr": "topk(10, pve_memory_size_bytes{id=~\"qemu/.*|lxc/.*\"} * on (id) group_left (name, node, type) pve_guest_info{node=~\"$node\"})",
+          "expr": "topk(10, pve_memory_size_bytes{id=~\"qemu/.*|lxc/.*\"} * on (id, instance) group_left (name, node, type) pve_guest_info{node=~\"$node\"})",
           "legendFormat": "{{name}} ({{node}}) size",
           "refId": "B"
         }
@@ -636,7 +636,7 @@
             "type": "prometheus",
             "uid": "skmon-vm"
           },
-          "expr": "pve_disk_usage_bytes{id=~\"storage/.*\"} / pve_disk_size_bytes{id=~\"storage/.*\"} * on (id) group_left (storage, node) pve_storage_info{node=~\"$node\"}",
+          "expr": "pve_disk_usage_bytes{id=~\"storage/.*\"} / pve_disk_size_bytes{id=~\"storage/.*\"} * on (id, instance) group_left (storage, node) pve_storage_info{node=~\"$node\"}",
           "legendFormat": "{{node}} {{storage}}",
           "refId": "A"
         }
@@ -694,7 +694,7 @@
             "type": "prometheus",
             "uid": "skmon-vm"
           },
-          "expr": "pve_disk_usage_bytes{id=~\"storage/.*\"} * on (id) group_left (storage, node) pve_storage_info{node=~\"$node\"}",
+          "expr": "pve_disk_usage_bytes{id=~\"storage/.*\"} * on (id, instance) group_left (storage, node) pve_storage_info{node=~\"$node\"}",
           "legendFormat": "{{node}} {{storage}} used",
           "refId": "A"
         },
@@ -703,7 +703,7 @@
             "type": "prometheus",
             "uid": "skmon-vm"
           },
-          "expr": "pve_disk_size_bytes{id=~\"storage/.*\"} * on (id) group_left (storage, node) pve_storage_info{node=~\"$node\"}",
+          "expr": "pve_disk_size_bytes{id=~\"storage/.*\"} * on (id, instance) group_left (storage, node) pve_storage_info{node=~\"$node\"}",
           "legendFormat": "{{node}} {{storage}} size",
           "refId": "B"
         }

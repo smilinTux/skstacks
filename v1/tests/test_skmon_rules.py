@@ -156,7 +156,8 @@ def test_vmalert_eval_interval_and_limits():
 def test_vmalert_flags():
     cmd = services()["vmalert"]["command"]
     for flag in ("-datasource.url=http://skmon-prod_victoriametrics:8428", "-notifier.url=http://skmon-prod_alertmanager:9093",
-                 "-rule=/etc/vmalert/rules/*.yml", "-external.label=estate=example"):
+                 "-rule=/etc/vmalert/rules/*.yml", "-external.label=estate=example",
+                 "-remoteWrite.url=http://skmon-prod_victoriametrics:8428", "-remoteRead.url=http://skmon-prod_victoriametrics:8428"):
         assert flag in cmd, flag
 
 

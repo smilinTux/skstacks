@@ -837,7 +837,7 @@
         "definition": "label_values(container_last_seen, stack)",
         "refresh": 2,
         "sort": 1,
-        "multi": true,
+        "multi": false,
         "includeAll": true,
         "hide": 0,
         "options": [],
@@ -846,12 +846,8 @@
         "allValue": ".*",
         "current": {
           "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
+          "text": "All",
+          "value": "$__all"
         }
       },
       {
@@ -869,7 +865,7 @@
         "definition": "label_values(container_last_seen{stack=~\"$stack\"}, service)",
         "refresh": 2,
         "sort": 1,
-        "multi": true,
+        "multi": false,
         "includeAll": true,
         "hide": 0,
         "options": [],
@@ -878,12 +874,8 @@
         "allValue": ".*",
         "current": {
           "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
+          "text": "All",
+          "value": "$__all"
         }
       },
       {

@@ -95,7 +95,8 @@ def test_swarm_board_series():
 
 def test_zfs_board_series():
     q = queries("infrastructure/zfs.json")
-    assert all(any(s in x for x in q) for s in ("node_zfs_zpool_state", "node_zfs_arc_size", "node_zfs_zpool_nread", "node_zfs_zpool_nwritten"))
+    assert all(any(s in x for x in q) for s in ("node_zfs_zpool_state", "node_zfs_arc_size", "node_zfs_zpool_dataset_nread", "node_zfs_zpool_dataset_nwritten",
+                                                             "node_zfs_zpool_dataset_reads", "node_zfs_zpool_dataset_writes"))
 
 
 def test_loki_logs_board_uses_stream_labels():
@@ -137,3 +138,23 @@ def test_built_boards_are_current_schema_and_use_only_uid_datasources():
         for p in walk_panels(d["panels"]):
             if p["type"] != "row" and p["type"] != "text":
                 assert isinstance(p["datasource"], dict) and p["datasource"]["uid"].startswith("skmon-"), (rel, p["title"])
+
+
+def test_container_board_stack_and_service_are_single_select():
+    # The :percentencode data links are only valid for a single value.
+    for name in ("stack", "service"):
+        v = var("infrastructure/container.json", name)
+        assert v["multi"] is False and v["includeAll"] is True and v["allValue"] == ".*"
+
+
+def test_proxmox_joins_use_id_and_instance():
+    q = queries("infrastructure/proxmox.json")
+    joins = [x for x in q if " on (" in x]
+    assert joins and all("on (id, instance)" in x for x in joins)
+    assert not any("on (id)" in x for x in q)
+
+
+def test_zfs_pool_io_is_summed_per_node_and_pool():
+    q = [x for x in queries("infrastructure/zfs.json") if "zpool_dataset_" in x]
+    assert q and all(x.startswith("sum by (node, zpool) (rate(") for x in q)
+    assert not any(re.search(r"node_zfs_zpool_(nread|nwritten|reads|writes)\b", x) for x in queries("infrastructure/zfs.json"))
