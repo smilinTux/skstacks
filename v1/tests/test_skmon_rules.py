@@ -27,7 +27,8 @@ TABLE = {"NodeDown": ("30s", "critical", "node"), "ZfsPoolNotOnline": ("15s", "c
          "AlertDeliveryFailing": ("5m", "critical", "meta"), "MonitorDiskFilling": ("10m", "warning", "meta")}
 
 # Every alert shipped.
-ALERTS = set(TABLE) | {"HttpEndpointDown", "CertExpiringSoon", "DiskFilling", "Watchdog", "ServiceBelowReplicas"}
+ALERTS = set(TABLE) | {"HttpEndpointDown", "CertExpiringSoon", "DiskFilling", "Watchdog", "ServiceBelowReplicas",
+                         "SwarmNodeNotReady"}
 
 
 def dur(text: str) -> int:
