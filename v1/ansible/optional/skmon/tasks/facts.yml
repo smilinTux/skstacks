@@ -5,6 +5,8 @@
 #   skmon_data_path  normalized local data root: repeated slashes collapsed, no trailing slash
 #   skmon_dashboards_unwanted  shipped dashboard paths to prune (proxmox.json unless PVE is on)
 #   skmon_parked     true when skmon.replicas is 0 (also the string "0"): every workload is parked
+#   skmon_sfx        '' in prod, -<env> elsewhere (router hosts, Authentik slugs)
+#   skmon_grafana_url  Grafana's public URL (GRAFANA_ROOT_URL, else https://skmon[-env].<CLUSTERNAME>.<DOMAIN>), no trailing slash
 #   skmon_skalert_src  controller path of the estate's sk-alert script (SKALERT_SCRIPT_SRC)
 - name: Derive the skmon data node
   set_fact:
@@ -22,6 +24,17 @@
     # PVE.enabled as a real boolean (the string "false" is off), so templates that are also
     # rendered by plain Jinja in the framework tests (deploy.j2) need no Ansible filter.
     skmon_pve_enabled: "{{ ((skmon.PVE | default({}, true)).enabled | default(false) | bool) if (skmon.PVE | default({}, true)) is mapping else false }}"
+
+- name: Derive the environment suffix for router hosts and Authentik slugs
+  set_fact:
+    skmon_sfx: "{{ '' if env == 'prod' else '-' ~ env }}"
+
+- name: Derive the Grafana public URL
+  set_fact:
+    skmon_grafana_url: >-
+      {{ (skmon.GRAFANA_ROOT_URL | default('', true)
+          or ('https://skmon' ~ ('' if env == 'prod' else '-' ~ env) ~ '.' ~ skmon.CLUSTERNAME ~ '.' ~ skmon.DOMAIN))
+         | regex_replace('/+$', '') }}
 
 # Shipped dashboards the deploy must not leave on the data node, as paths relative to dashboards/.
 # The Proxmox board is wanted only when PVE is on; the prune after the copy removes it otherwise.

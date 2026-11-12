@@ -175,3 +175,30 @@
       skmon.PVE_TOKEN_SECRET and a non-empty skmon.PVE.targets (the Proxmox hostnames to
       scrape) are all required. Set them in the skmon vault, or set skmon.PVE.enabled to false.
   when: (skmon.PVE | default({}, true)).enabled | default(false) | bool
+
+# --- Grafana sign-in through Authentik (spec 10) ---
+
+- name: Require the Grafana OIDC client id and secret
+  # Names only in the message: the secret must never be printed. Both are operator-generated
+  # (openssl rand -hex 16 or longer) and are the client credentials both Grafana and the
+  # provisioned Authentik provider use, so the vault and Authentik cannot drift apart.
+  assert:
+    that:
+      - skmon.GRAFANA_OIDC_CLIENT_ID | default('', true) | string | length >= 32
+      - skmon.GRAFANA_OIDC_CLIENT_SECRET | default('', true) | string | length >= 32
+    fail_msg: >-
+      skmon.GRAFANA_OIDC_CLIENT_ID and skmon.GRAFANA_OIDC_CLIENT_SECRET are required and must be
+      32 or more characters each (generate each with openssl rand -hex 32). Grafana signs in
+      through Authentik, the local admin account is break-glass only.
+  when: not skmon_parked
+  no_log: true
+
+- name: Require AUTHENTIK_HOST when skmon provisions Authentik
+  assert:
+    that:
+      - skmon.AUTHENTIK_HOST | default('', true) | string | length > 0
+    fail_msg: >-
+      skmon.AUTHENTIK_HOST (the public hostname of sksso, for example sso.<cluster>.<domain>)
+      is required: Grafana's OIDC endpoints are built from it. Set skmon.AUTHENTIK_PROVISION
+      to false to skip creating the Authentik objects (the host is still needed for the URLs).
+  when: not skmon_parked and (skmon.AUTHENTIK_PROVISION | default(true) | bool)

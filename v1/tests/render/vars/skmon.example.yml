@@ -10,6 +10,10 @@ skmon:
   GRAFANA_ADMIN_PASSWORD: example-grafana-admin-password-not-a-secret
   GRAFANA_SECRET_KEY: example-grafana-secret-key-not-a-secret
   GRAFANA_ROOT_URL: https://skmon.render.example.test
+  # Grafana signs in through Authentik (fake, 32+ characters each).
+  GRAFANA_OIDC_CLIENT_ID: example-grafana-oidc-client-id-not-real-0123
+  GRAFANA_OIDC_CLIENT_SECRET: example-grafana-oidc-client-secret-not-real-0123
+  AUTHENTIK_HOST: sso.render.example.test
   # The render inventory's only host has no address; the allowlist wants an IPv4 literal.
   AGENT_LISTEN_ADDR:
     localhost: 192.0.2.10

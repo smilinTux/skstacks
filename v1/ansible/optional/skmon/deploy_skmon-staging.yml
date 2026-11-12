@@ -282,6 +282,8 @@
           # prometheus-pve-exporter's config with the API token. Rendered with empty values when
           # PVE is off, so the stack stays valid at replicas 0.
           pve_config: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/pve.yml.j2') }}"
+          # Grafana's OIDC client secret, mounted as a file (GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET__FILE).
+          grafana_oidc_client_secret: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/grafana_oidc_client_secret.j2') }}"
       no_log: true
       tags:
         - config
@@ -461,6 +463,15 @@
       changed_when: false
       tags:
         - always
+
+    - name: Create or update the skmon providers and applications in Authentik
+      # On by default; AUTHENTIK_PROVISION: false skips it (the Grafana OIDC env still renders
+      # from the vault values). Skipped while parked. See tasks/authentik.yml.
+      include_tasks: "{{ playbook_dir }}/tasks/authentik.yml"
+      when: not skmon_parked and (skmon.AUTHENTIK_PROVISION | default(true) | bool)
+      tags:
+        - config
+        - authentik
 
     - name: Create or update the skmon portal tiles in Authentik
       # On by default (AUTHENTIK_TILE: true); opt out per instance with

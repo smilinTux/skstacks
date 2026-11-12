@@ -853,9 +853,12 @@ skmon:
 **Health check**: per-component endpoints (`/health` VictoriaMetrics, `/ready` Loki,
 `/-/healthy` Alertmanager, `/api/health` Grafana).
 
-**Gotchas**: every dashboard hostname sits behind a separate `traefikAuth@file`
-basic-auth middleware in addition to Grafana's own login. Operators need
-both credentials. Extra scrape targets go in `skmon.EXTRA_SCRAPE_CONFIGS`, not a
+**Gotchas**: Grafana signs in through Authentik OIDC (only `skadmin`, mapped to Grafana
+Admin; the local admin and login form stay for break-glass). vmui and Alertmanager sit
+behind the Authentik forward-auth middleware (`skmon.FORWARD_AUTH_MIDDLEWARE`, default
+`authentik@file`). The vault needs `GRAFANA_OIDC_CLIENT_ID` and `GRAFANA_OIDC_CLIENT_SECRET`
+(32+ characters each) and `AUTHENTIK_HOST`; `AUTHENTIK_PROVISION: false` skips creating
+the Authentik objects. Extra scrape targets go in `skmon.EXTRA_SCRAPE_CONFIGS`, not a
 bespoke scrape job. Blackbox probes default to every Traefik router host
 found at deploy time; `skmon.PROBES` replaces that list.
 `skmon.replicas: 0` parks the whole stack and every agent and keeps it parked across
@@ -863,12 +866,7 @@ redeploys; `DATA_PATH` stays on disk and the deploy script skips forced updates.
 list: current Grafana refuses the Angular ones in it
 (`grafana-simple-json-datasource`, `grafana-piechart-panel`,
 `grafana-worldmap-panel`), so drop them there.
-The edge `traefikAuth` middleware forwards the browser's `Authorization`
-header to Grafana, which tries it as a Grafana login; when the edge user
-name equals the Grafana admin name every request is a failed admin login
-and Grafana's brute-force protection locks the admin out. Set
-`skmon.GRAFANA_BASIC_AUTH: false` behind that middleware (API clients then
-use service-account tokens or a login session). On a slow shared
+On a slow shared
 filesystem Grafana's first boot can outlast the 60s health start period;
 raise `skmon.GRAFANA_HEALTH_START_PERIOD` (for example `5m`).
 

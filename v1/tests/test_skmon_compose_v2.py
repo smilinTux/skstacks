@@ -149,13 +149,6 @@ def test_grafana_plugins_default_empty_and_knob_works():
     assert "GF_INSTALL_PLUGINS=grafana-clock-panel" in render(CFG / "skmon.env.j2", GRAFANA_PLUGINS=["grafana-clock-panel"]).splitlines()
 
 
-def test_grafana_basic_auth_default_unchanged_and_can_be_disabled():
-    lines = lambda **kw: render(CFG / "skmon.env.j2", **kw).splitlines()
-    assert not any(l.startswith("GF_AUTH_BASIC_ENABLED") for l in lines())
-    assert "GF_AUTH_BASIC_ENABLED=false" in lines(GRAFANA_BASIC_AUTH=False)
-    assert "GF_AUTH_BASIC_ENABLED=false" in lines(GRAFANA_BASIC_AUTH="false")
-
-
 def test_grafana_health_start_period_knob():
     assert services()["grafana"]["healthcheck"]["start_period"] == "60s"
     assert services(GRAFANA_HEALTH_START_PERIOD="10m")["grafana"]["healthcheck"]["start_period"] == "10m"

@@ -26,6 +26,10 @@ BASE = {
     "GRAFANA_ADMIN_PASSWORD": "fake-admin-password",
     "GRAFANA_SECRET_KEY": "fake-secret-key",
     "GRAFANA_ROOT_URL": "https://skmon.c1.example.test",
+    # Authentik sign-in (Task 20): fake, obviously not secrets, 32+ characters each.
+    "GRAFANA_OIDC_CLIENT_ID": "fake-grafana-oidc-client-id-0123456789",
+    "GRAFANA_OIDC_CLIENT_SECRET": "SECRET-MARKER-fake-grafana-oidc-secret-0123",
+    "AUTHENTIK_HOST": "sso.c1.example.test",
     # Alert delivery (Task 13): the fixture stub stands in for the estate's sk-alert, pinned by its hash.
     # A relative SKALERT_SCRIPT_SRC resolves against the vault file's directory (tasks/facts.yml).
     "SKALERT_SCRIPT_SRC": str(pathlib.Path(__file__).resolve().parent / "fixtures/skmon/fake_sk_alert"),
@@ -45,7 +49,8 @@ CONFIG_TEMPLATES = {
     "loki-rules": "loki-rules/storage.yml.j2",
 }
 # Secret templates delivered as hash-named Docker secrets: key -> template file.
-SECRET_TEMPLATES = {"alert_env": "alert.env.j2", "alert_secret": "alert.secret.j2", "pve_config": "pve.yml.j2"}
+SECRET_TEMPLATES = {"alert_env": "alert.env.j2", "alert_secret": "alert.secret.j2", "pve_config": "pve.yml.j2",
+                    "grafana_oidc_client_secret": "grafana_oidc_client_secret.j2"}
 
 # vmalert rule classes (one rules/<class>.yml.j2 each, mounted at /etc/vmalert/rules/<class>.yml).
 RULE_CLASSES = tuple(k.removeprefix("rules-") for k in CONFIG_TEMPLATES if k.startswith("rules-"))
@@ -65,7 +70,7 @@ def render(tpl: pathlib.Path, env: str = "prod", extra_ctx: dict | None = None, 
     jenv.undefined = jinja2.StrictUndefined
     jenv.filters["quote"] = lambda v: shlex.quote(str(v))  # Ansible's quote filter
     facts = guard_facts(env=env, **dict(skmon))
-    derived = {k: facts[k] for k in ("skmon_data_node", "skmon_data_path", "skmon_parked", "skmon_pve_enabled")}
+    derived = {k: facts[k] for k in ("skmon_data_node", "skmon_data_path", "skmon_parked", "skmon_pve_enabled", "skmon_grafana_url")}
     ctx = {"app": "skmon", "env": env, "skmon": {**BASE, **skmon}, **derived, **(extra_ctx or {})}
     return jenv.from_string(tpl.read_text()).render(**ctx)
 

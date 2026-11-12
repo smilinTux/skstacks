@@ -93,6 +93,12 @@ services:
     image: {{ skmon.GRAFANA_IMAGE | default('grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205') }}
     env_file:
       - /var/data/config/skmon-{{ env }}/skmon.env
+    secrets:
+      - source: grafana_oidc_client_secret
+        target: grafana_oidc_client_secret
+        uid: "472"
+        gid: "472"
+        mode: 0400
     environment:
       - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
       - GF_PATHS_DATA=/var/lib/grafana
@@ -129,7 +135,7 @@ services:
         - "traefik.http.routers.grafana{{ sfx }}-secure.tls.certresolver=main"
         - "traefik.http.routers.grafana{{ sfx }}-secure.service=grafana{{ sfx }}"
         - "traefik.http.services.grafana{{ sfx }}.loadbalancer.server.port=3000"
-        - "traefik.http.routers.grafana{{ sfx }}-secure.middlewares=default-security-headers@file,gzip@file,traefikAuth@file"
+        - "traefik.http.routers.grafana{{ sfx }}-secure.middlewares=default-security-headers@file,gzip@file"
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1"]
       interval: 30s
