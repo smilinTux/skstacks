@@ -2,7 +2,7 @@
 # skmon guards: fail early, before any host is touched, on vault values that
 # would put alert-path data in the wrong place or silently do nothing.
 - name: Derive the skmon facts
-  import_tasks: facts.yml
+  import_tasks: "{{ playbook_dir }}/tasks/facts.yml"
 
 - name: List the swarm nodes
   command: docker node ls --format '{{ '{{' }}.Hostname{{ '}}' }}'
