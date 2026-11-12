@@ -28,8 +28,12 @@ fi
 docker rm -f skmon-{{ env }}-alloy >/dev/null 2>&1 || true
 # --cgroupns host: the cadvisor component reads every container's cgroup under /sys/fs/cgroup.
 # --stability.level experimental: the loki.write WAL block is experimental in Alloy.
-# /run/systemd/private: the systemd collector talks to systemd directly. The system bus is
-# no use from a container on AppArmor hosts: dbus-daemon refuses docker-default peers.
+# /run/systemd/private: systemd's private manager socket. This is a root-equivalent control
+# channel into the host (the container, root inside, can start, stop or replace any unit),
+# the same class of exposure as the docker.sock mount above. It is mounted only for the
+# systemd collector (failed units) and carries no :ro, because :ro does not stop connect()
+# on a socket. The system bus is no alternative: on AppArmor hosts dbus-daemon refuses
+# docker-default peers.
 docker run -d \
   --name skmon-{{ env }}-alloy \
   --label skmon.config-hash={{ skmon_agent_config_hash }} \
@@ -48,7 +52,7 @@ docker run -d \
   -v /run/log/journal:/run/log/journal:ro \
   -v /var/log/journal:/var/log/journal:ro \
   -v /var/run/docker.sock:/var/run/docker.sock:ro \
-  -v /run/systemd/private:/run/systemd/private:ro \
+  -v /run/systemd/private:/run/systemd/private \
   -v /etc/skmon-{{ env }}/alloy:/etc/alloy:ro \
   -v /var/lib/skmon-{{ env }}/alloy:/var/lib/alloy \
   {{ skmon.ALLOY_IMAGE | default('grafana/alloy:v1.21.3@sha256:8ab871206bd2d8f89277f53abffee5f452a293980788d52f85fa183a87a505a4') }} \

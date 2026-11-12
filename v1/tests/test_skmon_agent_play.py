@@ -4,7 +4,7 @@ import re
 import yaml
 
 from image_pins import template_default
-from skmon_support import (AGENT_PLAY, AGENT_RUN, AGENT_TARGETS, CFG, PLAYS, ROLE, load_tasks, mounts,
+from skmon_support import (AGENT_PLAY, AGENT_RUN, AGENT_TARGETS, CFG, PLAYS, ROLE, cfg, load_tasks, mounts,
                            play_tasks, render_run_script, run_script_args)
 
 PINS = yaml.safe_load((CFG / "pins.yml").read_text())
@@ -23,8 +23,21 @@ def test_cgroup_namespace_is_the_hosts():
 
 
 def test_systemd_collector_reaches_systemd():
-    # the system bus refuses AppArmor docker-default peers, so systemd's private socket is mounted
-    assert "/run/systemd/private:/run/systemd/private:ro" in mounts() and "-e" not in run_script_args()
+    # the system bus refuses AppArmor docker-default peers, so systemd's private socket is mounted;
+    # without :ro, which would suggest a restriction a socket bind mount does not have (R31)
+    assert "/run/systemd/private:/run/systemd/private" in mounts() and "-e" not in run_script_args()
+    assert not any(m.startswith("/run/systemd/private:") and m.endswith(":ro") for m in mounts())
+    assert "root-equivalent control channel" in " ".join(AGENT_RUN.read_text().replace("#", " ").split())
+
+
+def test_systemd_private_socket_only_in_container_mode():
+    # the mount lives only in the container run script, which the play writes and runs only in
+    # container mode; the agent config (shared with systemd mode) mounts nothing
+    tasks = play_tasks(AGENT_PLAY)
+    for name in ("Write the agent run script", "Start, replace or remove the agent container"):
+        assert next(t for t in tasks if t.get("name") == name)["when"] == "skmon_agent_mode == 'container'"
+    assert "/run/systemd/private" not in AGENT_PLAY.read_text()
+    assert "/run/systemd/private:" not in cfg(agent_mode="systemd") + cfg(agent_mode="container")
 
 
 def test_resource_caps():
