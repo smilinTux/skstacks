@@ -463,3 +463,39 @@ FAKE_SERVICE_INSPECT = [
     }),
     _svc("db", {"com.docker.stack.namespace": "db"}),
 ]
+
+
+def _matcher_ok(matcher: str, labels: dict) -> bool:
+    """One Alertmanager matcher (label=, !=, =~, !~ with a quoted value; regexes are anchored)."""
+    m = re.fullmatch(r'\s*([A-Za-z_]\w*)\s*(=~|!~|!=|=)\s*"(.*)"\s*', matcher)
+    assert m, f"unparseable matcher {matcher!r}"
+    name, op, value = m.groups()
+    have = labels.get(name, "")
+    return {"=": have == value, "!=": have != value,
+            "=~": re.fullmatch(value, have) is not None, "!~": re.fullmatch(value, have) is None}[op]
+
+
+def route_for(config_text: str, **labels) -> dict:
+    """Walk an Alertmanager route tree the way Alertmanager does and return the merged settings.
+
+    Children are tried in order, depth first; the first match wins unless it sets
+    `continue`; unset receiver, group_by, group_wait, group_interval and repeat_interval
+    are inherited from the parent. Returns the settings of the first route that would notify (pass the `class` label as
+    `**{"class": ...}`).
+    """
+    root = yaml.safe_load(config_text)["route"]
+    inherit = ("receiver", "group_by", "group_wait", "group_interval", "repeat_interval")
+
+    # Alertmanager semantics: a node matches, then its children are tried; if no child
+    # matches (or all matching children continue), the node itself is the result.
+    def match(route: dict, parent: dict) -> list[dict]:
+        merged = {k: route.get(k, parent.get(k)) for k in inherit}
+        hits: list[dict] = []
+        for child in route.get("routes") or []:
+            if all(_matcher_ok(m, labels) for m in child.get("matchers") or []):
+                hits += match(child, merged)
+                if not child.get("continue"):
+                    break
+        return hits or [merged]
+
+    return match(root, {})[0]

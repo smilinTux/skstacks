@@ -164,7 +164,7 @@ def test_env_files_carry_no_retired_component_lines():
 
 def test_grafana_datasource_points_at_victoriametrics():
     text = render(CFG / "grafana-datasources.yml.j2")
-    assert "http://victoriametrics:8428" in text and "prometheus:9090" not in text
+    assert "http://skmon-prod_victoriametrics:8428" in text and "prometheus:9090" not in text
 
 
 def test_only_traefik_swarm_labels():

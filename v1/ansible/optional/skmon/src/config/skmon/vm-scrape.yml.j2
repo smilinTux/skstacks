@@ -143,7 +143,7 @@ scrape_configs:
   # No alloy-blackbox job: DATA_NODE '{{ skmon_data_node }}' is not an agent host.
 {% endif %}
 
-  # Self-monitoring of the stack (service names resolve on the stack network).
+  # Self-monitoring of the stack (addressed by full Swarm service name).
   - job_name: victoriametrics
     scrape_interval: {{ normal }}
     static_configs:
@@ -153,19 +153,19 @@ scrape_configs:
   - job_name: loki
     scrape_interval: {{ normal }}
     static_configs:
-      - targets: ['loki:3100']
+      - targets: ['skmon-{{ env }}_loki:3100']
         labels:
           estate: '{{ estate }}'
   - job_name: alertmanager
     scrape_interval: {{ normal }}
     static_configs:
-      - targets: ['alertmanager:9093']
+      - targets: ['skmon-{{ env }}_alertmanager:9093']
         labels:
           estate: '{{ estate }}'
   - job_name: vmalert
     scrape_interval: {{ normal }}
     static_configs:
-      - targets: ['vmalert:8880']
+      - targets: ['skmon-{{ env }}_vmalert:8880']
         labels:
           estate: '{{ estate }}'
 

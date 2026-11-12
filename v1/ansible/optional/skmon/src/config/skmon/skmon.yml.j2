@@ -166,8 +166,8 @@ services:
     image: {{ skmon.VMALERT_IMAGE | default('victoriametrics/vmalert:v1.155.0@sha256:3256cba5ddaca5974eae6141105cec4ce37871f1c213f0a5c267ec0111bc68e1') }}
     command:
       - '-evaluationInterval=15s'
-      - '-datasource.url=http://victoriametrics:8428'
-      - '-notifier.url=http://alertmanager:9093'
+      - '-datasource.url=http://skmon-{{ env }}_victoriametrics:8428'
+      - '-notifier.url=http://skmon-{{ env }}_alertmanager:9093'
       - '-rule=/etc/vmalert/rules/*.yml'
       - '-external.label=estate={{ skmon.ESTATE }}'
       - '-httpListenAddr=:8880'

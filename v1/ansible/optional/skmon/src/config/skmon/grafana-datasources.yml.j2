@@ -4,7 +4,7 @@ datasources:
   - name: Prometheus
     type: prometheus
     access: proxy
-    url: http://victoriametrics:8428
+    url: http://skmon-{{ env }}_victoriametrics:8428
     isDefault: true
     editable: true
     jsonData:
@@ -14,7 +14,7 @@ datasources:
   - name: Loki
     type: loki
     access: proxy
-    url: http://loki:3100
+    url: http://skmon-{{ env }}_loki:3100
     editable: true
     jsonData:
       maxLines: 1000

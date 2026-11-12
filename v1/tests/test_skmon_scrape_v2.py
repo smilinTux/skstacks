@@ -64,7 +64,9 @@ def test_self_monitoring_jobs():
     j = jobs()
     assert {"victoriametrics", "loki", "alertmanager", "alloy-self", "traefik"} <= set(j)
     assert j["alloy-self"]["metrics_path"] == "/metrics"
-    assert j["loki"]["static_configs"][0]["targets"] == ["loki:3100"]
+    assert j["loki"]["static_configs"][0]["targets"] == ["skmon-prod_loki:3100"]
+    assert j["alertmanager"]["static_configs"][0]["targets"] == ["skmon-prod_alertmanager:9093"]
+    assert j["victoriametrics"]["static_configs"][0]["targets"] == ["localhost:8428"]
 
 
 def test_traefik_uses_swarm_dns_discovery_and_estate_label():

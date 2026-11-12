@@ -40,7 +40,7 @@ limits_config:
 # The ruler runs the log-based storage rules (spec 8) from a Swarm config mounted under
 # /etc/loki/rules, and sends to the stack's Alertmanager. Its scratch space is under /loki.
 ruler:
-  alertmanager_url: http://alertmanager:9093
+  alertmanager_url: http://skmon-{{ env }}_alertmanager:9093
   enable_api: true
   storage:
     type: local

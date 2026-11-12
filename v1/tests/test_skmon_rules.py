@@ -9,7 +9,7 @@ import re
 import pytest
 import yaml
 
-from skmon_support import (CFG, DATA_MOUNTPOINT, PLAYS, RULE_CLASSES, all_rules, compose, ctx_with_configs,
+from skmon_support import (CFG, route_for, DATA_MOUNTPOINT, PLAYS, RULE_CLASSES, all_rules, compose, ctx_with_configs,
                            eval_play_fact, play_tasks, render, render_rules, rule, rules_named, services,
                            task_named)
 
@@ -33,19 +33,8 @@ def dur(text: str) -> int:
 
 
 def group_wait(cls: str, severity: str) -> int:
-    """group_wait of the Alertmanager route that matches class and severity (Task 11 adds it)."""
-    doc = yaml.safe_load(render(CFG / "alertmanager-config.yml.j2"))
-
-    def walk(route):
-        for r in route.get("routes") or []:
-            yield r
-            yield from walk(r)
-
-    for r in walk(doc["route"]):
-        text = " ".join(map(str, r.get("matchers") or [])) + str(r.get("match") or "")
-        if cls in text and severity in text and "group_wait" in r:
-            return dur(r["group_wait"])
-    raise LookupError(f"no route for class={cls} severity={severity}")
+    """group_wait the real Alertmanager config gives an alert of this class and severity."""
+    return dur(route_for(render(CFG / "alertmanager-config.yml.j2"), severity=severity, **{"class": cls})["group_wait"])
 
 
 def test_rule_table_matches_spec_8():
@@ -162,7 +151,7 @@ def test_vmalert_eval_interval_and_limits():
 
 def test_vmalert_flags():
     cmd = services()["vmalert"]["command"]
-    for flag in ("-datasource.url=http://victoriametrics:8428", "-notifier.url=http://alertmanager:9093",
+    for flag in ("-datasource.url=http://skmon-prod_victoriametrics:8428", "-notifier.url=http://skmon-prod_alertmanager:9093",
                  "-rule=/etc/vmalert/rules/*.yml", "-external.label=estate=example"):
         assert flag in cmd, flag
 
@@ -188,11 +177,10 @@ def test_vmalert_is_internal_on_data_node_and_parks():
 def test_vmalert_is_scraped():
     scrape = ctx_with_configs()["skmon_configs"]["vm-scrape"]
     jobs = {j["job_name"]: j for j in yaml.safe_load(scrape)["scrape_configs"]}
-    assert jobs["vmalert"]["static_configs"][0]["targets"] == ["vmalert:8880"]
+    assert jobs["vmalert"]["static_configs"][0]["targets"] == ["skmon-prod_vmalert:8880"]
     assert jobs["vmalert"]["scrape_interval"] == "30s"
 
 
-@pytest.mark.xfail(strict=True, reason="Task 11")
 def test_storage_timing_budget_within_60s():
     # spec 8.1: scrape + eval + for + group_wait + delivery
     assert 15 + 15 + dur(rule("NfsMountUnresponsive")["for"]) + group_wait("storage", "critical") + 2 <= 60
@@ -220,7 +208,7 @@ def test_loki_rules_labels():
 def test_loki_ruler_sends_to_alertmanager_from_a_swarm_config():
     doc = yaml.safe_load(render(CFG / "loki-config.yml.j2"))
     ruler = doc["ruler"]
-    assert ruler["alertmanager_url"] == "http://alertmanager:9093" and ruler["enable_api"] is True
+    assert ruler["alertmanager_url"] == "http://skmon-prod_alertmanager:9093" and ruler["enable_api"] is True
     assert ruler["storage"] == {"type": "local", "local": {"directory": "/etc/loki/rules"}}
     assert ruler["rule_path"].startswith("/loki/")
     loki = services()["loki"]
