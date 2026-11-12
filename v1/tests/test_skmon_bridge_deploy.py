@@ -211,7 +211,7 @@ def test_sk_alert_not_vendored():
 
 def test_secrets_are_hash_named_and_roll_the_bridge_on_change():
     a, b = compose()["secrets"], compose(ALERT_SECRETS={"TELEGRAM_BOT_TOKEN": "another-fake"})["secrets"]
-    assert set(a) == {"alert_env", "alert_secret"}
+    assert set(a) == {"alert_env", "alert_secret", "pve_config"}
     assert all(re.fullmatch(r"skmon_prod_alert_(env|secret)_[0-9a-f]{12}", c["name"]) for c in a.values())
     assert a["alert_env"]["file"] == "/var/data/config/skmon-prod/secrets/alert_env"
     assert a["alert_env"]["name"] == b["alert_env"]["name"] and a["alert_secret"]["name"] != b["alert_secret"]["name"]

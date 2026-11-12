@@ -160,3 +160,18 @@
       skmon.HEALTHZ_ALLOW is required (a list of IPv4 addresses or CIDRs of the outside monitor
       that polls the bridge's /healthz on DATA_NODE).
   when: not skmon_parked
+
+# --- optional Proxmox exporter (R54) ---
+
+- name: Require the Proxmox API token and targets when PVE is enabled
+  # Names only in the message: the token secret must never be printed.
+  assert:
+    that:
+      - skmon.PVE_TOKEN_ID | default('', true) | length > 0
+      - skmon.PVE_TOKEN_SECRET | default('', true) | length > 0
+      - (skmon.PVE | default({}, true)).targets | default([], true) | length > 0
+    fail_msg: >-
+      skmon.PVE.enabled is true, so skmon.PVE_TOKEN_ID (user@realm!tokenname),
+      skmon.PVE_TOKEN_SECRET and a non-empty skmon.PVE.targets (the Proxmox hostnames to
+      scrape) are all required. Set them in the skmon vault, or set skmon.PVE.enabled to false.
+  when: (skmon.PVE | default({}, true)).enabled | default(false) | bool

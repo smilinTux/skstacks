@@ -1,0 +1,61 @@
+# vmalert rules, class swarm (spec 8) from skswarm-exporter's series (spec 7.4). The other
+# alerts built on those series live in their own class files: SwarmNodeNotReady in node.yml,
+# AgentMissing in meta.yml, ContainerCrashloop in container.yml. A parked service
+# (desired 0, running 0) alerts on nothing.
+groups:
+  - name: skmon-swarm
+    rules:
+      - alert: TasksStuckPreparing
+        expr: skswarm_task_state_age_seconds{state=~"preparing|starting|pending"} > 120
+        labels:
+          severity: critical
+          class: swarm
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "A task of {{ $labels.service }} has been {{ $labels.state }} for over 2 minutes."
+{% endraw %}
+          runbook: "Read docker service ps --no-trunc for the service: a stuck task is usually an image pull, a mount that does not answer or a placement constraint nothing meets."
+
+      - alert: SwarmApiUnresponsive
+        expr: skswarm_up == 0 or skswarm_api_duration_seconds > 5
+        for: 30s
+        labels:
+          severity: critical
+          class: swarm
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+          summary: "The Docker Swarm API fails or answers slowly, so Swarm state is not being observed."
+          runbook: "Check the Docker daemon and the swarm quorum on the managers, then the skmon socket proxy and skswarm-exporter services."
+
+      # One alert, two severities. The warning excludes a service with no running replica at
+      # all, so a fully down service raises the critical alone. Both expressions return the
+      # running series, so the warning and the critical carry the same labels.
+      - alert: ServiceBelowReplicas
+        expr: >-
+          skswarm_service_replicas_running > 0
+          and on(stack, service) (skswarm_service_replicas_desired > on(stack, service) skswarm_service_replicas_running)
+        for: 2m
+        labels:
+          severity: warning
+          class: swarm
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "Service {{ $labels.service }} runs fewer replicas than desired ({{ $value }} running)."
+{% endraw %}
+          runbook: "Read docker service ps --no-trunc for the service to see why its remaining tasks are not running."
+      - alert: ServiceBelowReplicas
+        expr: >-
+          skswarm_service_replicas_running == 0
+          and on(stack, service) (skswarm_service_replicas_desired > 0)
+        for: 2m
+        labels:
+          severity: critical
+          class: swarm
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "Service {{ $labels.service }} has no running replica."
+{% endraw %}
+          runbook: "Read docker service ps --no-trunc for the service to see why no task runs, then its logs."

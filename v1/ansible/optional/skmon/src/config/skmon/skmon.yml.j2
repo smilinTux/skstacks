@@ -36,6 +36,10 @@ name: "skmon_{{ env }}_{{ key }}_{{ (skmon_secrets[key] | hash('sha256'))[:12] }
 {% set healthz_port = skmon.HEALTHZ_PORT | default(9095) %}
 {% set data = skmon_data_path | default('') %}
 {% set node = skmon_data_node | default('') %}
+{% set pve = skmon.PVE | default({}, true) %}
+{% set pve_on = (pve.enabled | default(false) | bool) if pve is mapping else false %}
+{% set pve_uid = skmon.PVE_UID | default(65534) %}
+{% set swarm_uid = skmon.SKSWARM_UID | default(65534) %}
 
 services:
   victoriametrics:
@@ -180,7 +184,7 @@ services:
       - '-external.label=estate={{ skmon.ESTATE }}'
       - '-httpListenAddr=:8880'
     configs:
-{% for cls in ['node', 'storage', 'http', 'cert', 'capacity', 'container', 'meta'] %}
+{% for cls in ['node', 'storage', 'http', 'cert', 'capacity', 'container', 'swarm', 'meta'] %}
       - source: rules-{{ cls }}
         target: /etc/vmalert/rules/{{ cls }}.yml
 {% endfor %}
@@ -312,6 +316,104 @@ services:
           cpus: '{{ skmon.BRIDGE_CPU_RESERVATION | default("0.05") }}'
           memory: {{ skmon.BRIDGE_MEMORY_RESERVATION | default("16M") }}
 
+  # Swarm API access for skswarm-exporter: GET on services, tasks, nodes and info only
+  # (POST=0 and every other section left at the image default of denied). The docker socket
+  # is mounted read-only (that limits the filesystem object, the proxy's own filtering is what
+  # limits the API) and the proxy joins the internal docker-api overlay only: nothing but the
+  # exporter can reach it, and it publishes no port. Managers only: workers have no Swarm API.
+  socket-proxy:
+    image: {{ skmon.SOCKET_PROXY_IMAGE | default('tecnativa/docker-socket-proxy:v0.5.0@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459') }}
+    environment:
+      - SERVICES=1
+      - TASKS=1
+      - NODES=1
+      - INFO=1
+      - POST=0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - docker-api
+    deploy:
+      mode: replicated
+      replicas: {{ replicas }}
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: '{{ skmon.SOCKET_PROXY_CPU_LIMIT | default("0.05") }}'
+          memory: {{ skmon.SOCKET_PROXY_MEMORY_LIMIT | default("64M") }}
+        reservations:
+          cpus: '{{ skmon.SOCKET_PROXY_CPU_RESERVATION | default("0.05") }}'
+          memory: {{ skmon.SOCKET_PROXY_MEMORY_RESERVATION | default("16M") }}
+
+  # Desired-versus-running Swarm state as metrics (spec 7.4). The script is a Swarm config on
+  # a pinned Python base image. It joins docker-api (to reach the proxy) and the skmon overlay
+  # (VictoriaMetrics scrapes it on 9323), and publishes no port.
+  skswarm-exporter:
+    image: {{ skmon.SKSWARM_EXPORTER_IMAGE | default('python:3.13.18-slim-bookworm@sha256:a5a7017efc5969e00ae2b91c8eb0631049a569652aa4ffc4501769049ae45c72') }}
+    command: ["python3", "/opt/skmon/skswarm_exporter.py"]
+    user: "{{ swarm_uid }}:{{ swarm_uid }}"
+    environment:
+      - SKSWARM_DOCKER_HOST=http://skmon-{{ env }}_socket-proxy:2375
+      - SKSWARM_POLL_S=15
+      - SKSWARM_PORT=9323
+      - SKSWARM_TIMEOUT_S=10
+    configs:
+      - source: skswarm_exporter.py
+        target: /opt/skmon/skswarm_exporter.py
+    networks:
+      - docker-api
+      - skmon-{{ env }}
+    depends_on:
+      - socket-proxy
+    deploy:
+      mode: replicated
+      replicas: {{ replicas }}
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: '{{ skmon.SKSWARM_EXPORTER_CPU_LIMIT | default("0.05") }}'
+          memory: {{ skmon.SKSWARM_EXPORTER_MEMORY_LIMIT | default("64M") }}
+        reservations:
+          cpus: '{{ skmon.SKSWARM_EXPORTER_CPU_RESERVATION | default("0.05") }}'
+          memory: {{ skmon.SKSWARM_EXPORTER_MEMORY_RESERVATION | default("16M") }}
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9323/metrics', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Optional Proxmox exporter (PVE.enabled). It reads its API token from pve.yml, a Docker
+  # secret (never env or argv), and is scraped through /pve with each PVE.targets host as the
+  # target parameter. Always present in the stack so a toggle is one redeploy; replicas 0 when
+  # PVE is off or skmon is parked.
+  pve-exporter:
+    image: {{ skmon.PVE_EXPORTER_IMAGE | default('prompve/prometheus-pve-exporter:3.10.2@sha256:7ed5dbff1b145e62e94003cb78d70226d9a7c4d4d1c928b3c7daed21ae9a84d8') }}
+    command: ["--config.file=/etc/prometheus/pve.yml"]
+    user: "{{ pve_uid }}:{{ pve_uid }}"
+    secrets:
+      - source: pve_config
+        target: /etc/prometheus/pve.yml
+        uid: "{{ pve_uid }}"
+        gid: "{{ pve_uid }}"
+        mode: 0400
+    networks:
+      - skmon-{{ env }}
+    deploy:
+      mode: replicated
+      replicas: {{ 1 if (pve_on and not (skmon_parked | default(false))) else 0 }}
+      resources:
+        limits:
+          cpus: '{{ skmon.PVE_EXPORTER_CPU_LIMIT | default("0.1") }}'
+          memory: {{ skmon.PVE_EXPORTER_MEMORY_LIMIT | default("128M") }}
+        reservations:
+          cpus: '{{ skmon.PVE_EXPORTER_CPU_RESERVATION | default("0.05") }}'
+          memory: {{ skmon.PVE_EXPORTER_MEMORY_RESERVATION | default("32M") }}
+
 {% if skmon_secrets | default({}) %}
 secrets:
 {% for key in skmon_secrets %}
@@ -333,3 +435,9 @@ networks:
     external: true
   cloud-public-{{ env }}:
     external: true
+  # Created by the stack deploy (skmon-<env>_docker-api), not by the shared network task:
+  # internal, so nothing on it has a route out, and only the socket proxy and
+  # skswarm-exporter attach.
+  docker-api:
+    driver: overlay
+    internal: true

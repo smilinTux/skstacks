@@ -40,3 +40,18 @@ groups:
           summary: "The skmon data filesystem {{ $labels.mountpoint }} on {{ $labels.node }} is above 85 % used."
 {% endraw %}
           runbook: "Lower METRICS_RETENTION or LOGS_RETENTION, or give DATA_PATH more space, before VictoriaMetrics and Loki stop writing."
+
+      # A swarm node whose agent does not report. The agent labels its series with the
+      # inventory name (node), which the guard requires to equal the Swarm hostname.
+      - alert: AgentMissing
+        expr: skswarm_node_info unless on(node) up{job="alloy-unix"}
+        for: 5m
+        labels:
+          severity: warning
+          class: meta
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "Swarm node {{ $labels.node }} has no skmon agent reporting host metrics."
+{% endraw %}
+          runbook: "Run the skmon agent play for the node, then check that its agent container or systemd unit is running and that the node label is its Swarm hostname."

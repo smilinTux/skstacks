@@ -41,11 +41,11 @@ CONFIG_TEMPLATES = {
     "vm-scrape": "vm-scrape.yml.j2",
     "loki": "loki-config.yml.j2",
     "alertmanager": "alertmanager-config.yml.j2",
-    **{f"rules-{c}": f"rules/{c}.yml.j2" for c in ("node", "storage", "http", "cert", "capacity", "container", "meta")},
+    **{f"rules-{c}": f"rules/{c}.yml.j2" for c in ("node", "storage", "http", "cert", "capacity", "container", "swarm", "meta")},
     "loki-rules": "loki-rules/storage.yml.j2",
 }
 # Secret templates delivered as hash-named Docker secrets: key -> template file.
-SECRET_TEMPLATES = {"alert_env": "alert.env.j2", "alert_secret": "alert.secret.j2"}
+SECRET_TEMPLATES = {"alert_env": "alert.env.j2", "alert_secret": "alert.secret.j2", "pve_config": "pve.yml.j2"}
 
 # vmalert rule classes (one rules/<class>.yml.j2 each, mounted at /etc/vmalert/rules/<class>.yml).
 RULE_CLASSES = tuple(k.removeprefix("rules-") for k in CONFIG_TEMPLATES if k.startswith("rules-"))
@@ -93,6 +93,7 @@ def ctx_with_configs(env: str = "prod", **skmon) -> dict:
     configs = {key: render(CFG / name, env=env, extra_ctx=extra, **skmon) for key, name in CONFIG_TEMPLATES.items()}
     # The bridge script and the sk-alert stub are files the plays read with lookup('file'), not templates.
     configs["skmon_bridge.py"] = (SRC / "skmon/bridge/skmon_bridge.py").read_text()
+    configs["skswarm_exporter.py"] = (SWARM_DIR / "skswarm_exporter.py").read_text()
     configs["sk-alert"] = (ROLE.parents[2] / "tests/fixtures/skmon/fake_sk_alert").read_text()
     secrets = {key: render(CFG / name, env=env, **skmon) for key, name in SECRET_TEMPLATES.items()}
     return {"skmon_configs": configs, "skmon_secrets": secrets, **extra}

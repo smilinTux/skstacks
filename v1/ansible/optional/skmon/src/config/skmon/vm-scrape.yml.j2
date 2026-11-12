@@ -175,6 +175,33 @@ scrape_configs:
       - targets: ['skmon-{{ env }}_bridge:8080']
         labels:
           estate: '{{ estate }}'
+  # Desired-versus-running Swarm state (spec 7.4).
+  - job_name: skswarm
+    scrape_interval: {{ fast }}
+    static_configs:
+      - targets: ['skmon-{{ env }}_skswarm-exporter:9323']
+        labels:
+          estate: '{{ estate }}'
+{% set pve = skmon.PVE | default({}, true) %}
+{% if pve is mapping and (pve.enabled | default(false) | bool) %}
+
+  # Proxmox: the exporter is multi-target, so each PVE.targets host is the `target` URL
+  # parameter of one scrape through /pve (the standard relabeling, as for alloy-blackbox).
+  - job_name: pve
+    scrape_interval: {{ normal }}
+    metrics_path: /pve
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__address__]
+        target_label: instance
+      - target_label: __address__
+        replacement: 'skmon-{{ env }}_pve-exporter:9221'
+    static_configs:
+      - targets: {{ pve.targets | default([]) | to_json }}
+        labels:
+          estate: '{{ estate }}'
+{% endif %}
 
   # Traefik: Swarm DNS service discovery on the metrics entrypoint, as the estate
   # scraped it before v2. Name the Traefik stack service with skmon.TRAEFIK_SCRAPE_NAME

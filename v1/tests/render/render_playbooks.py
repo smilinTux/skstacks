@@ -120,7 +120,9 @@ FAKE_STDOUT = {
     "actual_cert_dir": "/var/data/runtime/skfenceha-dev/certs/mail.example.test",
     "skfenceha_logrotate_nodes": "render-node-1",
     "skfence_logrotate_nodes": "render-node-1",
-    "skmon_node_ls": "node-1.render.example.test",
+    # DATA_NODE, plus the gate's own inventory host (tasks/agent_guards.yml: a swarm host's
+    # inventory name must be a Swarm hostname).
+    "skmon_node_ls": "node-1.render.example.test\nlocalhost",
     "garage_node": "render-node-1",
     "garage_replicas": "1/1",
     # skpayment: the controller-side app checkout (a fixture stand-in)
@@ -176,7 +178,7 @@ def fake_result(register: str) -> dict:
     out = FAKE_STDOUT.get(register, "")
     return {
         "changed": False, "failed": False, "skipped": False, "rc": 0,
-        "stdout": out, "stdout_lines": [out] if out else [],
+        "stdout": out, "stdout_lines": out.splitlines(),
         "stderr": "", "stderr_lines": [], "msg": "", "content": FAKE_CONTENT.get(register, ""),
         "exists": False, "stat": {"exists": False}, "results": [],
     }

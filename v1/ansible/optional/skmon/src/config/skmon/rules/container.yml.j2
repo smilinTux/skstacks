@@ -35,3 +35,16 @@ groups:
           summary: "Container metrics of {{ $labels.node }} cannot be scraped."
 {% endraw %}
           runbook: "Check that the Docker daemon on the host answers (docker info) and that the agent can read the Docker socket."
+
+      # increase_prometheus, not increase: see rules/container.yml.j2 (OomKill).
+      - alert: ContainerCrashloop
+        expr: increase_prometheus(skswarm_service_task_failures_total[10m]) >= 3
+        labels:
+          severity: warning
+          class: container
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "Service {{ $labels.service }} had {{ $value }} failed tasks in 10 minutes."
+{% endraw %}
+          runbook: "Read the logs of the failed tasks (docker service logs) and the exit code in docker service ps --no-trunc."

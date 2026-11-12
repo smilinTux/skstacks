@@ -16,6 +16,9 @@ COMPOSE_KNOBS = {
     "LOKI_IMAGE": "loki",
     "ALERTMANAGER_IMAGE": "alertmanager",
     "VMALERT_IMAGE": "vmalert",
+    "SOCKET_PROXY_IMAGE": "socket_proxy",
+    "SKSWARM_EXPORTER_IMAGE": "python_slim",
+    "PVE_EXPORTER_IMAGE": "pve_exporter",
 }
 
 

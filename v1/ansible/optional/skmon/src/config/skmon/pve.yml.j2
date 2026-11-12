@@ -1,0 +1,11 @@
+# prometheus-pve-exporter config (rendered into a Docker secret, mounted at
+# /etc/prometheus/pve.yml). Always rendered, with empty values when PVE is off, so the
+# stack stays valid at replicas 0. PVE_TOKEN_ID is "user@realm!tokenname" (the form the
+# Proxmox UI shows); PVE_TOKEN_SECRET is the token's value.
+{% set tid = skmon.PVE_TOKEN_ID | default('', true) | string %}
+{% set pve = skmon.PVE | default({}, true) %}
+default:
+  user: {{ (tid.split('!')[0]) | to_json }}
+  token_name: {{ (tid.split('!', 1)[1] if '!' in tid else '') | to_json }}
+  token_value: {{ skmon.PVE_TOKEN_SECRET | default('', true) | string | to_json }}
+  verify_ssl: {{ 'true' if (pve is not mapping or (pve.verify_ssl | default(true) | bool)) else 'false' }}

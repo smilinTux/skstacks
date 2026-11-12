@@ -245,12 +245,15 @@
           rules-cert: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/rules/cert.yml.j2') }}"
           rules-capacity: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/rules/capacity.yml.j2') }}"
           rules-container: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/rules/container.yml.j2') }}"
+          rules-swarm: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/rules/swarm.yml.j2') }}"
           rules-meta: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/rules/meta.yml.j2') }}"
           loki-rules: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/loki-rules/storage.yml.j2') }}"
           # The bridge script from this repository and the estate's sk-alert from the controller
           # (SKALERT_SCRIPT_SRC, hash-checked by tasks/guards.yml). rstrip=False keeps the bytes exact.
           skmon_bridge.py: "{{ lookup('ansible.builtin.file', playbook_dir + '/src/skmon/bridge/skmon_bridge.py', rstrip=False) }}"
           sk-alert: "{{ lookup('ansible.builtin.file', skmon_skalert_src, rstrip=False) }}"
+          # The Swarm exporter script, delivered like the bridge script.
+          skswarm_exporter.py: "{{ lookup('ansible.builtin.file', playbook_dir + '/src/skmon/swarm_exporter/skswarm_exporter.py', rstrip=False) }}"
       no_log: true
       tags:
         - config
@@ -270,12 +273,15 @@
         - config
 
     - name: Render the {{ app }} Docker secret contents
-      # sk-alert's alert.env (ALERT_ROUTING) and alert.secret (ALERT_SECRETS). Like the configs,
+      # sk-alert's alert.env (ALERT_ROUTING) and alert.secret (ALERT_SECRETS), and pve.yml. Like the configs,
       # the compose template names each secret after the sha256 of its content.
       set_fact:
         skmon_secrets:
           alert_env: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/alert.env.j2') }}"
           alert_secret: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/alert.secret.j2') }}"
+          # prometheus-pve-exporter's config with the API token. Rendered with empty values when
+          # PVE is off, so the stack stays valid at replicas 0.
+          pve_config: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/pve.yml.j2') }}"
       no_log: true
       tags:
         - config

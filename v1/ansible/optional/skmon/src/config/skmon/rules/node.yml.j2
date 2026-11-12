@@ -18,3 +18,18 @@ groups:
           summary: "Node {{ $labels.node }} is down: its agent has not answered a scrape for 30 s."
 {% endraw %}
           runbook: "Check that the host is up and reachable on the agent port, then that the skmon-{{ env }}-alloy agent is running on it."
+
+      # node is the Swarm hostname, which tasks/agent_guards.yml requires to equal the
+      # inventory name that labels the agent's own series.
+      - alert: SwarmNodeNotReady
+        expr: skswarm_node_info{state!="ready"} or skswarm_node_info{availability="drain"}
+        for: 30s
+        labels:
+          severity: critical
+          class: node
+          estate: "{{ skmon.ESTATE }}"
+        annotations:
+{% raw %}
+          summary: "Swarm node {{ $labels.node }} is not ready or is drained (state {{ $labels.state }}, availability {{ $labels.availability }})."
+{% endraw %}
+          runbook: "Check that the Docker daemon on the node is running and that it still reaches the managers, or set it back to active if the drain was a mistake."

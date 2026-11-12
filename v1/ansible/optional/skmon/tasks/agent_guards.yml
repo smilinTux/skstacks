@@ -20,3 +20,27 @@
          | map(attribute='node') | join(', ') }}.
       Set skmon.AGENT_LISTEN_ADDR (a map of host to private address) for them: the
       inventory address is used otherwise, and the agent must not listen publicly.
+
+# AgentMissing and the node inhibitions join the agents' series (labelled with the inventory
+# name) to skswarm-exporter's series (labelled with the Swarm hostname) on `node`. A swarm
+# host whose inventory name differs from its Swarm hostname would split into two nodes.
+# skmon_extra_hosts are not Swarm nodes and are exempt.
+- name: Require every swarm agent host's inventory name to be its Swarm hostname
+  assert:
+    that:
+      - >-
+        skmon_agent_host_list
+        | select('in', (groups['swarm_managers'] | default([])) + (groups['swarm_workers'] | default([])))
+        | reject('in', groups['skmon_extra_hosts'] | default([]))
+        | reject('in', skmon_swarm_nodes)
+        | list | length == 0
+    fail_msg: >-
+      The inventory name of swarm host(s)
+      {{ skmon_agent_host_list
+         | select('in', (groups['swarm_managers'] | default([])) + (groups['swarm_workers'] | default([])))
+         | reject('in', groups['skmon_extra_hosts'] | default([]))
+         | reject('in', skmon_swarm_nodes) | join(', ') }}
+      is not a Swarm node hostname (docker node ls: {{ skmon_swarm_nodes | join(', ') }}). The agent's
+      `node` label is the inventory name and must equal the Swarm hostname, because AgentMissing
+      and the node inhibitions join the agents' series to skswarm-exporter's on `node`. Rename the
+      inventory host to its Swarm hostname (keep the address in ansible_host).

@@ -21,10 +21,13 @@ TABLE = {"NodeDown": ("30s", "critical", "node"), "ZfsPoolNotOnline": ("15s", "c
          "StorageHostStalled": ("30s", "critical", "storage"), "AuthentikDown": ("1m", "critical", "http"),
          "MemoryPressure": ("2m", "warning", "capacity"), "OomKill": ("0s", "warning", "container"),
          "CadvisorScrapeFailing": ("2m", "warning", "container"),
+         "SwarmNodeNotReady": ("30s", "critical", "node"), "AgentMissing": ("5m", "warning", "meta"),
+         "TasksStuckPreparing": ("0s", "critical", "swarm"), "SwarmApiUnresponsive": ("30s", "critical", "swarm"),
+         "ContainerCrashloop": ("0s", "warning", "container"),
          "AlertDeliveryFailing": ("5m", "critical", "meta"), "MonitorDiskFilling": ("10m", "warning", "meta")}
 
-# Every alert this task ships (the swarm class comes with skswarm-exporter).
-ALERTS = set(TABLE) | {"HttpEndpointDown", "CertExpiringSoon", "DiskFilling", "Watchdog"}
+# Every alert shipped.
+ALERTS = set(TABLE) | {"HttpEndpointDown", "CertExpiringSoon", "DiskFilling", "Watchdog", "ServiceBelowReplicas"}
 
 
 def dur(text: str) -> int:
@@ -46,7 +49,7 @@ def test_rule_table_matches_spec_8():
 def test_every_shipped_alert_exists_once_per_severity():
     names = [r["alert"] for r in all_rules()]
     assert set(names) == ALERTS
-    assert {n for n in names if names.count(n) > 1} == {"CertExpiringSoon", "DiskFilling"}
+    assert {n for n in names if names.count(n) > 1} == {"CertExpiringSoon", "DiskFilling", "ServiceBelowReplicas"}
 
 
 def test_every_rule_has_runbook_estate_and_class():
