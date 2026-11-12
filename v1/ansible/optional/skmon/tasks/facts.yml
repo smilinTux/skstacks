@@ -3,6 +3,7 @@
 # play (the deploy plays, the agent play) can import this file on its own.
 #   skmon_data_node  host that holds the local data (DATA_NODE, required by guards.yml)
 #   skmon_data_path  normalized local data root: repeated slashes collapsed, no trailing slash
+#   skmon_dashboards_unwanted  shipped dashboard paths to prune (proxmox.json unless PVE is on)
 #   skmon_parked     true when skmon.replicas is 0 (also the string "0"): every workload is parked
 #   skmon_skalert_src  controller path of the estate's sk-alert script (SKALERT_SCRIPT_SRC)
 - name: Derive the skmon data node
@@ -21,6 +22,12 @@
     # PVE.enabled as a real boolean (the string "false" is off), so templates that are also
     # rendered by plain Jinja in the framework tests (deploy.j2) need no Ansible filter.
     skmon_pve_enabled: "{{ ((skmon.PVE | default({}, true)).enabled | default(false) | bool) if (skmon.PVE | default({}, true)) is mapping else false }}"
+
+# Shipped dashboards the deploy must not leave on the data node, as paths relative to dashboards/.
+# The Proxmox board is wanted only when PVE is on; the prune after the copy removes it otherwise.
+- name: Derive the dashboards this deploy does not want
+  set_fact:
+    skmon_dashboards_unwanted: "{{ [] if skmon_pve_enabled else ['infrastructure/proxmox.json'] }}"
 
 # SKALERT_SCRIPT_SRC is read on the controller. A leading ~ is expanded and an absolute path is
 # used as given. A relative path resolves against the directory of the selected vault file

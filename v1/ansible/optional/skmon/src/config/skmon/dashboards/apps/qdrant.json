@@ -11,7 +11,11 @@
   "refresh": "30s",
   "schemaVersion": 27,
   "style": "dark",
-  "tags": ["qdrant", "skvector", "vector-db"],
+  "tags": [
+    "qdrant",
+    "skvector",
+    "vector-db"
+  ],
   "templating": {
     "list": []
   },
@@ -26,4 +30,3 @@
   "version": 0,
   "description": "This is a placeholder dashboard. To enable:\n1. Check if Qdrant exposes Prometheus metrics endpoint\n2. Uncomment qdrant job in prometheus.yml.j2 if metrics available\n3. Create custom dashboard using Qdrant metrics\n4. Recommended metrics (if available):\n   - Collection stats: qdrant_collections_*\n   - Query performance: qdrant_query_*\n   - Storage usage: qdrant_storage_*"
 }
-

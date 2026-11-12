@@ -371,7 +371,7 @@
           {%- set src = playbook_dir ~ '/src/config/' ~ app ~ '/dashboards/' -%}
           {%- set dst = skmon_data_path ~ '/grafana-provisioning/dashboards/' -%}
           {%- set wanted = [] -%}
-          {%- for f in skmon_dashboards_shipped.get('files', []) -%}{%- if wanted.append(dst ~ f.path[src | length:]) -%}{%- endif -%}{%- endfor -%}
+          {%- for f in skmon_dashboards_shipped.get('files', []) -%}{%- if f.path[src | length:] not in (skmon_dashboards_unwanted | default([])) and wanted.append(dst ~ f.path[src | length:]) -%}{%- endif -%}{%- endfor -%}
           {{ skmon_dashboards_present.get('files', []) | map(attribute='path') | reject('in', wanted) | list }}
       tags:
         - dashboards
