@@ -108,12 +108,18 @@
           'credential': {'name': 'skpatch-hosts ' ~ (skpatch_hosts.PROVISION_USER | default('skpatch-ro', true)),
                          'username': skpatch_hosts.PROVISION_USER | default('skpatch-ro', true),
                          'private_key': skp_reg_private_key},
+          'sync_credential': skpatch_hosts.SYNC_CREDENTIAL | default(false) | bool,
+          'upgrade_mode': skpatch_hosts.UPGRADE_MODE | default('', true) | string,
+          'notifications': skpatch_hosts.NOTIFICATIONS | default([], true),
+          'schedules': skpatch_hosts_schedules | default(skpatch_hosts.SCHEDULES | default([], true), true),
           'systems': skp_reg_systems | default([])} | to_json }}
   delegate_to: "{{ skp_reg_node }}"
   connection: "{{ hostvars[skp_reg_node].ansible_connection | default('ssh') }}"
   become: true
   register: skp_reg_result
-  changed_when: "': created' in skp_reg_result.stdout"
+  changed_when: >-
+    ': created' in skp_reg_result.stdout or ': updated' in skp_reg_result.stdout
+    or ': key synced' in skp_reg_result.stdout or 'upgrade mode set' in skp_reg_result.stdout
   failed_when: false
   no_log: true  # stdin carries the private key
 

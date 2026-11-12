@@ -24,9 +24,15 @@ networks:
    unset knobs still render byte-identical to the v2.26.3 baseline. The
    condition is inlined in each {% if %} guard, never a {% set %}, so this
    0644 file is never treated as carrying a secret value. #}
+{# Postgres 18+ images moved PGDATA to /var/lib/postgresql/<major>/docker and declare VOLUME
+   /var/lib/postgresql, so the data bind mount targets the PARENT for major 18 and up. A pinned
+   older image keeps the old target. Mounting /var/lib/postgresql/data under an 18 image would
+   leave the real data dir on an anonymous volume. The default here must stay in step with the
+   image default below (test_postgres18_guard.py). #}
+{% set _pg_data_mount = '/var/lib/postgresql' if ((sksso.POSTGRES_IMAGE | default('postgres:18')).split('@')[0].split('/')[-1].split(':')[-1].lstrip('pg').split('.')[0].split('-')[0] | int(0)) >= 18 else '/var/lib/postgresql/data' %}
 services:
   postgres:
-    image: postgres:16.15
+    image: {{ sksso.POSTGRES_IMAGE | default('postgres:18.6@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42') }}
     env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}.env
     environment:
       - PGTEMP=/var/lib/postgresql/data/tmp
@@ -46,7 +52,7 @@ services:
         condition: any
         delay: 10s
     volumes:
-      - {{ sksso.POSTGRES_DATA_PATH | default('/var/data/runtime/' + app + '-' + env + '/postgres', true) }}:/var/lib/postgresql/data
+      - {{ sksso.POSTGRES_DATA_PATH | default('/var/data/runtime/' + app + '-' + env + '/postgres', true) }}:{{ _pg_data_mount }}
       - /etc/localtime:/etc/localtime:ro
     networks:
       - {{ app }}-{{ env }}
@@ -63,7 +69,7 @@ services:
       start_period: 40s
 
   postgres-db-backup:
-    image: postgres:16.15
+    image: {{ sksso.POSTGRES_BACKUP_IMAGE | default('postgres:18.6@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42') }}
     env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}-backup.env
     environment:
       - PGTEMP=/dump/tmp
@@ -119,7 +125,7 @@ services:
       - {{ app }}-{{ env }}
 
   redis:
-    image: docker.io/library/redis:7.4.12
+    image: {{ sksso.REDIS_IMAGE | default('docker.io/library/redis:8.10.3@sha256:1f88291b4c57bdf249f02eb085a8669889b2d2954e91d4de5118a5da6b78dd53') }}
     env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}.env
     command: redis-server --dir /data --save 60 1 --loglevel warning
     healthcheck:

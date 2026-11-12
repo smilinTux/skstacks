@@ -122,8 +122,10 @@ services:
           cpus: '{{ skmon.LOKI_CPU_RESERVATION | default("0.1") }}'
           memory: {{ skmon.LOKI_MEMORY_RESERVATION | default("256M") }}
 
+  # Promtail is EOL upstream (2026-03-02): future work is a move to Grafana Alloy
+  # (`alloy convert --source-format=promtail` converts this config). 3.x needs Loki 3.x.
   promtail:
-    image: grafana/promtail:2.9.17
+    image: grafana/promtail:3.6.11@sha256:a761cb834cfaeee29745440d4884d6748f0a08d8f68928db1d707018c1dcfbe9
     command: -config.file=/etc/promtail/promtail-config.yaml
     volumes:
       - /var/data/config/skmon-{{ env }}/promtail:/etc/promtail

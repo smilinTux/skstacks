@@ -48,6 +48,9 @@ class Dashboard:
         self.credentials: list[dict] = []
         self.systems: list[dict] = []
         self.calls: list[tuple[str, str]] = []
+        self.notifications: list[dict] = []
+        self.schedules: list[dict] = []
+        self.modes: dict[int, str] = {}
 
     def session_user(self, headers) -> dict | None:
         if headers.get("Authorization", "").startswith("Bearer "):
@@ -116,6 +119,31 @@ def _handler(dash: Dashboard):
                 s = {"id": len(dash.systems) + 1, **body}
                 dash.systems.append(s)
                 return self._send(201, {"id": s["id"]})
+            if method == "PUT" and self.path.startswith("/api/credentials/"):
+                cid = int(self.path.rsplit("/", 1)[1])
+                c = next(c for c in dash.credentials if c["id"] == cid)
+                assert body["name"] == c["name"] and body["payload"]["privateKey"]
+                c["payload"] = body["payload"]
+                return self._send(200, {"ok": True})
+            if method == "PUT" and self.path.endswith("/upgrade-mode"):
+                sid = int(self.path.split("/")[3])
+                s = next(s for s in dash.systems if s["id"] == sid)
+                s["pkgManagerConfigs"] = {"apt": {"defaultUpgradeMode": "full-upgrade" if body["fullUpgrade"] else "upgrade"}}
+                return self._send(200, {"status": "ok"})
+            for coll, key in (("notifications", "notifications"), ("schedules", "schedules")):
+                items = getattr(dash, coll)
+                if method == "GET" and self.path == f"/api/{coll}":
+                    # secrets come back masked, as the app does
+                    masked = [{**i, "config": {k: ("(stored)" if "assword" in k else v) for k, v in i.get("config", {}).items()}} for i in items]
+                    return self._send(200, {key: masked})
+                if method == "POST" and self.path == f"/api/{coll}":
+                    i = {"id": len(items) + 1, **body}
+                    items.append(i)
+                    return self._send(201, {"id": i["id"]})
+                if method == "PUT" and self.path.startswith(f"/api/{coll}/"):
+                    iid = int(self.path.rsplit("/", 1)[1])
+                    next(i for i in items if i["id"] == iid).update(body)
+                    return self._send(200, {"ok": True})
             return self._send(404, {"error": "not found"})
 
         def do_GET(self):
@@ -223,3 +251,92 @@ def test_needs_a_credential(dash):
 def test_unknown_credential_id_fails(dash):
     out = _run(dash, _cfg(credential_id=7))
     assert out.returncode != 0 and "no sshKey credential with id 7" in out.stderr
+
+
+def _detected(dash):
+    for s in dash.systems:
+        s.setdefault("pkgManager", "apt")
+
+
+def test_sync_credential_rewrites_the_key_of_an_existing_credential(dash):
+    dash.credentials.append({"id": 1, "name": "skpatch-ro (estate)", "payload": {"privateKey": "old"}})
+    out = _run(dash, _cfg(credential_id=1, sync_credential=True))
+    assert out.returncode == 0, out.stderr
+    assert "credential skpatch-ro (estate): key synced from this run (id 1)" in out.stdout
+    assert dash.credentials[0]["payload"]["privateKey"] == KEY
+    assert KEY not in out.stdout + out.stderr
+    # off by default: a plain run never touches the key
+    dash.credentials[0]["payload"]["privateKey"] = "changed-by-hand"
+    assert _run(dash, _cfg(credential_id=1)).returncode == 0
+    assert dash.credentials[0]["payload"]["privateKey"] == "changed-by-hand"
+
+
+def test_upgrade_mode_waits_for_detection_then_converges(dash):
+    first = _run(dash, _cfg(upgrade_mode="full-upgrade"))
+    assert first.returncode == 0, first.stderr
+    assert "wkr-1: upgrade mode pending" in first.stdout
+    assert not any(p.endswith("/upgrade-mode") for _, p in dash.calls)
+    _detected(dash)
+    second = _run(dash, _cfg(upgrade_mode="full-upgrade",
+                             systems=[{"name": "wkr-1", "hostname": "10.0.0.21", "port": 22},
+                                      {"name": "mgr-1", "hostname": "10.0.0.11", "port": 22, "upgrade_mode": "upgrade"}]))
+    assert second.returncode == 0, second.stderr
+    assert "wkr-1: upgrade mode set to full-upgrade" in second.stdout
+    assert "mgr-1: upgrade mode upgrade unchanged" in second.stdout
+    third = _run(dash, _cfg(upgrade_mode="full-upgrade"))
+    assert "wkr-1: upgrade mode full-upgrade unchanged" in third.stdout
+
+
+SCHEDULES = [
+    {"name": "Default refresh", "type": "refresh", "cron": "0 */6 * * *", "cache_hours": 6},
+    {"name": "Nightly workers", "type": "update", "cron": "0 2 * * *", "systems": ["wkr-1", "gone-host"]},
+    {"name": "Reboot mgr-1", "type": "reboot", "cron": "0 4 * * 2", "systems": ["mgr-1"]},
+    {"name": "Never matches", "type": "reboot", "cron": "0 5 * * 2", "systems": ["gone-host"]},
+    {"name": "Daily digest", "type": "notification_digest", "cron": "0 7 * * *", "notifications": ["Digest mail"]},
+]
+NOTIFS = [{"name": "Digest mail", "type": "email", "notify_on": ["updates"],
+           "config": {"smtpHost": "smtp.example.test", "smtpPassword": KEY, "emailTo": "ops@example.test"}}]
+
+
+def test_schedules_and_notifications_converge_by_name_and_never_delete(dash):
+    dash.schedules.append({"id": 1, "name": "Default refresh", "type": "refresh", "enabled": True, "systemIds": None,
+                           "config": {"cron": "*/15 * * * *", "cacheDurationHours": 12}})
+    dash.schedules.append({"id": 2, "name": "Made by hand", "type": "update", "enabled": False, "systemIds": [9],
+                           "config": {"cron": "0 1 * * *"}})
+    first = _run(dash, _cfg(schedules=SCHEDULES, notifications=NOTIFS))
+    assert first.returncode == 0, first.stderr
+    out = first.stdout
+    assert "notification Digest mail: created (id 1)" in out
+    assert 'schedule Default refresh: updated (id 1, refresh "0 */6 * * *")' in out
+    assert "schedule Nightly workers: not in the dashboard, left out: gone-host" in out
+    assert "schedule Nightly workers: created" in out
+    assert "schedule Never matches: skipped" in out
+    assert "schedule Made by hand: not declared here, left as is (disabled)" in out
+    by = {x["name"]: x for x in dash.schedules}
+    assert by["Default refresh"]["config"] == {"cron": "0 */6 * * *", "cacheDurationHours": 6}
+    assert by["Nightly workers"]["systemIds"] == [1]
+    assert by["Reboot mgr-1"]["systemIds"] == [2] and by["Reboot mgr-1"]["config"]["onlyIfRequired"] is True
+    assert by["Daily digest"]["config"]["notificationIds"] == [1]
+    assert "Never matches" not in by and len(dash.schedules) == 5
+    assert KEY not in out + first.stderr
+    second = _run(dash, _cfg(schedules=SCHEDULES, notifications=NOTIFS))
+    assert second.returncode == 0, second.stderr
+    assert "created" not in second.stdout and "updated" not in second.stdout
+    assert "schedule Nightly workers: unchanged" in second.stdout
+    assert "notification Digest mail: synced (id 1)" in second.stdout
+    assert len(dash.notifications) == 1 and not any(m == "DELETE" for m, _ in dash.calls)
+
+
+def test_a_digest_naming_an_unknown_channel_fails(dash):
+    out = _run(dash, _cfg(schedules=[{"name": "d", "type": "notification_digest", "cron": "0 7 * * *",
+                                      "notifications": ["nope"]}]))
+    assert out.returncode != 0 and "no notification channel named nope" in out.stderr
+
+
+def test_upgrade_mode_skips_a_package_manager_without_one(dash):
+    assert _run(dash, _cfg()).returncode == 0
+    dash.systems[0]["pkgManager"] = "pacman"
+    out = _run(dash, _cfg(upgrade_mode="full-upgrade"))
+    assert out.returncode == 0, out.stderr
+    assert "wkr-1: upgrade mode n/a (pacman has none)" in out.stdout
+    assert not any(p.endswith("/upgrade-mode") for _, p in dash.calls)

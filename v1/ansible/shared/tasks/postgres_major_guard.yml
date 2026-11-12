@@ -1,0 +1,105 @@
+---
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Fail closed when the Postgres data on disk is from another major than the
+# image about to be deployed, BEFORE the stack deploy.
+#
+# Why: Postgres cannot open a data directory written by another major. Worse,
+# the 18+ images moved PGDATA to /var/lib/postgresql/<major>/docker, so an old
+# (pre-18) data directory sitting in the bind-mounted directory is not even
+# seen: the container would initdb a brand new EMPTY database next to it and the
+# service would come up looking like total data loss. This task reads the
+# on-disk PG_VERSION in either layout and refuses a mismatch with a message
+# that names the knob (pin the image) and the runbook (dump and restore).
+#
+#   pre-18 layout:  <dir>/PG_VERSION               (image mounts <dir> at /var/lib/postgresql/data)
+#   18+ layout:     <dir>/<major>/docker/PG_VERSION (image mounts <dir> at /var/lib/postgresql)
+#
+# No PG_VERSION in either place means a fresh install: nothing to guard.
+# Passes when the on-disk major equals the image major AND the layout is the one
+# the image's mount target expects.
+#
+# Inputs (set with `vars:` on the include):
+#   pg_guard_app        label used in messages, e.g. skgit
+#   pg_guard_image      the Postgres server image about to be deployed; its tag must
+#                       start with the major (postgres:18.6, pgvector/pgvector:pg18)
+#   pg_guard_data_path  host directory bind-mounted as the Postgres data volume
+#   pg_guard_pin_var    the vault knob that pins the image, e.g. skgit.POSTGRES_IMAGE
+#   pg_guard_node       optional host that owns the path (a local-disk DATA_NODE);
+#                       default: the play host
+# Sets: pg_guard_disk_major, pg_guard_target_major (strings, "" when unknown).
+
+- name: Read the Postgres major and layout on disk for {{ pg_guard_app }}
+  shell: |
+    D="{{ pg_guard_data_path }}"
+    [ -d "$D" ] || exit 0
+    if [ -f "$D/PG_VERSION" ]; then
+      echo "flat $(tr -d '[:space:]' < "$D/PG_VERSION")"
+      exit 0
+    fi
+    for f in "$D"/*/docker/PG_VERSION; do
+      [ -f "$f" ] && { echo "nested $(tr -d '[:space:]' < "$f")"; exit 0; }
+    done
+    exit 0
+  args:
+    executable: /bin/sh
+  delegate_to: "{{ pg_guard_node | default(inventory_hostname, true) }}"
+  register: pg_guard_probe
+  changed_when: false
+  check_mode: false
+  tags:
+    - deploy
+    - postgres-major
+
+- name: Work out the target Postgres major for {{ pg_guard_app }}
+  set_fact:
+    pg_guard_layout: "{{ (pg_guard_probe.stdout | default('') | trim).split(' ')[0] }}"
+    pg_guard_disk_major: "{{ ((pg_guard_probe.stdout | default('') | trim).split(' ') | list)[1:] | join('') | regex_search('^[0-9]+') | default('', true) }}"
+    pg_guard_target_major: >-
+      {{ (pg_guard_image | string | regex_replace('@.*$', '') | regex_replace('^.*/', '')
+          | regex_replace('^[^:]*:', '') | regex_replace('^pg', '') | regex_search('^[0-9]+')) | default('', true) }}
+  tags:
+    - deploy
+    - postgres-major
+
+- name: Refuse a Postgres major or layout this image cannot open in place ({{ pg_guard_app }})
+  assert:
+    that:
+      - >-
+        (pg_guard_target_major | int) >= 18
+        and pg_guard_layout == 'nested'
+        and pg_guard_disk_major == pg_guard_target_major
+        or (pg_guard_target_major | int) < 18
+        and pg_guard_layout == 'flat'
+        and pg_guard_disk_major == pg_guard_target_major
+    fail_msg: >-
+      {{ pg_guard_app }}: the Postgres data on disk ({{ pg_guard_data_path }}) is major
+      {{ pg_guard_disk_major }} ({{ 'pre-18 layout, files directly in the directory' if pg_guard_layout == 'flat'
+      else 'versioned layout, <major>/docker' }}) but the image to deploy is major
+      {{ pg_guard_target_major }} ({{ pg_guard_image }}). Postgres cannot open a data directory from
+      another major, and an 18+ image would start an EMPTY database beside an old data directory,
+      so nothing was changed. To keep running what you have, pin {{ pg_guard_pin_var }} in the
+      vault to a {{ pg_guard_disk_major }}.x image (and the matching backup image knob). To move to
+      {{ pg_guard_target_major }}, follow the dump-and-restore runbook in the {{ pg_guard_app }} README
+      ("Upgrading Postgres to 18"): pg_dumpall from the old image, stop the stack, move the old data
+      directory aside, start the new image on an empty directory, restore.
+    quiet: true
+  when:
+    - pg_guard_layout | length > 0
+    - pg_guard_target_major | length > 0
+  tags:
+    - deploy
+    - postgres-major

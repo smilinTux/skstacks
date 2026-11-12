@@ -154,6 +154,11 @@ skpatch-hosts:
   REGISTER_AS: ""                           # an existing dashboard admin's username (local or OIDC)
   SSH_PRIVATE_KEY: ""                       # private half of SSH_PUBLIC_KEY; the registrar creates the credential from it
   CREDENTIAL_ID: 0                          # or an existing sshKey credential's id (takes precedence)
+  # Dashboard configuration as code (README "Schedules and notifications as code"); all optional
+  SYNC_CREDENTIAL: false                    # true: rewrite the credential's key from SSH_PRIVATE_KEY (key rotation)
+  UPGRADE_MODE: ""                          # upgrade | full-upgrade: APT default for registered systems; "" leaves it
+  NOTIFICATIONS: []                         # [{name, type, enabled, notify_on, systems, config}], secrets allowed
+  SCHEDULES: []                             # [{name, type, cron, enabled, systems, only_if_required, cache_hours, notifications}]
 ```
 
 **Per-host actions ceiling:** set `skpatch_hosts_allow_actions: false` in the
@@ -273,6 +278,72 @@ system if an estate wants it.
 this dashboard version. A vault that still sets `API_TOKEN` makes the
 playbook fail with what to set instead; remove it and set `REGISTER_AS`.
 `API_CREDENTIAL_ID` is still read, as `CREDENTIAL_ID`.
+
+## Schedules and notifications as code
+
+The same registrar run (README "Automatic host registration", so
+`REGISTER_AS` and a credential must be set) also converges the dashboard's
+own configuration, so a redeploy or a fresh `dashboard.db` reproduces it:
+
+| Input | Where | What it does |
+|---|---|---|
+| `SCHEDULES` | vault, or `skpatch_hosts_schedules` (e.g. `-e @<file>.yml`, which wins) | Refresh / update / autoremove / reboot / notification_digest schedules. `systems` is a list of dashboard system **names**, or absent for all. |
+| `NOTIFICATIONS` | vault (channel configs carry SMTP passwords, tokens) | Notification channels; a digest channel is one a `notification_digest` schedule lists in `notifications`. |
+| `UPGRADE_MODE` / `skpatch_hosts_upgrade_mode` | vault / host var | APT default upgrade mode of each registered system. |
+| `SYNC_CREDENTIAL` | vault | Rewrites the estate credential's key from `SSH_PRIVATE_KEY` (key rotation, SOP §5). |
+| `skpatch_hosts_dashboard_address` / `_port` | host var | The address the dashboard container dials, when the controller's (an ssh alias, a tailnet name) does not resolve there. |
+
+Matched by name: missing is created, different is updated, anything the
+input does not name is reported and left alone. Nothing is ever deleted.
+Notification channels are rewritten on every run (the API only returns their
+secrets masked, so they cannot be compared). A system whose package manager
+is not detected yet (registered this run, first check pending) gets its
+upgrade mode on the next run.
+
+**What the pinned app (2026.10.9) actually does, which the schedule design
+has to respect** (read from `server/services/scheduler.ts`):
+
+- An **update** schedule refreshes its systems in parallel, then runs
+  upgrade-all on them **one at a time, in the order of `systems`**. One
+  schedule is therefore a strict serial chain; two schedules whose windows
+  overlap run in parallel.
+- Upgrade-all uses each system's APT mode. There is no "full-upgrade"
+  schedule type, and plain `apt-get upgrade` keeps back anything that needs
+  a new package, which on Ubuntu includes every new kernel ABI. Set
+  `UPGRADE_MODE: full-upgrade` if kernels and dependency-changing security
+  fixes should land on the schedule rather than by hand.
+- A **reboot** schedule sends `reboot` to each system and moves on without
+  waiting for it to come back. Never put two swarm managers (or every worker)
+  in one reboot schedule: give each its own, staggered.
+- Upgrades run under `nohup setsid` on the host and survive the dashboard
+  container restarting; the schedule itself does not. Put the node that runs
+  the dashboard last in its window.
+- A Proxmox reboot is blocked by the app's own backup guard unless sudoers
+  grants `pvesh get /cluster/tasks`, which this role does not (sudoers
+  template). Hypervisors are rebooted from Proxmox, not from here.
+- An enabled **Telegram** channel starts a `getUpdates` long-poll worker and
+  rewrites that bot's command menu, whatever `commandsEnabled` says
+  (`server/services/telegram-bot.ts` `sync()`). Never point it at a bot
+  another service already uses; give it its own bot, or use email.
+- Docker engine packages (`docker-ce`, `containerd.io`) upgrade like any
+  other package and restart `dockerd`, moving that node's tasks. This role
+  holds nothing (`apt-mark hold` is not in the sudoers and is not used);
+  the safety comes from ordering: swarm nodes are upgraded in serial chains,
+  managers in their own chain after the workers, so at most one `dockerd`
+  restarts at a time and manager quorum is never at risk.
+
+Example (estate specifics, host names and times, belong in the estate's own
+prod repo):
+
+```yaml
+skpatch_hosts_schedules:
+  - {name: Default refresh, type: refresh, cron: "15 */6 * * *", cache_hours: 6}
+  - {name: Nightly workers, type: update, cron: "0 2 * * *", systems: [wkr-1, wkr-2]}
+  - {name: Nightly managers, type: update, cron: "0 3 * * *", systems: [mgr-1, mgr-2, mgr-3]}
+  - {name: Reboot mgr-1, type: reboot, cron: "0 4 * * 2", only_if_required: true, systems: [mgr-1]}
+  - {name: Reboot mgr-2, type: reboot, cron: "30 4 * * 2", only_if_required: true, systems: [mgr-2]}
+  - {name: Daily digest, type: notification_digest, cron: "0 7 * * *", notifications: [Patch digest]}
+```
 
 ## Related projects / See also
 
