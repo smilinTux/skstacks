@@ -1,0 +1,89 @@
+# Image and binary pin table for the skmon role.
+# Every entry is an exact version, its multi-arch index digest, the upstream
+# release date of that version, and the release page it was taken from.
+# Rule: a pin is released at least 14 days before it is adopted.
+# The compose defaults in skmon.yml.j2 must equal repo:tag@digest here
+# (enforced by v1/tests/test_skmon_pins.py).
+images:
+  victoriametrics:
+    repo: victoriametrics/victoria-metrics
+    tag: v1.155.0
+    digest: sha256:f60dc268b54ecf87f6e09d740c2b732838aa9193090cc741417c9f6386a130df
+    released: "2026-10-26"
+    source: https://github.com/VictoriaMetrics/VictoriaMetrics/releases/tag/v1.155.0
+  vmalert:
+    repo: victoriametrics/vmalert
+    tag: v1.155.0
+    digest: sha256:3256cba5ddaca5974eae6141105cec4ce37871f1c213f0a5c267ec0111bc68e1
+    released: "2026-10-26"
+    source: https://github.com/VictoriaMetrics/VictoriaMetrics/releases/tag/v1.155.0
+  vmalert_tool:
+    repo: victoriametrics/vmalert-tool
+    tag: v1.155.0
+    digest: sha256:b03d29d0a11b906a85879a6a4009c9d0a9d5a8b9a744ebb7dd3a7721f1e78f36
+    released: "2026-10-26"
+    source: https://github.com/VictoriaMetrics/VictoriaMetrics/releases/tag/v1.155.0
+  alertmanager:
+    repo: prom/alertmanager
+    tag: v0.34.2
+    digest: sha256:39d8bb3966c694a124428a3a88fbcffd40bd069129ecd47c059f8a3f17c55f3b
+    released: "2026-10-29"
+    source: https://github.com/prometheus/alertmanager/releases/tag/v0.34.2
+  alloy:
+    repo: grafana/alloy
+    tag: v1.21.3
+    digest: sha256:8ab871206bd2d8f89277f53abffee5f452a293980788d52f85fa183a87a505a4
+    released: "2026-10-28"
+    source: https://github.com/grafana/alloy/releases/tag/v1.21.3
+  loki:
+    repo: grafana/loki
+    tag: 3.7.9
+    digest: sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28
+    released: "2026-10-20"
+    source: https://github.com/grafana/loki/releases/tag/v3.7.9
+  grafana:
+    repo: grafana/grafana
+    tag: 13.3.0
+    digest: sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205
+    released: "2026-10-27"
+    source: https://github.com/grafana/grafana/releases/tag/v13.3.0
+  pyroscope:
+    repo: grafana/pyroscope
+    tag: 2.4.2
+    digest: sha256:ef9b48976386aa2781e84664dfdba7cc33a1b6793c0cc9d130812173a926ca1f
+    released: "2026-10-26"
+    source: https://github.com/grafana/pyroscope/releases/tag/v2.4.2
+  pve_exporter:
+    repo: prompve/prometheus-pve-exporter
+    tag: 3.10.2
+    digest: sha256:7ed5dbff1b145e62e94003cb78d70226d9a7c4d4d1c928b3c7daed21ae9a84d8
+    released: "2026-10-26"
+    source: https://github.com/prometheus-pve/prometheus-pve-exporter/releases/tag/v3.10.2
+  python:
+    repo: python
+    tag: 3.13.18-bookworm
+    digest: sha256:cc55e4ded9c95f6ce2133b3d096db43f214d280c2a8af65d83e246c8fa7d168c
+    released: "2026-10-25"
+    source: https://www.python.org/downloads/release/python-31318/
+  python_slim:
+    repo: python
+    tag: 3.13.18-slim-bookworm
+    digest: sha256:a5a7017efc5969e00ae2b91c8eb0631049a569652aa4ffc4501769049ae45c72
+    released: "2026-10-25"
+    source: https://www.python.org/downloads/release/python-31318/
+  socket_proxy:
+    repo: tecnativa/docker-socket-proxy
+    tag: v0.5.0
+    digest: sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
+    released: "2026-07-27"
+    source: https://github.com/Tecnativa/docker-socket-proxy/releases/tag/v0.5.0
+
+# Release assets for systemd mode (no container). Each sha256 is of the official
+# alloy-linux-<arch>.zip, from upstream's SHA256SUMS for the release.
+binaries:
+  alloy:
+    version: v1.21.3
+    released: "2026-10-28"
+    sha256_linux_amd64: 50d23af2d0f98c00beac6ce9a365693e60f87fb76b6cad6fe1d161e80588af6d
+    sha256_linux_arm64: ca2f383cc60491877b21aef50c54af6a198f6c861c2c4b80f41ec49ad73b1b93
+    source: https://github.com/grafana/alloy/releases/tag/v1.21.3
