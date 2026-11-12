@@ -6,7 +6,9 @@ import yaml
 
 from skmon_support import CFG, fw_context, get, load, post, render, rule, rules, services, server, server_failing  # noqa: F401
 
-HEALTHZ_WINDOW_S = 180  # the bridge reports unhealthy when no Watchdog arrived within this window
+import skmon_bridge  # noqa: E402  (on sys.path via skmon_support)
+
+HEALTHZ_WINDOW_S = skmon_bridge.WATCHDOG_MAX_AGE_S  # the bridge reports unhealthy when no Watchdog arrived within this window
 DATA_NODE = "node-1.render.example.test"
 
 
