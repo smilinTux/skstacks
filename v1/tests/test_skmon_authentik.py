@@ -306,6 +306,10 @@ class FakeAuthentik:
             assert not any(r["target"] == body["target"] and r["group"] == body["group"] for r in self._rows), "duplicate binding"
             self._rows.append({"pk": f"b{len(self._rows) + len(self.deleted) + 1}", **body})
             return dict(body)
+        if path.startswith("/policies/bindings/") and method == "PATCH":
+            pk = path.rstrip("/").rsplit("/", 1)[1]
+            next(r for r in self._rows if r["pk"] == pk).update(body)
+            return {}
         if path.startswith("/policies/bindings/") and method == "DELETE":
             pk = path.rstrip("/").rsplit("/", 1)[1]
             self._rows = [r for r in self._rows if r["pk"] != pk]
@@ -483,6 +487,23 @@ def test_extra_bindings_on_owned_apps_are_removed_and_others_untouched(capsys):
     assert [r["pk"] for r in fake._rows if r["target"] == "app-unrelated"] == ["keep1"]
     owned = [r for r in fake._rows if r["target"] != "app-unrelated"]
     assert len(owned) == 4 and all(r["group"] == "grp-skadmin" for r in owned)
+    n = fake.writes
+    run_provisioner(fake, input_for())
+    assert fake.writes == n
+
+
+@pytest.mark.parametrize("field,bad", [("enabled", False), ("negate", True)])
+def test_unhealthy_skadmin_binding_is_repaired_then_stable(field, bad, capsys):
+    fake = FakeAuthentik()
+    run_provisioner(fake, input_for())
+    row = next(r for r in fake._rows if r["target"] == "app-vmui")
+    row[field] = bad
+    capsys.readouterr()
+    run_provisioner(fake, input_for())
+    out = capsys.readouterr().out
+    assert row["enabled"] is True and row["negate"] is False
+    assert "binding vmui -> skadmin: updated (enabled, negate)" in out
+    assert fake.deleted == [] and len([r for r in fake._rows if r["target"] == "app-vmui"]) == 1
     n = fake.writes
     run_provisioner(fake, input_for())
     assert fake.writes == n

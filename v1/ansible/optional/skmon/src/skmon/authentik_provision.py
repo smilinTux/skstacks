@@ -254,8 +254,14 @@ def ensure_group_binding(api, app_slug, group):
     if grp is None:
         raise ApiError(f"group '{group}' not found in Authentik (it is created by sksso, not here)")
     bindings = [b for b in api.pages("/policies/bindings/", target=app["pk"]) if b.get("target") == app["pk"]]
-    keep = next((b for b in bindings if b.get("group") == grp["pk"]), None)
+    mine = [b for b in bindings if b.get("group") == grp["pk"]]
+    # Prefer a healthy binding: a disabled one is skipped by Authentik's policy engine (leaving
+    # the application open) and a negated one admits everyone except the group.
+    keep = next((b for b in mine if b.get("enabled") is True and b.get("negate") is False), mine[0] if mine else None)
     lines = []
+    if keep is not None and not (keep.get("enabled") is True and keep.get("negate") is False):
+        api.call("PATCH", f"/policies/bindings/{keep['pk']}/", {"enabled": True, "negate": False})
+        lines.append(f"binding {app_slug} -> {group}: updated (enabled, negate)")
     if keep is None:
         api.call("POST", "/policies/bindings/", {
             "target": app["pk"], "group": grp["pk"], "order": 0, "enabled": True,
