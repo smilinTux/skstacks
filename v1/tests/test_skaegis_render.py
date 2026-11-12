@@ -153,3 +153,16 @@ def test_indexer_entrypoint_changes_no_ownership():
     body = (ROLE / "src/skaegis/indexer-entrypoint").read_text()
     code = "\n".join(line for line in body.splitlines() if not line.lstrip().startswith("#"))
     assert not re.search(r"\bchown\b|\binstall\b[^\n]*\s-[og]\s", code)
+
+
+@pytest.mark.parametrize("play", PLAYS, ids=lambda p: p.name)
+def test_manager_state_dirs_are_created_never_owned(play):
+    # the image seeds these with wazuh ownership on its first start; a play
+    # that sets owner/group/mode resets them on every redeploy under a running
+    # manager (remoted then cannot read etc/client.keys, lab gate 2026-11-12)
+    doc = yaml.safe_load(play.read_text())
+    tasks = [t for p in doc if isinstance(p, dict) for t in p.get("tasks", [])]
+    task = next(t for t in tasks if "manager state directories" in t.get("name", ""))
+    assert task["file"]["state"] == "directory"
+    assert not {"owner", "group", "mode"} & set(task["file"]), task["file"]
+    assert "etc" in task["loop"] and "queue" in task["loop"]

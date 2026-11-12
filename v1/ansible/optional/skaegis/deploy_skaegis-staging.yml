@@ -294,12 +294,16 @@
       delegate_to: "{{ ska_data_node if (ska_data_node | length > 0 and not item.path.startswith('/var/data/')) else inventory_hostname }}"
 
     - name: Create the {{ app }} manager state directories (seeded by the image on first start)
+      # Create only, never own: no owner, group or mode here. On its first
+      # start the image seeds each one (cp -a) with its own ownership (etc is
+      # wazuh:wazuh 0770, logs and queue belong to wazuh), and the daemons run
+      # as wazuh. Enforcing root:root 0750 reset that on every redeploy, under
+      # a running manager: remoted could no longer read etc/client.keys, so a
+      # newly enrolled agent never went Active, and agent_control (which
+      # drops to wazuh) failed reading etc/ossec.conf (lab gate, 2026-11-12).
       file:
         path: "{{ ska_manager_path }}/{{ item }}"
         state: directory
-        owner: root
-        group: root
-        mode: '0750'
       loop: [api-configuration, etc, logs, queue, multigroups, integrations, active-response, agentless, wodles, filebeat-etc, filebeat-var]
       delegate_to: "{{ ska_data_node if (ska_data_node | length > 0 and not ska_manager_path.startswith('/var/data/')) else inventory_hostname }}"
 
