@@ -121,6 +121,92 @@
       tags:
         - templates
 
+    # --- probe list for the agent play (R9) -------------------------------------------
+    # skmon_probes is set here, on the selected manager, because agent.yml reads it from
+    # that host's hostvars; it comes before the config render because vm-scrape.yml.j2 turns
+    # it into the alloy-blackbox targets (the series labels probe, severity, forward_auth).
+    # On a first install the stack's own routers do not exist yet and appear on the next
+    # deploy. skmon.PROBES wins when set; otherwise one probe per Traefik
+    # router host on the estate, read from every service's labels (the parsing is the
+    # skmon_probes_from_services filter in filter_plugins/). The Authentik health probe is
+    # appended when skmon can tell the sksso host (skmon.AUTHENTIK_HOST, else sksso's
+    # vault); without either the entry is omitted and the deploy carries on.
+
+    - name: List the Swarm service IDs
+      command: docker service ls -q
+      register: skmon_service_ids
+      changed_when: false
+      when: not skmon_parked and (skmon.PROBES | default([], true) | length) == 0
+      tags:
+        - config
+        - probes
+
+    - name: Inspect every service for its Traefik router labels
+      command:
+        argv: "{{ ['docker', 'service', 'inspect'] + skmon_service_ids.stdout_lines }}"
+      register: skmon_service_inspect
+      changed_when: false
+      when:
+        - not skmon_parked
+        - (skmon.PROBES | default([], true) | length) == 0
+        - skmon_service_ids.stdout_lines | default([]) | length > 0
+      tags:
+        - config
+        - probes
+
+    - name: Locate sksso's vault (for the Authentik health probe host)
+      set_fact:
+        skmon_sksso_vault_file: >-
+          {{ (vault_file_path | dirname) ~ '/'
+             ~ (vault_file_path | basename | regex_replace('^skmon-', 'sksso-')) }}
+      when: vault_file_path is defined and (skmon.AUTHENTIK_HOST | default('', true)) == ''
+      tags:
+        - config
+        - probes
+
+    - name: Load sksso's vault when it exists
+      include_vars:
+        file: "{{ skmon_sksso_vault_file }}"
+        name: skmon_sksso_vault
+      when: skmon_sksso_vault_file is defined and (lookup('ansible.builtin.fileglob', skmon_sksso_vault_file) | length) > 0
+      no_log: true
+      tags:
+        - config
+        - probes
+
+    - name: Derive the Authentik host for the health probe
+      set_fact:
+        skmon_authentik_host: >-
+          {{ skmon.AUTHENTIK_HOST | default('', true)
+             or (('sso' ~ ('' if env == 'prod' else '-' ~ env) ~ '.'
+                  ~ ((skmon_sksso_vault.sksso.DOMAIN | string) if (skmon_sksso_vault.sksso.CLOUDFLARED | default(false) | bool)
+                     else ((skmon_sksso_vault.sksso.CLUSTERNAME | string) ~ '.' ~ (skmon_sksso_vault.sksso.DOMAIN | string))))
+                 if (skmon_sksso_vault is defined and (skmon_sksso_vault.sksso.DOMAIN | default('', true)) != '') else '') }}
+      tags:
+        - config
+        - probes
+
+    - name: Say that the Authentik health probe is left out
+      debug:
+        msg: >-
+          skmon cannot tell the sksso host (no skmon.AUTHENTIK_HOST and no sksso vault with
+          DOMAIN), so the authentik health probe is omitted. Set skmon.AUTHENTIK_HOST to add it.
+      when: skmon_authentik_host == ''
+      tags:
+        - config
+        - probes
+
+    - name: Set the skmon probe list
+      set_fact:
+        skmon_probes: >-
+          {{ ((skmon.PROBES | default([], true)) if (skmon.PROBES | default([], true) | length) > 0
+              else (skmon_service_inspect.stdout | default('[]', true) | from_json
+                    | skmon_probes_from_services(skmon.FORWARD_AUTH_MIDDLEWARE | default('authentik@file'))))
+             | skmon_with_authentik_probe(skmon_authentik_host) }}
+      tags:
+        - config
+        - probes
+
     - name: Render the {{ app }} Swarm config contents
       # Contents live in a variable (the compose template names each config after
       # the sha256 of its content) and are written to disk only so the docker CLI

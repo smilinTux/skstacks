@@ -13,3 +13,7 @@ skmon:
   # The render inventory's only host has no address; the allowlist wants an IPv4 literal.
   AGENT_LISTEN_ADDR:
     localhost: 192.0.2.10
+  # Estate address allowed to reach /healthz (RFC 5737). PROBES stays unset here so this pass
+  # takes the default discovery path; the set pass gives it a fake list.
+  HEALTHZ_ALLOW:
+    - 198.51.100.7

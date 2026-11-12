@@ -57,7 +57,7 @@ tag yet.
 | [skmail](#skmail) | optional | Full SMTP/IMAP mail server | docker-mailserver `16.0.1` | skfence/skfenceha (for ACME cert) | host ports 25/587/465/143/993 | `skmail-<env>/docker-data/dms/{maildata,mailstate}` | `CLUSTERNAME`, `DOMAIN` | `DMS_VERSION` (16.0.1), Rspamd/ClamAV/Fail2ban (all on) | v2.19.0 |
 | [skmem-pg](#skmem-pg) | optional | Postgres 17 + pgvector + pg_search + AGE | Postgres 17 custom image `pg17-bm25-age` | none | internal only, no Traefik | `runtime/skmem-pg-<env>/postgres` | `skmem_pg_password` | `skmem_pg_default_agent`/`skmem_pg_graph` | v2.14.0 |
 | [skmesh](#skmesh) | optional | Netbird self-hosted WireGuard mesh VPN | netbird `0.80.0` (mgmt/signal/relay), dashboard `v2.94.0` | sksso (OIDC app) | `skmesh.<cluster>.<domain>` (path-routed) | `skmesh-<env>/database-dump` | `NETBIRD_*` secrets, `POSTGRES_PASSWORD`, `SSO_HOST_IP` | `DEPLOY_COTURN` (false) | v2.19.0 |
-| [skmon](#skmon) | optional | Observability stack (metrics/logs) | Prometheus `v3.15.0`, Grafana `13.2.2`, Loki `3.5.4` | none | `prometheus\|skmon\|alertmanager[-env].<cluster>.<domain>` | `skmon-<env>/{prometheus,grafana,loki-data,...}` | `GRAFANA_ADMIN_USER/_PASSWORD`, `GRAFANA_SECRET_KEY`, `CLUSTERNAME`, `DOMAIN` | `SMTP_ENABLED` (false), `EXTRA_SCRAPE_CONFIGS`, `replicas` (1; 0 = parked), `GRAFANA_PLUGINS`, `GRAFANA_BASIC_AUTH` (true), `GRAFANA_HEALTH_START_PERIOD` (60s) | v2.15.0 |
+| [skmon](#skmon) | optional | Observability stack (metrics/logs) | VictoriaMetrics `v1.155.0`, Grafana Alloy `v1.21.3`, Loki `3.7.9`, Grafana `13.3.0`, Alertmanager `v0.34.2` | none | `skmon\|vmui\|alertmanager[-env].<cluster>.<domain>` | `DATA_PATH` on `DATA_NODE` (local disk, default `/srv/local/skmon-<env>`) | `DATA_NODE`, `GRAFANA_ADMIN_USER/_PASSWORD`, `GRAFANA_SECRET_KEY`, `CLUSTERNAME`, `DOMAIN`, `ESTATE` | `DATA_PATH`, `PROBES` (default: every Traefik router host), `AUTHENTIK_HOST`, `HEALTHZ_ALLOW`, `EXTRA_SCRAPE_CONFIGS`, `replicas` (1; 0 = parked), `GRAFANA_PLUGINS`, `GRAFANA_BASIC_AUTH` (true), `GRAFANA_HEALTH_START_PERIOD` (60s) | v2.15.0 |
 | [skorch](#skorch) | optional | n8n workflow automation | n8n (digest-pinned) + pgvector Postgres | none | `skorch[-env].<cluster>.<domain>` | `skorch-<env>/{n8n_data,database-backup,gpg-keys}` | `POSTGRES_USER/_PASSWORD/_DB`, `REDIS_PASSWORD` | `enable_gpg_signer` (false) | v2.18.0 |
 | [skpatch-hosts](#skpatch-hosts) | optional | Linux update/patch dashboard (SSH, holds a key per estate); host half of the [skpatch program](./skpatch-program.md) | linux-update-dashboard `2026.10.9` (upstream, digest-pinned) | skfence or skfenceha; sksso for default `AUTH_MODE: sso` | `skpatch-hosts[-env].<cluster>.<domain>` | `skpatch-hosts-<env>/data` | `LUDASH_ENCRYPTION_KEY`, `SSH_PUBLIC_KEY` (provisioning) | `AUTH_MODE` (sso), `ALLOW_ACTIONS` (false, enforced by `provision_skpatch_hosts_nodes.yml`, not this deploy), `DATA_NODE` (floating) | pending |
 | [skpdf](#skpdf) | optional | Stirling-PDF toolkit | Stirling-PDF `2.14.3` | none | `skpdf[-env].<cluster>.<domain>` | `skpdf-<env>/{trainingData,customFiles}` | `CLUSTERNAME`, `DOMAIN`; `SECURITY_INITIAL_PASSWORD` if login on | `SECURITY_ENABLELOGIN` (false) | v2.13.0 |
@@ -827,11 +827,12 @@ origins, or login redirects are rejected. See the
 
 ### skmon
 
-Observability stack: Prometheus, Grafana, Loki, Promtail, cAdvisor, node-exporter, Alertmanager. Jaeger
-was removed (no trace producers).
+Observability stack: VictoriaMetrics, a Grafana Alloy agent on every host, Loki, Grafana and
+Alertmanager. Prometheus, Promtail, node-exporter, cAdvisor and Jaeger are gone.
 
-**Prerequisites**: none. It scrapes and logs the rest of the cluster
-automatically via `global`-mode Promtail/cAdvisor/node-exporter.
+**Prerequisites**: none. It scrapes and logs the rest of the cluster through one Alloy agent per
+host. `DATA_NODE` (a swarm node) and local-disk `DATA_PATH` are required; old `PROMETHEUS_*`,
+`NODE_EXPORTER_*`, `CADVISOR_*`, `PROMTAIL_*` and `JAEGER_*` vault keys fail the deploy.
 
 **Minimal vault snippet**:
 
@@ -843,20 +844,22 @@ skmon:
   GRAFANA_ROOT_URL: "https://skmon.example.com"
   CLUSTERNAME: "<cluster>"
   DOMAIN: "example.com"
+  DATA_NODE: "<swarm node hostname>"
+  ESTATE: "<estate label>"
 ```
 
 **Deploy**: `deploy_skmon-<env>.yml`, standard invocation.
 
-**Health check**: per-component endpoints (`/-/healthy` Prometheus and
-Alertmanager, `/api/health` Grafana, `/healthz` cAdvisor).
+**Health check**: per-component endpoints (`/health` VictoriaMetrics, `/ready` Loki,
+`/-/healthy` Alertmanager, `/api/health` Grafana).
 
 **Gotchas**: every dashboard hostname sits behind a separate `traefikAuth@file`
 basic-auth middleware in addition to Grafana's own login. Operators need
 both credentials. Extra scrape targets go in `skmon.EXTRA_SCRAPE_CONFIGS`, not a
-bespoke Prometheus job.
-`skmon.replicas: 0` parks the whole stack and keeps it parked across
-redeploys (global services get a placement constraint no node matches);
-data stays on disk. `skmon.GRAFANA_PLUGINS` replaces the default plugin
+bespoke scrape job. Blackbox probes default to every Traefik router host
+found at deploy time; `skmon.PROBES` replaces that list.
+`skmon.replicas: 0` parks the whole stack and every agent and keeps it parked across
+redeploys; `DATA_PATH` stays on disk and the deploy script skips forced updates. `skmon.GRAFANA_PLUGINS` replaces the default plugin
 list: current Grafana refuses the Angular ones in it
 (`grafana-simple-json-datasource`, `grafana-piechart-panel`,
 `grafana-worldmap-panel`), so drop them there.

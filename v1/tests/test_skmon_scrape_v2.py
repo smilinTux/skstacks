@@ -11,8 +11,9 @@ CTX = {"skmon_agent_targets": [
 ]}
 
 
-def jobs(**kw):
-    return {j["job_name"]: j for j in yaml.safe_load(render(SCRAPE, extra_ctx=CTX, **kw))["scrape_configs"]}
+def jobs(skmon_probes=None, **kw):
+    ctx = {**CTX, **({"skmon_probes": skmon_probes} if skmon_probes is not None else {})}
+    return {j["job_name"]: j for j in yaml.safe_load(render(SCRAPE, extra_ctx=ctx, **kw))["scrape_configs"]}
 
 
 def test_unix_and_cadvisor_are_separate_jobs_with_spec_intervals():
@@ -43,13 +44,14 @@ def test_agent_port_knob():
 
 
 def test_blackbox_is_the_data_node_agent_only():
-    bb = jobs()["alloy-blackbox"]
+    bb = jobs(skmon_probes=[{"name": "app", "url": "https://app.render.example.test"}])["alloy-blackbox"]
     assert bb["scrape_interval"] == "15s" and bb["metrics_path"].endswith("prometheus.exporter.blackbox.probes/metrics")
-    assert [(t["targets"], t["labels"]["node"]) for t in bb["static_configs"]] == [(["192.0.2.10:12345"], A)]
+    assert [(t["targets"], t["labels"]["node"]) for t in bb["static_configs"]] == [(["https://app.render.example.test"], A)]
+    assert bb["relabel_configs"][-1]["replacement"] == "192.0.2.10:12345"
 
 
 def test_no_blackbox_job_when_data_node_is_not_an_agent_host():
-    assert "alloy-blackbox" not in jobs(DATA_NODE="other.render.example.test")
+    assert "alloy-blackbox" not in jobs(DATA_NODE="other.render.example.test", skmon_probes=[{"name": "a", "url": "https://a.example.test"}])
 
 
 def test_extra_scrape_configs_pass_through():

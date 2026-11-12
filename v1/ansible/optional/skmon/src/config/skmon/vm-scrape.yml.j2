@@ -108,17 +108,37 @@ scrape_configs:
 {% endfor %}
 
 {% set blackbox = skmon_agent_targets | selectattr('node', 'equalto', skmon_data_node) | list %}
-{% if blackbox %}
-  # Blackbox probes run on the DATA_NODE agent only.
+{% if blackbox and (skmon_probes | default([]) | length) > 0 %}
+  # Blackbox probes run on the DATA_NODE agent only. The agent's exporter component takes
+  # target and module as URL parameters, so each probe is one target here (the standard
+  # blackbox relabeling) and the series carry probe (the name), severity and forward_auth:
+  # alert rules select probe="authentik" and inhibition matches forward_auth="true".
   - job_name: alloy-blackbox
     scrape_interval: {{ fast }}
     metrics_path: /api/v0/component/prometheus.exporter.blackbox.probes/metrics
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [__tmp_module]
+        target_label: __param_module
+      - target_label: __address__
+        replacement: '{{ blackbox[0].addr }}:{{ agent_port }}'
     static_configs:
-      - targets: ['{{ blackbox[0].addr }}:{{ agent_port }}']
+{% for p in skmon_probes %}
+      - targets: [{{ p.url | to_json }}]
         labels:
+          __tmp_module: '{{ "http_200" if (p.expect | default("") | string) == "200" else "http_2xx_3xx" }}'
+          probe: {{ p.name | to_json }}
+          severity: {{ p.severity | default('warning') | to_json }}
+          forward_auth: '{{ "true" if (p.forward_auth | default(false) | bool) else "false" }}'
           node: '{{ blackbox[0].node }}'
           role: '{{ blackbox[0].role }}'
           estate: '{{ estate }}'
+{% endfor %}
+{% elif blackbox %}
+  # No alloy-blackbox job: there are no probes (skmon.PROBES is empty and no router host was found).
 {% else %}
   # No alloy-blackbox job: DATA_NODE '{{ skmon_data_node }}' is not an agent host.
 {% endif %}

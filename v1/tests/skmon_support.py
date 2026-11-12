@@ -257,7 +257,7 @@ def unit(env: str = "prod", **kw) -> str:
 
 def task_named(path: pathlib.Path, name: str) -> dict:
     """The one task of a play (or task file) with this exact name."""
-    found = [t for t in (play_tasks(path) if path == AGENT_PLAY else load_tasks(path)) if t.get("name") == name]
+    found = [t for t in (play_tasks(path) if path in (AGENT_PLAY, *PLAYS) else load_tasks(path)) if t.get("name") == name]
     if len(found) != 1:
         raise LookupError(f"expected one task named {name!r} in {path.name}, found {len(found)}")
     return found[0]
@@ -370,3 +370,65 @@ def fw_unit(env: str = "prod", **kw) -> str:
     """The rendered skmon-<env>-fw.service unit."""
     vault = {k: v for k, v in kw.items() if k not in ("node", "docker", "ports")}
     return render(FW_UNIT, env=env, extra_ctx=fw_context(env=env, **kw), **vault)
+
+
+# --- the deploy script and probe discovery (Task 9) -----------------------------
+
+DEPLOY = SRC / "skmon/deploy.j2"
+PROBES_PLUGIN = ROLE / "filter_plugins/skmon_probes.py"
+V2_SERVICES = ("victoriametrics", "loki", "grafana", "alertmanager")
+
+
+def render_deploy(env: str = "prod", **skmon) -> str:
+    """The rendered deploy script; vault overrides as for render() (replicas=0 parks)."""
+    return render(DEPLOY, env=env, **skmon)
+
+
+def _load_probes_plugin():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("skmon_probes", PROBES_PLUGIN)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def probe_env() -> jinja2.Environment:
+    """ansible_environment() plus what the probe tasks use: from_json and the skmon_probes filters."""
+    import json
+    jenv = ansible_environment()
+    jenv.filters["from_json"] = json.loads
+    jenv.filters.update(_load_probes_plugin().FilterModule().filters())
+    return jenv
+
+
+def probes_from(inspect: list, forward_auth_middleware: str = "authentik@file") -> list[dict]:
+    """The probes the deploy plays derive from `docker service inspect` output (the plugin's filter)."""
+    return _load_probes_plugin().skmon_probes_from_services(inspect, forward_auth_middleware)
+
+
+def eval_play_fact(task_name: str, fact: str, play: pathlib.Path = PLAYS[0], **ctx):
+    """Evaluate one set_fact of a deploy play over a context (R9: the play computes the fact)."""
+    task = task_named(play, task_name)
+    return _eval_value(probe_env(), task["set_fact"][fact], ctx)
+
+
+def _svc(name: str, labels: dict) -> dict:
+    """One `docker service inspect` entry (labels live under Spec.Labels)."""
+    return {"ID": f"id-{name}", "Spec": {"Name": name, "Labels": labels}}
+
+
+# What `docker service inspect` returns for a fake estate (example.test only).
+FAKE_SERVICE_INSPECT = [
+    _svc("app_web", {
+        "traefik.http.routers.app-secure.rule": "Host(`app.render.example.test`)",
+        "traefik.http.routers.app-secure.middlewares": "default-security-headers@file,gzip@file,authentik@file",
+    }),
+    _svc("public_site", {
+        "traefik.http.routers.site-secure.rule": "Host(`www.render.example.test`) || Host(`render.example.test`)",
+        "traefik.http.routers.site-secure.middlewares": "default-security-headers@file",
+    }),
+    _svc("api_gw", {
+        "traefik.http.routers.api-secure.rule": "Host(`api.render.example.test`) && PathPrefix(`/v1`)",
+    }),
+    _svc("db", {"com.docker.stack.namespace": "db"}),
+]

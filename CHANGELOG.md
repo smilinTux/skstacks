@@ -5,6 +5,28 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+### skmon v2, phase 1: VictoriaMetrics, Alloy agent, Loki and Grafana on local disk
+
+- **skmon: Prometheus, Promtail, node-exporter and cAdvisor are removed.** The stack is now
+  `victoriametrics` (metrics, vmui at `vmui[-env].<cluster>.<domain>`), `loki`, `grafana` and
+  `alertmanager`, all pinned by digest and placed on `DATA_NODE`. One Grafana Alloy agent per host
+  (a host container, or a systemd unit on storage and hypervisor hosts) replaces the three global
+  services: node metrics, container metrics, Docker and journal logs to Loki, and blackbox probes. The
+  next deploy's `docker stack deploy --prune` removes the retired services. Needs the operator: set
+  `skmon.DATA_NODE` (a swarm node, required) and `skmon.DATA_PATH` (local disk, default
+  `/srv/local/skmon-<env>`, never under `/var/data`) and create nothing else by hand; the deploy makes
+  the directories. Any `PROMETHEUS_*`, `NODE_EXPORTER_*`, `CADVISOR_*`, `PROMTAIL_*` or `JAEGER_*` vault
+  key now fails the deploy with a message naming it: delete those keys. `skmon.replicas: 0` still
+  parks everything, agents included, keeps `DATA_PATH`, and the deploy script no longer force-updates
+  parked services.
+- **skmon: default probes.** The blackbox probes default to one per Traefik router host found on the
+  estate at deploy time (every `traefik.http.routers.<name>.rule` Host on every service), severity
+  `critical`, pass on 2xx or 3xx, with the labels `probe`, `severity` and `forward_auth` (true when the
+  router carries `skmon.FORWARD_AUTH_MIDDLEWARE`, default `authentik@file`). `skmon.PROBES` replaces
+  discovery. An `authentik` health probe is added when the sksso host is known (`skmon.AUTHENTIK_HOST`,
+  else derived from sksso's vault); without either it is left out and the deploy carries on.
+  `skmon.HEALTHZ_ALLOW` lists the addresses allowed to reach the bridge `/healthz`.
+
 ### Upgrade notes (instances)
 
 - **skmon: Jaeger removed** (carried from #368, closed as superseded by the skmon v2 design). Jaeger had
