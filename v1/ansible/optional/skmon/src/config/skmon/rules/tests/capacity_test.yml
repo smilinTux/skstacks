@@ -3,8 +3,8 @@ rule_files:
   - ../capacity.yml
 evaluation_interval: 15s
 tests:
-  # Space 92 % used: the warning fires, the critical does not. An NFS client mount at 99 %
-  # is left to the server's own filesystem and stays quiet.
+  # Space 92 % used on a writable filesystem: the warning fires, the critical does not. An NFS
+  # client mount at 99 % is left to the server's own filesystem and stays quiet.
   - interval: 15s
     input_series:
       - series: 'node_filesystem_avail_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sda1",mountpoint="/",fstype="ext4"}'
@@ -15,6 +15,8 @@ tests:
         values: '900x30'
       - series: 'node_filesystem_files{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sda1",mountpoint="/",fstype="ext4"}'
         values: '1000x30'
+      - series: 'node_filesystem_readonly{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/sda1",mountpoint="/",fstype="ext4"}'
+        values: '0x30'
       - series: 'node_filesystem_avail_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="192.0.2.20:/export",mountpoint="/mnt/shared",fstype="nfs4"}'
         values: '10x30'
       - series: 'node_filesystem_size_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="192.0.2.20:/export",mountpoint="/mnt/shared",fstype="nfs4"}'
@@ -197,4 +199,32 @@ tests:
       - eval_time: 2m30s
         groupname: skmon-capacity
         alertname: MemoryPressure
+        exp_alerts: []
+
+  # A full read-only filesystem (an image mounted ro, space and inodes 100 %) and a full tmpfs
+  # stay quiet at both severities.
+  - interval: 15s
+    input_series:
+      - series: 'node_filesystem_avail_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/loop0",mountpoint="/srv/image",fstype="ext4"}'
+        values: '0x30'
+      - series: 'node_filesystem_size_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/loop0",mountpoint="/srv/image",fstype="ext4"}'
+        values: '1000x30'
+      - series: 'node_filesystem_files_free{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/loop0",mountpoint="/srv/image",fstype="ext4"}'
+        values: '0x30'
+      - series: 'node_filesystem_files{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/loop0",mountpoint="/srv/image",fstype="ext4"}'
+        values: '1000x30'
+      - series: 'node_filesystem_readonly{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="/dev/loop0",mountpoint="/srv/image",fstype="ext4"}'
+        values: '1x30'
+      - series: 'node_filesystem_avail_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="tmpfs",mountpoint="/run",fstype="tmpfs"}'
+        values: '0x30'
+      - series: 'node_filesystem_size_bytes{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="tmpfs",mountpoint="/run",fstype="tmpfs"}'
+        values: '1000x30'
+      - series: 'node_filesystem_files_free{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="tmpfs",mountpoint="/run",fstype="tmpfs"}'
+        values: '0x30'
+      - series: 'node_filesystem_files{job="alloy-unix",instance="192.0.2.10:12345",node="node-1.render.example.test",role="swarm",estate="example",device="tmpfs",mountpoint="/run",fstype="tmpfs"}'
+        values: '1000x30'
+    alert_rule_test:
+      - eval_time: 5m30s
+        groupname: skmon-capacity
+        alertname: DiskFilling
         exp_alerts: []

@@ -1,11 +1,13 @@
 # Loki ruler rules, class storage (spec 8): a second, independent signal for the storage
 # class, from the journal lines the agents ship. Mounted as a Swarm config at
 # /etc/loki/rules/fake/storage.yml (auth_enabled is false, so the tenant is "fake").
+# LogQL |~ is case-sensitive and OpenZFS writes "Pool 'tank' has encountered ...", so
+# both matchers are case-insensitive ((?i), RE2).
 groups:
   - name: skmon-storage-logs
     rules:
       - alert: NfsServerNotResponding
-        expr: 'count_over_time({job="journal"} |~ "nfs: server .* not responding" [1m]) > 0'
+        expr: 'count_over_time({job="journal"} |~ "(?i)nfs: server .* not responding" [1m]) > 0'
         for: 0s
         labels:
           severity: critical
@@ -18,7 +20,7 @@ groups:
           runbook: "Check the NFS server named in the journal line, its nfsd threads and its pool state."
 
       - alert: ZfsPoolSuspendedLog
-        expr: 'count_over_time({job="journal"} |~ "pool .* (suspended|has encountered an uncorrectable I/O failure)" [1m]) > 0'
+        expr: 'count_over_time({job="journal"} |~ "(?i)pool .* (suspended|has encountered an uncorrectable I/O failure)" [1m]) > 0'
         for: 0s
         labels:
           severity: critical

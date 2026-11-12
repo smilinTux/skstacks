@@ -1,16 +1,21 @@
-# vmalert rules, class capacity (spec 8). NFS client mounts are left out of DiskFilling:
-# the server reports its own filesystems, and every client would repeat the same alert.
-{% set fs = 'fstype!~"nfs4?"' %}
+# vmalert rules, class capacity (spec 8). DiskFilling leaves out network mounts (the server
+# reports its own filesystems, and every client would repeat the same alert) and pseudo or
+# image filesystems, stated here instead of relying on the collector's defaults, and never
+# fires for a read-only filesystem (a full read-only image is not filling).
+{% set fs = 'fstype!~"nfs4?|cifs|smb3|tmpfs|ramfs|overlay|squashfs|nsfs|erofs|iso9660|fuse\\\\..*|devtmpfs|autofs|proc|sysfs"' %}
+{% set ro = 'unless on(node, device, mountpoint) node_filesystem_readonly == 1' %}
 groups:
   - name: skmon-capacity
     rules:
       # Space or inodes above 90 %, or either predicted to run out within 24 h.
       - alert: DiskFilling
         expr: >-
-          100 * (1 - node_filesystem_avail_bytes{ {{- fs -}} } / node_filesystem_size_bytes{ {{- fs -}} }) > 90
-          or predict_linear(node_filesystem_avail_bytes{ {{- fs -}} }[6h], 24 * 3600) < 0
-          or 100 * (1 - node_filesystem_files_free{ {{- fs -}} } / node_filesystem_files{ {{- fs -}} }) > 90
-          or predict_linear(node_filesystem_files_free{ {{- fs -}} }[6h], 24 * 3600) < 0
+          (
+            100 * (1 - node_filesystem_avail_bytes{ {{- fs -}} } / node_filesystem_size_bytes{ {{- fs -}} }) > 90
+            or predict_linear(node_filesystem_avail_bytes{ {{- fs -}} }[6h], 24 * 3600) < 0
+            or 100 * (1 - node_filesystem_files_free{ {{- fs -}} } / node_filesystem_files{ {{- fs -}} }) > 90
+            or predict_linear(node_filesystem_files_free{ {{- fs -}} }[6h], 24 * 3600) < 0
+          ) {{ ro }}
         for: 5m
         labels:
           severity: warning
@@ -25,8 +30,10 @@ groups:
       # Space or inodes above 95 %.
       - alert: DiskFilling
         expr: >-
-          100 * (1 - node_filesystem_avail_bytes{ {{- fs -}} } / node_filesystem_size_bytes{ {{- fs -}} }) > 95
-          or 100 * (1 - node_filesystem_files_free{ {{- fs -}} } / node_filesystem_files{ {{- fs -}} }) > 95
+          (
+            100 * (1 - node_filesystem_avail_bytes{ {{- fs -}} } / node_filesystem_size_bytes{ {{- fs -}} }) > 95
+            or 100 * (1 - node_filesystem_files_free{ {{- fs -}} } / node_filesystem_files{ {{- fs -}} }) > 95
+          ) {{ ro }}
         for: 5m
         labels:
           severity: critical

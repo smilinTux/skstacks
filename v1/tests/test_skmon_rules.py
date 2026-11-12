@@ -254,3 +254,38 @@ def test_plays_render_every_rule_config(play):
 ])
 def test_data_path_mountpoint_falls_back_to_root(probe, want):
     assert eval_play_fact("Set the DATA_PATH mountpoint", "skmon_data_mountpoint", skmon_data_findmnt=probe) == want
+
+
+# Real kernel lines (hosts and pool names replaced by fake ones).
+NFS_LINE = "nfs: server nas.render.example.test not responding, still trying"
+ZFS_LINE = "WARNING: Pool 'tank' has encountered an uncorrectable I/O failure and has been suspended."
+OTHER_LINE = "nfs: server nas.render.example.test OK"
+
+
+def logql_line_filter(expr: str) -> str:
+    """The RE2 pattern of the `|~ "..."` line filter in a LogQL expression (Go string unescaped)."""
+    m = re.search(r'\|~ "((?:[^"\\]|\\.)*)"', expr)
+    assert m, expr
+    return re.sub(r"\\(.)", r"\1", m.group(1))
+
+
+def test_loki_patterns_match_real_kernel_lines():
+    rs = {r["alert"]: logql_line_filter(r["expr"]) for r in loki_rules()}
+    nfs, zfs = rs["NfsServerNotResponding"], rs["ZfsPoolSuspendedLog"]
+    assert re.search(nfs, NFS_LINE) and not re.search(nfs, ZFS_LINE) and not re.search(nfs, OTHER_LINE)
+    assert re.search(zfs, ZFS_LINE) and not re.search(zfs, NFS_LINE) and not re.search(zfs, OTHER_LINE)
+    assert re.search(zfs, "pool 'tank' is suspended")
+
+
+def test_disk_filling_skips_read_only_and_pseudo_filesystems():
+    for r in rules_named("DiskFilling"):
+        expr = r["expr"].strip()
+        assert expr.endswith("unless on(node, device, mountpoint) node_filesystem_readonly == 1"), expr
+        excluded = re.findall(r'fstype!~"([^"]*)"', expr)
+        assert excluded and len(set(excluded)) == 1
+        pattern = "^(?:" + excluded[0].replace("\\\\", "\\") + ")$"
+        for fs in ("nfs", "nfs4", "cifs", "smb3", "tmpfs", "ramfs", "overlay", "squashfs", "nsfs", "erofs",
+                   "iso9660", "fuse.sshfs", "devtmpfs", "autofs", "proc", "sysfs"):
+            assert re.match(pattern, fs), fs
+        for fs in ("ext4", "xfs", "zfs", "btrfs", "fuseblk"):
+            assert not re.match(pattern, fs), fs
