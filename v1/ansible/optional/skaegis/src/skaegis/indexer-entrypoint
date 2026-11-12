@@ -64,9 +64,10 @@ kibanaserver:
   description: "skaegis dashboard server account"
 EOF
 mv -f "$tmp" "$SEC_DIR/internal_users.yml"
-install -m 0640 -o 1000 -g 0 "$SRC/config.yml" "$SEC_DIR/config.yml"
-install -m 0640 -o 1000 -g 0 "$SRC/roles_mapping.yml" "$SEC_DIR/roles_mapping.yml"
-chown 1000:0 "$SEC_DIR/internal_users.yml"
+# no -o/-g and no chown: the indexer runs as uid 1000 (wazuh-indexer), which
+# may not change ownership, and the files it writes are already its own
+install -m 0640 "$SRC/config.yml" "$SEC_DIR/config.yml"
+install -m 0640 "$SRC/roles_mapping.yml" "$SEC_DIR/roles_mapping.yml"
 chmod 0640 "$SEC_DIR/internal_users.yml"
 log "security config staged (internal users: admin, kibanaserver)"
 

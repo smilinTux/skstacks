@@ -143,3 +143,13 @@ def test_compose_has_no_bare_dollar():
         ska_auth_mode="oidc", ska_extra_ca="", ska_sso_host_ip="")
     bare = [line.strip() for line in text.splitlines() if "$" in line.replace("$$", "")]
     assert not bare, f"escape these dollars as $$: {bare}"
+
+
+def test_indexer_entrypoint_changes_no_ownership():
+    # the indexer image runs as uid 1000, which may not chown: an install -o or
+    # chown made every start exit 1 ("Operation not permitted", lab gate 2026-11-12)
+    import re
+
+    body = (ROLE / "src/skaegis/indexer-entrypoint").read_text()
+    code = "\n".join(line for line in body.splitlines() if not line.lstrip().startswith("#"))
+    assert not re.search(r"\bchown\b|\binstall\b[^\n]*\s-[og]\s", code)
