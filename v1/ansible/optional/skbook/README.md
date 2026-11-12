@@ -116,3 +116,12 @@ curl -sf https://skbook[-<env>].<your-domain>/
 
 or, from the swarm manager: `docker service logs <stack>_bookstack` /
 `docker service ps <stack>_bookstack` where `<stack>` is `skbook-<env>`.
+
+## MariaDB image
+
+`db` and `db-backup` use `skbook.MARIADB_IMAGE` (default: the MariaDB 12.3 LTS,
+digest-pinned). BookStack needs MariaDB 10.6 or newer, so 12.3 is supported.
+The env file sets `MARIADB_AUTO_UPGRADE=1`: an older datadir is upgraded in
+place on first start, with a system-tables backup written to the datadir first.
+There is no downgrade. To keep an older major, pin `skbook.MARIADB_IMAGE` in
+the vault to a build of that major (for example `mariadb:10.11`).

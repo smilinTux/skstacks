@@ -632,3 +632,20 @@ def test_provisioner_ignores_fields_authentik_adds_to_redirect_uris(fake_authent
         u["redirect_uri_type"] = "authorization"
     again = _provision(_cfg(fake))
     assert again.returncode == 0 and "provider: unchanged" in again.stdout, again.stdout
+
+
+def test_provisioner_keeps_a_configured_sub_mode(fake_authentik):
+    fake = fake_authentik()
+    out = _provision(_cfg(fake, sub_mode="hashed_user_id"))
+    assert out.returncode == 0, out.stderr
+    assert fake.objects["provider"][0]["sub_mode"] == "hashed_user_id"
+    again = _provision(_cfg(fake, sub_mode="hashed_user_id"))
+    assert again.returncode == 0, again.stderr
+    assert fake.objects["provider"][0]["sub_mode"] == "hashed_user_id"
+
+
+def test_provisioner_rejects_an_unknown_sub_mode(fake_authentik):
+    fake = fake_authentik()
+    out = _provision(_cfg(fake, sub_mode="nonsense"))
+    assert out.returncode != 0
+    assert not fake.objects.get("provider")

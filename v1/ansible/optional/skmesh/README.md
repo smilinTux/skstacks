@@ -17,7 +17,7 @@ swapped out from under it on the next deploy from this framework - the
 default is deliberately not the only option.
 
 Default (unset): the upstream `netbirdio/dashboard` release paired with the
-pinned NetBird version, tag plus digest (`v2.94.0` for NetBird 0.80.0; see
+pinned NetBird version, tag plus digest (`v2.96.0` for NetBird 0.82.0; see
 `src/config/skmesh/skmesh.yml.j2`). This is not
 pullable from a private fork's own registry, so an instance that depends
 on one (see "Instance notes" below) must set `DASHBOARD_IMAGE` explicitly;
@@ -53,8 +53,10 @@ idempotent and drift-correcting:
 
 - OAuth2/OpenID provider `<AUTHENTIK_APP_SLUG>`: public client
   `NETBIRD_AUTH_CLIENT_ID` (default `skmesh`), PKCE, `sub` = the user's
-  numeric id (NetBird's Authentik IdP manager looks users up by it),
-  redirect URIs `https://<skmesh host>/nb-auth`, `/nb-silent-auth` and
+  numeric id (NetBird's Authentik IdP manager looks users up by it;
+  `AUTHENTIK_SUB_MODE` overrides it, see below),
+  redirect URIs `https://<skmesh host>/nb-auth`, `/nb-silent-auth`, the
+  site root `https://<skmesh host>/` (the dashboard's main login sends it) and
   `http://localhost:53000`, scopes openid, email, profile, offline_access
   and goauthentik.io/api, the default self-signed signing key;
 - application `<AUTHENTIK_APP_SLUG>` with that provider;
@@ -71,6 +73,27 @@ set as `meta_icon`. Override with `AUTHENTIK_TILE_ICON_FILE` /
 `AUTHENTIK_TILE_ICON_NAME`, or fall back to a `fa://fa-...` glyph with
 `AUTHENTIK_TILE_ICON` if the copy ever fails.
 
+**`AUTHENTIK_SUB_MODE` (keep what a live instance started with).** NetBird
+stores each user under the token's `sub`. An instance whose provider was
+created by hand, or before this provisioner, may use Authentik's default
+`hashed_user_id`; forcing `user_id` there makes the owner's next login a new
+user without the owner role. Check the NetBird user ids first: 64 hex
+characters means `hashed_user_id`, set `AUTHENTIK_SUB_MODE: hashed_user_id`.
+With hashed ids the IdP manager logs `user ... not found in IDP` (it looks
+users up by numeric id); logins and roles are unaffected.
+
+**`AUTHENTIK_EXTRA_REDIRECT_URIS` (custom dashboard builds).** The provider
+gets `/nb-auth`, `/nb-silent-auth`, the site root `https://<host>/` and
+`http://localhost:53000`, strict. A custom dashboard build that returns to
+another path lists it in `AUTHENTIK_EXTRA_REDIRECT_URIS`, otherwise every
+redeploy drops it and login stops with "Redirect URI Error".
+
+**Application bindings.** If the `skmesh` application has policy bindings
+(for example an admin group), bind the `IDP_MANAGER_USERNAME` group too.
+Otherwise Authentik answers the IdP manager's client_credentials login with
+`invalid_grant` and management logs `unable to get authentik token,
+statusCode 400`.
+
 Every secret goes in on stdin; the task is `no_log` and the provisioner
 prints status lines only. Management reaches `sso<-env>.<base>` through an
 `extra_hosts` entry to `SSO_HOST_IP` (the edge), and the dashboard's
@@ -81,6 +104,10 @@ with `EXTRA_CA_CERT` (PEM); it is mounted into `/etc/ssl/certs/`.
 If `sksso` enforces CSRF-trusted origins, add this stack's `skmesh.*`
 hostname to `sksso.csrf_extra_origins` in sksso's vault so login redirects
 are not rejected.
+
+`DISABLE_PROMPT_LOGIN` (default `true`): NetBird otherwise sends `prompt=login` on the
+SSO flow, and Authentik then asks for the password twice (seen on the iOS app: a login,
+a second login, then the authorize). Set `false` to force a fresh login every time.
 
 ## TURN / STUN
 
@@ -124,8 +151,13 @@ for traffic that cannot go peer to peer.
 `POSTGRES_BACKUP_IMAGE` (optional) override the framework defaults, e.g. to
 pin `tag@sha256:digest`.
 
-Defaults: NetBird `0.80.0` (management, signal, relay) and dashboard
-`v2.94.0`, each pinned as `tag@sha256:<multi-arch index digest>`.
+Defaults: NetBird `0.82.0` (management, signal, relay) and dashboard
+`v2.96.0`, each pinned as `tag@sha256:<multi-arch index digest>`.
+
+**Upgrading from 0.80.0 to 0.82.0.** The 0.81.x and 0.82.0 release notes list
+no breaking change and no manual step (0.82.0 adds a separate access-log store
+that by default follows the main store). Take a database dump first, then
+redeploy. Done on two live instances (from 0.79.0 and from 0.80.0) 2026-11-08.
 
 **Upgrading from 0.79.0 (framework v2.26.5 and older).** The NetBird 0.80.0
 release notes list no breaking change and no manual step. Management's
@@ -231,3 +263,83 @@ them at `https://<skmesh-host>/team/users`. A Windmill job tells Talk when that 
   user message, no state).
 - Failures: schedule `on_failure` runs `f/ops/skmesh_on_failure` (`v1/scripts/windmill-ops/skmesh_on_failure.py`),
   at most one post per hour (`f/ops/skmesh_failure_last`).
+
+## Upgrading Postgres to 18
+
+Framework default: `postgres:18.6` (pinned `tag@sha256:digest`) (`postgres:18.6-alpine` for the server, the Debian image for the dump sidecar). Earlier releases ran Postgres 16.
+**Postgres 18 cannot open a Postgres 16 data directory, and an upgrade is never automatic.**
+
+What the framework does for you:
+
+- **Fail-closed guard.** Before the stack deploy, `shared/tasks/postgres_major_guard.yml` reads
+  `PG_VERSION` under `/var/data/runtime/skmesh-<env>/postgres` and stops the play when the data on disk is another major than the
+  image to deploy. The running stack is left untouched. Fresh installs (no `PG_VERSION`) pass.
+- **New data layout.** 18+ images keep the cluster in `/var/lib/postgresql/<major>/docker` and declare
+  `VOLUME /var/lib/postgresql`. For an 18+ image the compose file therefore mounts the data
+  directory at `/var/lib/postgresql` (a fresh install persists at `/var/data/runtime/skmesh-<env>/postgres/18/docker`). A
+  pinned older image keeps the old mount target `/var/lib/postgresql/data`. Never mount
+  `/var/lib/postgresql/data` under an 18 image: the real data would land on an anonymous volume.
+  The guard is also what stops an 18 image from initialising an empty database beside old files.
+- **Keep your current major.** Pin both images in the vault and redeploy; nothing else changes:
+
+  ```yaml
+  skmesh:
+    POSTGRES_IMAGE: "postgres:16.15-alpine@sha256:<digest>"
+    POSTGRES_BACKUP_IMAGE: "postgres:16.15@sha256:<digest>"   # the dump sidecar should match the server major
+  ```
+
+Upstream support: NetBird management uses a plain GORM/pgx Postgres store with no version-specific features; its docs do not name a supported Postgres major and its examples use 16, so this move is not vendor-tested. Run the restore, then watch the management logs for store errors before declaring done. Pin to the old major if anything misbehaves.
+
+PG18 defaults worth knowing (no action needed): `initdb` enables data checksums by default (a
+dump-and-restore creates a checksummed cluster, a small CPU cost); `io_method` defaults to `worker`
+(asynchronous I/O through background workers, no `io_uring` unless you set it, and no memory limit
+change is needed); `md5` password hashes still work but log a deprecation warning, re-set the
+password to move to SCRAM. `PGTEMP` in the compose file is not a Postgres setting and is ignored.
+
+### Runbook: dump and restore (16 to 18)
+
+Plan for a short outage (the mesh control plane (NetBird management; peers keep their existing tunnels meanwhile) is down from step 2 to step 6). All commands run on the swarm
+manager; `<env>` is your environment, `<stack>` is `skmesh-<env>`.
+
+1. **Dump from the running 16.** Stop the writers first so the dump is consistent, then dump the
+   whole cluster with the old server's own tools:
+
+   ```bash
+   docker service scale <stack>_management=0
+   C=$(docker ps -q -f name=<stack>_postgres)
+   docker exec "$C" pg_dumpall -U netbird > /var/data/skmesh-<env>/database-dump/pre-pg18.sql
+   ls -l /var/data/skmesh-<env>/database-dump/pre-pg18.sql
+   tail -n 2 /var/data/skmesh-<env>/database-dump/pre-pg18.sql   # must end "PostgreSQL database cluster dump complete"
+   ```
+
+   The file holds password hashes: keep it `0600` and delete it once the upgrade is verified.
+2. **Stop the stack and move the old data aside** (this is your rollback copy, do not delete it yet):
+
+   ```bash
+   docker stack rm <stack>
+   mv /var/data/runtime/skmesh-<env>/postgres /var/data/runtime/skmesh-<env>/postgres.pg16
+   mkdir -p /var/data/runtime/skmesh-<env>/postgres && chown 999:999 /var/data/runtime/skmesh-<env>/postgres
+   ```
+
+3. **Pin nothing and deploy.** With the default image, run the usual deploy for `skmesh`. The guard
+   sees an empty directory (fresh install) and passes; the 18 image initialises `/var/data/runtime/skmesh-<env>/postgres/18/docker`
+   from the credentials in the stack's `postgres.env`/vault. Wait for the `postgres` service to report healthy.
+4. **Restore into the new cluster:**
+
+   ```bash
+   C=$(docker ps -q -f name=<stack>_postgres)
+   docker exec -i "$C" psql -U netbird -d postgres < /var/data/skmesh-<env>/database-dump/pre-pg18.sql 2> /tmp/restore.err
+   grep -v "already exists" /tmp/restore.err | head    # anything else here needs a look
+   ```
+
+   `already exists` errors for the bootstrap role and database are expected: `initdb` created them.
+5. **Verify:** `docker exec "$C" psql -U netbird -c "SHOW server_version" -c "SHOW data_checksums"`, then bring the
+   writers back (`docker service scale <stack>_management=1`) and check the the mesh control plane (NetBird management; peers keep their existing tunnels meanwhile) health endpoint and a real login or request.
+6. **Clean up** after a few days of good operation: remove `/var/data/runtime/skmesh-<env>/postgres.pg16` and the dump file.
+
+**Rollback.** The old directory is untouched. `docker stack rm <stack>`, move `/var/data/runtime/skmesh-<env>/postgres` aside,
+move `/var/data/runtime/skmesh-<env>/postgres.pg16` back to `/var/data/runtime/skmesh-<env>/postgres`, pin `skmesh.POSTGRES_IMAGE` and `skmesh.POSTGRES_BACKUP_IMAGE` to the 16 image
+(see above), redeploy. Data written after the upgrade is not carried back; restore it from a dump if needed.
+
+Order matters: if the deploy runs before step 2 the guard stops it with the message that names this
+section. That is the intended behaviour, not a fault.

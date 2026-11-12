@@ -20,13 +20,19 @@ networks:
     external: true
 
 services:
+{# Postgres 18+ images moved PGDATA to /var/lib/postgresql/<major>/docker and declare VOLUME
+   /var/lib/postgresql, so the data bind mount targets the PARENT for major 18 and up. A pinned
+   older image keeps the old target. Mounting /var/lib/postgresql/data under an 18 image would
+   leave the real data dir on an anonymous volume. The default here must stay in step with the
+   image default below (test_postgres18_guard.py). #}
+{% set _pg_data_mount = '/var/lib/postgresql' if ((skmesh.POSTGRES_IMAGE | default('postgres:18-alpine')).split('@')[0].split('/')[-1].split(':')[-1].lstrip('pg').split('.')[0].split('-')[0] | int(0)) >= 18 else '/var/lib/postgresql/data' %}
   postgres:
-    image: {{ skmesh.POSTGRES_IMAGE | default('postgres:16.15-alpine') }}
+    image: {{ skmesh.POSTGRES_IMAGE | default('postgres:18.6-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395') }}
     env_file: /var/data/config/skmesh-{{ env }}/postgres.env
     environment:
       - PGTEMP=/var/lib/postgresql/data/tmp
     volumes:
-      - /var/data/runtime/skmesh-{{ env }}/postgres:/var/lib/postgresql/data
+      - /var/data/runtime/skmesh-{{ env }}/postgres:{{ _pg_data_mount }}
     networks:
       - skmesh-{{ env }}
     deploy:
@@ -50,7 +56,7 @@ services:
       start_period: 30s
 
   postgres-db-backup:
-    image: {{ skmesh.POSTGRES_BACKUP_IMAGE | default('postgres:16.15@sha256:f9a7b9ebf6f56201f949db745e47bc423c0f0f8294bafe991cc10bf74b029657') }}
+    image: {{ skmesh.POSTGRES_BACKUP_IMAGE | default('postgres:18.6@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42') }}
     env_file: /var/data/config/skmesh-{{ env }}/postgres-backup.env
     environment:
       - PGTEMP=/dump/tmp
@@ -220,7 +226,7 @@ services:
     # of the framework default, e.g. a private branded fork it already
     # depends on (that image is not published here - see README). Default:
     # the upstream dashboard release paired with the management version
-    # (dashboard v2.94.0 for NetBird 0.80), tag plus digest.
+    # (dashboard v2.96.0 for NetBird 0.82), tag plus digest.
     image: {{ skmesh.DASHBOARD_IMAGE | default('netbirdio/dashboard:v2.96.0@sha256:340b13c00b84349572a2acc5605e907cb09250a9e6461c757097eabdb8e02f2c') }}
     container_name: skmesh-dashboard
     env_file: /var/data/config/skmesh-{{ env }}/skmesh.env

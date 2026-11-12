@@ -11,7 +11,7 @@ gate.
 - Networks: `sksso-<env>` (internal), `cloud-public-<env>` (external, shared
   with Traefik - see the framework README's "Instance contract")
 - Bind mounts:
-  - `/var/data/runtime/sksso-<env>/postgres:/var/lib/postgresql/data`
+  - `/var/data/runtime/sksso-<env>/postgres:/var/lib/postgresql` (Postgres 18+; `:/var/lib/postgresql/data` when `POSTGRES_IMAGE` pins an older major)
   - `/var/data/runtime/sksso-<env>/redis:/data`
   - `/var/data/sksso-<env>/media:/media`
   - `/var/data/sksso-<env>/certs:/certs`
@@ -575,3 +575,84 @@ status of the instance before promising self-service reset to anyone.
   next run. Applications and groups not listed in `tiles.yml` (the Windmill application, `nc-*` groups) must be
   left untouched by the script; do not add them there.
 - Rotating a client secret: runbook section "Rotate a client secret".
+
+## Upgrading Postgres to 18
+
+Framework default: `postgres:18.6` (pinned `tag@sha256:digest`) for the server and the dump sidecar. Earlier releases ran Postgres 16.
+**Postgres 18 cannot open a Postgres 16 data directory, and an upgrade is never automatic.**
+
+What the framework does for you:
+
+- **Fail-closed guard.** Before the stack deploy, `shared/tasks/postgres_major_guard.yml` reads
+  `PG_VERSION` under `<sksso.POSTGRES_DATA_PATH, default /var/data/runtime/sksso-<env>/postgres>` and stops the play when the data on disk is another major than the
+  image to deploy. The running stack is left untouched. Fresh installs (no `PG_VERSION`) pass.
+- **New data layout.** 18+ images keep the cluster in `/var/lib/postgresql/<major>/docker` and declare
+  `VOLUME /var/lib/postgresql`. For an 18+ image the compose file therefore mounts the data
+  directory at `/var/lib/postgresql` (a fresh install persists at `<sksso.POSTGRES_DATA_PATH, default /var/data/runtime/sksso-<env>/postgres>/18/docker`). A
+  pinned older image keeps the old mount target `/var/lib/postgresql/data`. Never mount
+  `/var/lib/postgresql/data` under an 18 image: the real data would land on an anonymous volume.
+  The guard is also what stops an 18 image from initialising an empty database beside old files.
+- **Keep your current major.** Pin both images in the vault and redeploy; nothing else changes:
+
+  ```yaml
+  sksso:
+    POSTGRES_IMAGE: "postgres:16.15@sha256:<digest>"
+    POSTGRES_BACKUP_IMAGE: "postgres:16.15@sha256:<digest>"   # the dump sidecar should match the server major
+  ```
+
+Upstream support: Authentik's 2026.8 release notes include "fix docker compose pg volume path for compatibility with pg18", i.e. upstream's own compose moved to 18. The framework default `authentik_version` (2024.4.2) predates that: an instance still on a much older Authentik should pin `POSTGRES_IMAGE` to its current major until Authentik itself is upgraded.
+
+PG18 defaults worth knowing (no action needed): `initdb` enables data checksums by default (a
+dump-and-restore creates a checksummed cluster, a small CPU cost); `io_method` defaults to `worker`
+(asynchronous I/O through background workers, no `io_uring` unless you set it, and no memory limit
+change is needed); `md5` password hashes still work but log a deprecation warning, re-set the
+password to move to SCRAM. `PGTEMP` in the compose file is not a Postgres setting and is ignored.
+
+### Runbook: dump and restore (16 to 18)
+
+Plan for a short outage (every login that goes through Authentik is down from step 2 to step 6). All commands run on the swarm
+manager; `<env>` is your environment, `<stack>` is `sksso-<env>`.
+
+1. **Dump from the running 16.** Stop the writers first so the dump is consistent, then dump the
+   whole cluster with the old server's own tools:
+
+   ```bash
+   docker service scale <stack>_server=0 <stack>_worker=0
+   C=$(docker ps -q -f name=<stack>_postgres)
+   docker exec "$C" pg_dumpall -U <sksso.postgres_user> > /var/data/sksso-<env>/database-dump/pre-pg18.sql
+   ls -l /var/data/sksso-<env>/database-dump/pre-pg18.sql
+   tail -n 2 /var/data/sksso-<env>/database-dump/pre-pg18.sql   # must end "PostgreSQL database cluster dump complete"
+   ```
+
+   The file holds password hashes: keep it `0600` and delete it once the upgrade is verified.
+2. **Stop the stack and move the old data aside** (this is your rollback copy, do not delete it yet):
+
+   ```bash
+   docker stack rm <stack>
+   mv <sksso.POSTGRES_DATA_PATH, default /var/data/runtime/sksso-<env>/postgres> <sksso.POSTGRES_DATA_PATH, default /var/data/runtime/sksso-<env>/postgres>.pg16
+   mkdir -p <sksso.POSTGRES_DATA_PATH, default /var/data/runtime/sksso-<env>/postgres> && chown 999:999 <sksso.POSTGRES_DATA_PATH, default /var/data/runtime/sksso-<env>/postgres>
+   ```
+
+3. **Pin nothing and deploy.** With the default image, run the usual deploy for `sksso`. The guard
+   sees an empty directory (fresh install) and passes; the 18 image initialises `<sksso.POSTGRES_DATA_PATH, default /var/data/runtime/sksso-<env>/postgres>/18/docker`
+   from the credentials in the stack's `postgres.env`/vault. Wait for the `postgres` service to report healthy.
+4. **Restore into the new cluster:**
+
+   ```bash
+   C=$(docker ps -q -f name=<stack>_postgres)
+   docker exec -i "$C" psql -U <sksso.postgres_user> -d postgres < /var/data/sksso-<env>/database-dump/pre-pg18.sql 2> /tmp/restore.err
+   grep -v "already exists" /tmp/restore.err | head    # anything else here needs a look
+   ```
+
+   `already exists` errors for the bootstrap role and database are expected: `initdb` created them.
+   With `DATA_NODE` set the directory lives on that node: run the `mv`/`mkdir` there (as root, mode `0700` for a local path).
+5. **Verify:** `docker exec "$C" psql -U <sksso.postgres_user> -c "SHOW server_version" -c "SHOW data_checksums"`, then bring the
+   writers back (`docker service scale <stack>_server=<n> <stack>_worker=<n>`) and check the every login that goes through Authentik health endpoint and a real login or request.
+6. **Clean up** after a few days of good operation: remove `<sksso.POSTGRES_DATA_PATH, default /var/data/runtime/sksso-<env>/postgres>.pg16` and the dump file.
+
+**Rollback.** The old directory is untouched. `docker stack rm <stack>`, move `<sksso.POSTGRES_DATA_PATH, default /var/data/runtime/sksso-<env>/postgres>` aside,
+move `<sksso.POSTGRES_DATA_PATH, default /var/data/runtime/sksso-<env>/postgres>.pg16` back to `<sksso.POSTGRES_DATA_PATH, default /var/data/runtime/sksso-<env>/postgres>`, pin `sksso.POSTGRES_IMAGE` and `sksso.POSTGRES_BACKUP_IMAGE` to the 16 image
+(see above), redeploy. Data written after the upgrade is not carried back; restore it from a dump if needed.
+
+Order matters: if the deploy runs before step 2 the guard stops it with the message that names this
+section. That is the intended behaviour, not a fault.
