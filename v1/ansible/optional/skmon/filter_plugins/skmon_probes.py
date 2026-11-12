@@ -20,7 +20,9 @@
 
 import re
 
-_HOST_RE = re.compile(r"Host\(\s*`([^`]+)`\s*\)")
+# Host(`a`) and Host(`a`, `b`); HostRegexp( and HostSNI( do not match (no word character before "(").
+_HOST_RE = re.compile(r"(?<![A-Za-z0-9_])Host\(([^)]*)\)")
+_ARG_RE = re.compile(r"`([^`]+)`")
 _RULE_RE = re.compile(r"^traefik\.http\.routers\.([^.]+)\.rule$")
 
 
@@ -46,7 +48,7 @@ def skmon_probes_from_services(inspect, forward_auth_middleware):
                 continue
             middlewares = [x.strip() for x in str(labels.get(f"traefik.http.routers.{m.group(1)}.middlewares", "")).split(",")]
             fwd = bool(forward_auth_middleware) and forward_auth_middleware in middlewares
-            for host in _HOST_RE.findall(str(rule)):
+            for host in (h for args in _HOST_RE.findall(str(rule)) for h in _ARG_RE.findall(args)):
                 hosts[host] = hosts.get(host, False) or fwd
     return [
         {"name": host, "url": f"https://{host}", "severity": "critical", "expect": "2xx|3xx", "forward_auth": hosts[host]}

@@ -71,6 +71,21 @@ def test_probe_default_from_router_hosts():
         assert p["severity"] == "critical" and p["expect"] == "2xx|3xx"
 
 
+def test_multi_argument_host_rules_yield_a_probe_per_host():
+    got = s.probes_from([s._svc("multi", {
+        "traefik.http.routers.m.rule": "Host(`a.render.example.test`, `b.render.example.test`) && PathPrefix(`/x`)",
+        "traefik.http.routers.n.rule": "Host(`c.render.example.test`) || Host(`d.render.example.test`,`e.render.example.test`)"})])
+    assert [p["name"] for p in got] == [f"{x}.render.example.test" for x in "abcde"]
+
+
+def test_hostregexp_and_hostsni_are_not_probed():
+    rules = ["HostRegexp(`^.+\\.render\\.example\\.test$`)", "HostSNI(`sni.render.example.test`)",
+             "HostSNI(`*`)", "HostRegexp(`{sub:[a-z]+}.render.example.test`)"]
+    assert s.probes_from([s._svc(f"r{i}", {f"traefik.http.routers.r{i}.rule": r}) for i, r in enumerate(rules)]) == []
+    mixed = s.probes_from([s._svc("x", {"traefik.http.routers.x.rule": "HostSNI(`s.example.test`) || Host(`h.example.test`)"})])
+    assert [p["name"] for p in mixed] == ["h.example.test"]
+
+
 def test_probe_names_are_unique_and_one_per_host():
     twice = s.FAKE_SERVICE_INSPECT + [s._svc("app_alias", {
         "traefik.http.routers.alias.rule": "Host(`app.render.example.test`)"})]
