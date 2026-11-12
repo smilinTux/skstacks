@@ -18,6 +18,9 @@
 - name: Derive whether skmon is parked
   set_fact:
     skmon_parked: "{{ (skmon.replicas | default(1) | int) == 0 }}"
+    # PVE.enabled as a real boolean (the string "false" is off), so templates that are also
+    # rendered by plain Jinja in the framework tests (deploy.j2) need no Ansible filter.
+    skmon_pve_enabled: "{{ ((skmon.PVE | default({}, true)).enabled | default(false) | bool) if (skmon.PVE | default({}, true)) is mapping else false }}"
 
 # SKALERT_SCRIPT_SRC is read on the controller. A leading ~ is expanded and an absolute path is
 # used as given. A relative path resolves against the directory of the selected vault file

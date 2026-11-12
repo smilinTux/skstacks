@@ -83,7 +83,7 @@ docker service ls | grep "${STACK_NAME}"
 {% if not skmon_parked %}
 # Health check
 echo -e "${YELLOW}🏥 Checking service health...${NC}"
-{% set pve_on = ((skmon.PVE | default({}, true)).enabled | default(false) | bool) if (skmon.PVE | default({}, true)) is mapping else false %}
+{% set pve_on = skmon_pve_enabled | default(false) %}{# derived in tasks/facts.yml #}
 {% set waits = [('loki', 'LOKI', 'Loki'), ('grafana', 'GRAFANA', 'Grafana'), ('victoriametrics', 'VM', 'VictoriaMetrics'), ('alertmanager', 'ALERTMANAGER', 'Alertmanager'), ('vmalert', 'VMALERT', 'vmalert'), ('bridge', 'BRIDGE', 'skmon-bridge'), ('skswarm-exporter', 'SKSWARM', 'skswarm-exporter')] + ([('pve-exporter', 'PVE', 'pve-exporter')] if pve_on else []) %}
 {% for svc, var, label in waits %}
 

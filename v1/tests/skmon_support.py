@@ -57,7 +57,7 @@ DATA_MOUNTPOINT = "/srv/local"
 def render(tpl: pathlib.Path, env: str = "prod", extra_ctx: dict | None = None, **skmon) -> str:
     """Render a role template with the framework's filters and StrictUndefined.
 
-    The data facts the plays set (skmon_data_node, skmon_data_path, skmon_parked)
+    The data facts the plays set (skmon_data_node, skmon_data_path, skmon_parked, skmon_pve_enabled)
     are derived from the vault the same way tasks/facts.yml does, unless
     extra_ctx overrides them.
     """
@@ -65,7 +65,7 @@ def render(tpl: pathlib.Path, env: str = "prod", extra_ctx: dict | None = None, 
     jenv.undefined = jinja2.StrictUndefined
     jenv.filters["quote"] = lambda v: shlex.quote(str(v))  # Ansible's quote filter
     facts = guard_facts(env=env, **dict(skmon))
-    derived = {k: facts[k] for k in ("skmon_data_node", "skmon_data_path", "skmon_parked")}
+    derived = {k: facts[k] for k in ("skmon_data_node", "skmon_data_path", "skmon_parked", "skmon_pve_enabled")}
     ctx = {"app": "skmon", "env": env, "skmon": {**BASE, **skmon}, **derived, **(extra_ctx or {})}
     return jenv.from_string(tpl.read_text()).render(**ctx)
 
@@ -287,7 +287,7 @@ RUN_CTX = {
 
 def _split(kw: dict) -> tuple[dict, dict]:
     """Split keyword overrides into (top-level template context, vault keys)."""
-    known = set(AGENT_CTX) | set(RUN_CTX) | {"skmon_parked", "skmon_data_node", "skmon_data_path"}
+    known = set(AGENT_CTX) | set(RUN_CTX) | {"skmon_parked", "skmon_pve_enabled", "skmon_data_node", "skmon_data_path"}
     top = {k: kw.pop(k) for k in list(kw) if k in known}
     return top, kw
 
