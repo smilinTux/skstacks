@@ -51,6 +51,16 @@
       include_vars: "{{ vault_file_path }}"
       when: vault_file_path is defined
 
+    - name: Check the skmon vault and derive the data facts
+      include_tasks: "{{ playbook_dir }}/tasks/guards.yml"
+      tags:
+        - always
+
+    - name: Create the skmon local data directories
+      include_tasks: "{{ playbook_dir }}/tasks/data_dirs.yml"
+      tags:
+        - always
+
     - name: Define network variables (⚠️ TODO register subnet in shared/networks — placeholder)
       # Networks are created idempotently by the create_networks.yml shared
       # task below. Reference: See shared/networks for all registered
@@ -78,13 +88,6 @@
         mode: "{{ item.mode }}"
       loop:
         - { path: "/var/data/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/{{ app }}-{{ env }}/prometheus/data", owner: "65534", group: "65534", mode: "0755" }
-        - { path: "/var/data/{{ app }}-{{ env }}/grafana/data", owner: "472", group: "472", mode: "0755" }
-        - { path: "/var/data/{{ app }}-{{ env }}/loki-data", owner: "10001", group: "10001", mode: "0755" }
-        - { path: "/var/data/{{ app }}-{{ env }}/loki-data/rules", owner: "10001", group: "10001", mode: "0755" }
-        - { path: "/var/data/{{ app }}-{{ env }}/loki-data/chunks", owner: "10001", group: "10001", mode: "0755" }
-        - { path: "/var/data/{{ app }}-{{ env }}/loki-data/tsdb-index", owner: "10001", group: "10001", mode: "0755" }
-        - { path: "/var/data/{{ app }}-{{ env }}/loki-data/tsdb-cache", owner: "10001", group: "10001", mode: "0755" }
         - { path: "/var/data/config/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/config/{{ app }}-{{ env }}/prometheus", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/config/{{ app }}-{{ env }}/grafana/provisioning/datasources", owner: "root", group: "root", mode: "0755" }
@@ -92,13 +95,6 @@
         - { path: "/var/data/config/{{ app }}-{{ env }}/loki", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/config/{{ app }}-{{ env }}/promtail", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/config/{{ app }}-{{ env }}/alertmanager", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/{{ app }}-{{ env }}/alertmanager/data", owner: "root", group: "root", mode: "0777" }
-        - { path: "/var/data/logs/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/logs/{{ app }}-{{ env }}/prometheus", owner: "65534", group: "65534", mode: "0755" }
-        - { path: "/var/data/logs/{{ app }}-{{ env }}/grafana", owner: "472", group: "472", mode: "0755" }
-        - { path: "/var/data/logs/{{ app }}-{{ env }}/loki", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/logs/{{ app }}-{{ env }}/promtail", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/logs/{{ app }}-{{ env }}/cadvisor", owner: "root", group: "root", mode: "0755" }
 
     - name: Process {{ app }} environment templates
       template:

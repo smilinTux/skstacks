@@ -1,0 +1,55 @@
+---
+# skmon guards: fail early, before any host is touched, on vault values that
+# would put alert-path data in the wrong place or silently do nothing.
+- name: Derive the skmon facts
+  import_tasks: facts.yml
+
+- name: List the swarm nodes
+  command: docker node ls --format '{{ '{{' }}.Hostname{{ '}}' }}'
+  register: skmon_node_ls
+  changed_when: false
+  check_mode: false
+
+- name: Derive the swarm node list
+  set_fact:
+    skmon_swarm_nodes: "{{ skmon_node_ls.stdout_lines | default([]) }}"
+
+- name: Require DATA_NODE
+  assert:
+    that:
+      - skmon_data_node | length > 0
+    fail_msg: >-
+      skmon.DATA_NODE is required: set it in the skmon vault to the swarm node
+      hostname that holds the Grafana data and the Loki data.
+
+- name: Require DATA_NODE to be a swarm node
+  assert:
+    that:
+      - skmon_data_node in skmon_swarm_nodes
+    fail_msg: >-
+      skmon.DATA_NODE '{{ skmon_data_node }}' is not a swarm node. Swarm nodes:
+      {{ skmon_swarm_nodes | join(', ') }}.
+
+- name: Reject relative segments in DATA_PATH
+  assert:
+    that:
+      - not ('..' in skmon_data_path.split('/') or '.' in skmon_data_path.split('/'))
+    fail_msg: >-
+      skmon.DATA_PATH '{{ skmon_data_path }}' must not contain '.' or '..' segments.
+
+- name: Keep DATA_PATH off the shared /var/data tree
+  assert:
+    that:
+      - skmon_data_path != '/var/data' and not skmon_data_path.startswith('/var/data/')
+    fail_msg: >-
+      skmon.DATA_PATH '{{ skmon_data_path }}' is under /var/data. skmon data lives on
+      local disk of DATA_NODE, never on the replicated /var/data tree: pick a
+      local path (default /srv/local/skmon-{{ env }}).
+
+- name: Reject vault keys removed in skmon v2
+  assert:
+    that:
+      - (skmon.keys() | select('match', '^(PROMETHEUS|NODE_EXPORTER|CADVISOR|PROMTAIL|JAEGER)_') | list) | length == 0
+    fail_msg: >-
+      These skmon vault keys were removed in v2, delete them:
+      {{ skmon.keys() | select('match', '^(PROMETHEUS|NODE_EXPORTER|CADVISOR|PROMTAIL|JAEGER)_') | list | join(', ') }}.

@@ -1,0 +1,36 @@
+---
+# Local data directories on DATA_NODE. Owners are the container UIDs.
+# Only Grafana, Loki and Pyroscope write here; nothing on the alert path
+# (agent, VictoriaMetrics, vmalert, Alertmanager, bridge) depends on /var/data.
+- name: Create the skmon data root
+  file:
+    path: "{{ skmon_data_path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  delegate_to: "{{ skmon_data_node }}"
+
+- name: Create the skmon data directories
+  file:
+    path: "{{ skmon_data_path }}/{{ item.sub }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.owner }}"
+    mode: "{{ item.mode }}"
+  delegate_to: "{{ skmon_data_node }}"
+  loop:
+    - { sub: "vm", owner: "0", mode: "0755" }
+    - { sub: "loki", owner: "10001", mode: "0750" }
+    - { sub: "loki/chunks", owner: "10001", mode: "0750" }
+    - { sub: "loki/tsdb-index", owner: "10001", mode: "0750" }
+    - { sub: "loki/tsdb-cache", owner: "10001", mode: "0750" }
+    - { sub: "loki/compactor", owner: "10001", mode: "0750" }
+    - { sub: "loki/rules", owner: "10001", mode: "0750" }
+    - { sub: "grafana", owner: "472", mode: "0750" }
+    - { sub: "grafana-provisioning", owner: "0", mode: "0755" }
+    - { sub: "alertmanager", owner: "65534", mode: "0750" }
+    - { sub: "bridge", owner: "{{ skmon.BRIDGE_UID | default(65534) }}", mode: "0750" }
+    - { sub: "pyroscope", owner: "10001", mode: "0750" }
+  loop_control:
+    label: "{{ item.sub }}"

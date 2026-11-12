@@ -1,0 +1,19 @@
+---
+# skmon facts derived from the vault. set_fact only, no host access, so any
+# play (the deploy plays, the agent play) can import this file on its own.
+#   skmon_data_node  host that holds the local data (DATA_NODE, required by guards.yml)
+#   skmon_data_path  normalized local data root: repeated slashes collapsed, no trailing slash
+#   skmon_parked     true when skmon.replicas is 0 (also the string "0"): every workload is parked
+- name: Derive the skmon data node
+  set_fact:
+    skmon_data_node: "{{ skmon.DATA_NODE | default('', true) }}"
+
+- name: Derive the normalized skmon local data path
+  set_fact:
+    skmon_data_path: >-
+      {{ skmon.DATA_PATH | default('/srv/local/skmon-' ~ env, true)
+         | regex_replace('/+', '/') | regex_replace('/$', '') }}
+
+- name: Derive whether skmon is parked
+  set_fact:
+    skmon_parked: "{{ (skmon.replicas | default(1) | int) == 0 }}"

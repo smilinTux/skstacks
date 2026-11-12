@@ -120,6 +120,7 @@ FAKE_STDOUT = {
     "actual_cert_dir": "/var/data/runtime/skfenceha-dev/certs/mail.example.test",
     "skfenceha_logrotate_nodes": "render-node-1",
     "skfence_logrotate_nodes": "render-node-1",
+    "skmon_node_ls": "node-1.render.example.test",
     "garage_node": "render-node-1",
     "garage_replicas": "1/1",
     # skpayment: the controller-side app checkout (a fixture stand-in)
