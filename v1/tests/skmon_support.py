@@ -3,6 +3,7 @@ import ast
 import hashlib
 import pathlib
 import re
+import shlex
 
 import jinja2
 import yaml
@@ -26,8 +27,8 @@ BASE = {
     "GRAFANA_SECRET_KEY": "fake-secret-key",
     "GRAFANA_ROOT_URL": "https://skmon.c1.example.test",
     # Alert delivery (Task 13): the fixture stub stands in for the estate's sk-alert, pinned by its hash.
-    # A relative SKALERT_SCRIPT_SRC resolves against the repository root (tasks/facts.yml).
-    "SKALERT_SCRIPT_SRC": "v1/tests/fixtures/skmon/fake_sk_alert",
+    # A relative SKALERT_SCRIPT_SRC resolves against the vault file's directory (tasks/facts.yml).
+    "SKALERT_SCRIPT_SRC": str(pathlib.Path(__file__).resolve().parent / "fixtures/skmon/fake_sk_alert"),
     "SKALERT_SCRIPT_SHA256": hashlib.sha256((pathlib.Path(__file__).resolve().parent / "fixtures/skmon/fake_sk_alert").read_bytes()).hexdigest(),
     "ALERT_ROUTING": {"TELEGRAM_CHAT_ID": "-1000000000", "TALK_URL": "https://talk.example.test/room/fake"},
     "ALERT_SECRETS": {"TELEGRAM_BOT_TOKEN": "fake-telegram-token-not-a-secret"},
@@ -62,6 +63,7 @@ def render(tpl: pathlib.Path, env: str = "prod", extra_ctx: dict | None = None, 
     """
     jenv = _schema.make_environment()
     jenv.undefined = jinja2.StrictUndefined
+    jenv.filters["quote"] = lambda v: shlex.quote(str(v))  # Ansible's quote filter
     facts = guard_facts(env=env, **dict(skmon))
     derived = {k: facts[k] for k in ("skmon_data_node", "skmon_data_path", "skmon_parked")}
     ctx = {"app": "skmon", "env": env, "skmon": {**BASE, **skmon}, **derived, **(extra_ctx or {})}
@@ -156,7 +158,7 @@ AGENT_GUARDS = ROLE / "tasks/agent_guards.yml"
 
 # Override keys that are top-level facts rather than vault keys. Anything else
 # passed to guard_facts() is a vault key and lands in the `skmon` mapping.
-_TOP_LEVEL_FACTS = {"swarm_nodes", "env", "groups", "playbook_dir", "skstacks_repo_root"}
+_TOP_LEVEL_FACTS = {"swarm_nodes", "env", "groups", "vault_file_path"}
 _TOP_LEVEL_PREFIXES = ("skmon_", "skalert_")
 
 
@@ -172,6 +174,9 @@ def ansible_environment() -> jinja2.Environment:
         x for x in seq if (jenv.tests[test](x, *a) if test else x)
     ]
     jenv.filters["int"] = lambda v, default=0: int(v) if str(v).lstrip("-").isdigit() else default
+    jenv.filters["expanduser"] = lambda v: __import__("os").path.expanduser(str(v))
+    jenv.filters["dirname"] = lambda v: __import__("os").path.dirname(str(v))
+    jenv.filters["quote"] = lambda v: __import__("shlex").quote(str(v))
     jenv.tests["match"] = lambda v, pattern: re.match(pattern, str(v)) is not None
     jenv.tests["regex"] = lambda v, pattern: re.search(pattern, str(v)) is not None
     return jenv
@@ -194,7 +199,7 @@ def guard_facts(**overrides) -> dict:
     land in the `skmon` mapping. Non-vault facts land at the top level: `env`,
     `swarm_nodes` (which also becomes `skmon_swarm_nodes`, the fact guards.yml
     derives from the registered `docker node ls`, defaulting to just DATA_NODE),
-    `playbook_dir` and `skstacks_repo_root` (the path facts), and any `skmon_*` /
+    `vault_file_path`, and any `skmon_*` /
     `skalert_*` key (e.g. `skalert_actual_sha256`, the controller-side hash of the script).
     """
     top = {k: overrides.pop(k) for k in list(overrides)
@@ -203,7 +208,7 @@ def guard_facts(**overrides) -> dict:
     swarm = top.pop("swarm_nodes", [vault.get("DATA_NODE", "")])
     # skalert_actual_sha256 is what the play's `stat` of the script registers; by default it matches the pin.
     ctx = {"app": "skmon", "env": "prod", "skmon": vault, "skmon_swarm_nodes": swarm, "groups": {},
-           "playbook_dir": str(ROLE), "skalert_actual_sha256": BASE["SKALERT_SCRIPT_SHA256"], **top}
+           "skalert_actual_sha256": BASE["SKALERT_SCRIPT_SHA256"], **top}
     jenv = ansible_environment()
     for t in load_tasks(FACTS_FILE):
         for name, value in (t.get("set_fact") or {}).items():

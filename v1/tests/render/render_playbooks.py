@@ -624,6 +624,9 @@ def run_one(work: Path, stype: str, svc: str, env: str, pb: Path, pass_name: str
     vault_dir.mkdir(parents=True)
     (vault_dir / f"{svc}-{env}_vault.yml").write_text(yaml.dump(vault, Dumper=VarsDumper))
     stage_companion_vaults(svc, env, vault_dir, vaults_root=run_dir / "vaults")
+    if svc == "skmon":
+        # SKALERT_SCRIPT_SRC is relative to the vault file's directory: stage the test stub beside it.
+        shutil.copy(V1 / "tests/fixtures/skmon/fake_sk_alert", vault_dir / "fake_sk_alert")
     inv_dir = run_dir / "inventory"
     shutil.copytree(FIXTURES, inv_dir)
     target_group = "skfenceha_managers" if svc == "skfenceha" else "swarm_managers"
@@ -647,8 +650,6 @@ def run_one(work: Path, stype: str, svc: str, env: str, pb: Path, pass_name: str
            "-e", f"render_outdir={outdir}",
            "-e", f"skstacks_vault_dir={run_dir / 'vaults'}",
            "-e", f"target_manager_group={target_group}",
-           # relative script paths in an example vault (skmon's SKALERT_SCRIPT_SRC) resolve against this
-           "-e", f"skstacks_repo_root={V1.parent}",
            str(render_pb)]
     proc = subprocess.run(cmd, cwd=render_pb.parent, env=env_vars,
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)

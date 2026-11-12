@@ -19,16 +19,17 @@
   set_fact:
     skmon_parked: "{{ (skmon.replicas | default(1) | int) == 0 }}"
 
-# SKALERT_SCRIPT_SRC is read on the controller. An absolute path is used as given; a relative
-# path is resolved against the SKStacks repository root, which is skstacks_repo_root when set
-# (the render gate sets it) and otherwise four levels above this role's playbook directory
-# (<repo>/v1/ansible/optional/skmon). Empty when SKALERT_SCRIPT_SRC is unset (guards.yml fails).
+# SKALERT_SCRIPT_SRC is read on the controller. A leading ~ is expanded and an absolute path is
+# used as given. A relative path resolves against the directory of the selected vault file
+# (vault_file_path, set by shared/tasks/select_vault_file.yml), so the script is kept beside the
+# vault and never inside this public repository. Empty when SKALERT_SCRIPT_SRC is unset
+# (guards.yml fails).
 - name: Derive the sk-alert script path on the controller
   set_fact:
     skmon_skalert_src: >-
-      {%- set src = skmon.SKALERT_SCRIPT_SRC | default('', true) | string -%}
-      {%- if src == '' or src.startswith('/') -%}{{ src }}
-      {%- else -%}{{ skstacks_repo_root | default(playbook_dir ~ '/../../../..', true) }}/{{ src }}
+      {%- set src = (skmon.SKALERT_SCRIPT_SRC | default('', true) | string) | expanduser -%}
+      {%- if src == '' or src.startswith('/') or (vault_file_path | default('', true)) == '' -%}{{ src }}
+      {%- else -%}{{ vault_file_path | dirname }}/{{ src }}
       {%- endif -%}
 
 # Inventory hosts that run an agent: the skmon_agent_hosts group when the inventory

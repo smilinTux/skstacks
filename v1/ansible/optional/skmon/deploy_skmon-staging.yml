@@ -50,6 +50,7 @@
     - name: Load vault file
       include_vars: "{{ vault_file_path }}"
       when: vault_file_path is defined
+      no_log: true
 
     - name: Check the skmon vault and derive the data facts
       include_tasks: "{{ playbook_dir }}/tasks/guards.yml"

@@ -18,9 +18,10 @@ skmon:
   HEALTHZ_ALLOW:
     - 198.51.100.7
   # The estate's own sk-alert script, read on the controller and pinned by its sha256. A relative
-  # path resolves against the SKStacks repository root (an absolute path is used as given); this
-  # one is the test stub that ships with the repository, never the real script.
-  SKALERT_SCRIPT_SRC: v1/tests/fixtures/skmon/fake_sk_alert
+  # path resolves against the directory of this vault file (an absolute path or ~/... is used as
+  # given), so the real script lives beside the vault, not in the repository. The render gate
+  # stages the test stub (v1/tests/fixtures/skmon/fake_sk_alert) next to the vault under this name.
+  SKALERT_SCRIPT_SRC: fake_sk_alert
   SKALERT_SCRIPT_SHA256: c0809061607f79a66430dad19af667d7ad2d16fd8dfc1b1b88ed539fef5f7738
   # sk-alert's alert.env and alert.secret, one NAME=value per line (single-line values only).
   ALERT_ROUTING:

@@ -84,16 +84,29 @@ def test_multiline_values_and_bad_names_fail_without_printing_the_value(key):
 
 # --- the script path rule ------------------------------------------------------------
 
-def test_relative_script_src_resolves_against_the_repo_root():
-    f = facts()
-    assert f["skmon_skalert_src"].endswith("/v1/tests/fixtures/skmon/fake_sk_alert")
-    assert f["skmon_skalert_src"].startswith(str(ROLE.parents[2].parent))
-    assert facts(skstacks_repo_root="/repo")["skmon_skalert_src"] == "/repo/v1/tests/fixtures/skmon/fake_sk_alert"
+def test_relative_script_src_resolves_against_the_vault_file_directory():
+    f = facts(SKALERT_SCRIPT_SRC="sk-alert", vault_file_path="/etc/vaults/optional/skmon-prod_vault.yml")
+    assert f["skmon_skalert_src"] == "/etc/vaults/optional/sk-alert"
+    assert facts(SKALERT_SCRIPT_SRC="scripts/sk-alert", vault_file_path="/v/x.yml")["skmon_skalert_src"] == "/v/scripts/sk-alert"
+
+
+def test_home_relative_script_src_is_expanded(monkeypatch):
+    monkeypatch.setenv("HOME", "/home/fake")
+    assert facts(SKALERT_SCRIPT_SRC="~/bin/sk-alert", vault_file_path="/v/x.yml")["skmon_skalert_src"] == "/home/fake/bin/sk-alert"
 
 
 def test_absolute_script_src_is_used_as_given():
-    assert facts(SKALERT_SCRIPT_SRC="/etc/estate/sk-alert")["skmon_skalert_src"] == "/etc/estate/sk-alert"
-    assert facts(SKALERT_SCRIPT_SRC="")["skmon_skalert_src"] == ""
+    assert facts(SKALERT_SCRIPT_SRC="/etc/estate/sk-alert", vault_file_path="/v/x.yml")["skmon_skalert_src"] == "/etc/estate/sk-alert"
+    assert facts(SKALERT_SCRIPT_SRC="", vault_file_path="/v/x.yml")["skmon_skalert_src"] == ""
+
+
+def test_plays_do_not_read_the_repo_root():
+    assert "skstacks_repo_root" not in "".join(p.read_text() for p in PLAYS) + (ROLE / "tasks/facts.yml").read_text()
+
+
+@pytest.mark.parametrize("play", PLAYS, ids=lambda p: p.name)
+def test_vault_load_is_no_log(play):
+    assert task_named(play, "Load vault file")["no_log"] is True
 
 
 def test_the_fixture_stub_matches_the_base_pin():
@@ -218,6 +231,25 @@ def test_parked_bridge_still_renders_a_valid_compose(r):
 
 
 # --- secret files --------------------------------------------------------------------
+
+NASTY = {"URL": "https://x.example.test/?a=1&b=2", "DOLLAR": "ab$cd#ef", "QUOTES": "it's \"q\" `x`",
+         "SPACE": "two words;echo pwned", "BACK": "a\\b $(id)", "PLAIN": "2"}
+
+
+@pytest.mark.parametrize("tpl,key", [("alert_env", "ALERT_ROUTING"), ("alert_secret", "ALERT_SECRETS")])
+def test_secret_files_survive_bash_source(tmp_path, tpl, key):
+    """sk-alert loads both files with bash `source`: every value must round-trip exactly."""
+    import subprocess
+    f = tmp_path / "f.env"
+    f.write_text(render(CFG / SECRET_TEMPLATES[tpl], **{key: NASTY}))
+    names = " ".join(NASTY)
+    script = f'set -a; source "$1"; for n in {names}; do printf "%s=%s\\0" "$n" "${{!n}}"; done'
+    out = subprocess.run(["bash", "-c", script, "bash", str(f)], capture_output=True, text=True, check=True,
+                         cwd=tmp_path)
+    got = dict(kv.split("=", 1) for kv in out.stdout.split("\0") if kv)
+    assert got == NASTY
+    assert not (tmp_path / "pwned").exists() and "pwned" not in out.stderr.replace("two words;echo pwned", "")
+
 
 def test_alert_env_and_secret_render_one_pair_per_line():
     env = render(CFG / SECRET_TEMPLATES["alert_env"], ALERT_ROUTING={"B": "2", "A": "https://x.example.test/a=b"})
