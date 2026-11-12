@@ -10,18 +10,11 @@ global:
   scrape_interval: {{ normal }}
 
 scrape_configs:
-  # Host metrics, every agent.
-  - job_name: alloy-unix
-    scrape_interval: {{ fast }}
-    metrics_path: /api/v0/component/prometheus.exporter.unix.host/metrics
-    static_configs:
-{% for t in skmon_agent_targets %}
-      - targets: ['{{ t.addr }}:{{ agent_port }}']
-        labels:
-          node: '{{ t.node }}'
-          role: '{{ t.role }}'
-          estate: '{{ estate }}'
-{% endfor %}
+{% set full_targets = skmon_agent_targets | rejectattr('light') | list %}
+{% set light_targets = skmon_agent_targets | selectattr('light') | list %}
+{# The systemd collector reports every unit in every state; keep the state="failed" series only.
+   Shared by the full and the light host job. #}
+{% macro systemd_failed_only() %}
     # systemd: failed units only. The collector reports every unit in every state; mark
     # the state="failed" series, drop the other node_systemd_unit_state series, then drop
     # the mark. (A relabel inside Alloy would not change what this metrics path serves.)
@@ -35,13 +28,49 @@ scrape_configs:
         action: drop
       - regex: __tmp_systemd_keep
         action: labeldrop
-
-  # Container metrics, every agent.
+{% endmacro %}
+{% if full_targets %}
+  # Host metrics, every full agent (light hosts are the alloy-unix-light job below).
+  - job_name: alloy-unix
+    scrape_interval: {{ fast }}
+    metrics_path: /api/v0/component/prometheus.exporter.unix.host/metrics
+    static_configs:
+{% for t in full_targets %}
+      - targets: ['{{ t.addr }}:{{ agent_port }}']
+        labels:
+          node: '{{ t.node }}'
+          role: '{{ t.role }}'
+          estate: '{{ estate }}'
+{% endfor %}
+{{ systemd_failed_only() }}
+{% endif %}
+{% if light_targets %}
+  # Host metrics, light agents (storage and hypervisor hosts, spec 18 Q2): 60 s. job is
+  # relabeled to alloy-unix so NodeDown and every board that selects job="alloy-unix"
+  # cover these hosts too (job names must be unique, so this is a second job).
+  - job_name: alloy-unix-light
+    scrape_interval: 60s
+    metrics_path: /api/v0/component/prometheus.exporter.unix.host/metrics
+    static_configs:
+{% for t in light_targets %}
+      - targets: ['{{ t.addr }}:{{ agent_port }}']
+        labels:
+          node: '{{ t.node }}'
+          role: '{{ t.role }}'
+          estate: '{{ estate }}'
+{% endfor %}
+    relabel_configs:
+      - target_label: job
+        replacement: alloy-unix
+{{ systemd_failed_only() }}
+{% endif %}
+{% if full_targets %}
+  # Container metrics, every full agent (a light agent runs no cadvisor).
   - job_name: alloy-cadvisor
     scrape_interval: {{ normal }}
     metrics_path: /api/v0/component/prometheus.exporter.cadvisor.docker/metrics
     static_configs:
-{% for t in skmon_agent_targets %}
+{% for t in full_targets %}
       - targets: ['{{ t.addr }}:{{ agent_port }}']
         labels:
           node: '{{ t.node }}'
@@ -61,6 +90,7 @@ scrape_configs:
         target_label: task_slot
       - regex: container_label_.*
         action: labeldrop
+{% endif %}
 
   # The agents themselves (up, component health).
   - job_name: alloy-self

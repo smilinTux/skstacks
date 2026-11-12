@@ -23,6 +23,14 @@
 # one host container skmon-<env>-alloy running (config /etc/skmon-<env>/alloy, state
 # /var/lib/skmon-<env>/alloy, both local disk). Parked (skmon.replicas 0) removes the
 # container; the state directory and DATA_PATH are never deleted.
+#
+# Systemd mode (hosts where Docker is wrong, spec 7.2): the pinned Alloy release
+# (pins.yml binaries.alloy, sha256 verified) is installed as /usr/local/bin/skmon-alloy-<version>
+# behind the symlink /usr/local/bin/skmon-alloy, run by unit skmon-<env>-alloy.service. A light
+# host (agent_light, default true for skmon_extra_hosts, spec 18 Q2) runs the short collector
+# list under MemoryMax=256M and CPUQuota=5% and adds a SMART textfile timer; a full systemd
+# host gets the whole config under 384M and 50%. Hostvar state: absent removes the unit, timer,
+# binary and config and keeps /var/lib/skmon-<env>/alloy; parked stops (and disables) the unit.
 - hosts: skmon_agent_hosts
   become: true
   gather_facts: false
@@ -55,6 +63,7 @@
       # agent address (its own name when DATA_NODE runs no agent).
       set_fact:
         skmon_agent_mode: "{{ agent_mode | default('systemd' if inventory_hostname in (groups['skmon_extra_hosts'] | default([])) else 'container') }}"
+        skmon_agent_state: "{{ state | default('present') }}"
         skmon_agent_listen_addr: "{{ skmon_agent_self.addr }}"
         skmon_agent_probes: >-
           {{ hostvars[groups['selected_manager_group'][0]].skmon_probes
@@ -84,11 +93,6 @@
               ~ lookup('template', playbook_dir + '/src/config/skmon/alloy/skmon-alloy-run.sh.j2',
                        template_vars={'skmon_agent_config_hash': ''}))
              | hash('sha256') }}
-
-    - name: Note hosts in systemd mode
-      debug:
-        msg: "{{ inventory_hostname }}: agent_mode systemd is not installed by this play yet, skipped"
-      when: skmon_agent_mode != 'container'
 
     - name: Create the agent config and state directories
       file:
@@ -135,3 +139,247 @@
       register: skmon_agent_run
       changed_when: "'changed' in skmon_agent_run.stdout_lines"
       when: skmon_agent_mode == 'container'
+
+    # --- systemd install mode -------------------------------------------------------
+
+    - name: Gather the architecture fact for the Alloy binary
+      setup:
+        gather_subset:
+          - min
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state != 'absent'
+
+    - name: Pick the Alloy release architecture
+      set_fact:
+        skmon_agent_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_architecture] | default('') }}"
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state != 'absent'
+
+    - name: Fail on an architecture without an Alloy release
+      fail:
+        msg: >-
+          {{ inventory_hostname }} reports architecture '{{ ansible_architecture }}'; the skmon Alloy
+          binary is released for x86_64 (amd64) and aarch64 (arm64) only.
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state != 'absent' and skmon_agent_arch == ''
+
+    - name: Check that unzip is installed
+      # unarchive needs it. Packages are not installed by this play: say what is missing.
+      shell: command -v unzip
+      args:
+        executable: /bin/sh
+      register: skmon_agent_unzip
+      changed_when: false
+      failed_when: false
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state != 'absent'
+
+    - name: Fail when unzip is missing
+      fail:
+        msg: >-
+          {{ inventory_hostname }} has no unzip, which unpacking the Alloy release needs. Install the
+          unzip package on the host (this play installs no packages) and run the deploy again.
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state != 'absent' and skmon_agent_unzip.rc != 0
+
+    - name: Load the skmon pins
+      include_vars:
+        file: "{{ playbook_dir }}/src/config/skmon/pins.yml"
+        name: skmon_pins
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state != 'absent'
+
+    - name: Create the systemd agent directories
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop:
+        - {path: "/etc/skmon-{{ env }}/alloy", mode: "0750"}
+        - {path: "/var/lib/skmon-{{ env }}/alloy", mode: "0750"}
+        - {path: "/var/lib/skmon-{{ env }}/alloy/textfile", mode: "0755"}
+        - {path: "/usr/local/lib/skmon-alloy/{{ skmon_pins.binaries.alloy.version }}", mode: "0755"}
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state != 'absent'
+
+    - name: Create the node_exporter textfile directory for a full systemd agent
+      # The full config reads the node_exporter convention; a light agent reads the textfile dir above.
+      file:
+        path: /var/lib/node_exporter/textfile_collector
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state != 'absent' and not skmon_agent_self.light
+
+    - name: Download the pinned Alloy binary
+      get_url:
+        url: "https://github.com/grafana/alloy/releases/download/{{ skmon_pins.binaries.alloy.version }}/alloy-linux-{{ skmon_agent_arch }}.zip"
+        dest: "/usr/local/lib/skmon-alloy/{{ skmon_pins.binaries.alloy.version }}/alloy-linux-{{ skmon_agent_arch }}.zip"
+        checksum: "sha256:{{ skmon_pins.binaries.alloy['sha256_linux_' ~ skmon_agent_arch] }}"
+        owner: root
+        group: root
+        mode: "0644"
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state != 'absent'
+
+    - name: Unpack the Alloy release
+      unarchive:
+        src: "/usr/local/lib/skmon-alloy/{{ skmon_pins.binaries.alloy.version }}/alloy-linux-{{ skmon_agent_arch }}.zip"
+        dest: "/usr/local/lib/skmon-alloy/{{ skmon_pins.binaries.alloy.version }}"
+        remote_src: true
+        creates: "/usr/local/lib/skmon-alloy/{{ skmon_pins.binaries.alloy.version }}/alloy-linux-{{ skmon_agent_arch }}"
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state != 'absent'
+
+    - name: Install the versioned Alloy binary
+      copy:
+        src: "/usr/local/lib/skmon-alloy/{{ skmon_pins.binaries.alloy.version }}/alloy-linux-{{ skmon_agent_arch }}"
+        dest: "/usr/local/bin/skmon-alloy-{{ skmon_pins.binaries.alloy.version }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+      register: skmon_agent_binary
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state != 'absent'
+
+    - name: Point the Alloy symlink at the pinned binary
+      file:
+        src: "/usr/local/bin/skmon-alloy-{{ skmon_pins.binaries.alloy.version }}"
+        dest: /usr/local/bin/skmon-alloy
+        state: link
+      register: skmon_agent_link
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state != 'absent'
+
+    - name: Write the systemd agent config
+      copy:
+        content: "{{ skmon_agent_config }}"
+        dest: "/etc/skmon-{{ env }}/alloy/agent.alloy"
+        owner: root
+        group: root
+        mode: "0640"
+      register: skmon_agent_systemd_config
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state != 'absent'
+
+    - name: Write the systemd agent unit
+      template:
+        src: "{{ playbook_dir }}/src/config/skmon/alloy/skmon-alloy.service.j2"
+        dest: "/etc/systemd/system/skmon-{{ env }}-alloy.service"
+        owner: root
+        group: root
+        mode: "0644"
+      vars:
+        agent_light: "{{ skmon_agent_self.light }}"
+      register: skmon_agent_unit
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state != 'absent'
+
+    - name: Write the SMART textfile script
+      copy:
+        src: "{{ playbook_dir }}/src/skmon/smart_textfile.sh"
+        dest: "/usr/local/sbin/skmon-{{ env }}-smart-textfile"
+        owner: root
+        group: root
+        mode: "0755"
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state != 'absent' and skmon_agent_self.light
+
+    - name: Write the SMART textfile units
+      template:
+        src: "{{ playbook_dir }}/src/config/skmon/alloy/{{ item }}.j2"
+        dest: "/etc/systemd/system/skmon-{{ env }}-{{ item | regex_replace('^skmon-', '') }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - skmon-smart.service
+        - skmon-smart.timer
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state != 'absent' and skmon_agent_self.light
+
+    - name: Start the systemd agent
+      systemd:
+        name: "skmon-{{ env }}-alloy.service"
+        state: started
+        enabled: true
+        daemon_reload: true
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state != 'absent' and not skmon_parked
+
+    - name: Restart the systemd agent when its binary, config or unit changed
+      systemd:
+        name: "skmon-{{ env }}-alloy.service"
+        state: restarted
+      when: >-
+        skmon_agent_mode == 'systemd' and skmon_agent_state != 'absent' and not skmon_parked
+        and (skmon_agent_binary.changed or skmon_agent_link.changed
+             or skmon_agent_systemd_config.changed or skmon_agent_unit.changed)
+
+    - name: Start the SMART textfile timer
+      systemd:
+        name: "skmon-{{ env }}-smart.timer"
+        state: started
+        enabled: true
+        daemon_reload: true
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state != 'absent' and skmon_agent_self.light and not skmon_parked
+
+    - name: Stop the systemd agent while parked
+      # Files stay; enabled is turned off so a reboot does not start a parked agent.
+      # Unparking runs "Start the systemd agent", which enables and starts it again.
+      systemd:
+        name: "skmon-{{ env }}-alloy.service"
+        state: stopped
+        enabled: false
+        daemon_reload: true
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state != 'absent' and skmon_parked
+
+    - name: Stop the SMART textfile timer while parked
+      systemd:
+        name: "skmon-{{ env }}-smart.timer"
+        state: stopped
+        enabled: false
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state != 'absent' and skmon_agent_self.light and skmon_parked
+
+    # --- state: absent (hostvar state) ---------------------------------------------
+    # Removes the units, binary, symlink and config. /var/lib/skmon-<env>/alloy stays, so a
+    # re-add resumes its WAL and positions.
+
+    - name: Stop and disable the systemd agent and SMART timer when absent
+      systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - "skmon-{{ env }}-alloy.service"
+        - "skmon-{{ env }}-smart.timer"
+      register: skmon_agent_absent_stop
+      failed_when: skmon_agent_absent_stop.failed and 'Could not find' not in (skmon_agent_absent_stop.msg | default(''))
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state == 'absent'
+
+    - name: Remove the systemd agent unit when absent
+      file:
+        path: "/etc/systemd/system/{{ item }}"
+        state: absent
+      loop:
+        - "skmon-{{ env }}-alloy.service"
+        - "skmon-{{ env }}-smart.service"
+        - "skmon-{{ env }}-smart.timer"
+      register: skmon_agent_absent_units
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state == 'absent'
+
+    - name: Reload systemd after removing the agent unit
+      systemd:
+        daemon_reload: true
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state == 'absent' and skmon_agent_absent_units.changed
+
+    - name: Find the installed Alloy binaries
+      find:
+        paths: /usr/local/bin
+        patterns: "skmon-alloy-*"
+      register: skmon_agent_found_binaries
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state == 'absent'
+
+    - name: Remove the Alloy binary when absent
+      # Every versioned binary, the symlink, the unpacked releases and the SMART script.
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop: >-
+        {{ (skmon_agent_found_binaries.files | default([]) | map(attribute='path') | list)
+           + ['/usr/local/bin/skmon-alloy', '/usr/local/lib/skmon-alloy', '/usr/local/sbin/skmon-' ~ env ~ '-smart-textfile'] }}
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state == 'absent'
+
+    - name: Remove the systemd agent config when absent
+      file:
+        path: "/etc/skmon-{{ env }}/alloy"
+        state: absent
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state == 'absent'

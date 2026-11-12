@@ -1,0 +1,26 @@
+# skmon {{ env }} Alloy agent on {{ inventory_hostname }}, rendered by agent.yml (systemd install mode).
+# Do not edit on the host. Config /etc/skmon-{{ env }}/alloy, state /var/lib/skmon-{{ env }}/alloy.
+{% set light = agent_light | default(false) | bool %}
+[Unit]
+Description=skmon {{ env }} Alloy agent{{ ' (light)' if light }}
+Documentation=https://grafana.com/docs/alloy/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+{# The loki.write WAL block is experimental in Alloy; a light config has no loki.write. #}
+ExecStart=/usr/local/bin/skmon-alloy run /etc/skmon-{{ env }}/alloy/agent.alloy --server.http.listen-addr={{ skmon_agent_listen_addr }}:{{ skmon.AGENT_PORT | default(12345) }} --storage.path=/var/lib/skmon-{{ env }}/alloy{{ '' if light else ' --stability.level=experimental' }}
+Restart=always
+RestartSec=5
+# Root, because the systemd collector reads systemd's private manager socket and the
+# disk collectors read /sys and /proc of the whole host. Everything else is fenced.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/skmon-{{ env }}/alloy
+MemoryMax={{ '256M' if light else '384M' }}
+CPUQuota={{ '5%' if light else '50%' }}
+
+[Install]
+WantedBy=multi-user.target

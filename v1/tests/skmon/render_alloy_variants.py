@@ -23,6 +23,7 @@ VARIANTS = {
     "container-data-node": {"agent_is_data_node": True, "probes": PROBES},
     "container-storage": {"agent_is_storage": True},
     "systemd-node": {"agent_mode": "systemd"},
+    "systemd-light": {"agent_mode": "systemd", "agent_light": True, "agent_is_storage": True},
 }
 
 

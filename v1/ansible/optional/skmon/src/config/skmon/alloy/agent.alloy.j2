@@ -6,15 +6,23 @@
 // container labels) are metric relabels on those scrape jobs in vm-scrape.yml, because a
 // relabel inside Alloy does not change what a component's own metrics path serves.
 // Logs are pushed to Loki on DATA_NODE through a write-ahead log.
+// A light agent (storage and hypervisor hosts, systemd mode) runs the host exporter with a
+// short collector list and nothing else: no container metrics, no log shipping, no probes.
+{% set light = agent_light | default(false) | bool %}
 {% set container = agent_mode == 'container' %}
 {% set procfs = '/host/proc' if container else '/proc' %}
 {% set sysfs = '/host/sys' if container else '/sys' %}
 {% set rootfs = '/rootfs' if container else '/' %}
 {# The node_exporter convention, so existing *.prom writers (SMART, backup jobs) are picked up. #}
-{% set textfile_dir = (rootfs if container else '') ~ '/var/lib/node_exporter/textfile_collector' %}
-{% set collectors = ['cpu', 'diskstats', 'filesystem', 'loadavg', 'meminfo', 'netdev', 'netstat',
+{# A light host's SMART timer writes under the agent's own state directory instead. #}
+{% set textfile_dir = ('/var/lib/skmon-' ~ env ~ '/alloy/textfile') if light
+                      else ((rootfs if container else '') ~ '/var/lib/node_exporter/textfile_collector') %}
+{% set light_collectors = ['systemd', 'cpu', 'meminfo', 'loadavg', 'filesystem', 'diskstats', 'pressure',
+                           'processes', 'zfs', 'nfs', 'nfsd', 'mountstats', 'textfile'] %}
+{% set full_collectors = ['cpu', 'diskstats', 'filesystem', 'loadavg', 'meminfo', 'netdev', 'netstat',
                      'pressure', 'processes', 'stat', 'time', 'uname', 'vmstat', 'mountstats', 'nfs',
                      'zfs', 'systemd', 'hwmon', 'textfile'] + (['nfsd'] if agent_is_storage else []) %}
+{% set collectors = light_collectors if light else full_collectors %}
 {% set cadvisor_off = ['disk', 'percpu', 'process', 'tcp', 'udp', 'advtcp', 'sched', 'hugetlb',
                        'referenced_memory', 'cpu_topology', 'resctrl', 'memory_numa'] %}
 {% set swarm_labels = ['com.docker.stack.namespace', 'com.docker.swarm.service.name',
@@ -46,6 +54,7 @@ prometheus.exporter.unix "host" {
   }
 }
 
+{% if not light %}
 // Container metrics. Only the Swarm labels are kept as container_label_* series labels;
 // vm-scrape.yml renames them to stack, service and task_slot and drops the rest.
 // The housekeeping interval is not an argument of this component in Alloy v1.21 (cadvisor
@@ -58,7 +67,8 @@ prometheus.exporter.cadvisor "docker" {
   store_container_labels = false
   allowlisted_container_labels = [{% for l in swarm_labels %}"{{ l }}"{{ ", " if not loop.last }}{% endfor %}]
 }
-{% if agent_is_data_node %}
+{% endif %}
+{% if agent_is_data_node and not light %}
 
 // Probes, on the DATA_NODE agent only. A probe passes on 2xx or 3xx without following
 // redirects (a route behind forward auth stops at the login redirect), or on exactly 200
@@ -85,6 +95,7 @@ prometheus.exporter.blackbox "probes" {
 }
 {% endif %}
 
+{% if not light %}
 // Logs: Docker container logs and the systemd journal, to Loki on DATA_NODE.
 loki.write "local" {
   endpoint {
@@ -180,3 +191,4 @@ loki.source.journal "journal" {
   }
   forward_to = [loki.write.local.receiver]
 }
+{% endif %}

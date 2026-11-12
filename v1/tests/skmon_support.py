@@ -207,6 +207,8 @@ def data_dir_items() -> list[dict]:
 ALLOY = CFG / "alloy"
 AGENT_CONFIG = ALLOY / "agent.alloy.j2"
 AGENT_RUN = ALLOY / "skmon-alloy-run.sh.j2"
+AGENT_UNIT = ALLOY / "skmon-alloy.service.j2"
+SMART_SCRIPT = SRC / "skmon/smart_textfile.sh"
 AGENT_PLAY = ROLE / "agent.yml"
 AGENT_TARGETS = ROLE / "tasks/agent_targets.yml"
 
@@ -245,6 +247,20 @@ def render_run_script(env: str = "prod", **kw) -> str:
     """The rendered skmon-<env>-alloy-run script; overrides: context facts or vault keys."""
     top, vault = _split(dict(kw))
     return render(AGENT_RUN, env=env, extra_ctx={**AGENT_CTX, **RUN_CTX, **top}, **vault)
+
+
+def unit(env: str = "prod", **kw) -> str:
+    """The systemd unit of the Alloy agent for one host; overrides as for cfg()."""
+    top, vault = _split(dict(kw))
+    return render(AGENT_UNIT, env=env, extra_ctx={**AGENT_CTX, **RUN_CTX, "agent_mode": "systemd", **top}, **vault)
+
+
+def task_named(path: pathlib.Path, name: str) -> dict:
+    """The one task of a play (or task file) with this exact name."""
+    found = [t for t in (play_tasks(path) if path == AGENT_PLAY else load_tasks(path)) if t.get("name") == name]
+    if len(found) != 1:
+        raise LookupError(f"expected one task named {name!r} in {path.name}, found {len(found)}")
+    return found[0]
 
 
 class RunArgs:
