@@ -85,8 +85,9 @@ def test_every_play_includes_the_tiles_after_the_provisioner_unless_parked():
 
 
 def test_tile_group_is_fixed_and_the_knob_is_retired():
+    # The README names the retired knob on purpose (its "Removed keys" section); code must not read it.
     assert tile_vars(tile_items()[0])["group"] == "skadmin"
-    hits = [p for p in ROLE.rglob("*") if p.is_file() and p.suffix != ".pyc" and b"TILE_GROUP" in p.read_bytes()]
+    hits = [p for p in ROLE.rglob("*") if p.is_file() and p.suffix != ".pyc" and p.name != "README.md" and b"TILE_GROUP" in p.read_bytes()]
     assert hits == []
 
 
