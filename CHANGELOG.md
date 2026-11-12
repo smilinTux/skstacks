@@ -29,6 +29,22 @@ Each entry says what an instance must do, if anything.
 
 ### Upgrade notes (instances)
 
+- **skmon v2: the first v2 deploy restarts every skmon service and replaces the stack.** Plan for a short
+  gap in metrics, logs and alerting, and run the migration runbook in the skmon README ("Migration from
+  skmon v1"). `docker stack deploy --prune` removes `prometheus`, `node-exporter`, `cadvisor`, `promtail`
+  and `jaeger`; `/var/data` is untouched, and the old `/var/data/skmon-<env>` directories can be removed
+  by hand after a week. Set `skmon.DATA_NODE` and `skmon.DATA_PATH` (a dedicated local disk, never shared
+  storage). New required keys: `skmon.ESTATE`, `GRAFANA_OIDC_CLIENT_ID`, `GRAFANA_OIDC_CLIENT_SECRET`,
+  `AUTHENTIK_HOST`, `HEALTHZ_ALLOW`, `SKALERT_SCRIPT_SRC`, `SKALERT_SCRIPT_SHA256`, `ALERT_ROUTING`,
+  `ALERT_SECRETS` and `ALERT_OUT_OF_DOMAIN_CHANNEL` (or an explicit `ALERT_ACCEPT_IN_DOMAIN_ONLY` with
+  its reason). `AUTHENTIK_TILE_GROUP` and `GRAFANA_BASIC_AUTH` are retired: Grafana signs in through OIDC,
+  and vmui and Alertmanager use forward auth (`FORWARD_AUTH_MIDDLEWARE`, default `authentik@file`). On
+  the Authentik applications skmon owns, `skadmin` is the only binding and any other is removed on every
+  deploy. The retired `jaeger` and `prometheus` applications are removed only when `AUTHENTIK_PROVISION`
+  is true; otherwise remove them by hand. Inventory hostnames of swarm hosts must equal their Swarm
+  hostnames (the agent's `node` label). Finish with the outside Kuma monitor on `/healthz`: an estate
+  is not done until it is green.
+
 - **skmon: Jaeger removed** (carried from #368, closed as superseded by the skmon v2 design). Jaeger had
   no trace producers: its service, Traefik router, Prometheus job, deploy health wait, icon and portal
   tile entry are gone, and `JAEGER_*` knobs no longer exist. The next deploy's `docker stack deploy --prune`

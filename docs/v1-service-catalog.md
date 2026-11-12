@@ -57,7 +57,7 @@ tag yet.
 | [skmail](#skmail) | optional | Full SMTP/IMAP mail server | docker-mailserver `16.0.1` | skfence/skfenceha (for ACME cert) | host ports 25/587/465/143/993 | `skmail-<env>/docker-data/dms/{maildata,mailstate}` | `CLUSTERNAME`, `DOMAIN` | `DMS_VERSION` (16.0.1), Rspamd/ClamAV/Fail2ban (all on) | v2.19.0 |
 | [skmem-pg](#skmem-pg) | optional | Postgres 17 + pgvector + pg_search + AGE | Postgres 17 custom image `pg17-bm25-age` | none | internal only, no Traefik | `runtime/skmem-pg-<env>/postgres` | `skmem_pg_password` | `skmem_pg_default_agent`/`skmem_pg_graph` | v2.14.0 |
 | [skmesh](#skmesh) | optional | Netbird self-hosted WireGuard mesh VPN | netbird `0.80.0` (mgmt/signal/relay), dashboard `v2.94.0` | sksso (OIDC app) | `skmesh.<cluster>.<domain>` (path-routed) | `skmesh-<env>/database-dump` | `NETBIRD_*` secrets, `POSTGRES_PASSWORD`, `SSO_HOST_IP` | `DEPLOY_COTURN` (false) | v2.19.0 |
-| [skmon](#skmon) | optional | Observability stack (metrics/logs) | VictoriaMetrics `v1.155.0`, Grafana Alloy `v1.21.3`, Loki `3.7.9`, Grafana `13.3.0`, Alertmanager `v0.34.2` | none | `skmon\|vmui\|alertmanager[-env].<cluster>.<domain>` | `DATA_PATH` on `DATA_NODE` (local disk, default `/srv/local/skmon-<env>`) | `DATA_NODE`, `GRAFANA_ADMIN_USER/_PASSWORD`, `GRAFANA_SECRET_KEY`, `CLUSTERNAME`, `DOMAIN`, `ESTATE` | `DATA_PATH`, `PROBES` (default: every Traefik router host), `AUTHENTIK_HOST`, `HEALTHZ_ALLOW`, `EXTRA_SCRAPE_CONFIGS`, `replicas` (1; 0 = parked), `GRAFANA_PLUGINS`, `GRAFANA_BASIC_AUTH` (true), `GRAFANA_HEALTH_START_PERIOD` (60s) | v2.15.0 |
+| [skmon](#skmon) | optional | Observability stack (metrics, logs, alerts, optional profiles) | VictoriaMetrics `v1.155.0`, Grafana Alloy `v1.21.3`, Loki `3.7.9`, Grafana `13.3.0`, Alertmanager `v0.34.2` (all digest-pinned, `pins.yml`) | Authentik (Grafana OIDC, forward auth for vmui and Alertmanager, tiles) | `skmon\|vmui\|alertmanager[-env].<cluster>.<domain>` | `DATA_PATH` on `DATA_NODE` (local disk, default `/srv/local/skmon-<env>`) | `DATA_NODE`, `ESTATE`, `CLUSTERNAME`, `DOMAIN`, `GRAFANA_ADMIN_USER/_PASSWORD`, `GRAFANA_SECRET_KEY`, `GRAFANA_OIDC_CLIENT_ID/_SECRET`, `AUTHENTIK_HOST`, `HEALTHZ_ALLOW`, `SKALERT_SCRIPT_SRC/_SHA256`, `ALERT_ROUTING`, `ALERT_SECRETS`, `ALERT_OUT_OF_DOMAIN_CHANNEL` | `DATA_PATH`, `PROBES` (default: every Traefik router host), `PROFILING`, `PVE`, `METRICS_RETENTION` (90d), `LOGS_RETENTION` (30d), `replicas` (1; 0 = parked); full table in the [README](../v1/ansible/optional/skmon/README.md) | v2.15.0 |
 | [skorch](#skorch) | optional | n8n workflow automation | n8n (digest-pinned) + pgvector Postgres | none | `skorch[-env].<cluster>.<domain>` | `skorch-<env>/{n8n_data,database-backup,gpg-keys}` | `POSTGRES_USER/_PASSWORD/_DB`, `REDIS_PASSWORD` | `enable_gpg_signer` (false) | v2.18.0 |
 | [skpatch-hosts](#skpatch-hosts) | optional | Linux update/patch dashboard (SSH, holds a key per estate); host half of the [skpatch program](./skpatch-program.md) | linux-update-dashboard `2026.10.9` (upstream, digest-pinned) | skfence or skfenceha; sksso for default `AUTH_MODE: sso` | `skpatch-hosts[-env].<cluster>.<domain>` | `skpatch-hosts-<env>/data` | `LUDASH_ENCRYPTION_KEY`, `SSH_PUBLIC_KEY` (provisioning) | `AUTH_MODE` (sso), `ALLOW_ACTIONS` (false, enforced by `provision_skpatch_hosts_nodes.yml`, not this deploy), `DATA_NODE` (floating) | pending |
 | [skpdf](#skpdf) | optional | Stirling-PDF toolkit | Stirling-PDF `2.14.3` | none | `skpdf[-env].<cluster>.<domain>` | `skpdf-<env>/{trainingData,customFiles}` | `CLUSTERNAME`, `DOMAIN`; `SECURITY_INITIAL_PASSWORD` if login on | `SECURITY_ENABLELOGIN` (false) | v2.13.0 |
@@ -830,8 +830,10 @@ origins, or login redirects are rejected. See the
 Observability stack: VictoriaMetrics, a Grafana Alloy agent on every host, Loki, Grafana and
 Alertmanager. Prometheus, Promtail, node-exporter, cAdvisor and Jaeger are gone.
 
-**Prerequisites**: none. It scrapes and logs the rest of the cluster through one Alloy agent per
-host. `DATA_NODE` (a swarm node) and local-disk `DATA_PATH` are required; old `PROMETHEUS_*`,
+**Prerequisites**: sksso (Authentik) for Grafana OIDC and forward auth, and the estate's own
+`sk-alert` script pinned by sha256. It scrapes and logs the rest of the cluster through one Alloy agent per
+host. The full vault table, install modes, sizing and the migration runbook are in the
+[README](../v1/ansible/optional/skmon/README.md). `DATA_NODE` (a swarm node) and local-disk `DATA_PATH` are required; old `PROMETHEUS_*`,
 `NODE_EXPORTER_*`, `CADVISOR_*`, `PROMTAIL_*` and `JAEGER_*` vault keys fail the deploy.
 
 **Minimal vault snippet**:
@@ -846,6 +848,15 @@ skmon:
   DOMAIN: "example.com"
   DATA_NODE: "<swarm node hostname>"
   ESTATE: "<estate label>"
+  GRAFANA_OIDC_CLIENT_ID: "<32+ characters>"
+  GRAFANA_OIDC_CLIENT_SECRET: "<32+ characters>"
+  AUTHENTIK_HOST: "sso.<cluster>.<domain>"
+  HEALTHZ_ALLOW: ["<outside monitor IPv4>"]
+  SKALERT_SCRIPT_SRC: "sk-alert"            # beside this vault file
+  SKALERT_SCRIPT_SHA256: "<sha256 of that script>"
+  ALERT_ROUTING: {TELEGRAM_CHAT_ID: "<chat id>"}
+  ALERT_SECRETS: {TELEGRAM_BOT_TOKEN: "<token>"}
+  ALERT_OUT_OF_DOMAIN_CHANNEL: "telegram"
 ```
 
 **Deploy**: `deploy_skmon-<env>.yml`, standard invocation.

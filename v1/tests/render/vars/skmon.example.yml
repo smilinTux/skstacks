@@ -35,3 +35,110 @@ skmon:
     TELEGRAM_BOT_TOKEN: example-telegram-token-not-a-secret
   # A channel that does not run on the monitored estate (telegram or talk-external).
   ALERT_OUT_OF_DOMAIN_CHANNEL: telegram
+
+  # Every other documented key, at its default or a fake value, so the README contract is checked
+  # against a vault that sets it. PROBES stays unset (default discovery); PVE and PROFILING are
+  # present but off, so the base pass renders the default stack.
+  AUTHENTIK_PROVISION: true
+  AUTHENTIK_TILE: true
+  # AUTHENTIK_VAULT_FILE: sksso-render_vault.yml  (documented; left unset so the pass does not load a vault file)
+  AUTHENTIK_INTERNAL_URL: http://sksso-prod_server:9000
+  AUTHENTIK_NETWORK: sksso-prod
+  FORWARD_AUTH_MIDDLEWARE: authentik@file
+  METRICS_RETENTION: 90d
+  LOGS_RETENTION: 30d
+  PROFILES_RETENTION: 14d
+  SCRAPE_INTERVAL_FAST: 15s
+  SCRAPE_INTERVAL: 30s
+  AGENT_PORT: 12345
+  HEALTHZ_PORT: 9095
+  LOKI_PUSH_PORT: 3100
+  PYROSCOPE_PORT: 4040
+  PROFILING:
+    enabled: false
+    hosts: []
+  PVE:
+    enabled: false
+    targets: []
+    verify_ssl: true
+  PVE_TOKEN_ID: "monitor@pve!skmon"
+  PVE_TOKEN_SECRET: example-pve-token-secret-not-a-secret
+  PVE_UID: 65534
+  SKSWARM_UID: 65534
+  BRIDGE_UID: 65534
+  ALERT_TALK: false
+  ALERT_ACCEPT_IN_DOMAIN_ONLY: false
+  ALERT_ACCEPT_IN_DOMAIN_ONLY_REASON: "not used while an out-of-domain channel is set"
+  D_STATE_THRESHOLD: 10
+  EXTRA_SCRAPE_CONFIGS: []
+  TRAEFIK_SCRAPE_NAME: tasks.skfence-prod_traefik
+  GRAFANA_PLUGINS: []
+  GRAFANA_HEALTH_START_PERIOD: 60s
+  SMTP_ENABLED: false
+  SMTP_HOST: smtp.example.test
+  SMTP_PORT: 587
+  SMTP_USER: alerts@example.test
+  SMTP_PASSWORD: example-smtp-password-not-a-secret
+  SMTP_FROM_ADDRESS: alerts@example.test
+  SMTP_FROM_NAME: Grafana
+  SMTP_SECURE: true
+  INSTANCE: skmon-prod
+  APP_ENV: prod
+  replicas: 1
+  networks:
+    - {name: skmon-prod, subnet: 198.51.100.0/24, driver: overlay, attachable: true}
+    - {name: cloud-public-prod, subnet: 203.0.113.0/24, driver: overlay, attachable: true}
+  DATA_PATH: /srv/local/skmon-prod
+  # Image pins and resource knobs, at the shipped defaults (see src/config/skmon/pins.yml).
+  VICTORIAMETRICS_IMAGE: 'victoriametrics/victoria-metrics:v1.155.0@sha256:f60dc268b54ecf87f6e09d740c2b732838aa9193090cc741417c9f6386a130df'
+  VICTORIAMETRICS_CPU_LIMIT: '1.0'
+  VICTORIAMETRICS_CPU_RESERVATION: '0.1'
+  VICTORIAMETRICS_MEMORY_LIMIT: '1G'
+  VICTORIAMETRICS_MEMORY_RESERVATION: '256M'
+  VMALERT_IMAGE: 'victoriametrics/vmalert:v1.155.0@sha256:3256cba5ddaca5974eae6141105cec4ce37871f1c213f0a5c267ec0111bc68e1'
+  VMALERT_CPU_LIMIT: '0.25'
+  VMALERT_CPU_RESERVATION: '0.05'
+  VMALERT_MEMORY_LIMIT: '128M'
+  VMALERT_MEMORY_RESERVATION: '32M'
+  ALERTMANAGER_IMAGE: 'prom/alertmanager:v0.34.2@sha256:39d8bb3966c694a124428a3a88fbcffd40bd069129ecd47c059f8a3f17c55f3b'
+  ALERTMANAGER_CPU_LIMIT: '0.25'
+  ALERTMANAGER_CPU_RESERVATION: '0.1'
+  ALERTMANAGER_MEMORY_LIMIT: '128M'
+  ALERTMANAGER_MEMORY_RESERVATION: '32M'
+  BRIDGE_IMAGE: 'python:3.13.18-bookworm@sha256:cc55e4ded9c95f6ce2133b3d096db43f214d280c2a8af65d83e246c8fa7d168c'
+  BRIDGE_CPU_LIMIT: '0.1'
+  BRIDGE_CPU_RESERVATION: '0.05'
+  BRIDGE_MEMORY_LIMIT: '64M'
+  BRIDGE_MEMORY_RESERVATION: '16M'
+  LOKI_IMAGE: 'grafana/loki:3.7.9@sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28'
+  LOKI_CPU_LIMIT: '1.0'
+  LOKI_CPU_RESERVATION: '0.1'
+  LOKI_MEMORY_LIMIT: '1G'
+  LOKI_MEMORY_RESERVATION: '384M'
+  GRAFANA_IMAGE: 'grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205'
+  GRAFANA_CPU_LIMIT: '0.5'
+  GRAFANA_CPU_RESERVATION: '0.1'
+  GRAFANA_MEMORY_LIMIT: '512M'
+  GRAFANA_MEMORY_RESERVATION: '128M'
+  SKSWARM_EXPORTER_IMAGE: 'python:3.13.18-slim-bookworm@sha256:a5a7017efc5969e00ae2b91c8eb0631049a569652aa4ffc4501769049ae45c72'
+  SKSWARM_EXPORTER_CPU_LIMIT: '0.05'
+  SKSWARM_EXPORTER_CPU_RESERVATION: '0.05'
+  SKSWARM_EXPORTER_MEMORY_LIMIT: '64M'
+  SKSWARM_EXPORTER_MEMORY_RESERVATION: '16M'
+  SOCKET_PROXY_IMAGE: 'tecnativa/docker-socket-proxy:v0.5.0@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459'
+  SOCKET_PROXY_CPU_LIMIT: '0.05'
+  SOCKET_PROXY_CPU_RESERVATION: '0.05'
+  SOCKET_PROXY_MEMORY_LIMIT: '64M'
+  SOCKET_PROXY_MEMORY_RESERVATION: '16M'
+  PYROSCOPE_IMAGE: 'grafana/pyroscope:2.4.2@sha256:ef9b48976386aa2781e84664dfdba7cc33a1b6793c0cc9d130812173a926ca1f'
+  PYROSCOPE_CPU_LIMIT: '0.5'
+  PYROSCOPE_CPU_RESERVATION: '0.1'
+  PYROSCOPE_MEMORY_LIMIT: '1G'
+  PYROSCOPE_MEMORY_RESERVATION: '256M'
+  PVE_EXPORTER_IMAGE: 'prompve/prometheus-pve-exporter:3.10.2@sha256:7ed5dbff1b145e62e94003cb78d70226d9a7c4d4d1c928b3c7daed21ae9a84d8'
+  PVE_EXPORTER_CPU_LIMIT: '0.1'
+  PVE_EXPORTER_CPU_RESERVATION: '0.05'
+  PVE_EXPORTER_MEMORY_LIMIT: '128M'
+  PVE_EXPORTER_MEMORY_RESERVATION: '32M'
+  ALLOY_IMAGE: 'grafana/alloy:v1.21.3@sha256:8ab871206bd2d8f89277f53abffee5f452a293980788d52f85fa183a87a505a4'
+  PROVISIONER_IMAGE: 'python:3.13.18-slim-bookworm@sha256:a5a7017efc5969e00ae2b91c8eb0631049a569652aa4ffc4501769049ae45c72'
