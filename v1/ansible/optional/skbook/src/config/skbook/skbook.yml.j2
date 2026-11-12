@@ -101,15 +101,21 @@ services:
     # MariaDB 12.x keeps a tc.log (mmap transaction coordinator log). On a clean
     # shutdown it overwrites the first magic byte with 'A' and then deletes the
     # file; the 'A' is there so that a delete that fails is not mistaken for a
-    # crashed log. On an NFS datadir that delete does not always land, and the
-    # next start then aborts with "Bad magic header in tc log" (crashloop, found
-    # by the v2.26.20 gate). The wrapper moves aside only a log carrying that
-    # closed marker (41 23 05 74). A real crashed log (fe 23 05 74) is left for
-    # MariaDB's own recovery. $$ so docker stack deploy does not interpolate.
+    # crashed log. On an NFS datadir that delete can fail with EACCES ("Error on
+    # delete of './tc.log' (Errcode: 13)"), and the next start then aborts with
+    # "Bad magic header in tc log" (crashloop, found by the v2.26.20 gate). The
+    # wrapper moves aside only a log carrying that closed marker (41 23 05 74). A
+    # real crashed log (fe 23 05 74) is left for MariaDB's own recovery.
+    # It also unsets MYSQL_HOST: skhub's db reads the env file Nextcloud uses
+    # (MYSQL_HOST=db), and the mariadb client honours it, so the entrypoint's
+    # mariadb-upgrade (MARIADB_AUTO_UPGRADE, temporary server on the socket only)
+    # failed with "Unknown server host 'db'" on a 10.11 to 12.3 upgrade.
+    # $$ so docker stack deploy does not interpolate.
     entrypoint:
       - /bin/sh
       - -c
       - >-
+        unset MYSQL_HOST MYSQL_TCP_PORT MARIADB_HOST;
         f=/var/lib/mysql/tc.log;
         if [ -f "$$f" ] && [ "$$(head -c 4 "$$f" | od -An -tx1 | tr -d ' \n')" = 41230574 ]; then
         mv "$$f" "$$f.closed-$$(date +%Y%m%dT%H%M%S)" &&

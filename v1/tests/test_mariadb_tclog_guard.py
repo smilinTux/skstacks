@@ -43,7 +43,7 @@ def _stack_deploy(s):
     return s.replace("$$", "$")
 
 
-def _run(app, tmp_path, tc=None):
+def _run(app, tmp_path, tc=None, **extra_env):
     entry = _db(app)["entrypoint"]
     assert entry[:2] == ["/bin/sh", "-c"]
     script = _stack_deploy(entry[2]).replace("/var/lib/mysql/", f"{tmp_path}/data/")
@@ -54,9 +54,10 @@ def _run(app, tmp_path, tc=None):
     bindir = tmp_path / "bin"
     bindir.mkdir()
     fake = bindir / "docker-entrypoint.sh"
-    fake.write_text('#!/bin/sh\necho "ENTRY $*"\n')
+    fake.write_text('#!/bin/sh\necho "HOST=${MYSQL_HOST-unset} MARIADB_HOST=${MARIADB_HOST-unset}"\n'
+                    'echo "ENTRY $*"\n')
     fake.chmod(0o755)
-    env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}")
+    env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", **extra_env)
     args = [str(a) for a in _db(app)["command"]]
     r = subprocess.run(["/bin/sh", "-c", script, *entry[3:], *args],
                        env=env, capture_output=True, text=True, timeout=20)
@@ -102,6 +103,23 @@ def test_the_guard_has_no_deploy_time_variable(app):
     script = _db(app)["entrypoint"][2]
     assert "$" in script
     assert script.replace("$$", "").count("$") == 0
+
+
+@pytest.mark.parametrize("app", TEMPLATES)
+def test_the_entrypoint_does_not_see_mysql_host(app, tmp_path):
+    """skhub's db reads the env file Nextcloud uses (MYSQL_HOST=db). The mariadb
+    client honours MYSQL_HOST, so MARIADB_AUTO_UPGRADE's mariadb-upgrade against
+    the socket-only temporary server failed with "Unknown server host 'db'" on
+    the first 10.11 to 12.3 start (nor, v2.26.20). The db never needs it."""
+    r, _ = _run(app, tmp_path, None, MYSQL_HOST="db", MARIADB_HOST="db", MYSQL_TCP_PORT="3306")
+    assert r.returncode == 0, r.stderr
+    assert "HOST=unset MARIADB_HOST=unset" in r.stdout
+
+
+def test_skhub_env_still_gives_nextcloud_its_db_host():
+    """The fix is in the db wrapper, not the shared env file: Nextcloud still needs it."""
+    text = (ANSIBLE / "skhub/src/config/skhub/skhub.env.j2").read_text()
+    assert "MYSQL_HOST=db" in text
 
 
 def test_both_stacks_carry_the_same_guard():
