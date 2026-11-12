@@ -136,7 +136,7 @@ def build_call(payload: dict, cfg: Config, muted: int | None) -> list[str]:
 
     if payload.get("status") == "resolved":
         duration = _duration(alerts)
-        argv += ["--resolve", f"{alertname} resolved after {duration}" if duration else f"{alertname} resolved"]
+        argv += ["--resolve", "--", f"{alertname} resolved after {duration}" if duration else f"{alertname} resolved"]
         return argv
 
     target = target_of(labels) or target_of(first_labels)
@@ -153,7 +153,12 @@ def build_call(payload: dict, cfg: Config, muted: int | None) -> list[str]:
     body = "\n".join(lines)
     if len(body) > cfg.body_max:
         body = body[: max(cfg.body_max - len(TRUNCATED), 0)] + TRUNCATED
-    return argv + ["--title", f"{alertname} on {target}" if target else alertname, body]
+    return argv + ["--title", f"{alertname} on {target}" if target else alertname, "--", body]
+
+
+def _clean(text: str) -> str:
+    """Make a string safe as an argv element: no NUL, no lone surrogates."""
+    return text.replace("\x00", " ").encode("utf-8", "replace").decode("utf-8")
 
 
 def muted_count(cfg: Config) -> int | None:
@@ -200,21 +205,25 @@ def metrics_text(state: State) -> str:
 
 def _deliver(payload: dict, cfg: Config, state: State) -> bool:
     """Run sk-alert once for this notification; True on exit 0. Logs alertname, status, exit code only."""
-    alertname = _alertname(payload)
-    status = payload.get("status", "")
-    muted = muted_count(cfg) if status == "firing" else None
-    argv = build_call(payload, cfg, muted)
+    try:
+        alertname = _clean(str(_alertname(payload)))
+    except Exception:
+        alertname = ""
+    status = _clean(str(payload.get("status", "")))
     env = dict(os.environ)
     if cfg.config_dir:
         env["SKALERT_CONFIG_DIR"] = cfg.config_dir
     if cfg.state_dir:
         env["SKALERT_STATE_DIR"] = cfg.state_dir
+    muted = None
     try:
+        muted = muted_count(cfg) if status == "firing" else None
+        argv = [_clean(a) for a in build_call(payload, cfg, muted)]
         proc = subprocess.run(argv, timeout=cfg.timeout_s, env=env, capture_output=True, check=False)
         code: object = proc.returncode
     except subprocess.TimeoutExpired:
         code = "timeout"
-    except OSError as exc:
+    except Exception as exc:  # a delivery that cannot even be attempted is a failed delivery
         code = f"error:{type(exc).__name__}"
     ok = code == 0
     with state.lock:

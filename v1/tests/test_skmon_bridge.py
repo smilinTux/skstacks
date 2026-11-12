@@ -41,7 +41,8 @@ def test_thread_key_shape():
 def test_resolved_uses_same_thread_and_resolve_flag():
     a = build_call(load("am_resolved.json"), CFG, None)
     assert a[a.index("-g") + 1] == thread_key("example", load("am_resolved.json")["groupKey"])
-    assert a[a.index("--resolve") + 1].startswith("NfsMountUnresponsive resolved after ")
+    assert a[a.index("--resolve") + 1] == "--"
+    assert a[-1].startswith("NfsMountUnresponsive resolved after ")
     assert a[-1] == "NfsMountUnresponsive resolved after 4m12s"
     assert "--title" not in a
 
@@ -97,6 +98,13 @@ def test_big_group_adds_count_line():
 def test_body_is_last_argv_element_and_not_truncated_when_short():
     a = build_call(load("am_firing.json"), CFG, None)
     assert a[-1].startswith("Shared storage") and "(truncated)" not in a[-1]
+
+
+def test_double_dash_before_message():
+    f = build_call(load("am_firing.json"), CFG, None)
+    assert f[-2] == "--" and f[f.index("--title") + 2] == "--"
+    r = build_call(load("am_resolved.json"), CFG, None)
+    assert r[-2:] == ["--", r[-1]] and r[-3] == "--resolve"
 
 
 def test_never_uses_dedup_key_flag():
@@ -238,3 +246,48 @@ def test_config_from_env():
     assert (cfg.estate, cfg.grafana_url, cfg.talk, cfg.skalert) == ("e", "https://g.example.test", True, "/opt/sk-alert/sk-alert")
     assert cfg.config_dir == "/c" and cfg.state_dir == "/state"
     assert sb.config_from_env({}).talk is False
+
+
+def _summary_payload(summary):
+    p = load("am_firing.json")
+    p["commonAnnotations"]["summary"] = summary
+    return p
+
+
+def test_summary_starting_with_dash_is_safe(server):
+    assert post(server, "/alert", _summary_payload("-x not a flag")).status == 200
+    call = server.calls()[0]
+    assert call[-2] == "--" and call[-1].startswith("-x not a flag")
+
+
+def test_nul_in_summary_is_sanitized(server):
+    assert post(server, "/alert", _summary_payload("bad\u0000byte")).status == 200
+    assert server.calls()[0][-1].startswith("bad byte")
+
+
+def test_lone_surrogate_in_summary_is_sanitized(server):
+    raw = json.dumps(_summary_payload("x\ud800y"), ensure_ascii=True).encode()  # JSON escape \ud800
+    assert post(server, "/alert", None, raw=raw).status == 200
+    assert len(server.calls()) == 1 and server.calls()[0][-1].startswith("x")
+
+
+def test_non_ascii_summary_delivered(server):
+    assert post(server, "/alert", _summary_payload("Speicher voll: 5 \u00b0C \u2603")).status == 200
+    assert server.calls()[0][-1].startswith("Speicher voll: 5 \u00b0C \u2603")
+
+
+def test_no_node_labels_fallback_title(server):
+    p = load("am_firing.json")
+    for src in (p["commonLabels"], p["alerts"][0]["labels"]):
+        src.pop("node")
+    assert post(server, "/alert", p).status == 200
+    call = server.calls()[0]
+    assert call[call.index("--title") + 1] == "NfsMountUnresponsive on example"
+
+
+def test_exception_in_delivery_returns_500(server, monkeypatch):
+    def boom(*a, **k):
+        raise ValueError("embedded null byte SECRET-MARKER")
+    monkeypatch.setattr(sb.subprocess, "run", boom)
+    assert post(server, "/alert", load("am_firing.json")).status == 500
+    assert server.state.failures == 1 and not server.state.last_delivery_ok
