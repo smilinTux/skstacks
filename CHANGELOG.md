@@ -5,6 +5,16 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+### Upgrade notes (instances)
+
+- **skmon: Jaeger removed** (carried from #368, closed as superseded by the skmon v2 design). Jaeger had
+  no trace producers: its service, Traefik router, Prometheus job, deploy health wait, icon and portal
+  tile entry are gone, and `JAEGER_*` knobs no longer exist. The next deploy's `docker stack deploy --prune`
+  removes the service. Left for the operator: an existing Jaeger portal tile (slug `jaeger`,
+  `jaeger-<env>` off prod) is not deleted automatically, so delete it once in the admin UI or with
+  `ak shell`; `/var/data/skmon-<env>/jaeger/` is left on disk. The v2 skmon descriptor, service page and
+  STACK-MAP now name Loki as the log store.
+
 ### New
 
 - **`optional/skaegis`: continuous CVE detection for every host (upstream Wazuh 4.14.10).** Opt in. The

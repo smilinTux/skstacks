@@ -26,7 +26,7 @@ BASE = {
     "GRAFANA_SECRET_KEY": "y",
     "GRAFANA_ROOT_URL": "https://mon.example.org",
 }
-REPLICATED = {"prometheus", "grafana", "loki", "alertmanager", "jaeger"}
+REPLICATED = {"prometheus", "grafana", "loki", "alertmanager"}
 GLOBAL = {"promtail", "cadvisor", "node-exporter"}
 DEFAULT_PLUGINS = ("grafana-clock-panel,grafana-simple-json-datasource,grafana-piechart-panel,"
                    "marcusolsson-json-datasource,grafana-worldmap-panel")

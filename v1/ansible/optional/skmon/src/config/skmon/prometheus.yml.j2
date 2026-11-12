@@ -91,17 +91,6 @@ scrape_configs:
     metrics_path: '/metrics'
     scrape_interval: 30s
 
-  # Jaeger metrics
-  - job_name: 'jaeger'
-    static_configs:
-      - targets: ['skmon-{{ env }}_jaeger:14269']
-        labels:
-          service: jaeger
-          component: tracing
-          environment: '{{ env }}'
-    metrics_path: '/metrics'
-    scrape_interval: 30s
-
   # Loki metrics
   - job_name: 'loki'
     static_configs:

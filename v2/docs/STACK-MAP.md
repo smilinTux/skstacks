@@ -160,7 +160,7 @@ flowchart TD
 | **No-catch-22 secret bootstrap** | vault-file/capauth are server-less roots → bootstrap OpenBao with PGP-encrypted init (no plaintext); K8s-auth = no pre-shared secret. The factory default stays `vault-file`. |
 | **Gateway API + Traefik** (not ingress-nginx) | ingress-nginx EOL Mar-2026; consolidate on the skfence edge engine — one ingress stack. |
 | **Two exposure ladders** | mesh: Tailscale(ease)→Netbird(sovereign); tunnel: cloudflared(ease)→Pangolin(sovereign); `lan` always-on baseline kills the bootstrap catch-22. |
-| **Loki→VictoriaLogs, Uptime-Kuma→Gatus, +Velero, +Tetragon/Kyverno** | license + footprint + closing real gaps (K8s backup, enforcement, admission). |
+| **Loki stays the log store (Chef, 2026-11-11), Uptime-Kuma→Gatus, +Velero, +Tetragon/Kyverno** | license + footprint + closing real gaps (K8s backup, enforcement, admission). |
 | **skwire = mint-then-inject + signed plan handshake** | the OOTB-wiring moat; the plan_hash is the trust anchor for human↔AI and service↔service. |
 | **Catalog in its own repo** | adding an app is a PR to JSON — never touches the engine; easy governance. |
 | **"if you need one, get two"** | redundancy advisor surfaces load-bearing services and offers an HA pair, in the install flow. |

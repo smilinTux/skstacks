@@ -13,7 +13,7 @@ depends_on: [skbus]   # wiring (bridge → skwire needs)
 scope: skmon
 version: "CHANGEME_VERSION"
 platforms: [docker-swarm, kubernetes]
-provider: "Prometheus (metrics) + Grafana (dashboards) + VictoriaLogs (logs, Apache-2.0, replaces Loki) + Tempo (traces) + Grafana Alloy (OTel)"
+provider: "Prometheus (metrics) + Grafana (dashboards) + Loki (logs; the strategic log store, Chef 2026-11-11) + Tempo (traces) + Grafana Alloy (OTel)"
 alternates:
   - SigNoz (all-in-one, ClickHouse)
 

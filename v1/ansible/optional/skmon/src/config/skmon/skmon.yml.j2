@@ -250,46 +250,6 @@ services:
       retries: 3
       start_period: 30s
 
-  jaeger:
-    image: jaegertracing/all-in-one:{{ skmon.JAEGER_IMAGE_VERSION | default('1.76.0') }}
-    user: "0:0"
-    environment:
-      - SPAN_STORAGE_TYPE=badger
-      - BADGER_EPHEMERAL=false
-      - BADGER_DIRECTORY_KEY=/badger/key
-      - BADGER_DIRECTORY_VALUE=/badger/value
-    volumes:
-      - /var/data/skmon-{{ env }}/jaeger/badger:/badger
-    networks:
-      - skmon-{{ env }}
-      - cloud-public-{{ env }}
-    deploy:
-      mode: replicated
-      replicas: {{ skmon.replicas | default(1) | int }}
-      resources:
-        limits:
-          cpus: '{{ skmon.JAEGER_CPU_LIMIT | default("0.5") }}'
-          memory: {{ skmon.JAEGER_MEMORY_LIMIT | default("512M") }}
-        reservations:
-          cpus: '{{ skmon.JAEGER_CPU_RESERVATION | default("0.1") }}'
-          memory: {{ skmon.JAEGER_MEMORY_RESERVATION | default("128M") }}
-      labels:
-        - "traefik.enable=true"
-        - "traefik.swarm.network=cloud-public-{{ env }}"
-        - "traefik.http.routers.jaeger{% if env != 'prod' %}-{{ env }}{% endif %}-secure.rule=Host(`jaeger{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}`)"
-        - "traefik.http.routers.jaeger{% if env != 'prod' %}-{{ env }}{% endif %}-secure.entrypoints=websecure"
-        - "traefik.http.routers.jaeger{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls=true"
-        - "traefik.http.routers.jaeger{% if env != 'prod' %}-{{ env }}{% endif %}-secure.tls.certresolver=main"
-        - "traefik.http.routers.jaeger{% if env != 'prod' %}-{{ env }}{% endif %}-secure.service=jaeger{% if env != 'prod' %}-{{ env }}{% endif %}"
-        - "traefik.http.services.jaeger{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=16686"
-        - "traefik.http.routers.jaeger{% if env != 'prod' %}-{{ env }}{% endif %}-secure.middlewares=default-security-headers@file,gzip@file,traefikAuth@file"
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:16686/ || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-
 networks:
   skmon-{{ env }}:
     external: true

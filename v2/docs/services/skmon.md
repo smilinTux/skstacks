@@ -2,11 +2,11 @@
 
 📋 **descriptor-only** · layer: compute · version CHANGEME_VERSION · scope `skmon`
 
-**Status:** 📋 descriptor-only — deploy block TODO. Multi-component stack (Prometheus/Grafana/VictoriaLogs/Tempo/Alloy); needs `deploy:` blocks (containers, ports, volumes) and a real healthcheck URL.
+**Status:** 📋 descriptor-only, deploy block TODO. Multi-component stack (Prometheus/Grafana/Loki/Tempo/Alloy); needs `deploy:` blocks (containers, ports, volumes) and a real healthcheck URL.
 
 ## Capability / Provider
 - **Capability:** Observability — metrics, logs, traces with OTel standard
-- **Provider:** Prometheus (metrics) + Grafana (dashboards) + VictoriaLogs (logs, Apache-2.0, replaces Loki) + Tempo (traces) + Grafana Alloy (OTel)
+- **Provider:** Prometheus (metrics) + Grafana (dashboards) + Loki (logs; the strategic log store, Chef 2026-11-11) + Tempo (traces) + Grafana Alloy (OTel)
 - **Alternates:** SigNoz (all-in-one, ClickHouse)
 - **Platforms:** docker-swarm, kubernetes
 
@@ -15,8 +15,8 @@
 ```mermaid
 flowchart LR
   TGT[targets] -->|OTel| AL[Grafana Alloy]
-  AL --> PROM[Prometheus] & VL[VictoriaLogs] & TP[Tempo]
-  PROM & VL & TP --> GR["skmon / Grafana"]
+  AL --> PROM[Prometheus] & LK[Loki] & TP[Tempo]
+  PROM & LK & TP --> GR["skmon / Grafana"]
   skbus[(skbus)] -.depends_on.-> GR
   skfence -.required_by.-> GR
   S1[grafana_admin_password] --> GR

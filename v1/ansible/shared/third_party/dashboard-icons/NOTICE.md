@@ -26,7 +26,6 @@ These PNGs are taken as-is from the `png/` directory of:
 | `garage.png` | `optional/skstor/src/config/skstor/icon.png` | skstor |
 | `grafana.png` | `optional/skmon/src/config/skmon/icons/grafana.png` | skmon (Grafana tile) |
 | `immich.png` | `optional/skgallery/src/config/skgallery/icon.png` | skgallery |
-| `jaeger.png` | `optional/skmon/src/config/skmon/icons/jaeger.png` | skmon (Jaeger tile) |
 | `lidarr.png` | `optional/skfetch/src/config/skfetch/icons/lidarr.png` | skfetch (Lidarr tile) |
 | `meshcentral.png` | `optional/skrac/src/config/skrac/icon.png` | skrac |
 | `n8n.png` | `optional/skorch/src/config/skorch/icon.png` | skorch |

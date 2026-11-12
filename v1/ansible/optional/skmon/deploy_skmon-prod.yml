@@ -14,8 +14,8 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 ---
-# skmon: monitoring + tracing stack (Prometheus, Grafana, Loki, Promtail,
-# cAdvisor, node-exporter, Alertmanager, Jaeger) — adapted from
+# skmon: monitoring stack (Prometheus, Grafana, Loki, Promtail,
+# cAdvisor, node-exporter, Alertmanager), adapted from
 # optional/skgraph and optional/skmem-pg SOP.
 # TODO before deploy: register the skmon-{{ env }} overlay subnet in
 # shared/networks (pick a free /24 if these placeholders collide on your
@@ -93,9 +93,6 @@
         - { path: "/var/data/config/{{ app }}-{{ env }}/promtail", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/config/{{ app }}-{{ env }}/alertmanager", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/{{ app }}-{{ env }}/alertmanager/data", owner: "root", group: "root", mode: "0777" }
-        - { path: "/var/data/{{ app }}-{{ env }}/jaeger/badger", owner: "root", group: "root", mode: "0777" }
-        - { path: "/var/data/{{ app }}-{{ env }}/jaeger/badger/key", owner: "root", group: "root", mode: "0777" }
-        - { path: "/var/data/{{ app }}-{{ env }}/jaeger/badger/value", owner: "root", group: "root", mode: "0777" }
         - { path: "/var/data/logs/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/logs/{{ app }}-{{ env }}/prometheus", owner: "65534", group: "65534", mode: "0755" }
         - { path: "/var/data/logs/{{ app }}-{{ env }}/grafana", owner: "472", group: "472", mode: "0755" }
@@ -219,8 +216,8 @@
 
     - name: Create or update the skmon portal tiles in Authentik
       # On by default (AUTHENTIK_TILE: true); opt out per instance with
-      # AUTHENTIK_TILE: false. skmon bundles four separate web UIs
-      # (Grafana, Prometheus, Alertmanager, Jaeger), each behind the
+      # AUTHENTIK_TILE: false. skmon bundles three separate web UIs
+      # (Grafana, Prometheus, Alertmanager), each behind the
       # cluster's domain-wide Traefik ForwardAuth catch-all already; each
       # gets its own bookmark tile, bound to one group, with no provider.
       # See shared/tasks/authentik_portal_tile.yml.
@@ -241,7 +238,6 @@
         - { key: "skmon", host_prefix: "skmon", name: "SKMon (Grafana)", icon: "fa://fa-chart-line", icon_file: "grafana.png", icon_name: "grafana" }
         - { key: "prometheus", host_prefix: "prometheus", name: "Prometheus", icon: "fa://fa-fire", icon_file: "prometheus.png", icon_name: "prometheus" }
         - { key: "alertmanager", host_prefix: "alertmanager", name: "Alertmanager", icon: "fa://fa-bell", icon_file: "alertmanager.png", icon_name: "alertmanager" }
-        - { key: "jaeger", host_prefix: "jaeger", name: "Jaeger", icon: "fa://fa-diagram-project", icon_file: "jaeger.png", icon_name: "jaeger" }
       loop_control:
         label: "{{ item.key }}"
       tags:

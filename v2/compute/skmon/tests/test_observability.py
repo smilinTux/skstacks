@@ -47,5 +47,5 @@ def test_skpulse_alerts_feed_skops_itil():
 
 
 def test_descriptors_updated():
-    assert "VictoriaLogs" in yaml.safe_load((_SKMON / "app.yaml").read_text())["provider"]
+    assert "Loki" in yaml.safe_load((_SKMON / "app.yaml").read_text())["provider"]  # Chef 2026-11-11
     assert "Gatus" in yaml.safe_load((_SKPULSE / "app.yaml").read_text())["provider"]
