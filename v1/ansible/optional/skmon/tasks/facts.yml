@@ -17,3 +17,13 @@
 - name: Derive whether skmon is parked
   set_fact:
     skmon_parked: "{{ (skmon.replicas | default(1) | int) == 0 }}"
+
+# Inventory hosts that run an agent: the skmon_agent_hosts group when the inventory
+# defines it, else the swarm nodes plus skmon_extra_hosts (unique, in that order).
+- name: Derive the skmon agent host list
+  set_fact:
+    skmon_agent_host_list: >-
+      {{ groups['skmon_agent_hosts'] if 'skmon_agent_hosts' in groups
+         else ((groups['swarm_managers'] | default([]))
+               + (groups['swarm_workers'] | default([]))
+               + (groups['skmon_extra_hosts'] | default([]))) | unique | list }}

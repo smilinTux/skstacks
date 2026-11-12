@@ -1,9 +1,108 @@
-# Minimal scrape config: VictoriaMetrics scraping itself. The full target set
-# (agents, swarm exporter, Traefik, extras) is added by later tasks.
+# VictoriaMetrics scrape config (read with -promscrape.config.strictParse=true:
+# only keys VictoriaMetrics accepts). One Alloy agent per inventory host, pulled
+# on AGENT_PORT; the agent exposes each exporter component at
+# /api/v0/component/<component id>/metrics. Pull only (nothing is pushed or federated).
+{% set agent_port = skmon.AGENT_PORT | default(12345) %}
+{% set fast = skmon.SCRAPE_INTERVAL_FAST | default('15s') %}
+{% set normal = skmon.SCRAPE_INTERVAL | default('30s') %}
+{% set estate = skmon.ESTATE %}
 global:
-  scrape_interval: {{ skmon.SCRAPE_INTERVAL | default('30s') }}
+  scrape_interval: {{ normal }}
 
 scrape_configs:
+  # Host metrics, every agent.
+  - job_name: alloy-unix
+    scrape_interval: {{ fast }}
+    metrics_path: /api/v0/component/prometheus.exporter.unix.host/metrics
+    static_configs:
+{% for t in skmon_agent_targets %}
+      - targets: ['{{ t.addr }}:{{ agent_port }}']
+        labels:
+          node: '{{ t.node }}'
+          role: '{{ t.role }}'
+          estate: '{{ estate }}'
+{% endfor %}
+
+  # Container metrics, every agent.
+  - job_name: alloy-cadvisor
+    scrape_interval: {{ normal }}
+    metrics_path: /api/v0/component/prometheus.exporter.cadvisor.docker/metrics
+    static_configs:
+{% for t in skmon_agent_targets %}
+      - targets: ['{{ t.addr }}:{{ agent_port }}']
+        labels:
+          node: '{{ t.node }}'
+          role: '{{ t.role }}'
+          estate: '{{ estate }}'
+{% endfor %}
+
+  # The agents themselves (up, component health).
+  - job_name: alloy-self
+    scrape_interval: {{ normal }}
+    metrics_path: /metrics
+    static_configs:
+{% for t in skmon_agent_targets %}
+      - targets: ['{{ t.addr }}:{{ agent_port }}']
+        labels:
+          node: '{{ t.node }}'
+          role: '{{ t.role }}'
+          estate: '{{ estate }}'
+{% endfor %}
+
+{% set blackbox = skmon_agent_targets | selectattr('node', 'equalto', skmon_data_node) | list %}
+{% if blackbox %}
+  # Blackbox probes run on the DATA_NODE agent only.
+  - job_name: alloy-blackbox
+    scrape_interval: {{ fast }}
+    metrics_path: /api/v0/component/prometheus.exporter.blackbox.probes/metrics
+    static_configs:
+      - targets: ['{{ blackbox[0].addr }}:{{ agent_port }}']
+        labels:
+          node: '{{ blackbox[0].node }}'
+          role: '{{ blackbox[0].role }}'
+          estate: '{{ estate }}'
+{% else %}
+  # No alloy-blackbox job: DATA_NODE '{{ skmon_data_node }}' is not an agent host.
+{% endif %}
+
+  # Self-monitoring of the stack (service names resolve on the stack network).
   - job_name: victoriametrics
+    scrape_interval: {{ normal }}
     static_configs:
       - targets: ['localhost:8428']
+        labels:
+          estate: '{{ estate }}'
+  - job_name: loki
+    scrape_interval: {{ normal }}
+    static_configs:
+      - targets: ['loki:3100']
+        labels:
+          estate: '{{ estate }}'
+  - job_name: alertmanager
+    scrape_interval: {{ normal }}
+    static_configs:
+      - targets: ['alertmanager:9093']
+        labels:
+          estate: '{{ estate }}'
+
+  # Traefik: Swarm DNS service discovery on the metrics entrypoint, as the estate
+  # scraped it before v2. Name the Traefik stack service with skmon.TRAEFIK_SCRAPE_NAME
+  # if it is not skfence-<env>_traefik. An estate that already scrapes Traefik through
+  # EXTRA_SCRAPE_CONFIGS should drop that job, the names would collide.
+  - job_name: traefik
+    scrape_interval: {{ fast }}
+    metrics_path: /metrics
+    dns_sd_configs:
+      - names:
+          - '{{ skmon.TRAEFIK_SCRAPE_NAME | default('tasks.skfence-' ~ env ~ '_traefik') }}'
+        type: A
+        port: 8082
+    relabel_configs:
+      - target_label: estate
+        replacement: '{{ estate }}'
+{% if skmon.EXTRA_SCRAPE_CONFIGS | default([]) %}
+
+  # Full scrape_config entries (DNS service discovery, relabelling, ...),
+  # rendered as given from skmon.EXTRA_SCRAPE_CONFIGS.
+  {{ skmon.EXTRA_SCRAPE_CONFIGS | to_nice_yaml(indent=2) | indent(2) }}
+{% endif %}

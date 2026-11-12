@@ -1,4 +1,5 @@
 """Shared helpers for the skmon role tests (render a template, load its compose, read a play)."""
+import ast
 import pathlib
 import re
 
@@ -48,10 +49,28 @@ def render(tpl: pathlib.Path, env: str = "prod", extra_ctx: dict | None = None, 
     return jenv.from_string(tpl.read_text()).render(**ctx)
 
 
+# A fake two-node inventory (RFC 5737 addresses) and the targets the plays derive from it.
+FAKE_HOSTVARS = {
+    "node-1.render.example.test": {"ansible_host": "192.0.2.10"},
+    "node-2.render.example.test": {"ansible_host": "192.0.2.11"},
+}
+
+
+def agent_targets(hostvars: dict = FAKE_HOSTVARS, **skmon) -> list[dict]:
+    """skmon_agent_targets as the plays derive it: evaluate the play's set_fact over a fake inventory."""
+    task = next(t for t in play_tasks(PLAYS[0]) if t.get("name") == "Derive the skmon agent scrape targets")
+    groups = {"swarm_managers": list(hostvars)}
+    facts = guard_facts(groups=groups, **skmon)
+    jenv = ansible_environment()
+    ctx = {**facts, "hostvars": hostvars, "groups": groups}
+    return ast.literal_eval(jenv.from_string(task["set_fact"]["skmon_agent_targets"]).render(**ctx))  # as Ansible does
+
+
 def ctx_with_configs(env: str = "prod", **skmon) -> dict:
     """Template context carrying `skmon_configs`: every config template rendered, as the plays do."""
-    configs = {key: render(CFG / name, env=env, **skmon) for key, name in CONFIG_TEMPLATES.items()}
-    return {"skmon_configs": configs}
+    extra = {"skmon_agent_targets": agent_targets(**skmon)}
+    configs = {key: render(CFG / name, env=env, extra_ctx=extra, **skmon) for key, name in CONFIG_TEMPLATES.items()}
+    return {"skmon_configs": configs, **extra}
 
 
 def compose(**skmon) -> dict:
@@ -90,7 +109,7 @@ DATA_DIRS = ROLE / "tasks/data_dirs.yml"
 
 # Override keys that are top-level facts rather than vault keys. Anything else
 # passed to guard_facts() is a vault key and lands in the `skmon` mapping.
-_TOP_LEVEL_FACTS = {"swarm_nodes", "env"}
+_TOP_LEVEL_FACTS = {"swarm_nodes", "env", "groups"}
 _TOP_LEVEL_PREFIXES = ("skmon_", "skalert_")
 
 
@@ -134,7 +153,7 @@ def guard_facts(**overrides) -> dict:
            if k in _TOP_LEVEL_FACTS or k.startswith(_TOP_LEVEL_PREFIXES)}
     vault = {**BASE, **overrides}
     swarm = top.pop("swarm_nodes", [vault.get("DATA_NODE", "")])
-    ctx = {"app": "skmon", "env": "prod", "skmon": vault, "skmon_swarm_nodes": swarm, **top}
+    ctx = {"app": "skmon", "env": "prod", "skmon": vault, "skmon_swarm_nodes": swarm, "groups": {}, **top}
     jenv = ansible_environment()
     for t in load_tasks(FACTS_FILE):
         for name, value in (t.get("set_fact") or {}).items():

@@ -56,6 +56,24 @@
       tags:
         - always
 
+    - name: Derive the skmon agent scrape targets
+      # One item per agent host: node, addr (AGENT_LISTEN_ADDR override, else the
+      # inventory address), role (storage marks a storage host), light (SMART/NFS only).
+      set_fact:
+        skmon_agent_targets: >-
+          {%- set out = [] -%}
+          {%- for h in skmon_agent_host_list -%}
+          {%- set _ = out.append({
+                'node': h,
+                'addr': ((skmon.AGENT_LISTEN_ADDR | default({}))[h] | default(hostvars[h].ansible_host | default(h))),
+                'role': (hostvars[h].skmon_role | default('swarm')),
+                'light': (hostvars[h].agent_light | default(h in groups['skmon_extra_hosts'] | default([])) | bool)
+              }) -%}
+          {%- endfor -%}
+          {{ out }}
+      tags:
+        - always
+
     - name: Create the skmon local data directories
       include_tasks: "{{ playbook_dir }}/tasks/data_dirs.yml"
       tags:
