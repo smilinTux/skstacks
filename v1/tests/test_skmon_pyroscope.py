@@ -42,8 +42,15 @@ def test_ebpf_block_pushes_to_data_node_with_the_port_knob():
 
 def test_profiling_agent_caps_and_memory():
     a = run_script_args(**agent_ctx("h1", PROFILING=ON))
-    assert set(a.getall("--cap-add")) == {"BPF", "PERFMON", "SYS_ADMIN"} and a["--memory"] == "640m"
-    assert "--privileged" not in a
+    assert set(a.getall("--cap-add")) == {"BPF", "PERFMON", "SYS_ADMIN", "SYS_PTRACE"} and a["--memory"] == "640m"
+    assert "--privileged" not in a and "SYS_RESOURCE" not in a.getall("--cap-add")
+
+
+def test_tracefs_mount_only_for_profiling_agents():
+    mount = "/sys/kernel/tracing:/sys/kernel/tracing:ro"
+    assert mount in run_script_args(**agent_ctx("h1", PROFILING=ON)).getall("-v")
+    assert mount not in run_script_args(**agent_ctx("h2", PROFILING=ON)).getall("-v")
+    assert mount not in run_script_args().getall("-v")
 
 
 def test_non_profiling_agents_keep_their_flags():

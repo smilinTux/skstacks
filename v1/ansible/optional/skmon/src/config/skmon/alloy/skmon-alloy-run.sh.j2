@@ -35,7 +35,9 @@ docker rm -f skmon-{{ env }}-alloy >/dev/null 2>&1 || true
 # on a socket. The system bus is no alternative: on AppArmor hosts dbus-daemon refuses
 # docker-default peers.
 # Profiling hosts (PROFILING.hosts, container mode only, R75) add the three capabilities the
-# eBPF profiler needs and 640m of memory. Never --privileged.
+# eBPF profiler needs and 640m of memory. Never --privileged. The set is BPF, PERFMON, SYS_ADMIN
+# and SYS_PTRACE (Alloy v1.21 pyroscope.ebpf, unprivileged), plus a read-only tracefs mount.
+# SYS_RESOURCE is deliberately absent: it is only needed on kernels older than 5.11.
 {% set profiling = agent_profiling | default(false) | bool %}
 docker run -d \
   --name skmon-{{ env }}-alloy \
@@ -51,6 +53,7 @@ docker run -d \
   --cap-add BPF \
   --cap-add PERFMON \
   --cap-add SYS_ADMIN \
+  --cap-add SYS_PTRACE \
 {% endif %}
   -v /proc:/host/proc:ro \
   -v /sys:/host/sys:ro \
@@ -61,6 +64,9 @@ docker run -d \
   -v /var/log/journal:/var/log/journal:ro \
   -v /var/run/docker.sock:/var/run/docker.sock:ro \
   -v /run/systemd/private:/run/systemd/private \
+{% if profiling %}
+  -v /sys/kernel/tracing:/sys/kernel/tracing:ro \
+{% endif %}
   -v /etc/skmon-{{ env }}/alloy:/etc/alloy:ro \
   -v /var/lib/skmon-{{ env }}/alloy:/var/lib/alloy \
   {{ skmon.ALLOY_IMAGE | default('grafana/alloy:v1.21.3@sha256:8ab871206bd2d8f89277f53abffee5f452a293980788d52f85fa183a87a505a4') }} \
