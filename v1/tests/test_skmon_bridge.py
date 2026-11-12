@@ -291,3 +291,34 @@ def test_exception_in_delivery_returns_500(server, monkeypatch):
     monkeypatch.setattr(sb.subprocess, "run", boom)
     assert post(server, "/alert", load("am_firing.json")).status == 500
     assert server.state.failures == 1 and not server.state.last_delivery_ok
+
+
+def test_config_from_env_reads_the_sk_alert_passthrough_variables():
+    cfg = sb.config_from_env({"SKCAPSTONE_HOME": "/opt/sk-alert", "SKALERT_LOG": "/state/skalert.log",
+                              "SKALERT_ENV_FILE": "/dev/null"})
+    assert (cfg.skcapstone_home, cfg.skalert_log, cfg.skalert_env_file) == ("/opt/sk-alert", "/state/skalert.log", "/dev/null")
+    unset = sb.config_from_env({})
+    assert (unset.skcapstone_home, unset.skalert_log, unset.skalert_env_file) == (None, None, None)
+
+
+def test_sk_alert_gets_home_log_and_env_file_from_config(tmp_path, monkeypatch):
+    """The real sk-alert reads $SKCAPSTONE_HOME/config and writes $SKALERT_LOG: the bridge hands them over."""
+    from skmon_support import FAKE_SK_ALERT
+    calls, home = tmp_path / "calls", tmp_path / "home"
+    calls.mkdir()
+    (home / "config").mkdir(parents=True)
+    (home / "config/alert.secret").write_text("SECRET-MARKER-FILE\n")
+    for name in ("SKCAPSTONE_HOME", "SKALERT_LOG", "SKALERT_ENV_FILE", "SKALERT_CONFIG_DIR", "SKALERT_STATE_DIR"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("FAKE_CALLS_DIR", str(calls))
+    cfg = Config(estate="example", grafana_url="https://skmon.example.test", skalert=str(FAKE_SK_ALERT), talk=False,
+                 alertmanager_url="http://127.0.0.1:1", state_dir=str(tmp_path / "state"), skcapstone_home=str(home),
+                 skalert_log=str(tmp_path / "skalert.log"), skalert_env_file="/dev/null")
+    state = State()
+    sb._deliver(load("am_firing.json"), cfg, state)
+    assert state.deliveries == 1
+    (env_file,) = calls.glob("env-*.txt")
+    got = dict(line.split("=", 1) for line in env_file.read_text().splitlines())
+    assert got == {"SKCAPSTONE_HOME": str(home), "SKALERT_LOG": str(tmp_path / "skalert.log"),
+                   "SKALERT_ENV_FILE": "/dev/null", "SKALERT_STATE_DIR": str(tmp_path / "state")}
+    assert (tmp_path / "skalert.log").read_text() == "fake-sk-alert ran\n"

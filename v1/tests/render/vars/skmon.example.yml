@@ -17,3 +17,16 @@ skmon:
   # takes the default discovery path; the set pass gives it a fake list.
   HEALTHZ_ALLOW:
     - 198.51.100.7
+  # The estate's own sk-alert script, read on the controller and pinned by its sha256. A relative
+  # path resolves against the SKStacks repository root (an absolute path is used as given); this
+  # one is the test stub that ships with the repository, never the real script.
+  SKALERT_SCRIPT_SRC: v1/tests/fixtures/skmon/fake_sk_alert
+  SKALERT_SCRIPT_SHA256: c0809061607f79a66430dad19af667d7ad2d16fd8dfc1b1b88ed539fef5f7738
+  # sk-alert's alert.env and alert.secret, one NAME=value per line (single-line values only).
+  ALERT_ROUTING:
+    TELEGRAM_CHAT_ID: "-1000000000"
+    TALK_URL: https://talk.example.test/room/example-not-real
+  ALERT_SECRETS:
+    TELEGRAM_BOT_TOKEN: example-telegram-token-not-a-secret
+  # A channel that does not run on the monitored estate (telegram or talk-external).
+  ALERT_OUT_OF_DOMAIN_CHANNEL: telegram

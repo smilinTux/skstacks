@@ -83,7 +83,7 @@ docker service ls | grep "${STACK_NAME}"
 {% if not skmon_parked %}
 # Health check
 echo -e "${YELLOW}🏥 Checking service health...${NC}"
-{% for svc, var, label in [('loki', 'LOKI', 'Loki'), ('grafana', 'GRAFANA', 'Grafana'), ('victoriametrics', 'VM', 'VictoriaMetrics'), ('alertmanager', 'ALERTMANAGER', 'Alertmanager')] %}
+{% for svc, var, label in [('loki', 'LOKI', 'Loki'), ('grafana', 'GRAFANA', 'Grafana'), ('victoriametrics', 'VM', 'VictoriaMetrics'), ('alertmanager', 'ALERTMANAGER', 'Alertmanager'), ('vmalert', 'VMALERT', 'vmalert'), ('bridge', 'BRIDGE', 'skmon-bridge')] %}
 
 # Check {{ label }}
 for _ in $(seq 1 36); do

@@ -1,5 +1,6 @@
 """Shared helpers for the skmon role tests (render a template, load its compose, read a play)."""
 import ast
+import hashlib
 import pathlib
 import re
 
@@ -24,6 +25,14 @@ BASE = {
     "GRAFANA_ADMIN_PASSWORD": "fake-admin-password",
     "GRAFANA_SECRET_KEY": "fake-secret-key",
     "GRAFANA_ROOT_URL": "https://skmon.c1.example.test",
+    # Alert delivery (Task 13): the fixture stub stands in for the estate's sk-alert, pinned by its hash.
+    # A relative SKALERT_SCRIPT_SRC resolves against the repository root (tasks/facts.yml).
+    "SKALERT_SCRIPT_SRC": "v1/tests/fixtures/skmon/fake_sk_alert",
+    "SKALERT_SCRIPT_SHA256": hashlib.sha256((pathlib.Path(__file__).resolve().parent / "fixtures/skmon/fake_sk_alert").read_bytes()).hexdigest(),
+    "ALERT_ROUTING": {"TELEGRAM_CHAT_ID": "-1000000000", "TALK_URL": "https://talk.example.test/room/fake"},
+    "ALERT_SECRETS": {"TELEGRAM_BOT_TOKEN": "fake-telegram-token-not-a-secret"},
+    "ALERT_OUT_OF_DOMAIN_CHANNEL": "telegram",
+    "HEALTHZ_ALLOW": ["198.51.100.7"],
 }
 
 # Config templates delivered as hash-named Swarm configs: key -> template file.
@@ -34,6 +43,8 @@ CONFIG_TEMPLATES = {
     **{f"rules-{c}": f"rules/{c}.yml.j2" for c in ("node", "storage", "http", "cert", "capacity", "container", "meta")},
     "loki-rules": "loki-rules/storage.yml.j2",
 }
+# Secret templates delivered as hash-named Docker secrets: key -> template file.
+SECRET_TEMPLATES = {"alert_env": "alert.env.j2", "alert_secret": "alert.secret.j2"}
 
 # vmalert rule classes (one rules/<class>.yml.j2 each, mounted at /etc/vmalert/rules/<class>.yml).
 RULE_CLASSES = tuple(k.removeprefix("rules-") for k in CONFIG_TEMPLATES if k.startswith("rules-"))
@@ -78,7 +89,11 @@ def ctx_with_configs(env: str = "prod", **skmon) -> dict:
     """Template context carrying `skmon_configs`: every config template rendered, as the plays do."""
     extra = {"skmon_agent_targets": agent_targets(**skmon), "skmon_data_mountpoint": DATA_MOUNTPOINT}
     configs = {key: render(CFG / name, env=env, extra_ctx=extra, **skmon) for key, name in CONFIG_TEMPLATES.items()}
-    return {"skmon_configs": configs, **extra}
+    # The bridge script and the sk-alert stub are files the plays read with lookup('file'), not templates.
+    configs["skmon_bridge.py"] = (SRC / "skmon/bridge/skmon_bridge.py").read_text()
+    configs["sk-alert"] = (ROLE.parents[2] / "tests/fixtures/skmon/fake_sk_alert").read_text()
+    secrets = {key: render(CFG / name, env=env, **skmon) for key, name in SECRET_TEMPLATES.items()}
+    return {"skmon_configs": configs, "skmon_secrets": secrets, **extra}
 
 
 def render_rules(cls: str, env: str = "prod", mountpoint: str = DATA_MOUNTPOINT, **skmon) -> str:
@@ -141,7 +156,7 @@ AGENT_GUARDS = ROLE / "tasks/agent_guards.yml"
 
 # Override keys that are top-level facts rather than vault keys. Anything else
 # passed to guard_facts() is a vault key and lands in the `skmon` mapping.
-_TOP_LEVEL_FACTS = {"swarm_nodes", "env", "groups"}
+_TOP_LEVEL_FACTS = {"swarm_nodes", "env", "groups", "playbook_dir", "skstacks_repo_root"}
 _TOP_LEVEL_PREFIXES = ("skmon_", "skalert_")
 
 
@@ -179,13 +194,16 @@ def guard_facts(**overrides) -> dict:
     land in the `skmon` mapping. Non-vault facts land at the top level: `env`,
     `swarm_nodes` (which also becomes `skmon_swarm_nodes`, the fact guards.yml
     derives from the registered `docker node ls`, defaulting to just DATA_NODE),
-    and any `skmon_*` / `skalert_*` key (e.g. `skalert_actual_sha256`).
+    `playbook_dir` and `skstacks_repo_root` (the path facts), and any `skmon_*` /
+    `skalert_*` key (e.g. `skalert_actual_sha256`, the controller-side hash of the script).
     """
     top = {k: overrides.pop(k) for k in list(overrides)
            if k in _TOP_LEVEL_FACTS or k.startswith(_TOP_LEVEL_PREFIXES)}
     vault = {**BASE, **overrides}
     swarm = top.pop("swarm_nodes", [vault.get("DATA_NODE", "")])
-    ctx = {"app": "skmon", "env": "prod", "skmon": vault, "skmon_swarm_nodes": swarm, "groups": {}, **top}
+    # skalert_actual_sha256 is what the play's `stat` of the script registers; by default it matches the pin.
+    ctx = {"app": "skmon", "env": "prod", "skmon": vault, "skmon_swarm_nodes": swarm, "groups": {},
+           "playbook_dir": str(ROLE), "skalert_actual_sha256": BASE["SKALERT_SCRIPT_SHA256"], **top}
     jenv = ansible_environment()
     for t in load_tasks(FACTS_FILE):
         for name, value in (t.get("set_fact") or {}).items():
@@ -408,6 +426,9 @@ def fw_unit(env: str = "prod", **kw) -> str:
 DEPLOY = SRC / "skmon/deploy.j2"
 PROBES_PLUGIN = ROLE / "filter_plugins/skmon_probes.py"
 V2_SERVICES = ("victoriametrics", "loki", "grafana", "alertmanager")
+# Every service whose replica count the deploy script waits for (the bridge and vmalert roll
+# themselves: their configs are hash-named, so a change is a new service spec).
+WAITED_SERVICES = (*V2_SERVICES, "vmalert", "bridge")
 
 
 def render_deploy(env: str = "prod", **skmon) -> str:

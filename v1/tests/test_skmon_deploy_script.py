@@ -36,7 +36,7 @@ def test_unparked_script_updates_and_waits_for_the_v2_services_only():
     forced = re.findall(r'preexisted \$\{STACK_NAME\}_([a-z-]+) && .*service update --force', out)
     assert sorted(forced) == sorted(s.V2_SERVICES)
     waited = re.findall(r'--filter "name=\$\{STACK_NAME\}_([a-z-]+)"', out)
-    assert sorted(waited) == sorted(s.V2_SERVICES)
+    assert sorted(waited) == sorted(s.WAITED_SERVICES)
 
 
 def test_parked_script_skips_health_waits_and_says_so():

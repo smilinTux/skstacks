@@ -61,3 +61,102 @@
     fail_msg: >-
       These skmon vault keys were removed in v2, delete them:
       {{ skmon.keys() | select('match', '^(PROMETHEUS|NODE_EXPORTER|CADVISOR|PROMTAIL|JAEGER)_') | list | join(', ') }}.
+
+# --- alert delivery (spec 9.2, 9.5): the estate's own pinned sk-alert and where it can reach ---
+
+- name: Require SKALERT_SCRIPT_SRC and SKALERT_SCRIPT_SHA256
+  assert:
+    that:
+      - skmon_skalert_src | length > 0
+      - skmon.SKALERT_SCRIPT_SHA256 | default('', true) | length > 0
+    fail_msg: >-
+      skmon.SKALERT_SCRIPT_SRC (a path to the estate's sk-alert script on the controller) and
+      skmon.SKALERT_SCRIPT_SHA256 (its pinned sha256) are both required. skmon-bridge runs that
+      exact script and never a copy kept in this repository.
+
+- name: Hash the sk-alert script on the controller
+  stat:
+    path: "{{ skmon_skalert_src }}"
+    checksum_algorithm: sha256
+  register: skalert_stat
+  delegate_to: localhost
+  become: false
+  changed_when: false
+
+- name: Derive the sk-alert script hash
+  set_fact:
+    skalert_actual_sha256: "{{ skalert_stat.stat.checksum | default('', true) if skalert_stat.stat.exists | default(false) else '' }}"
+
+- name: Require the sk-alert script to exist
+  assert:
+    that:
+      - skalert_actual_sha256 | length > 0
+    fail_msg: >-
+      skmon.SKALERT_SCRIPT_SRC '{{ skmon_skalert_src }}' is not a readable file on the controller.
+      Point SKALERT_SCRIPT_SRC at the estate's sk-alert script (an absolute path, or one relative
+      to the SKStacks repository root).
+
+- name: Require the sk-alert script to match its pinned hash
+  assert:
+    that:
+      - skalert_actual_sha256 == skmon.SKALERT_SCRIPT_SHA256 | default('', true)
+    fail_msg: >-
+      The sk-alert script at SKALERT_SCRIPT_SRC does not match SKALERT_SCRIPT_SHA256: the file
+      hashes to {{ skalert_actual_sha256[:12] }}... and the vault pins
+      {{ (skmon.SKALERT_SCRIPT_SHA256 | default('', true))[:12] }}.... Review the change to the
+      script, then update SKALERT_SCRIPT_SHA256 in the vault (or restore the pinned script).
+  when: skalert_actual_sha256 | length > 0
+
+- name: Require the alert routing and secrets
+  assert:
+    that:
+      - skmon.ALERT_ROUTING | default({}, true) | length > 0
+      - skmon.ALERT_SECRETS | default({}, true) | length > 0
+    fail_msg: >-
+      skmon.ALERT_ROUTING and skmon.ALERT_SECRETS (dicts of NAME: value, rendered one NAME=value
+      per line into sk-alert's alert.env and alert.secret) are both required and non-empty.
+
+- name: Keep alert routing and secrets to one line per entry
+  # Names only in the message: a value may be a secret.
+  assert:
+    that:
+      - ((skmon.ALERT_ROUTING | default({}, true)).keys() | list + (skmon.ALERT_SECRETS | default({}, true)).keys() | list) | reject('match', '^[A-Za-z_][A-Za-z0-9_]*$') | list | length == 0
+      - ((skmon.ALERT_ROUTING | default({}, true)).values() | list + (skmon.ALERT_SECRETS | default({}, true)).values() | list) | map('string') | select('regex', '[\r\n]') | list | length == 0
+    fail_msg: >-
+      Every skmon.ALERT_ROUTING and skmon.ALERT_SECRETS name must be a shell-style identifier
+      (letters, digits, underscore) and every value a single line: a newline would add a line
+      to alert.env or alert.secret. Check the entries by name, the values are not printed.
+
+- name: Require an out-of-domain alert channel
+  # An alert that only reaches a channel hosted on the estate it reports on is silent exactly
+  # when the estate is down (spec 9.5).
+  assert:
+    that:
+      - >-
+        (skmon.ALERT_OUT_OF_DOMAIN_CHANNEL | default('', true)) in ['telegram', 'talk-external']
+        or (skmon.ALERT_ACCEPT_IN_DOMAIN_ONLY | default(false) | bool)
+    fail_msg: >-
+      skmon.ALERT_OUT_OF_DOMAIN_CHANNEL must be 'telegram' or 'talk-external': a channel that
+      does not run on the estate being monitored, so an outage still pages. To accept
+      in-domain delivery only, set skmon.ALERT_ACCEPT_IN_DOMAIN_ONLY: true and give
+      skmon.ALERT_ACCEPT_IN_DOMAIN_ONLY_REASON.
+
+- name: Require a reason when only in-domain delivery is accepted
+  assert:
+    that:
+      - skmon.ALERT_ACCEPT_IN_DOMAIN_ONLY_REASON | default('', true) | length > 0
+    fail_msg: >-
+      skmon.ALERT_ACCEPT_IN_DOMAIN_ONLY is true: set skmon.ALERT_ACCEPT_IN_DOMAIN_ONLY_REASON
+      to why no out-of-domain channel is wanted (it is written down, not interpreted).
+  when: skmon.ALERT_ACCEPT_IN_DOMAIN_ONLY | default(false) | bool
+
+- name: Require HEALTHZ_ALLOW when skmon runs
+  # The bridge's /healthz is published on DATA_NODE and reachable only from these sources. Empty
+  # would publish nothing to the outside monitor that is the last line of defence (spec 9.5).
+  assert:
+    that:
+      - skmon.HEALTHZ_ALLOW | default([], true) | length > 0
+    fail_msg: >-
+      skmon.HEALTHZ_ALLOW is required (a list of IPv4 addresses or CIDRs of the outside monitor
+      that polls the bridge's /healthz on DATA_NODE).
+  when: not skmon_parked

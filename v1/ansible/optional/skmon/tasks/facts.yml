@@ -4,6 +4,7 @@
 #   skmon_data_node  host that holds the local data (DATA_NODE, required by guards.yml)
 #   skmon_data_path  normalized local data root: repeated slashes collapsed, no trailing slash
 #   skmon_parked     true when skmon.replicas is 0 (also the string "0"): every workload is parked
+#   skmon_skalert_src  controller path of the estate's sk-alert script (SKALERT_SCRIPT_SRC)
 - name: Derive the skmon data node
   set_fact:
     skmon_data_node: "{{ skmon.DATA_NODE | default('', true) }}"
@@ -17,6 +18,18 @@
 - name: Derive whether skmon is parked
   set_fact:
     skmon_parked: "{{ (skmon.replicas | default(1) | int) == 0 }}"
+
+# SKALERT_SCRIPT_SRC is read on the controller. An absolute path is used as given; a relative
+# path is resolved against the SKStacks repository root, which is skstacks_repo_root when set
+# (the render gate sets it) and otherwise four levels above this role's playbook directory
+# (<repo>/v1/ansible/optional/skmon). Empty when SKALERT_SCRIPT_SRC is unset (guards.yml fails).
+- name: Derive the sk-alert script path on the controller
+  set_fact:
+    skmon_skalert_src: >-
+      {%- set src = skmon.SKALERT_SCRIPT_SRC | default('', true) | string -%}
+      {%- if src == '' or src.startswith('/') -%}{{ src }}
+      {%- else -%}{{ skstacks_repo_root | default(playbook_dir ~ '/../../../..', true) }}/{{ src }}
+      {%- endif -%}
 
 # Inventory hosts that run an agent: the skmon_agent_hosts group when the inventory
 # defines it, else the swarm nodes plus skmon_extra_hosts (unique, in that order).

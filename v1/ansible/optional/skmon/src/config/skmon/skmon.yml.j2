@@ -23,9 +23,17 @@ version: '3.8'
 name: "skmon_{{ env }}_{{ key }}_{{ (skmon_configs[key] | hash('sha256'))[:12] }}"
     file: "/var/data/config/skmon-{{ env }}/configs/{{ key }}"
 {%- endmacro %}
+{#- Docker secret helper, same naming rule: skmon_secrets (key -> rendered content) is written
+    by the plays to /var/data/config/skmon-<env>/secrets/<key> (0600) before `docker stack deploy`. #}
+{% macro swarm_secret(key) -%}
+name: "skmon_{{ env }}_{{ key }}_{{ (skmon_secrets[key] | hash('sha256'))[:12] }}"
+    file: "/var/data/config/skmon-{{ env }}/secrets/{{ key }}"
+{%- endmacro %}
 {% set sfx = '' if env == 'prod' else '-' ~ env %}
 {% set replicas = 0 if skmon_parked | default(false) else 1 %}
 {% set fwd = skmon.FORWARD_AUTH_MIDDLEWARE | default('authentik@file') %}
+{% set bridge_uid = skmon.BRIDGE_UID | default(65534) %}
+{% set healthz_port = skmon.HEALTHZ_PORT | default(9095) %}
 {% set data = skmon_data_path | default('') %}
 {% set node = skmon_data_node | default('') %}
 
@@ -243,6 +251,74 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+
+  # Delivers Alertmanager notifications through the estate's own pinned sk-alert (spec 9.2).
+  # The script and its two secret files are mounted, never baked in or passed in argv or env.
+  # Joins the skmon overlay only: Alertmanager posts to skmon-<env>_bridge:8080, and the
+  # healthz port is published on DATA_NODE for the outside monitor (tasks/port_allowlist.yml
+  # filters it by the original destination port, so target equals published).
+  bridge:
+    image: {{ skmon.BRIDGE_IMAGE | default('python:3.13.18-bookworm@sha256:cc55e4ded9c95f6ce2133b3d096db43f214d280c2a8af65d83e246c8fa7d168c') }}
+    command: ["python3", "/opt/skmon/skmon_bridge.py"]
+    user: "{{ bridge_uid }}:{{ bridge_uid }}"
+    environment:
+      - SKMON_ESTATE={{ skmon.ESTATE }}
+      - SKMON_GRAFANA_URL=https://skmon{{ sfx }}.{{ skmon.CLUSTERNAME }}.{{ skmon.DOMAIN }}
+      - SKMON_AM_URL=http://skmon-{{ env }}_alertmanager:9093
+      - SKMON_SKALERT=/opt/sk-alert/sk-alert
+      - SKMON_TALK={{ 1 if (skmon.ALERT_TALK | default(false) | bool) else 0 }}
+      - SKMON_HEALTHZ_PORT={{ healthz_port }}
+      - SKCAPSTONE_HOME=/opt/sk-alert
+      - SKALERT_STATE_DIR=/state
+      - SKALERT_LOG=/state/skalert.log
+      - SKALERT_ENV_FILE=/dev/null
+    volumes:
+      - {{ data }}/bridge:/state
+    configs:
+      - source: skmon_bridge.py
+        target: /opt/skmon/skmon_bridge.py
+      - source: sk-alert
+        target: /opt/sk-alert/sk-alert
+        mode: 0555
+    secrets:
+      - source: alert_env
+        target: /opt/sk-alert/config/alert.env
+        uid: "{{ bridge_uid }}"
+        gid: "{{ bridge_uid }}"
+        mode: 0400
+      - source: alert_secret
+        target: /opt/sk-alert/config/alert.secret
+        uid: "{{ bridge_uid }}"
+        gid: "{{ bridge_uid }}"
+        mode: 0400
+    ports:
+      - target: {{ healthz_port }}
+        published: {{ healthz_port }}
+        protocol: tcp
+        mode: host
+    networks:
+      - skmon-{{ env }}
+    deploy:
+      mode: replicated
+      replicas: {{ replicas }}
+      placement:
+        constraints:
+          - node.hostname == {{ node }}
+      resources:
+        limits:
+          cpus: '{{ skmon.BRIDGE_CPU_LIMIT | default("0.1") }}'
+          memory: {{ skmon.BRIDGE_MEMORY_LIMIT | default("64M") }}
+        reservations:
+          cpus: '{{ skmon.BRIDGE_CPU_RESERVATION | default("0.05") }}'
+          memory: {{ skmon.BRIDGE_MEMORY_RESERVATION | default("16M") }}
+
+{% if skmon_secrets | default({}) %}
+secrets:
+{% for key in skmon_secrets %}
+  {{ key }}:
+    {{ swarm_secret(key) }}
+{% endfor %}
+{% endif %}
 
 {% if skmon_configs | default({}) %}
 configs:

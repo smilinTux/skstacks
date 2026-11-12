@@ -168,6 +168,13 @@ scrape_configs:
       - targets: ['skmon-{{ env }}_vmalert:8880']
         labels:
           estate: '{{ estate }}'
+  # The bridge's own counters (skmon_bridge_*), which AlertDeliveryFailing reads.
+  - job_name: bridge
+    scrape_interval: {{ normal }}
+    static_configs:
+      - targets: ['skmon-{{ env }}_bridge:8080']
+        labels:
+          estate: '{{ estate }}'
 
   # Traefik: Swarm DNS service discovery on the metrics entrypoint, as the estate
   # scraped it before v2. Name the Traefik stack service with skmon.TRAEFIK_SCRAPE_NAME

@@ -43,6 +43,9 @@ class Config:
     body_max: int = 1500
     config_dir: str | None = None  # SKALERT_CONFIG_DIR passed to sk-alert
     state_dir: str | None = None  # SKALERT_STATE_DIR passed to sk-alert
+    skcapstone_home: str | None = None  # SKCAPSTONE_HOME: where sk-alert reads config/alert.env and alert.secret
+    skalert_log: str | None = None  # SKALERT_LOG passed to sk-alert
+    skalert_env_file: str | None = None  # SKALERT_ENV_FILE passed to sk-alert (legacy env file; /dev/null disables it)
 
 
 @dataclass
@@ -215,6 +218,10 @@ def _deliver(payload: dict, cfg: Config, state: State) -> bool:
         env["SKALERT_CONFIG_DIR"] = cfg.config_dir
     if cfg.state_dir:
         env["SKALERT_STATE_DIR"] = cfg.state_dir
+    for name, value in (("SKCAPSTONE_HOME", cfg.skcapstone_home), ("SKALERT_LOG", cfg.skalert_log),
+                        ("SKALERT_ENV_FILE", cfg.skalert_env_file)):
+        if value:
+            env[name] = value
     muted = None
     try:
         muted = muted_count(cfg) if status == "firing" else None
@@ -317,6 +324,9 @@ def config_from_env(env=os.environ) -> Config:
         alertmanager_url=env.get("SKMON_AM_URL", ""),
         config_dir=env.get("SKALERT_CONFIG_DIR") or None,
         state_dir=env.get("SKALERT_STATE_DIR", "/state"),
+        skcapstone_home=env.get("SKCAPSTONE_HOME") or None,
+        skalert_log=env.get("SKALERT_LOG") or None,
+        skalert_env_file=env.get("SKALERT_ENV_FILE") or None,
     )
 
 
