@@ -54,7 +54,7 @@ prometheus.exporter.unix "host" {
   }
 }
 
-{% if not light %}
+{% if container and not light %}
 // Container metrics. Only the Swarm labels are kept as container_label_* series labels;
 // vm-scrape.yml renames them to stack, service and task_slot and drops the rest.
 // The housekeeping interval is not an argument of this component in Alloy v1.21 (cadvisor
@@ -96,7 +96,7 @@ prometheus.exporter.blackbox "probes" {
 {% endif %}
 
 {% if not light %}
-// Logs: Docker container logs and the systemd journal, to Loki on DATA_NODE.
+// Logs: Docker container logs (container mode only) and the systemd journal, to Loki on DATA_NODE.
 loki.write "local" {
   endpoint {
     url = "{{ loki_push_url }}"
@@ -113,6 +113,7 @@ loki.write "local" {
   }
 }
 
+{% if container %}
 discovery.docker "containers" {
   host = "unix:///var/run/docker.sock"
 }
@@ -159,6 +160,7 @@ loki.source.docker "containers" {
   targets    = discovery.relabel.containers.output
   forward_to = [loki.write.local.receiver]
 }
+{% endif %}
 
 loki.relabel "journal" {
   forward_to = []

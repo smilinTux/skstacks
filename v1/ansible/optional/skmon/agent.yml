@@ -19,7 +19,8 @@
 # deploy play fills from skmon_agent_host_list when the inventory does not define it.
 #
 # Install mode per host: agent_mode (hostvar) container|systemd, default systemd for
-# skmon_extra_hosts members and container for every other host. Container mode keeps
+# skmon_extra_hosts members and container for every other host (derived once, in
+# tasks/agent_targets.yml, as skmon_agent_self.agent_mode). Container mode keeps
 # one host container skmon-<env>-alloy running (config /etc/skmon-<env>/alloy, state
 # /var/lib/skmon-<env>/alloy, both local disk). Parked (skmon.replicas 0) removes the
 # container; the state directory and DATA_PATH are never deleted.
@@ -62,7 +63,7 @@
       # when it ran in this run, else skmon.PROBES. Logs go to Loki on DATA_NODE's
       # agent address (its own name when DATA_NODE runs no agent).
       set_fact:
-        skmon_agent_mode: "{{ agent_mode | default('systemd' if inventory_hostname in (groups['skmon_extra_hosts'] | default([])) else 'container') }}"
+        skmon_agent_mode: "{{ skmon_agent_self.agent_mode }}"
         skmon_agent_state: "{{ state | default('present') }}"
         skmon_agent_listen_addr: "{{ skmon_agent_self.addr }}"
         skmon_agent_probes: >-
@@ -361,6 +362,15 @@
         daemon_reload: true
       when: skmon_agent_mode == 'systemd' and skmon_agent_state == 'absent' and skmon_agent_absent_units.changed
 
+    - name: Find the other skmon environments' agent units on this host
+      # The binary, symlink and release dir are shared by every env on the host (R35).
+      find:
+        paths: /etc/systemd/system
+        patterns: "skmon-*-alloy.service"
+        excludes: "skmon-{{ env }}-alloy.service"
+      register: skmon_agent_other_units
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state == 'absent'
+
     - name: Find the installed Alloy binaries
       find:
         paths: /usr/local/bin
@@ -369,13 +379,20 @@
       when: skmon_agent_mode == 'systemd' and skmon_agent_state == 'absent'
 
     - name: Remove the Alloy binary when absent
-      # Every versioned binary, the symlink, the unpacked releases and the SMART script.
+      # Every versioned binary, the symlink and the unpacked releases, but only when no other
+      # env's agent unit remains on this host: removing dev must not break a running prod agent.
       file:
         path: "{{ item }}"
         state: absent
       loop: >-
         {{ (skmon_agent_found_binaries.files | default([]) | map(attribute='path') | list)
-           + ['/usr/local/bin/skmon-alloy', '/usr/local/lib/skmon-alloy', '/usr/local/sbin/skmon-' ~ env ~ '-smart-textfile'] }}
+           + ['/usr/local/bin/skmon-alloy', '/usr/local/lib/skmon-alloy'] }}
+      when: skmon_agent_mode == 'systemd' and skmon_agent_state == 'absent' and skmon_agent_other_units.matched == 0
+
+    - name: Remove the SMART textfile script when absent
+      file:
+        path: "/usr/local/sbin/skmon-{{ env }}-smart-textfile"
+        state: absent
       when: skmon_agent_mode == 'systemd' and skmon_agent_state == 'absent'
 
     - name: Remove the systemd agent config when absent

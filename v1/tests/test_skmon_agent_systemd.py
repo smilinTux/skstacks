@@ -67,9 +67,56 @@ def test_light_mode_collector_list():
     assert 'directory = "/var/lib/skmon-prod/alloy/textfile"' in c
 
 
-def test_full_systemd_mode_keeps_the_full_config():
+def test_full_systemd_mode_has_no_docker_components_but_keeps_journal(  # R34
+):
     c = cfg(agent_mode="systemd", agent_light=False)
-    assert "prometheus.exporter.cadvisor" in c and "loki.write" in c and '"netdev"' in c
+    for docker_only in ("prometheus.exporter.cadvisor", "discovery.docker", "loki.source.docker", "docker.sock"):
+        assert docker_only not in c
+    assert 'loki.source.journal "journal"' in c and "loki.write" in c and '"netdev"' in c
+    assert 'prometheus.exporter.blackbox "probes"' in cfg(agent_mode="systemd", agent_is_data_node=True)
+
+
+def test_container_mode_keeps_the_docker_components():
+    c = cfg(agent_mode="container")
+    for comp in ("prometheus.exporter.cadvisor", "discovery.docker", "loki.source.docker", 'loki.source.journal'):
+        assert comp in c
+
+
+def test_full_systemd_host_in_unix_but_not_cadvisor():
+    ctx = {"skmon_agent_targets": [
+        {"node": A, "addr": "192.0.2.10", "role": "swarm", "light": False, "agent_mode": "container"},
+        {"node": B, "addr": "192.0.2.11", "role": "storage", "light": False, "agent_mode": "systemd"},
+    ]}
+    j = jobs(ctx)
+    names = {n: {t["labels"]["node"] for t in job["static_configs"]} for n, job in j.items() if n.startswith("alloy-")
+             and "static_configs" in job}
+    assert names["alloy-unix"] == {A, B} and names["alloy-cadvisor"] == {A} and names["alloy-self"] == {A, B}
+
+
+def test_targets_carry_agent_mode_derived_once():
+    hv = {"m1": {"ansible_host": "192.0.2.1"}, "x1": {"ansible_host": "192.0.2.2"},
+          "x2": {"ansible_host": "192.0.2.3", "agent_mode": "container"}}
+    import ast
+    from skmon_support import AGENT_TARGETS, ansible_environment, guard_facts, load_tasks
+    task = next(t for t in load_tasks(AGENT_TARGETS) if t.get("name") == "Derive the skmon agent scrape targets")
+    groups = {"swarm_managers": ["m1"], "skmon_extra_hosts": ["x1", "x2"]}
+    facts = guard_facts(groups=groups)
+    out = ast.literal_eval(ansible_environment().from_string(task["set_fact"]["skmon_agent_targets"]).render(
+        **{**facts, "hostvars": hv, "groups": groups}))
+    assert {t["node"]: t["agent_mode"] for t in out} == {"m1": "container", "x1": "systemd", "x2": "container"}
+    play = task_named(AGENT_PLAY, "Derive this host's agent settings")
+    assert play["set_fact"]["skmon_agent_mode"] == "{{ skmon_agent_self.agent_mode }}"
+
+
+def test_absent_removes_shared_binary_only_when_no_other_env_remains():  # R35
+    by = {t["name"]: t for t in tasks(AGENT_PLAY)}
+    find = by["Find the other skmon environments' agent units on this host"]["find"]
+    assert find["patterns"] == "skmon-*-alloy.service" and find["excludes"] == "skmon-{{ env }}-alloy.service"
+    rm = by["Remove the Alloy binary when absent"]
+    assert "skmon_agent_other_units.matched == 0" in rm["when"] and "state == 'absent'" in rm["when"]
+    # the per-env pieces are removed regardless
+    assert "skmon_agent_other_units" not in str(by["Remove the systemd agent unit when absent"].get("when"))
+    assert "skmon_agent_other_units" not in str(by["Remove the SMART textfile script when absent"].get("when"))
 
 
 def test_light_mode_scrape_interval_60s_but_still_job_alloy_unix():

@@ -11,6 +11,8 @@ global:
 
 scrape_configs:
 {% set full_targets = skmon_agent_targets | rejectattr('light') | list %}
+{% set cadvisor_targets = full_targets | selectattr('agent_mode', 'defined') | selectattr('agent_mode', 'equalto', 'container') | list
+                          + full_targets | rejectattr('agent_mode', 'defined') | list %}
 {% set light_targets = skmon_agent_targets | selectattr('light') | list %}
 {# The systemd collector reports every unit in every state; keep the state="failed" series only.
    Shared by the full and the light host job. #}
@@ -64,13 +66,13 @@ scrape_configs:
         replacement: alloy-unix
 {{ systemd_failed_only() }}
 {% endif %}
-{% if full_targets %}
-  # Container metrics, every full agent (a light agent runs no cadvisor).
+{% if cadvisor_targets %}
+  # Container metrics, container-mode agents only (a light or systemd agent runs no cadvisor).
   - job_name: alloy-cadvisor
     scrape_interval: {{ normal }}
     metrics_path: /api/v0/component/prometheus.exporter.cadvisor.docker/metrics
     static_configs:
-{% for t in full_targets %}
+{% for t in cadvisor_targets %}
       - targets: ['{{ t.addr }}:{{ agent_port }}']
         labels:
           node: '{{ t.node }}'
