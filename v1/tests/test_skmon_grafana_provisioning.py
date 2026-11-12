@@ -94,3 +94,49 @@ def test_dashboards_tree_copied_recursively_with_modes(play):
 def test_folder_directories_created(play):
     dirs = next(t for t in play_tasks(play) if t["name"].startswith("Create the Grafana provisioning directories"))["loop"]
     assert {"dashboards/apps", "dashboards/skmon internals", "dashboards/infrastructure", "datasources"} <= set(dirs)
+
+
+def _task(play, name):
+    return next(t for t in play_tasks(play) if t["name"].startswith(name))
+
+
+@pytest.mark.parametrize("play", PLAYS, ids=lambda p: p.name)
+def test_prune_task_is_scoped_to_dashboards_json_on_data_node(play):
+    names = [t["name"] for t in play_tasks(play)]
+    copy_i = names.index("Copy the dashboards tree to the data node")
+    assert names.index("Prune stale dashboards from the data node") > copy_i
+    present = _task(play, "List the dashboards present")
+    assert present["delegate_to"] == "{{ skmon_data_node }}"
+    assert present["find"]["paths"] == "{{ skmon_data_path }}/grafana-provisioning/dashboards"
+    assert present["find"]["patterns"] == "*.json"
+    shipped = _task(play, "List the dashboards the role ships")
+    assert shipped["delegate_to"] == "localhost" and shipped["become"] is False
+    assert shipped["find"]["patterns"] == "*.json"
+    prune = _task(play, "Prune stale dashboards")
+    assert prune["delegate_to"] == "{{ skmon_data_node }}"
+    assert prune["file"]["state"] == "absent" and prune["file"]["path"] == "{{ item }}"
+    assert prune["loop"] == "{{ skmon_dashboards_stale }}"
+
+
+@pytest.mark.parametrize("play", PLAYS, ids=lambda p: p.name)
+def test_stale_expression_removes_stale_root_file_keeps_wanted(play):
+    from skmon_support import ansible_environment
+    expr = _task(play, "Work out the stale")["set_fact"]["skmon_dashboards_stale"]
+    src = "/ctl/role/src/config/skmon/dashboards"
+    dst = "/srv/x/grafana-provisioning/dashboards"
+    ctx = {
+        "playbook_dir": "/ctl/role", "app": "skmon", "skmon_data_path": "/srv/x",
+        "skmon_dashboards_shipped": {"files": [{"path": f"{src}/estate-overview.json"},
+                                               {"path": f"{src}/apps/forgejo.json"},
+                                               {"path": f"{src}/skmon internals/grafana.json"}]},
+        "skmon_dashboards_present": {"files": [{"path": f"{dst}/estate-overview.json"},
+                                               {"path": f"{dst}/apps/forgejo.json"},
+                                               {"path": f"{dst}/skmon internals/grafana.json"},
+                                               {"path": f"{dst}/forgejo.json"},
+                                               {"path": f"{dst}/apps/removed.json"}]},
+    }
+    import ast
+    stale = ast.literal_eval(ansible_environment().from_string(expr).render(**ctx).strip())
+    assert sorted(stale) == [f"{dst}/apps/removed.json", f"{dst}/forgejo.json"]
+    ctx["skmon_dashboards_present"] = {"files": []}
+    assert ast.literal_eval(ansible_environment().from_string(expr).render(**ctx).strip()) == []
