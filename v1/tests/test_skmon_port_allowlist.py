@@ -1,4 +1,5 @@
 """skmon port allowlist (B4, R36-R38): one SKMON-<ENV> chain per host from one template."""
+import re
 import subprocess
 
 import yaml
@@ -19,8 +20,8 @@ def code(text: str) -> str:
 def test_each_estate_address_allowed_then_drop():
     r = rules(ports={"loki": 3100})
     for a in ADDRS:
-        assert f"-A SKMON-PROD -p tcp -m conntrack --ctorigdstport 3100 -s {a} -j RETURN" in r
-    assert r.index("--ctorigdstport 3100 -j DROP") > max(r.index(a) for a in ADDRS)
+        assert f"-A SKMON-PROD -p tcp -m conntrack --ctorigdstport 3100 --ctdir ORIGINAL -s {a} -j RETURN" in r
+    assert r.index("--ctorigdstport 3100 --ctdir ORIGINAL -j DROP") > max(r.index(a) for a in ADDRS)
 
 
 def test_chain_hooked_from_docker_user_and_input():
@@ -30,9 +31,9 @@ def test_chain_hooked_from_docker_user_and_input():
 
 def test_healthz_only_from_probe_hosts():
     r = rules(ports={"healthz": 9095}, HEALTHZ_ALLOW=["198.51.100.7"])
-    assert "--ctorigdstport 9095 -s 198.51.100.7 -j RETURN" in r
-    assert not any(f"--ctorigdstport 9095 -s {a}" in r for a in ADDRS)
-    assert r.index("--ctorigdstport 9095 -j DROP") > r.index("198.51.100.7")
+    assert "--ctorigdstport 9095 --ctdir ORIGINAL -s 198.51.100.7 -j RETURN" in r
+    assert not any(f"--ctorigdstport 9095 --ctdir ORIGINAL -s {a}" in r for a in ADDRS)
+    assert r.index("--ctorigdstport 9095 --ctdir ORIGINAL -j DROP") > r.index("198.51.100.7")
 
 
 def test_shell_parses():
@@ -49,7 +50,7 @@ def test_agent_port_on_every_host_and_published_ports_only_on_data_node():
     assert fw_context(node=OTHER)["skmon_fw_ports"] == {"agent": 12345}
     assert fw_context(node=DATA)["skmon_fw_ports"] == {"agent": 12345, "loki": 3100, "healthz": 9095}
     r = rules(node=OTHER)
-    assert "--ctorigdstport 12345 -j DROP" in r and "--ctorigdstport 3100" not in r and "--ctorigdstport 9095" not in r
+    assert "--ctorigdstport 12345 --ctdir ORIGINAL -j DROP" in r and "--ctorigdstport 3100" not in r and "--ctorigdstport 9095" not in r
 
 
 def test_pyroscope_port_only_when_profiling_is_enabled():
@@ -70,30 +71,40 @@ def test_loki_published_port_follows_the_knob_and_the_allowlist():
     loki_ports = compose(LOKI_PUSH_PORT=3200)["services"]["loki"]["ports"]
     assert loki_ports == [{"target": 3100, "published": 3200, "protocol": "tcp", "mode": "host"}]
     assert compose()["services"]["loki"]["ports"][0]["published"] == 3100
-    assert "--ctorigdstport 3200 -j DROP" in rules(LOKI_PUSH_PORT=3200)
+    assert "--ctorigdstport 3200 --ctdir ORIGINAL -j DROP" in rules(LOKI_PUSH_PORT=3200)
 
 
 def test_non_default_loki_port_rules_match_the_original_destination_port():  # R39
     from skmon_support import compose
     r = rules(LOKI_PUSH_PORT=3200)
     for a in ADDRS:
-        assert f"-A SKMON-PROD -p tcp -m conntrack --ctorigdstport 3200 -s {a} -j RETURN" in r
-    assert "-A SKMON-PROD -p tcp -m conntrack --ctorigdstport 3200 -j DROP" in r
+        assert f"-A SKMON-PROD -p tcp -m conntrack --ctorigdstport 3200 --ctdir ORIGINAL -s {a} -j RETURN" in r
+    assert "-A SKMON-PROD -p tcp -m conntrack --ctorigdstport 3200 --ctdir ORIGINAL -j DROP" in r
     assert "--dport" not in code(r)
     port = compose(LOKI_PUSH_PORT=3200)["services"]["loki"]["ports"][0]
     assert port["target"] == 3100 and port["published"] == 3200
 
 
+def test_no_rule_can_match_a_reply_direction_packet():  # R39 round 2
+    for kw in ({}, {"node": OTHER}, {"PROFILING": {"enabled": True}, "HEALTHZ_ALLOW": ["198.51.100.7"]}):
+        lines = [l for l in rules(**kw).splitlines() if l.startswith("-A SKMON-PROD")]
+        assert lines
+        for l in lines:
+            assert "--ctorigdstport" in l and "-m conntrack --ctorigdstport" in l
+            assert re.search(r"--ctorigdstport \d+ --ctdir ORIGINAL ", l), l
+    assert "ESTABLISHED" not in code(rules())
+
+
 def test_agent_scrape_from_the_data_nodes_own_gwbridge_is_returned_before_drop():  # R37
     r = rules(node=DATA)
-    gw = "-A SKMON-PROD -i docker_gwbridge -p tcp -m conntrack --ctorigdstport 12345 -j RETURN"
-    assert gw in r and r.index(gw) < r.index("--ctorigdstport 12345 -j DROP")
+    gw = "-A SKMON-PROD -i docker_gwbridge -p tcp -m conntrack --ctorigdstport 12345 --ctdir ORIGINAL -j RETURN"
+    assert gw in r and r.index(gw) < r.index("--ctorigdstport 12345 --ctdir ORIGINAL -j DROP")
     assert gw not in rules(node=OTHER)
 
 
 def test_sources_are_deduplicated_estate_addresses_only():
     r = rules(AGENT_LISTEN_ADDR={DATA: "192.0.2.11"}, ports={"agent": 12345})
-    assert r.count("--ctorigdstport 12345 -s 192.0.2.11 -j RETURN") == 1
+    assert r.count("--ctorigdstport 12345 --ctdir ORIGINAL -s 192.0.2.11 -j RETURN") == 1
     assert "-s 192.0.2.10 " not in r  # that host is no longer an agent address
     assert "198.51.100.7" not in r  # healthz probes never reach the agent port
 

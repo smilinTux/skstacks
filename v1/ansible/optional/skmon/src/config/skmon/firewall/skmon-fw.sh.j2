@@ -7,6 +7,9 @@
 # DNATed and pass FORWARD), each hook inserted only when missing. Re-running changes nothing.
 # Rules match --ctorigdstport, not --dport: a published Swarm port is DNATed before DOCKER-USER, which
 # then sees the container port; the original destination port is the published one on both hooks.
+# --ctdir ORIGINAL: ctorigdstport also matches reply packets of an allowed connection (their source is
+# the container, not an estate address); judging only original-direction packets lets replies fall
+# through to the end of the chain, so no ESTABLISHED accept is needed.
 # Sources are IPv4 literals: iptables resolves a name once, at apply time, so the task refuses
 # names. IPv6 is not filtered here: the agent and the published ports are reached over IPv4.
 set -euo pipefail
@@ -20,12 +23,12 @@ iptables-restore -w --noflush <<'SKMON_RULES'
 -F {{ chain }}
 {% for name, port in skmon_fw_ports.items() %}
 {% for src in (healthz_allow if name == 'healthz' else estate) %}
--A {{ chain }} -p tcp -m conntrack --ctorigdstport {{ port }} -s {{ src }} -j RETURN
+-A {{ chain }} -p tcp -m conntrack --ctorigdstport {{ port }} --ctdir ORIGINAL -s {{ src }} -j RETURN
 {% endfor %}
 {% if name == 'agent' and skmon_fw_is_data_node %}
--A {{ chain }} -i docker_gwbridge -p tcp -m conntrack --ctorigdstport {{ port }} -j RETURN
+-A {{ chain }} -i docker_gwbridge -p tcp -m conntrack --ctorigdstport {{ port }} --ctdir ORIGINAL -j RETURN
 {% endif %}
--A {{ chain }} -p tcp -m conntrack --ctorigdstport {{ port }} -j DROP
+-A {{ chain }} -p tcp -m conntrack --ctorigdstport {{ port }} --ctdir ORIGINAL -j DROP
 {% endfor %}
 COMMIT
 SKMON_RULES
