@@ -22,13 +22,22 @@
 {%- set _data_node = skgallery.DATA_NODE | default('', true) | string -%}
 {%- set _db_path = skgallery.DB_DATA_PATH | default('/var/data/skgallery-' ~ env ~ '/db-data', true) | string -%}
 {%- set _redis_path = skgallery.REDIS_DATA_PATH | default('/var/data/skgallery-' ~ env ~ '/redis-data', true) | string -%}
+{#- Immich machine-learning follows the server. IMMICH_VERSION pins both images; the
+    IMMICH_ML_VERSION knob overrides the ML image alone. Neither set: the ML default
+    below (its own index digest). _ml_pin stays undefined in that case on purpose,
+    so the image line keeps a literal default() that Renovate can read. -#}
+{%- if skgallery.IMMICH_ML_VERSION is defined -%}
+{%- set _ml_pin = skgallery.IMMICH_ML_VERSION -%}
+{%- elif skgallery.IMMICH_VERSION is defined -%}
+{%- set _ml_pin = skgallery.IMMICH_VERSION -%}
+{%- endif -%}
 version: '3.8'
 
 # =============================================================================
 # SKGallery (Immich) Docker Swarm Stack
 # =============================================================================
 # Self-hosted photo and video management solution
-# Components: immich-server, immich-machine-learning, postgres (pgvector), redis
+# Components: immich-server, immich-machine-learning, postgres (vectorchord), redis
 # Environment: {{ env }}
 # =============================================================================
 
@@ -46,7 +55,7 @@ services:
   # Immich Server - Main API and Web Interface
   # ===========================================================================
   immich-server:
-    image: ghcr.io/immich-app/immich-server:{{ skgallery.IMMICH_VERSION | default('v2.7.5') }}
+    image: ghcr.io/immich-app/immich-server:{{ skgallery.IMMICH_VERSION | default('v3.4.1@sha256:7c489add298fc2f92cda4c777de6462aa206877e04087b815f62c7664af0b53b') }}
     env_file: /var/data/config/skgallery-{{ env }}/skgallery.env
 {% if _split %}
     # SPLIT_WORKERS: this service runs only the API (uploads, web, mobile).
@@ -146,7 +155,7 @@ services:
   # Traefik labels: it serves no HTTP. The image's built-in healthcheck probes
   # the API port, which this worker does not open, so it is disabled.
   immich-microservices:
-    image: ghcr.io/immich-app/immich-server:{{ skgallery.IMMICH_VERSION | default('v2.7.5') }}
+    image: ghcr.io/immich-app/immich-server:{{ skgallery.IMMICH_VERSION | default('v3.4.1@sha256:7c489add298fc2f92cda4c777de6462aa206877e04087b815f62c7664af0b53b') }}
     env_file: /var/data/config/skgallery-{{ env }}/skgallery.env
     environment:
       - IMMICH_WORKERS_EXCLUDE=api
@@ -198,7 +207,7 @@ services:
   # ===========================================================================
   # Handles: face detection, object recognition, smart search, CLIP embeddings
   immich-machine-learning:
-    image: ghcr.io/immich-app/immich-machine-learning:{{ skgallery.IMMICH_VERSION | default('v2.7.5') }}
+    image: ghcr.io/immich-app/immich-machine-learning:{{ _ml_pin | default('v3.4.1@sha256:8adebf414256f6e4f837bfbb66fa94f14f4da7260e3a1d65cbba49e4e35d8764') }}
     env_file: /var/data/config/skgallery-{{ env }}/skgallery.env
     volumes:
       # === DIRECT BIND MOUNT ===
@@ -245,7 +254,7 @@ services:
   # Redis - In-memory Cache and Message Queue
   # ===========================================================================
   redis:
-    image: redis:{{ skgallery.REDIS_VERSION | default('8.10.3-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80') }}
+    image: redis:{{ skgallery.REDIS_VERSION | default('8.10.3-alpine@sha256:7958cfbb9d152f87dadfbc89f1b0b15938f0b81ff8982feb327476f4911935c3') }}
     command: redis-server --appendonly yes --maxmemory {{ skgallery.REDIS_MAXMEMORY | default('128mb') }} --maxmemory-policy noeviction
     volumes:
       - {{ _redis_path }}:/data
@@ -290,18 +299,26 @@ services:
   # PostgreSQL - Vector Database (Immich strategic image)
   # ===========================================================================
   # ghcr.io/immich-app/postgres bundles BOTH pgvecto.rs and vectorchord
-  # extensions on top of PostgreSQL, enabling in-place vector migration for
-  # legacy installs. Reference: https://docs.immich.app/install/upgrading
-  # The default tag is exactly what the pinned Immich release's docker-compose.yml
-  # names (PG 14). Immich supports only that image; the PG major must not change
-  # silently, so bump it only together with IMMICH_VERSION, per its release notes.
+  # extensions on top of PostgreSQL. Immich v3 dropped pgvecto.rs (the server
+  # refuses DB_VECTOR_EXTENSION=pgvecto.rs); the bundle is kept so an instance
+  # that still restores an old dump can. Reference: https://docs.immich.app/install/upgrading
+  # The default tag and digest are exactly what the pinned Immich release's
+  # docker-compose.yml names (PG 14). Immich's server accepts Postgres 14 up to
+  # 19, but its own compose still ships 14 and the PG major must not change
+  # silently: renovate.json blocks Postgres major proposals for this role, and
+  # the deploy playbooks run shared/tasks/postgres_major_guard.yml before the
+  # stack deploy (refuses a data directory from another major).
+  # 18+ images keep the cluster in /var/lib/postgresql/<major>/docker and declare
+  # VOLUME /var/lib/postgresql, so the mount target follows the image major
+  # (see skgit.yml.j2 and test_postgres18_guard.py for the same rule).
+{% set _pg_data_mount = '/var/lib/postgresql' if ((skgallery.POSTGRES_VERSION | default('14-vectorchord0.4.3-pgvectors0.2.0')).split('@')[0].split(':')[-1].lstrip('pg').split('.')[0].split('-')[0] | int(0)) >= 18 else '/var/lib/postgresql/data' %}
   database:
-    image: ghcr.io/immich-app/postgres:{{ skgallery.POSTGRES_VERSION | default('14-vectorchord0.4.3-pgvectors0.2.0') }}
+    image: ghcr.io/immich-app/postgres:{{ skgallery.POSTGRES_VERSION | default('14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23') }}
     env_file: /var/data/config/skgallery-{{ env }}/skgallery-db.env
     shm_size: {{ skgallery.DB_SHM_SIZE | default('128mb') }}
     volumes:
       # === DIRECT BIND MOUNT ===
-      - {{ _db_path }}:/var/lib/postgresql/data
+      - {{ _db_path }}:{{ _pg_data_mount }}
       - /etc/localtime:/etc/localtime:ro
     logging:
       driver: json-file
@@ -345,7 +362,7 @@ services:
   # ===========================================================================
   # Automated daily backups with retention policy
   postgres-db-backup:
-    image: postgres:{{ skgallery.POSTGRES_BACKUP_VERSION | default('14.24@sha256:834a046089d76edd1d2e81c4741f3ad5d1853646ededc86c2708936aad31c1ed') }}
+    image: postgres:{{ skgallery.POSTGRES_BACKUP_VERSION | default('14.25@sha256:9c8a7df7224219e4fa32bb93f4dea665c5b3f322cb443a849bd92eec79af8b81') }}
     env_file: /var/data/config/skgallery-{{ env }}/skgallery-backup.env
     environment:
       - PGTEMP=/dump/tmp

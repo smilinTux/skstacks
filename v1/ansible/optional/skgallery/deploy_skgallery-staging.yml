@@ -227,6 +227,40 @@
       tags:
         - networks
 
+    - name: Refuse a Postgres data directory from another major (fail closed, before the deploy)
+      include_tasks:
+        file: ../../shared/tasks/postgres_major_guard.yml
+        apply:
+          tags:
+            - deploy
+            - postgres-major
+      vars:
+        pg_guard_app: skgallery
+        pg_guard_image: "ghcr.io/immich-app/postgres:{{ skgallery.POSTGRES_VERSION | default('14-vectorchord0.4.3-pgvectors0.2.0') }}"
+        pg_guard_data_path: "{{ skgallery.DB_DATA_PATH | default('/var/data/' ~ app ~ '-' ~ env ~ '/db-data', true) }}"
+        pg_guard_pin_var: skgallery.POSTGRES_VERSION
+        pg_guard_node: "{{ skgallery.DATA_NODE | default('', true) }}"
+      tags:
+        - deploy
+        - postgres-major
+
+    - name: Refuse an unacknowledged or unsupported Immich major change (fail closed, before the deploy)
+      include_tasks:
+        file: tasks/immich_major_guard.yml
+        apply:
+          tags:
+            - deploy
+            - immich-major
+      vars:
+        immich_guard_stack: "{{ app }}-{{ env }}"
+        immich_guard_target_image: "ghcr.io/immich-app/immich-server:{{ skgallery.IMMICH_VERSION | default('v3.4.1') }}"
+        immich_guard_ack: "{{ skgallery.IMMICH_MAJOR_ACK | default('', true) }}"
+        immich_guard_vector_ext: "{{ skgallery.DB_VECTOR_EXTENSION | default('vectorchord', true) }}"
+        immich_guard_ml_image: "{{ ('ghcr.io/immich-app/immich-machine-learning:' ~ skgallery.IMMICH_ML_VERSION) if skgallery.IMMICH_ML_VERSION is defined else '' }}"
+      tags:
+        - deploy
+        - immich-major
+
     - name: Deploy {{ app }} stack
       shell: |
         cd /var/data/{{ app }}-{{ env }}

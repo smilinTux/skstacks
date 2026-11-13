@@ -1,0 +1,178 @@
+---
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Fail closed on an Immich major change, BEFORE the stack deploy.
+#
+# Why: Immich runs its database migrations when the server starts and does not
+# support downgrades ("Downgrading to an earlier version, even within the same
+# minor version, is not supported"; the server is only compatible with the
+# matching major). So moving a deployed v2 stack to v3 is a one-way step on the
+# instance's database, and it must never happen because a framework default or a
+# Renovate bump changed under an unattended deploy. This task compares the
+# server image that is running now with the one about to be deployed:
+#
+#   same major                  passes (patch and minor bumps are routine)
+#   new major, no ack           refused, nothing changed
+#   new major, ack == major     passes (the operator took a backup and read the notes)
+#   older major than running    refused (a downgrade needs a restore into a fresh stack)
+#   no running immich-server    fresh install, nothing to guard
+#
+# A v3 image also refuses DB_VECTOR_EXTENSION=pgvecto.rs (removed in v3), on a
+# fresh install too, because the server would only fail on start.
+#
+# Inputs (set with `vars:` on the include):
+#   immich_guard_stack         swarm stack name, e.g. skgallery-prod
+#   immich_guard_target_image  the immich-server image about to be deployed
+#                              (ghcr.io/immich-app/immich-server:v3.4.1[@sha256:...])
+#   immich_guard_ack           the operator's skgallery.IMMICH_MAJOR_ACK ("3" or "v3")
+#   immich_guard_vector_ext    effective DB_VECTOR_EXTENSION
+#   immich_guard_ml_image      optional: the immich-machine-learning image when pinned
+#                              on its own (IMMICH_ML_VERSION); its major must match
+#   immich_guard_running_image optional: skip the probe and use this (tests)
+# Sets: immich_guard_running_major, immich_guard_target_major (strings, "" when unknown).
+
+- name: Read the running Immich server image of {{ immich_guard_stack }}
+  # `no such service` is a first install. Any other failure (daemon down, no
+  # swarm, no permission) fails the play: an unreadable state is not a pass.
+  shell: |
+    S="{{ immich_guard_stack }}_immich-server"
+    out=$(docker service inspect --format '{% raw %}{{.Spec.TaskTemplate.ContainerSpec.Image}}{% endraw %}' "$S" 2>&1) && { echo "$out"; exit 0; }
+    case "$out" in
+      *[Nn]o\ such\ service*) exit 0 ;;
+    esac
+    echo "$out" >&2
+    exit 1
+  args:
+    executable: /bin/sh
+  register: immich_guard_probe
+  changed_when: false
+  check_mode: false
+  when: immich_guard_running_image is not defined
+  tags:
+    - deploy
+    - immich-major
+
+- name: Work out the running and target Immich majors for {{ immich_guard_stack }}
+  set_fact:
+    immich_guard_running_ref: "{{ immich_guard_running_image | default((immich_guard_probe.stdout | default('') | trim), true) }}"
+    immich_guard_target_major: "{{ immich_guard_target_image | string | regex_findall('immich-server:v?([0-9]+)') | first | default('', true) }}"
+    immich_guard_ml_major: "{{ (immich_guard_ml_image | default('', true)) | string | regex_findall('immich-machine-learning:v?([0-9]+)') | first | default('', true) }}"
+    immich_guard_ack_major: "{{ immich_guard_ack | default('', true) | string | trim | regex_replace('^[vV]', '') }}"
+  tags:
+    - deploy
+    - immich-major
+
+- name: Parse the running Immich major
+  set_fact:
+    immich_guard_running_major: "{{ immich_guard_running_ref | string | regex_findall('immich-server:v?([0-9]+)') | first | default('', true) }}"
+  tags:
+    - deploy
+    - immich-major
+
+- name: Refuse pgvecto.rs on Immich v3 ({{ immich_guard_stack }})
+  assert:
+    that:
+      - (immich_guard_vector_ext | default('vectorchord', true) | string | lower) not in ['pgvecto.rs', 'pgvecto-rs', 'pgvectors']
+    fail_msg: >-
+      {{ immich_guard_stack }}: DB_VECTOR_EXTENSION={{ immich_guard_vector_ext }} but Immich v3
+      (image {{ immich_guard_target_image }}) removed pgvecto.rs and its server throws on that value, so
+      nothing was changed. Migrate the database to VectorChord first, on the Immich version you run
+      today (https://docs.immich.app/install/upgrading, "Migrating to VectorChord"; the default
+      database image bundles both extensions), then set DB_VECTOR_EXTENSION to vectorchord or remove it.
+      To stay on pgvecto.rs, pin skgallery.IMMICH_VERSION to a v2 release.
+    quiet: true
+  when:
+    - immich_guard_target_major | length > 0
+    - (immich_guard_target_major | int) >= 3
+  tags:
+    - deploy
+    - immich-major
+
+- name: Refuse a machine-learning image of another major than the server ({{ immich_guard_stack }})
+  assert:
+    that:
+      - immich_guard_ml_major == immich_guard_target_major
+    fail_msg: >-
+      {{ immich_guard_stack }}: skgallery.IMMICH_ML_VERSION is major {{ immich_guard_ml_major | default('?', true) }}
+      but the server image is major {{ immich_guard_target_major | default('?', true) }}
+      ({{ immich_guard_target_image }}). Server and machine learning must be the same Immich version.
+      Nothing was changed. Remove IMMICH_ML_VERSION (IMMICH_VERSION then pins both) or pin it to the
+      server's release.
+    quiet: true
+  when:
+    - immich_guard_ml_image | default('', true) | length > 0
+  tags:
+    - deploy
+    - immich-major
+
+- name: Refuse an unreadable Immich major over a running stack ({{ immich_guard_stack }})
+  assert:
+    that:
+      - immich_guard_target_major | length > 0
+    fail_msg: >-
+      {{ immich_guard_stack }}: a server is running ({{ immich_guard_running_ref }}) and the image to
+      deploy ({{ immich_guard_target_image }}) names no Immich major, for example a floating tag such as
+      release. A floating tag can jump a major, and Immich cannot be downgraded, so nothing was changed.
+      Pin skgallery.IMMICH_VERSION to an exact release (v3.4.1).
+    quiet: true
+  when:
+    - immich_guard_running_ref | length > 0
+  tags:
+    - deploy
+    - immich-major
+
+- name: Refuse an Immich downgrade across a major ({{ immich_guard_stack }})
+  assert:
+    that:
+      - (immich_guard_target_major | int) >= (immich_guard_running_major | int)
+    fail_msg: >-
+      {{ immich_guard_stack }}: the running server is Immich major {{ immich_guard_running_major }}
+      ({{ immich_guard_running_ref }}) and the image to deploy is major {{ immich_guard_target_major }}
+      ({{ immich_guard_target_image }}). Immich runs its database migrations on start and does not
+      support downgrades, so nothing was changed. To go back, restore a database dump taken before the
+      upgrade into a fresh stack; to keep the running major, set skgallery.IMMICH_VERSION to a
+      {{ immich_guard_running_major }}.x release.
+    quiet: true
+  when:
+    - immich_guard_running_major | length > 0
+    - immich_guard_target_major | length > 0
+  tags:
+    - deploy
+    - immich-major
+
+- name: Refuse an Immich major upgrade that was not acknowledged ({{ immich_guard_stack }})
+  assert:
+    that:
+      - immich_guard_ack_major == immich_guard_target_major
+    fail_msg: >-
+      {{ immich_guard_stack }}: the running server is
+      {{ ('Immich major ' ~ immich_guard_running_major) if immich_guard_running_major | length > 0 else 'an Immich of unknown major' }}
+      ({{ immich_guard_running_ref }}) and the image to deploy is major {{ immich_guard_target_major }}
+      ({{ immich_guard_target_image }}). The new server migrates the database on its first start and
+      Immich does not support going back, so nothing was changed. To stay, pin
+      skgallery.IMMICH_VERSION to your current release. To upgrade: back up the database (the
+      postgres-db-backup dumps, plus a fresh one), upgrade the mobile apps first (they work with the
+      current and the previous major), read https://immich.app/blog/v3-migration, then set
+      skgallery.IMMICH_MAJOR_ACK to "{{ immich_guard_target_major }}" in the vault and redeploy.
+      The ack is for that major only; it does not cover the next one.
+    quiet: true
+  when:
+    - immich_guard_running_ref | length > 0
+    - immich_guard_target_major | length > 0
+    - immich_guard_running_major == '' or (immich_guard_target_major | int) > (immich_guard_running_major | int)
+  tags:
+    - deploy
+    - immich-major
