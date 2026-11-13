@@ -3,7 +3,7 @@
 # Secrets (initial root password) come from the secret backend.
 services:
   gitlab:
-    image: gitlab/gitlab-ce:19.5.3-ce.0
+    image: gitlab/gitlab-ce:19.5.5-ce.0
     hostname: "git.${SKSTACKS_DOMAIN}"
     environment:
       GITLAB_OMNIBUS_CONFIG: |
