@@ -133,6 +133,19 @@
       "enabled": false
     },
     {
+      "description": "skgallery stays on Postgres 14: the stock postgres image there is the dump sidecar of Immich's own database image (ghcr.io/immich-app/postgres), and Immich's docker-compose.yml still ships the 14 build with pgvecto.rs bundled. A sidecar of a newer major than the server writes dumps the server's major cannot restore, so it moves only together with that image. Moving the database to 18 is an operator decision with a dump and restore (see the skgallery README), not a Renovate proposal.",
+      "matchFileNames": [
+        "v1/ansible/optional/skgallery/**"
+      ],
+      "matchPackageNames": [
+        "postgres"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "enabled": false
+    },
+    {
       "description": "mariadb tracks the newest LTS that Nextcloud supports (12.3, patch builds only); rolling majors such as 13.x are not supported by Nextcloud and are short-lived",
       "matchPackageNames": [
         "mariadb"
