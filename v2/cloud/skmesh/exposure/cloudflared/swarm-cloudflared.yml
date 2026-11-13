@@ -1,7 +1,7 @@
 # exposure/cloudflared (Swarm) — Cloudflare Tunnel → Traefik on the overlay net.
 services:
   cloudflared:
-    image: cloudflare/cloudflared:2026.10.7
+    image: cloudflare/cloudflared:2026.11.0
     command: ["tunnel", "--no-autoupdate", "run"]
     environment:
       - TUNNEL_TOKEN=${CLOUDFLARED_TUNNEL_TOKEN}   # from secret backend

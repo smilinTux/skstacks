@@ -3,6 +3,58 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased (v2.26.22)
+
+### Renovate batch
+
+Non-major image and provider bumps folded into one change. Every image is pinned by exact tag and
+multi-arch index digest where the role already pinned a digest; the v2 manifests keep their
+tag-only convention. Unless a line says otherwise, an instance needs no action beyond redeploying the
+role. An instance that pins the matching `*_IMAGE` knob keeps its own pin and must move it.
+
+- **skstream**: kometa digest refresh. Redeploy, no action.
+- **skbook**: mariadb `12.3.3` digest refresh (stays within 12.3, a Renovate rule restricts mariadb to
+  12.3.x). Redeploy, no action.
+- **skhub**: mariadb `12.3.3` digest refresh (stays within 12.3), redis `8.10.3-alpine` digest refresh,
+  `aio-talk` digest refresh. Redeploy, no action.
+- **skreg**: `registry:3.1.2` digest refresh. Redeploy, no action.
+- **skfetch**: gluetun, qbittorrent, prowlarr, radarr and lidarr digest refreshes. Redeploy, no action.
+- **skpulse**: Uptime Kuma `2.5.9` to `2.5.11`. Redeploy, no action.
+- **sksso**: postgres `18.6` to `18.7` (server and dump sidecar). Minor within 18, which the role already
+  runs, so the postgres major guard is unaffected. Redeploy, no action.
+- **skmem-pg**: postgres `17.11` to `17.12`. Same major. Redeploy, no action.
+- **skmesh**: NetBird management, signal and relay `0.82.0` to `0.83.0`, dashboard `v2.96.0` to
+  `v2.97.0`, postgres `18.6` to `18.7` (server and dump sidecar, minor within 18). Take a database dump,
+  then redeploy. The 0.83.0 breaking change is on the client daemon (profile ownership and IPC
+  authorization), not the server; see the skmesh README. The management MCP server is off by default.
+- **skmesh exposure manifests (v2)**: netbird `0.82.0` to `0.83.0`, tailscale `v1.104.4` to `v1.104.7`,
+  cloudflared `2026.10.7` to `2026.11.0`. Reapply the manifests, no other action.
+- **skcicd gitlab (v2)**: gitlab-ce `19.5.3-ce.0` to `19.5.5-ce.0`. Patch release, redeploy.
+- **skflow (v2)**: Windmill `1.864.1` to `1.871.1`. Redeploy; Windmill migrates its own schema on start.
+- **OpenTofu proxmox-cluster module**: bpg/proxmox provider `~> 0.120` to `~> 0.122`. The upstream
+  breaking changes in 0.121 and 0.122 touch ACLs and LXC containers; this module only manages VMs and
+  files. Run `tofu init -upgrade` and review the plan.
+
+Left out of this batch:
+
+- **skmon** (all seven images): every proposed pin is younger than the 14-day minimum image age that
+  `v1/tests/test_skmon_pins.py` enforces. Old pins kept: victoria-metrics and vmalert `v1.156.0`
+  (released 2026-11-09), grafana `13.3.1` (2026-11-10, also in the v2 compose), alertmanager `v0.35.0`
+  (2026-11-09), pve-exporter `3.11.0` (2026-10-31, eligible 2026-11-14), pyroscope `2.4.3` (2026-11-03,
+  eligible 2026-11-17), python `3.15.2-bookworm` and `3.15.2-slim-bookworm` (image pushed 2026-11-05).
+  The python bump is also a jump from 3.13 to 3.15 and needs the bridge and exporter checked on 3.15
+  before it is taken.
+- **GitHub workflows Python 3.15**: `actions/setup-python` can install 3.15.2, but `ansible-core` 2.21.3
+  (pinned in `framework-tests.yml` and `config-template-drift.yml`) does not start on 3.15
+  (`AttributeError: module 'dataclasses' has no attribute '_is_type'` on import), so the workflows stay
+  on 3.12 until an ansible-core release supports 3.15.
+- **OpenTofu libvirt-cluster module, provider 0.9**: 0.9 is a rewrite with no automated migration of the
+  old HCL. The module uses the 0.8 schema (`libvirt_pool` `target` block, `libvirt_network` `dhcp` and
+  `dns` blocks, `libvirt_volume` `source` and `base_volume_id`, `libvirt_cloudinit_disk` consumed through
+  the domain `cloudinit` argument, `libvirt_domain` `network_interface`, `disk` and `console` blocks).
+  Each of those resources would need rewriting to the 1:1 libvirt XML attribute schema, plus the two
+  `tests/*.tftest.hcl` files. The provider stays at `~> 0.8.3`.
+
 ## Unreleased (v2.26.21)
 
 ### skfence, skfenceha: Traefik v3.7.18 (security)
