@@ -48,13 +48,33 @@
   ],
   "packageRules": [
     {
-      "description": "Group minor/patch/digest bumps per service directory (v1: the ansible role dir, v2: the app dir); majors are never grouped so each lands as its own reviewable PR",
+      "description": "Group minor/patch/digest bumps per service directory; majors are never grouped so each lands as its own reviewable PR. Renovate does not template groupName (a literal {{parentDir}} put every bump into one branch, renovate/parentdir, PR #421), so the directory goes into the branch prefix and the PR title instead: one branch per package-file directory.",
       "matchUpdateTypes": [
         "minor",
         "patch",
         "digest"
       ],
-      "groupName": "{{parentDir}}"
+      "groupName": "service images",
+      "groupSlug": "service",
+      "additionalBranchPrefix": "{{packageFileDir}}-",
+      "commitMessageSuffix": "({{packageFileDir}})"
+    },
+    {
+      "description": "CI Python stays on 3.12: ansible-core in CI fails on Python 3.15 (AttributeError: module 'dataclasses' has no attribute '_is_type', PR #421). Raise this together with ansible-core.",
+      "matchFileNames": [
+        ".github/workflows/**"
+      ],
+      "matchDepNames": [
+        "python"
+      ],
+      "allowedVersions": "<3.13"
+    },
+    {
+      "description": "dmacvicar/libvirt stays on 0.8.x: 0.9 rewrote the resource schema (libvirt_pool target block, libvirt_network mode are gone; tofu tests failed on #421). Moving to 0.9 is a module rewrite, not a bump.",
+      "matchPackageNames": [
+        "dmacvicar/libvirt"
+      ],
+      "allowedVersions": "<0.9"
     },
     {
       "description": "docker-mailserver majors need a human: prod was three majors behind what :latest resolved to before this framework started pinning (see test_skmail_dms_version_pinned.py)",
@@ -148,6 +168,22 @@
         "pinDigest"
       ],
       "automerge": false
+    },
+    {
+      "description": "FalkorDB (skgraph) and Qdrant (skvector) are retired from the estates: skmemory moved to skmem-pg. Do not propose updates for their images or roles.",
+      "matchPackageNames": [
+        "falkordb/falkordb",
+        "qdrant/qdrant"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "No updates at all for the retired skgraph and skvector roles.",
+      "matchFileNames": [
+        "v1/ansible/optional/skgraph/**",
+        "v1/ansible/optional/skvector/**"
+      ],
+      "enabled": false
     }
   ],
   "rebaseWhen": "conflicted"
