@@ -134,7 +134,7 @@ skpatch-hosts:
   HEALTH_CHECK_INTERVAL: 30s
   HEALTH_CHECK_TIMEOUT: 10s
   HEALTH_CHECK_RETRIES: 3
-  HEALTH_CHECK_START_PERIOD: 60s
+  HEALTH_CHECK_START_PERIOD: 60s            # default 30s, or 90s with AUTH_MODE oidc (see "OIDC healthcheck")
   DASHBOARD_CPUS: "0.50"
   DASHBOARD_MEMORY_LIMIT: 384M
   DASHBOARD_MEMORY_RESERVATION: 64M
@@ -221,6 +221,19 @@ or an `OIDC_UNMATCHED_ROLE` other than `deny`/`admin`/`read-only`.
 The Authentik side (the OAuth2 provider + application, as code) is
 rendered by **sksso**, not this role: see `../sksso/README.md`
 "sksec-web / skpatch-hosts (OIDC) login".
+
+### OIDC healthcheck
+
+With `AUTH_MODE: oidc` the app runs OIDC discovery once, at startup, and
+never retries. If sksso is unreachable at that moment the task stays up with
+SSO login silently off, and only a forced service update brings it back. So
+in oidc mode the swarm healthcheck reads `/api/auth/status` (with `node`,
+the image has no curl or wget) and fails unless it reports
+`"oidcEnabled":true`. Swarm then replaces the task and discovery runs again;
+while sksso stays down the task is replaced every few minutes, which is the
+intended signal. The start period defaults to 90s in this mode so a normal
+start, discovery included, never counts as a failure. Other modes keep the
+plain `/` probe.
 
 ## Automatic host registration
 
