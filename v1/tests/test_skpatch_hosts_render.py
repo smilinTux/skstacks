@@ -379,3 +379,88 @@ def test_dashboard_healthcheck_does_not_use_wget_or_curl(base_out):
     joined = " ".join(test)
     assert "wget" not in joined and "curl" not in joined, joined
     assert "node" in joined
+
+
+# --- AUTH_MODE oidc: the healthcheck catches "OIDC configured but off" -----
+# The app runs OIDC discovery once at startup and never retries. In
+# 2026-11, both estates started while sso was unreachable and SSO login
+# stayed off for about 36 hours until a manual forced update. The oidc
+# healthcheck reads /api/auth/status and fails unless "oidcEnabled" is true,
+# so swarm replaces the task and discovery runs again.
+
+def _oidc_healthcheck(tmp_path, extra=None):
+    out = ok(tmp_path, BASE | OIDC_VAULT | (extra or {}))
+    return compose(out)["services"]["dashboard"]["healthcheck"]
+
+
+def test_auth_mode_oidc_healthcheck_probes_auth_status(tmp_path):
+    hc = _oidc_healthcheck(tmp_path)
+    assert hc["test"][:3] == ["CMD", "/usr/local/bin/node", "-e"]
+    script = hc["test"][3]
+    assert "http://127.0.0.1:3001/api/auth/status" in script
+    assert "oidcEnabled===true" in script
+    joined = " ".join(hc["test"])
+    assert "wget" not in joined and "curl" not in joined
+    # A normal start (including discovery) must fit inside start_period.
+    assert (hc["interval"], hc["timeout"], hc["retries"], hc["start_period"]) == ("30s", "10s", 3, "90s")
+
+
+def test_auth_mode_oidc_healthcheck_start_period_is_still_a_knob(tmp_path):
+    hc = _oidc_healthcheck(tmp_path, {"HEALTH_CHECK_START_PERIOD": "120s"})
+    assert hc["start_period"] == "120s"
+
+
+def test_non_oidc_healthcheck_is_unchanged(base_out):
+    hc = compose(base_out)["services"]["dashboard"]["healthcheck"]
+    assert "api/auth/status" not in hc["test"][3]
+    assert hc["start_period"] == "30s"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+@pytest.mark.parametrize("status,body,want", [
+    (200, '{"oidcEnabled":true,"passwordLoginDisabled":true}', 0),
+    (200, '{"oidcEnabled":false,"passwordLoginDisabled":true}', 1),
+    (200, '{"passwordLoginDisabled":true}', 1),
+    (200, 'not json', 1),
+    (500, '{"oidcEnabled":true}', 1),
+])
+def test_auth_mode_oidc_healthcheck_script_behaviour(tmp_path, status, body, want):
+    import http.server
+    import subprocess
+    import threading
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            if self.path != "/api/auth/status":
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body.encode())
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        script = _oidc_healthcheck(tmp_path)["test"][3].replace(
+            "127.0.0.1:3001", f"127.0.0.1:{srv.server_port}")
+        rc = subprocess.run(["node", "-e", script], timeout=20).returncode
+    finally:
+        srv.shutdown()
+    assert rc == want
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_auth_mode_oidc_healthcheck_fails_when_nothing_listens(tmp_path):
+    import socket
+    import subprocess
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    script = _oidc_healthcheck(tmp_path)["test"][3].replace("127.0.0.1:3001", f"127.0.0.1:{port}")
+    assert subprocess.run(["node", "-e", script], timeout=20).returncode == 1
