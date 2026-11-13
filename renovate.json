@@ -138,6 +138,22 @@
         "mariadb"
       ],
       "allowedVersions": "/^12\\.3\\./"
+    },
+    {
+      "description": "FalkorDB (skgraph) and Qdrant (skvector) are retired from the estates: skmemory moved to skmem-pg. Do not propose updates for their images or roles.",
+      "matchPackageNames": [
+        "falkordb/falkordb",
+        "qdrant/qdrant"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "No updates at all for the retired skgraph and skvector roles.",
+      "matchFileNames": [
+        "v1/ansible/optional/skgraph/**",
+        "v1/ansible/optional/skvector/**"
+      ],
+      "enabled": false
     }
   ],
   "rebaseWhen": "conflicted"
