@@ -17,7 +17,7 @@ swapped out from under it on the next deploy from this framework - the
 default is deliberately not the only option.
 
 Default (unset): the upstream `netbirdio/dashboard` release paired with the
-pinned NetBird version, tag plus digest (`v2.96.0` for NetBird 0.82.0; see
+pinned NetBird version, tag plus digest (`v2.97.0` for NetBird 0.83.0; see
 `src/config/skmesh/skmesh.yml.j2`). This is not
 pullable from a private fork's own registry, so an instance that depends
 on one (see "Instance notes" below) must set `DASHBOARD_IMAGE` explicitly;
@@ -151,8 +151,17 @@ for traffic that cannot go peer to peer.
 `POSTGRES_BACKUP_IMAGE` (optional) override the framework defaults, e.g. to
 pin `tag@sha256:digest`.
 
-Defaults: NetBird `0.82.0` (management, signal, relay) and dashboard
-`v2.96.0`, each pinned as `tag@sha256:<multi-arch index digest>`.
+Defaults: NetBird `0.83.0` (management, signal, relay) and dashboard
+`v2.97.0`, each pinned as `tag@sha256:<multi-arch index digest>`.
+
+**Upgrading from 0.82.0 to 0.83.0.** The server components (management, signal,
+relay, dashboard) need no manual step: redeploy. The 0.83.0 release notes list one
+breaking change, and it is on the client daemon (profile ownership and a new IPC
+authorization layer; existing profiles migrate on first start). It matters only for
+peers that reach the daemon over `--daemon-addr tcp://`, or where a regular user runs
+`netbird` commands on a headless machine. Setup-key peers with auto-start, such as the
+`v2/cloud/skmesh/exposure/netbird` routing peers, need no action. The MCP server on
+management is off unless `NB_MCP_ENABLED=true`, so nothing new is exposed by default.
 
 **Upgrading from 0.80.0 to 0.82.0.** The 0.81.x and 0.82.0 release notes list
 no breaking change and no manual step (0.82.0 adds a separate access-log store
@@ -266,7 +275,7 @@ them at `https://<skmesh-host>/team/users`. A Windmill job tells Talk when that 
 
 ## Upgrading Postgres to 18
 
-Framework default: `postgres:18.6` (pinned `tag@sha256:digest`) (`postgres:18.6-alpine` for the server, the Debian image for the dump sidecar). Earlier releases ran Postgres 16.
+Framework default: `postgres:18.7` (pinned `tag@sha256:digest`) (`postgres:18.7-alpine` for the server, the Debian image for the dump sidecar). Earlier releases ran Postgres 16.
 **Postgres 18 cannot open a Postgres 16 data directory, and an upgrade is never automatic.**
 
 What the framework does for you:

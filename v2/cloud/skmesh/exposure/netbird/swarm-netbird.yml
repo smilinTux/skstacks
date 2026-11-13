@@ -6,7 +6,7 @@
 # reach it, so the mesh self-bootstraps and never depends on the mesh being up.
 services:
   netbird:
-    image: netbirdio/netbird:0.82.0
+    image: netbirdio/netbird:0.83.0
     environment:
       - NB_SETUP_KEY=${NETBIRD_SETUP_KEY}                 # from secret backend
       - NB_MANAGEMENT_URL=${NETBIRD_MGMT_URL}             # self-hosted mgmt (LAN-reachable)
