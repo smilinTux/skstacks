@@ -166,7 +166,7 @@ services:
       - docker-entrypoint.sh
     # Room for a slow shutdown on a busy NFS datadir.
     stop_grace_period: {{ skhub.DB_STOP_GRACE_PERIOD | default('120s', true) }}
-    image: {{ skhub.MARIADB_IMAGE | default('mariadb:12.3.3@sha256:d46e102fa8b9b72bfcdeb56f9dd538742092119dc8b11f31fe662605cd234cd9') }}
+    image: {{ skhub.MARIADB_IMAGE | default('mariadb:12.3.3@sha256:4ebbcf100a3ba320766dfa0e1af008df12261301db6ef72798c7650f70794aed') }}
     env_file: /var/data/config/skhub-{{ env }}/skhub.env
     command:
       - --wait_timeout=28800
@@ -205,7 +205,7 @@ services:
       start_period: 40s
 
   db-backup:
-    image: {{ skhub.MARIADB_IMAGE | default('mariadb:12.3.3@sha256:d46e102fa8b9b72bfcdeb56f9dd538742092119dc8b11f31fe662605cd234cd9') }}
+    image: {{ skhub.MARIADB_IMAGE | default('mariadb:12.3.3@sha256:4ebbcf100a3ba320766dfa0e1af008df12261301db6ef72798c7650f70794aed') }}
     env_file: /var/data/config/skhub-{{ env }}/skhub-db-backup.env
     deploy:
       placement:
@@ -278,7 +278,7 @@ services:
       - skhub-{{ env }}
 
   redis:
-    image: {{ skhub.REDIS_IMAGE | default('redis:8.10.3-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80') }}
+    image: {{ skhub.REDIS_IMAGE | default('redis:8.10.3-alpine@sha256:7958cfbb9d152f87dadfbc89f1b0b15938f0b81ff8982feb327476f4911935c3') }}
     # notify-keyspace-events Ex: required for Nextcloud file locking.
     # timeout 0 / tcp-keepalive 300: avoid "Redis went away" on long uploads.
     command: redis-server --notify-keyspace-events Ex --appendonly yes --timeout 0 --tcp-keepalive 300
@@ -632,7 +632,7 @@ services:
     supervisord for any other pinned image (the pre-v2.26.3 default). -#}
 {#- The default is captured once, on an `image:` line so Renovate's regex manager
     rewrites it; the image line and the dinit check both read it from here. -#}
-{% set _talk_hpb_default_line %}image: ghcr.io/nextcloud-releases/aio-talk:latest@sha256:907ee720df0dd346c738bad2525945c4c408b2af0d21975a4c6cfb199edeed22{% endset %}
+{% set _talk_hpb_default_line %}image: ghcr.io/nextcloud-releases/aio-talk:latest@sha256:658c961f0956b35f2771bb22e4e2d8619ae5aa6b63c8e35b657e3e16997e41ef{% endset %}
 {% set _talk_hpb_default = _talk_hpb_default_line | trim | replace('image: ', '') %}
 {% set _talk_hpb_dinit = (not (skhub.TALK_HPB_IMAGE | default('', true))) or (('@' ~ (_talk_hpb_default.split('@') | last)) in (skhub.TALK_HPB_IMAGE | string)) %}
 {% set _talk_hpb_cmd = skhub.TALK_HPB_CMD | default((['dinit', '--system', '--container', 'nats-server', 'eturnal', 'janus', 'signaling'] if _talk_hpb_dinit else ['supervisord', '-c', '/supervisord.conf']), true) %}
