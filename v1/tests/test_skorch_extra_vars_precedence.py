@@ -132,6 +132,21 @@ def test_n8n_version_defaults_to_the_pinned_digest_when_unset():
     assert re.search(r'image: "n8nio/n8n:\d+\.\d+\.\d+[\w.-]*@sha256:[0-9a-f]{64}"', stack)
 
 
+def test_n8n_default_stays_on_major_2_until_a_major_guard_exists():
+    # n8n 3.x is an upstream pre-release and n8n migrates its Postgres schema
+    # on start with no downgrade. Until the role has a fail-closed ack guard
+    # (the Postgres 18 guard pattern), a bump of the default to 3.x must fail
+    # here instead of silently starting 3 on an existing 2.x database.
+    skorch_cfg = combine(SKORCH_DEFAULTS, dict(REQUIRED_SECRETS))
+    stack = render_all(skorch_cfg)["src/config/skorch/skorch.yml.j2"]
+    m = re.search(r'image: "n8nio/n8n:(\d+)\.\d+\.\d+[\w.-]*@sha256:', stack)
+    assert m, "n8n default must be pinned tag@digest"
+    assert m.group(1) == "2", (
+        "n8n default moved to a new major: add the N8N_MAJOR_UPGRADE_ACK guard, "
+        "backup runbook and tests first (see skorch README and CHANGELOG)"
+    )
+
+
 def test_instance_can_pin_a_different_n8n_version():
     extra_vars_skorch = dict(
         REQUIRED_SECRETS,

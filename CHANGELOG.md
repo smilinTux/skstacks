@@ -3,6 +3,25 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## Unreleased (v2.26.22)
+
+### skorch: grouped image bumps (n8n 2.47.5, pgvector pg18 digest, redis digest); n8n 3 deferred
+
+- **n8n 2.47.2 to 2.47.5**, pinned by tag and index digest (`n8nio/n8n:2.47.5@sha256:e29e9cc9...`,
+  the upstream `latest` and `stable` build). The Renovate group PR proposed 2.48.2, but upstream
+  publishes 2.48.x only as a pre-release on the `next` channel, so the stable 2.47 line is used instead.
+  Patch bumps inside 2.x run n8n's own forward DB migrations on start. Needs the operator: redeploy
+  skorch. An instance that pins `skorch.N8N_VERSION` keeps its own pin.
+- **pgvector pg18 and redis 8.10.3-alpine: new index digests, same tags.** Upstream rebuilt the base
+  images. No major change, no datadir impact. An instance that pins `skorch.POSTGRES_IMAGE` or
+  `skorch.REDIS_IMAGE` keeps its own pin.
+- **n8n 3 is deferred, not adopted.** Every 3.x release (3.0.0 to 3.2.0, checked 2026-11-13) is still
+  flagged pre-release upstream, and `latest` and `stable` still point at 2.x. No major guard was added
+  yet: nothing in the role can start n8n 3 by default. Do not set `skorch.N8N_VERSION` to a 3.x tag on
+  an existing instance: n8n migrates its Postgres schema on start and has no downgrade. When 3.x
+  goes stable, the upgrade lands with a fail-closed ack guard (the Postgres 18 guard pattern) and a
+  pg_dump plus encryption key backup procedure. Tracked on #311 and #352.
+
 ## Unreleased (v2.26.21)
 
 ### skfence, skfenceha: Traefik v3.7.18 (security)
