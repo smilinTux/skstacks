@@ -345,7 +345,7 @@ services:
   # ===========================================================================
   # Automated daily backups with retention policy
   postgres-db-backup:
-    image: postgres:{{ skgallery.POSTGRES_BACKUP_VERSION | default('14.24@sha256:834a046089d76edd1d2e81c4741f3ad5d1853646ededc86c2708936aad31c1ed') }}
+    image: postgres:{{ skgallery.POSTGRES_BACKUP_VERSION | default('18.7@sha256:9f4fd4aa918f52ae3d6f3b687f1de90d8f867cd4d520021545a9a50c120eae3b') }}
     env_file: /var/data/config/skgallery-{{ env }}/skgallery-backup.env
     environment:
       - PGTEMP=/dump/tmp
