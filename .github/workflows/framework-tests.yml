@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
-        with: { python-version: '3.12' }
+        with: { python-version: '3.15' }
       - run: pip install pytest pyyaml ansible jsonschema
       # skbackup's engine tests drive a real local restic repository; shellcheck
       # and jq ship with the runner image.
@@ -41,7 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
-        with: { python-version: '3.12' }
+        with: { python-version: '3.15' }
       - run: pip install 'ansible-core==2.21.3' pyyaml jsonschema pytest
       - run: python v1/tests/render/render_playbooks.py
 
@@ -53,7 +53,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
-        with: { python-version: '3.12' }
+        with: { python-version: '3.15' }
       - run: pip install 'ansible-core==2.21.3' pyyaml jsonschema pytest
       - run: python v1/tests/render/render_playbooks.py --service skmon --keep "$RUNNER_TEMP/skmon"
       - run: python v1/tests/skmon/render_alloy_variants.py "$RUNNER_TEMP/skmon"
@@ -77,6 +77,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
-        with: { python-version: '3.12' }
+        with: { python-version: '3.15' }
       - run: pip install pytest pyyaml
       - run: python -m pytest -q tools
