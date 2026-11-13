@@ -2,6 +2,17 @@
 
 Workflow orchestration with a pgvector Postgres, redis and a `postgres-backup-local` sidecar. Router middleware chain: vault knob `TRAEFIK_MIDDLEWARES` (default `default-no-crowdsec@file`). Postgres data is bind-mounted from `/var/data/runtime/skorch-<env>/postgres`.
 
+## n8n major version policy
+
+The default n8n image stays on the 2.x stable line (the upstream `latest` and `stable` tags). n8n 3.x is
+still flagged pre-release upstream, and n8n migrates its Postgres schema on start with no downgrade, so an
+existing instance must never be moved to a 3.x tag casually. Do not set `skorch.N8N_VERSION` to a 3.x image
+on an instance with data. When 3.x goes stable, the role will gain a fail-closed acknowledgement guard
+(same pattern as the Postgres 18 guard below) and a documented backup first: `pg_dump` of the n8n database
+plus a copy of the n8n encryption key (`N8N_ENCRYPTION_KEY`). A test
+(`test_n8n_default_stays_on_major_2_until_a_major_guard_exists`) fails if the default moves to a new major
+before that guard exists.
+
 ## Upgrading Postgres to 18
 
 Framework default: `postgres:18.6` (pinned `tag@sha256:digest`) (`pgvector/pgvector:pg18` for the server, `prodrigestivill/postgres-backup-local:18-debian` for backups: the backup image major must match the server major). Earlier releases ran Postgres 16.
