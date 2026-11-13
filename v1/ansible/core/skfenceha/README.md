@@ -60,7 +60,7 @@ service is global). A deploy that changes it restarts each worker in turn
 
 **Traefik image (`TRAEFIK_IMAGE`)**: `skfenceha.TRAEFIK_IMAGE` pins the
 image for both `traefik-acme` and `traefik-worker` (they move together;
-default `traefik:v3.7.16@sha256:...`). A separate `skfence.TRAEFIK_IMAGE`
+default `traefik:v3.7.18@sha256:...`). A separate `skfence.TRAEFIK_IMAGE`
 pins skfence's own single `traefik` service -- the two are different vault
 keys under different top-level dicts, not one shared knob, since an
 instance can run only one of skfence or skfenceha at a time but the
