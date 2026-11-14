@@ -132,6 +132,10 @@ skpatch-hosts:
   DATA_NODE: ""                             # pin dashboard to this node (required with a local path)
   PLACEMENT_CONSTRAINTS: []                 # default ["node.role == worker"]
   EXTRA_HOSTS: []                           # ["host:address", ...] added to the container's /etc/hosts (README "Notification delivery")
+  MAX_CMD_TIMEOUT: 1800                     # ceiling for the app's command timeout (env LUDASH_MAX_CMD_TIMEOUT; the app's own cap is 600), 600 to 7200
+  DASHBOARD_SETTINGS:                       # app settings the provisioning run converges (PUT /api/settings, only when different)
+    cmd_timeout_seconds: 1800               #   long upgrades (a Pi with a backlog) outlast 600 s; clamped to MAX_CMD_TIMEOUT
+    ssh_timeout_seconds: 60                 #   app maximum 120
   HEALTH_CHECK_INTERVAL: 30s
   HEALTH_CHECK_TIMEOUT: 10s
   HEALTH_CHECK_RETRIES: 3

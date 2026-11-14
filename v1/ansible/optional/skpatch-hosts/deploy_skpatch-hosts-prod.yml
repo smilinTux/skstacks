@@ -109,6 +109,20 @@
         # OIDC host on the estate's own public address, behind a router with
         # no hairpin NAT). Empty by default.
         skp_extra_hosts: "{{ skpatch_hosts.EXTRA_HOSTS | default([], true) }}"
+        # Ceiling for the app's cmd_timeout_seconds setting (env
+        # LUDASH_MAX_CMD_TIMEOUT); the app's own cap is 600.
+        skp_max_cmd_timeout: "{{ skpatch_hosts.MAX_CMD_TIMEOUT | default(1800, true) }}"
+      tags: [config]
+
+    - name: Validate MAX_CMD_TIMEOUT
+      assert:
+        that:
+          - skp_max_cmd_timeout | string is match('^[0-9]+$')
+          - skp_max_cmd_timeout | int >= 600 and skp_max_cmd_timeout | int <= 7200
+        fail_msg: >-
+          ERROR: skpatch_hosts.MAX_CMD_TIMEOUT must be a whole number of seconds
+          from 600 (the app's own cap) to 7200.
+        quiet: true
       tags: [config]
 
     - name: Validate EXTRA_HOSTS

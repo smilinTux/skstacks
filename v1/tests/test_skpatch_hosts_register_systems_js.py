@@ -54,6 +54,8 @@ class Dashboard:
         self.modes: dict[int, str] = {}
         self.scripts: list[dict] = [{"id": "builtin:apt:detect", "readonly": True, "name": "Detect APT"}]
         self.settings: dict[str, str] = {"cmd_timeout_seconds": "120", "cache_duration_hours": "12"}
+        self.rules: dict[str, dict] = {"cmd_timeout_seconds": {"min": 10, "max": 1800, "fallback": 120},
+                                       "ssh_timeout_seconds": {"min": 5, "max": 120, "fallback": 30}}
 
     def session_user(self, headers) -> dict | None:
         if headers.get("Authorization", "").startswith("Bearer "):
@@ -134,7 +136,7 @@ def _handler(dash: Dashboard):
                 s["pkgManagerConfigs"] = {"apt": {"defaultUpgradeMode": "full-upgrade" if body["fullUpgrade"] else "upgrade"}}
                 return self._send(200, {"status": "ok"})
             if method == "GET" and self.path == "/api/settings":
-                return self._send(200, {"settings": dict(dash.settings)})
+                return self._send(200, {"settings": dict(dash.settings), "numericSettingRules": dash.rules})
             if method == "PUT" and self.path == "/api/settings":
                 assert all(isinstance(v, str) for v in body.values())
                 dash.settings.update(body)
@@ -388,3 +390,24 @@ def test_wrapper_scripts_and_settings_converge_by_name_and_value(dash):
     assert apt["steps"][0]["command"] == DASH_SCRIPTS[0]["steps"][0]["command"]
     assert len([s for s in dash.scripts if not s["readonly"]]) == 4
     assert not any(m == "DELETE" for m, _ in dash.calls)
+
+
+def test_a_setting_above_the_dashboards_maximum_is_clamped_once_not_rewritten_every_run(dash):
+    # a dashboard deployed without LUDASH_MAX_CMD_TIMEOUT caps the timeout at 600
+    dash.rules["cmd_timeout_seconds"]["max"] = 600
+    want = {"cmd_timeout_seconds": 1800, "ssh_timeout_seconds": 60}
+    first = _run(dash, _cfg(settings=want))
+    assert first.returncode == 0, first.stderr
+    assert "cmd_timeout_seconds 1800 is above the dashboard's maximum 600, using 600" in first.stdout
+    assert dash.settings["cmd_timeout_seconds"] == "600" and dash.settings["ssh_timeout_seconds"] == "60"
+    second = _run(dash, _cfg(settings=want))
+    assert "settings: unchanged" in second.stdout
+    # with the ceiling raised (redeploy), the next run converges to 1800
+    dash.rules["cmd_timeout_seconds"]["max"] = 1800
+    third = _run(dash, _cfg(settings=want))
+    assert "settings: set cmd_timeout_seconds" in third.stdout and dash.settings["cmd_timeout_seconds"] == "1800"
+
+
+def test_the_default_settings_are_the_long_upgrade_timeouts():
+    text = (SCRIPT.parent.parent.parent / "tasks" / "register_systems.yml").read_text()
+    assert "default({'cmd_timeout_seconds': 1800, 'ssh_timeout_seconds': 60}, true)" in text
