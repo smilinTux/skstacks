@@ -200,6 +200,13 @@ async function main() {
 //                   the whole-config PUT. A system whose package manager has
 //                   not been detected yet (first check still pending) is
 //                   reported and picked up by the next run.
+//   scripts         [{name, description, type, operation, pkgManager,
+//                     isDefault, steps}]: custom scripts matched by name
+//                   (dashboard-scripts.json: the wrapper-backed "upgrade
+//                   selected" defaults). Created when missing, updated when
+//                   any of those fields differ.
+//   settings        {key: value}: app settings, written only when a value
+//                   differs (PUT /api/settings with just those keys).
 //   notifications   [{name, type, enabled, notify_on, systems, config}]
 //   schedules       [{name, type, enabled, cron, systems, only_if_required,
 //                     cache_hours, notifications}]
@@ -235,7 +242,43 @@ async function configure(call, cfg) {
   const wantsModes = cfg.upgrade_mode || cfg.systems.some((w) => w.upgrade_mode);
   const notifs = Array.isArray(cfg.notifications) ? cfg.notifications : [];
   const scheds = Array.isArray(cfg.schedules) ? cfg.schedules : [];
-  if (!wantsModes && !notifs.length && !scheds.length) return;
+  const scripts = Array.isArray(cfg.scripts) ? cfg.scripts : [];
+  const settings = cfg.settings && typeof cfg.settings === "object" ? cfg.settings : {};
+  if (!wantsModes && !notifs.length && !scheds.length && !scripts.length && !Object.keys(settings).length) return;
+
+  if (Object.keys(settings).length) {
+    const cur = (await call("GET", "/settings")).settings || {};
+    const diff = {};
+    for (const [k, v] of Object.entries(settings)) {
+      if (String(cur[k]) !== String(v)) diff[k] = String(v);
+    }
+    if (Object.keys(diff).length) {
+      await call("PUT", "/settings", diff);
+      console.log(`settings: set ${Object.keys(diff).sort().join(", ")}`);
+    } else {
+      console.log(`settings: unchanged (${Object.keys(settings).sort().join(", ")})`);
+    }
+  }
+
+  if (scripts.length) {
+    const fields = ["description", "type", "operation", "pkgManager", "isDefault", "steps"];
+    const shape = (s) => sortedJson(fields.reduce((o, f) => ((o[f] = f === "steps"
+      ? (s.steps || []).map((x) => ({ label: x.label, command: x.command })) : s[f] ?? null), o), {}));
+    const have = ((await call("GET", "/scripts")).scripts || []).filter((s) => !s.readonly);
+    for (const want of scripts) {
+      if (!want.name || !want.operation || !Array.isArray(want.steps)) fail("every script needs name, operation and steps");
+      const cur = have.find((s) => s.name === want.name);
+      if (!cur) {
+        const out = await call("POST", "/scripts", want);
+        console.log(`script ${want.name}: created (${out.script ? out.script.id : "?"})`);
+      } else if (shape(cur) === shape(want)) {
+        console.log(`script ${want.name}: unchanged (${cur.id})`);
+      } else {
+        await call("PUT", `/scripts/${encodeURIComponent(cur.id)}`, want);
+        console.log(`script ${want.name}: updated (${cur.id})`);
+      }
+    }
+  }
 
   const all = (await call("GET", "/systems")).systems || [];
   const byKey = new Map(all.map((s) => [`${s.hostname}:${Number(s.port || 22)}`, s]));

@@ -16,6 +16,7 @@ import base64
 import hashlib
 import hmac
 import json
+import urllib.parse
 import secrets
 import shutil
 import sqlite3
@@ -51,6 +52,8 @@ class Dashboard:
         self.notifications: list[dict] = []
         self.schedules: list[dict] = []
         self.modes: dict[int, str] = {}
+        self.scripts: list[dict] = [{"id": "builtin:apt:detect", "readonly": True, "name": "Detect APT"}]
+        self.settings: dict[str, str] = {"cmd_timeout_seconds": "120", "cache_duration_hours": "12"}
 
     def session_user(self, headers) -> dict | None:
         if headers.get("Authorization", "").startswith("Bearer "):
@@ -130,6 +133,22 @@ def _handler(dash: Dashboard):
                 s = next(s for s in dash.systems if s["id"] == sid)
                 s["pkgManagerConfigs"] = {"apt": {"defaultUpgradeMode": "full-upgrade" if body["fullUpgrade"] else "upgrade"}}
                 return self._send(200, {"status": "ok"})
+            if method == "GET" and self.path == "/api/settings":
+                return self._send(200, {"settings": dict(dash.settings)})
+            if method == "PUT" and self.path == "/api/settings":
+                assert all(isinstance(v, str) for v in body.values())
+                dash.settings.update(body)
+                return self._send(200, {"ok": True})
+            if method == "GET" and self.path == "/api/scripts":
+                return self._send(200, {"scripts": dash.scripts, "packageManagers": []})
+            if method == "POST" and self.path == "/api/scripts":
+                s = {"id": f"custom:{len(dash.scripts)}", "readonly": False, **body}
+                dash.scripts.append(s)
+                return self._send(201, {"script": s})
+            if method == "PUT" and self.path.startswith("/api/scripts/"):
+                sid = urllib.parse.unquote(self.path.rsplit("/", 1)[1])
+                next(s for s in dash.scripts if s["id"] == sid).update(body)
+                return self._send(200, {"script": {"id": sid}})
             for coll, key in (("notifications", "notifications"), ("schedules", "schedules")):
                 items = getattr(dash, coll)
                 if method == "GET" and self.path == f"/api/{coll}":
@@ -340,3 +359,32 @@ def test_upgrade_mode_skips_a_package_manager_without_one(dash):
     assert out.returncode == 0, out.stderr
     assert "wkr-1: upgrade mode n/a (pacman has none)" in out.stdout
     assert not any(p.endswith("/upgrade-mode") for _, p in dash.calls)
+
+
+DASH_SCRIPTS = json.loads((SCRIPT.parent / "dashboard-scripts.json").read_text())["scripts"]
+
+
+def test_wrapper_scripts_and_settings_converge_by_name_and_value(dash):
+    first = _run(dash, _cfg(scripts=DASH_SCRIPTS, settings={"cmd_timeout_seconds": 600}))
+    assert first.returncode == 0, first.stderr
+    assert "settings: set cmd_timeout_seconds" in first.stdout
+    assert dash.settings == {"cmd_timeout_seconds": "600", "cache_duration_hours": "12"}
+    for s in DASH_SCRIPTS:
+        assert f"script {s['name']}: created" in first.stdout
+    custom = [s for s in dash.scripts if not s["readonly"]]
+    assert sorted(s["pkgManager"] for s in custom) == ["apt", "flatpak", "pacman", "snap"]
+    assert all(s["isDefault"] and s["operation"] == "upgrade_selected" for s in custom)
+
+    second = _run(dash, _cfg(scripts=DASH_SCRIPTS, settings={"cmd_timeout_seconds": 600}))
+    assert second.returncode == 0, second.stderr
+    assert "settings: unchanged" in second.stdout
+    assert "created" not in second.stdout and "updated" not in second.stdout
+
+    # someone edits one by hand: the next run puts it back, keeping its id
+    apt = next(s for s in dash.scripts if s.get("pkgManager") == "apt" and not s["readonly"])
+    apt["steps"] = [{"label": "x", "command": "sudo apt-get install -y {{packages}}"}]
+    third = _run(dash, _cfg(scripts=DASH_SCRIPTS))
+    assert f"script {apt['name']}: updated ({apt['id']})" in third.stdout
+    assert apt["steps"][0]["command"] == DASH_SCRIPTS[0]["steps"][0]["command"]
+    assert len([s for s in dash.scripts if not s["readonly"]]) == 4
+    assert not any(m == "DELETE" for m, _ in dash.calls)

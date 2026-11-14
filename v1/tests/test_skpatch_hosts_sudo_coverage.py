@@ -182,3 +182,16 @@ def test_every_manager_the_image_knows_is_supported_or_refused():
     assert not set(SUPPORTED) & set(coverage["unsupported"])
     for path in coverage["unsupported"].values():
         assert path.startswith("/")
+
+
+def test_every_wrapper_has_a_default_dashboard_script_that_calls_it():
+    scripts = json.loads((ROLE / "src" / "skpatch-hosts" / "dashboard-scripts.json").read_text())["scripts"]
+    by_manager = {s["pkgManager"]: s for s in scripts}
+    for manager, e in decisions():
+        if e["rule"] != "wrapper":
+            continue
+        s = by_manager.get(manager)
+        assert s, f"no dashboard script for {manager}: upgrade selected would use the app's ungranted argv"
+        assert s["operation"] == "upgrade_selected" and s["isDefault"] is True
+        cmd = "\n".join(x["command"] for x in s["steps"])
+        assert f"sudo -S -p '' /usr/local/sbin/{e['wrapper']} {{{{quotedPackages}}}}" in cmd
