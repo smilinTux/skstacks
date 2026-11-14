@@ -52,7 +52,8 @@ def test_included_file_selects_a_manager_then_registers_through_it():
     assert [t["name"] for t in on_mgr] == ["Find the node running the dashboard"]
     assert {t["name"] for t in on_node} == {"Stage the registrar on the dashboard's node",
                                             "Register this run's target nodes as dashboard systems (creates, never edits or deletes)",
-                                            "Read the dashboard's systems and recent sudo failures (compliance report)"}
+                                            "Read the dashboard's systems and recent sudo failures (compliance report)",
+                                            "Record this run's sudo coverage on the dashboard's node"}
     for t in on_mgr + on_node:
         assert "ansible_connection" in t.get("connection", "") and t.get("become") is True
     reg = next(t for t in on_node if t["name"].startswith("Register"))
@@ -112,3 +113,14 @@ def test_a_skipped_registrar_under_check_is_not_reported_as_a_failure():
     gate = text.split("- name: Fail if host registration failed")[1]
     assert "not (skp_reg_result.skipped | default(false))" in gate
     assert "'registration: ok' not in" in gate
+
+
+def test_the_coverage_stamp_is_written_only_for_hosts_whose_sudoers_was_written_and_never_under_check():
+    import yaml as _y
+    tasks = _y.safe_load((ROLE / "tasks" / "register_systems.yml").read_text())
+    t = next(t for t in tasks if t["name"] == "Record this run's sudo coverage on the dashboard's node")
+    assert t["when"] == "not ansible_check_mode" and t["become"] is True
+    assert "skp_sudoers_write" in t["args"]["stdin"] and "provisioned_at" in t["args"]["stdin"]
+    assert "skpatch-coverage.json" in t["shell"] and "os.replace" in t["shell"]
+    play = (ROLE / "provision_skpatch_hosts_nodes.yml").read_text()
+    assert "register: skp_sudoers_write" in play.split("- name: Write the sudoers rule (present)")[1].split("- name:")[0]

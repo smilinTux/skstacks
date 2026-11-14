@@ -147,6 +147,52 @@
     and ((skp_reg_result.rc | default(1)) != 0
          or 'registration: ok' not in (skp_reg_result.stdout | default('')))
 
+# Sudo coverage stamp, read by tools/skpatch_watch.py: for every host of
+# this run whose sudoers file was just written from this framework's template,
+# record when (and whether actions are granted). A sudo denial in the
+# dashboard that is OLDER than the stamp is resolved ("sudoers now covers
+# it"); one that is newer is a real gap. Lives beside the staged registrar on
+# the dashboard's node, merged per host, never touched under --check.
+- name: Record this run's sudo coverage on the dashboard's node
+  shell: |
+    set -euo pipefail
+    f=/var/data/config/{{ app }}-{{ env }}/skpatch-coverage.json
+    python3 -c '
+    import json, os, sys, tempfile
+    f = sys.argv[1]
+    cur = {}
+    if os.path.exists(f):
+        try:
+            cur = json.load(open(f))
+        except ValueError:
+            cur = {}
+    cur.update(json.load(sys.stdin))
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(f))
+    with os.fdopen(fd, "w") as fh:
+        json.dump(cur, fh, indent=1, sort_keys=True)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, f)
+    print("coverage stamped: " + ", ".join(sorted(json.load(open(f)))))
+    ' "$f"
+  args:
+    executable: /bin/bash
+    stdin: >-
+      {%- set out = {} -%}
+      {%- for s in skp_reg_systems | default([]) -%}
+      {%- set w = hostvars[s.name].skp_sudoers_write | default({}) -%}
+      {%- if w and not (w.skipped | default(false)) and not (w.failed | default(false)) -%}
+      {%- set _ = out.update({s.name: {'provisioned_at': now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                                        'actions': hostvars[s.name].skp_node_allow_actions | default(false) | bool}}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out | to_json }}
+  delegate_to: "{{ skp_reg_node }}"
+  connection: "{{ hostvars[skp_reg_node].ansible_connection | default('ssh') }}"
+  become: true
+  register: skp_coverage_result
+  changed_when: "'coverage stamped' in skp_coverage_result.stdout"
+  when: not ansible_check_mode
+
 # Compliance report (tools/skpatch_compliance.py sets
 # skpatch_hosts_compliance_report to a controller path). Read-only: GET
 # requests through the same signed session, run even under --check, so the

@@ -27,7 +27,7 @@ One read-only pass, nothing is changed anywhere:
        not-in-dashboard      a provisioned host the dashboard does not know
        sudo-denied:<action>  the dashboard's latest <action> on that system
                              failed on sudo asking for a password
-  4. De-duplicated alerts: a state file remembers open issues; a hook is
+  4. Deduplicated alerts: a state file remembers open issues; a hook is
      called once when an issue opens (`raise`) and once when it clears
      (`resolve`), never on every run.
 
@@ -225,25 +225,33 @@ def analyse(result: dict, hosts: dict[str, dict], paused: set[str], report: dict
     return issues, status
 
 
-def alert(hook: str | None, action: str, key: str, level: str, message: str) -> bool:
-    """Run the hook; True when it succeeded (or there is no hook)."""
+def alert(hook: str | None, action: str, key: str, level: str, message: str, ref: str | None = None) -> str | None:
+    """Run the hook. Returns None when it failed, else its stdout stripped
+    ("" with no hook): a Talk hook prints the posted message id, which a
+    later resolve passes back as `ref` so it replies in the same thread."""
     if not hook:
-        return True
+        return ""
     try:
-        rc = subprocess.run([*shlex.split(hook), action, key, level, message], timeout=60, check=False).returncode
+        proc = subprocess.run([*shlex.split(hook), action, key, level, message, *([ref] if ref else [])],
+                              timeout=60, check=False, capture_output=True, text=True)
     except (OSError, subprocess.SubprocessError) as err:
         print(f"alert hook failed for {key}: {err}", file=sys.stderr)
-        return False
-    if rc != 0:
-        print(f"alert hook failed for {key}: exit {rc}", file=sys.stderr)
-    return rc == 0
+        return None
+    if proc.stderr:
+        sys.stderr.write(proc.stderr)
+    if proc.returncode != 0:
+        print(f"alert hook failed for {key}: exit {proc.returncode}", file=sys.stderr)
+        return None
+    return proc.stdout.strip()
 
 
 def reconcile(state_path: Path | None, issues: dict[str, str], hook: str | None,
-              label: str = "skpatch compliance", levels: dict[str, str] | None = None) -> dict:
-    """Raise each new issue once and resolve each cleared one once. A hook
-    call that fails leaves the state as it was, so the next run retries it
-    instead of losing the alert."""
+              label: str = "skpatch compliance", levels: dict[str, str] | None = None,
+              reasons: dict[str, str] | None = None) -> dict:
+    """Raise each new issue once and resolve each cleared one once (the
+    resolve carries a short reason and the raise's message id, so it lands in
+    the same thread and the key is cleared). A hook call that fails leaves
+    the state as it was, so the next run retries it instead of losing it."""
     now = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     state = {}
     if state_path and state_path.exists():
@@ -252,10 +260,17 @@ def reconcile(state_path: Path | None, issues: dict[str, str], hook: str | None,
     closed = [k for k in state if k not in issues]
     for k in sorted(opened):
         level = (levels or {}).get(k, "warn")
-        if alert(hook, "raise", k, level, f"{label}: {k.split('|')[0]}: {issues[k]}"):
+        text = f"{label}: {k.split('|')[0]}: {issues[k]}" if label else issues[k]
+        out = alert(hook, "raise", k, level, text)
+        if out is not None:
             state[k] = {"since": now, "message": issues[k]}
+            ref = out.splitlines()[-1].strip() if out else ""
+            if ref.isdigit():
+                state[k]["ref"] = ref
     for k in sorted(closed):
-        if alert(hook, "resolve", k, "info", f"{label}: {k} is resolved"):
+        why = (reasons or {}).get(k) or "cleared"
+        text = f"{label}: {k} is resolved: {why}" if label else why
+        if alert(hook, "resolve", k, "info", text, state[k].get("ref")) is not None:
             del state[k]
     for k in issues:
         if k in state:
@@ -273,7 +288,7 @@ def reconcile(state_path: Path | None, issues: dict[str, str], hook: str | None,
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0], formatter_class=argparse.RawDescriptionHelpFormatter,
                                  epilog="Arguments after -- go to ansible-inventory/ansible-playbook.")
-    ap.add_argument("--state", type=Path, help="de-duplication state file (open issues)")
+    ap.add_argument("--state", type=Path, help="deduplication state file (open issues)")
     ap.add_argument("--alert-hook", help="command run as: <hook> raise|resolve <key> <level> <message>")
     ap.add_argument("--json-out", type=Path, help="write the full result here")
     ap.add_argument("--playbook", type=Path, default=PLAYBOOK)
