@@ -58,7 +58,7 @@ const NOISE = [
   /^Calculating upgrade/, /^\(Reading database/, /^(Preparing to unpack|Unpacking|Setting up|Processing triggers for|Selecting previously unselected)\b/,
   /^(Fetched|Need to get|After this operation)\b/, /^The following (packages|NEW packages|additional packages)/,
   /^\d+ upgraded, \d+ newly installed/, /^\d+ not fully installed or removed/, /^Use '.*apt autoremove' to remove/,
-  /^\s+[a-z0-9][a-z0-9.+:~-]*(\s+[a-z0-9][a-z0-9.+:~-]*)*\s*$/, /^\d+% \[/, /^Progress: \[/, /^Scanning (processes|candidates|linux images)/, /^Running kernel seems/,
+  /^\s+(?!.*\b(error|errors|returned|failed|status|warning|denied|broken|unmet)\b)[a-z0-9][a-z0-9.+:~-]*(\s+[a-z0-9][a-z0-9.+:~-]*)*\s*$/i, /^\d+% \[/, /^Progress: \[/, /^Scanning (processes|candidates|linux images)/, /^Running kernel seems/,
   /^No (services|containers|user sessions|VM guests) need to be restarted/, /^Restarting services/,
 ];
 function tail(error, output, n = 10) {
