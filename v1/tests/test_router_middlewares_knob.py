@@ -106,8 +106,20 @@ def test_unset_knobs_render_byte_identical_to_v2_26_4(svc, env):
     assert normalize_images(text) == normalize_images((BASELINE / f"{svc}-{env}.yml").read_text())
 
 
+_SKGIT_INIT_COMMENT = (
+    "    # The entrypoint override makes forgejo PID 1",
+    "    # grandchildren reparented to it",
+    "    # toward the container pids limit",
+    "    # stall). Docker's init",
+)
+
+
 def _drop_skgit_api(text):
-    return "".join(l for l in text.splitlines(keepends=True) if "-api." not in l)
+    """Drop what skgit gained after v2.26.4: the API router and the forgejo init."""
+    return "".join(
+        l for l in text.splitlines(keepends=True)
+        if "-api." not in l and l.rstrip() != "    init: true" and not l.startswith(_SKGIT_INIT_COMMENT)
+    )
 
 
 @pytest.mark.parametrize("env", ENVS)
@@ -249,3 +261,9 @@ def test_skgit_api_router_never_names_an_error_pages_chain():
         mw = next(l for l in _skgit_api_labels(render("skgit", "prod", **over)) if ".middlewares=" in l)
         assert "error-pages@file" not in mw.replace("default-no-error-pages@file", "")
         assert "default@file" not in mw and "default-no-crowdsec@file" not in mw
+
+
+def test_skgit_forgejo_runs_under_an_init():
+    """forgejo as PID 1 never reaps git zombies; tini does."""
+    svc = yaml.safe_load(render("skgit", "prod"))["services"]["forgejo"]
+    assert svc["init"] is True

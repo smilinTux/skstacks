@@ -14,6 +14,11 @@ services:
     working_dir: /data
     entrypoint: /usr/local/bin/forgejo
     command: web
+    # The entrypoint override makes forgejo PID 1, and it never reaps the git
+    # grandchildren reparented to it: about 230 zombie [git] processes an hour,
+    # toward the container pids limit (fork then fails and merges and pushes
+    # stall). Docker's init (tini) reaps them.
+    init: true
     env_file: /var/data/config/skgit-{{ env }}/skgit.env
     environment:
       # === SERVER CONFIGURATION ===
