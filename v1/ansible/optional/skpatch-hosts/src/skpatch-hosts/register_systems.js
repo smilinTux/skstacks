@@ -247,10 +247,21 @@ async function configure(call, cfg) {
   if (!wantsModes && !notifs.length && !scheds.length && !scripts.length && !Object.keys(settings).length) return;
 
   if (Object.keys(settings).length) {
-    const cur = (await call("GET", "/settings")).settings || {};
+    const got = (await call("GET", "/settings")) || {};
+    const cur = got.settings || {};
+    const rules = got.numericSettingRules || {};
     const diff = {};
     for (const [k, v] of Object.entries(settings)) {
-      if (String(cur[k]) !== String(v)) diff[k] = String(v);
+      let want = String(v);
+      // The app silently clamps a numeric setting to its maximum (for
+      // cmd_timeout_seconds that is 600 unless LUDASH_MAX_CMD_TIMEOUT is set):
+      // clamp here too, say so, and do not rewrite it on every run.
+      const r = rules[k];
+      if (r && Number.isFinite(Number(want)) && Number(want) > r.max) {
+        console.log(`settings: ${k} ${want} is above the dashboard's maximum ${r.max}, using ${r.max} (raise MAX_CMD_TIMEOUT and redeploy)`);
+        want = String(r.max);
+      }
+      if (String(cur[k]) !== want) diff[k] = want;
     }
     if (Object.keys(diff).length) {
       await call("PUT", "/settings", diff);

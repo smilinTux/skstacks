@@ -115,7 +115,7 @@
           'sync_credential': skpatch_hosts.SYNC_CREDENTIAL | default(false) | bool,
           'upgrade_mode': skpatch_hosts.UPGRADE_MODE | default('', true) | string,
           'scripts': (lookup('file', playbook_dir ~ '/src/skpatch-hosts/dashboard-scripts.json') | from_json).scripts,
-          'settings': skpatch_hosts.DASHBOARD_SETTINGS | default({'cmd_timeout_seconds': 600}, true),
+          'settings': skpatch_hosts.DASHBOARD_SETTINGS | default({'cmd_timeout_seconds': 1800, 'ssh_timeout_seconds': 60}, true),
           'notifications': skpatch_hosts.NOTIFICATIONS | default([], true),
           'schedules': skpatch_hosts_schedules | default(skpatch_hosts.SCHEDULES | default([], true), true),
           'systems': skp_reg_systems | default([])} | to_json }}

@@ -243,6 +243,7 @@ def test_default_env_binds_the_host_and_trusts_the_proxy(base_out):
         "LUDASH_DB_PATH": "/data/dashboard.db",
         "LUDASH_BASE_URL": "https://skpatch-hosts.render.example.test",
         "LUDASH_PORT": "3001", "LUDASH_HOST": "0.0.0.0", "LUDASH_TRUST_PROXY": "true",
+        "LUDASH_MAX_CMD_TIMEOUT": "1800",
         "LUDASH_LOG_LEVEL": "info", "TZ": "UTC", "NODE_ENV": "production",
     }
 
@@ -396,3 +397,19 @@ def test_extra_hosts_render_as_given(tmp_path):
 @pytest.mark.parametrize("bad", ["mail.example.org:10.0.0.15", ["mail.example.org"], ["a b:10.0.0.1"], ["x:1;rm"]])
 def test_malformed_extra_hosts_fail_loudly(tmp_path, bad):
     assert "EXTRA_HOSTS" in fails(tmp_path, BASE | {"EXTRA_HOSTS": bad})
+
+
+# --- MAX_CMD_TIMEOUT (the app's ceiling for cmd_timeout_seconds) ------------
+
+def test_max_cmd_timeout_defaults_to_1800(base_out):
+    assert env_file(base_out)["LUDASH_MAX_CMD_TIMEOUT"] == "1800"
+    assert "LUDASH_DEFAULT_CMD_TIMEOUT" not in env_file(base_out)  # unused by the pinned image
+
+
+def test_max_cmd_timeout_can_be_raised(tmp_path):
+    assert env_file(ok(tmp_path, BASE | {"MAX_CMD_TIMEOUT": 3600}))["LUDASH_MAX_CMD_TIMEOUT"] == "3600"
+
+
+@pytest.mark.parametrize("bad", [100, 9000, "ten", "1800s"])
+def test_bad_max_cmd_timeout_fails_loudly(tmp_path, bad):
+    assert "MAX_CMD_TIMEOUT" in fails(tmp_path, BASE | {"MAX_CMD_TIMEOUT": bad})
