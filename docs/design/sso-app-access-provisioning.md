@@ -74,7 +74,7 @@ What actually gates each app is a separate question from the tile, and it differ
 | Role | Tile kind today | Tile group knob (default on main) | Gate the role itself enforces | OIDC role-mapping knobs |
 |---|---|---|---|---|
 | skfence | link (no provider) | `AUTHENTIK_TILE_GROUP` (`authentik Admins`) | dashboard: own gate, no forward-auth default | none |
-| skfenceha | link | `AUTHENTIK_TILE_GROUP` (`authentik Admins`) | dashboard: `DASHBOARD_SSO_MIDDLEWARE` (opt-in), else basic auth, else LAN allowlist | none |
+| skfenceha | link | `AUTHENTIK_TILE_GROUP` (`authentik Admins`) | dashboard: SSO forward-auth only by default (`DASHBOARD_AUTH_MODE`: `sso`, opt-in `basic` or `lan`) | none |
 | skboard | link | `AUTHENTIK_TILE_GROUP` | `TRAEFIK_MIDDLEWARES` list; authentik not in default | none |
 | skbom | link | `AUTHENTIK_TILE_GROUP` | `TRAEFIK_MIDDLEWARES` list; authentik not in default | none |
 | skbook | link | `AUTHENTIK_TILE_GROUP` | `router_middlewares_pre` / `router_middlewares` (instance opt-in) | none |
@@ -118,7 +118,7 @@ How a router opts in to forward auth, by mechanism:
   skhome, skpatch-hosts, skpulse, sksec-web; `TRAEFIK_MIDDLEWARES` default in skfetch.
 - Instance opt-in: `router_middlewares_pre` and `router_middlewares` in skbook, skdash, skhub, skstream;
   `TRAEFIK_MIDDLEWARES` lists elsewhere.
-- Dashboard: `DASHBOARD_SSO_MIDDLEWARE` in skfenceha.
+- Dashboard: `DASHBOARD_AUTH_MODE` (default `sso`) in skfenceha.
 
 `authentik@file` appears as a role default in exactly those six roles. Most role comments say a service
 "already sits behind the cluster's domain-wide ForwardAuth catch-all"; that describes how an instance

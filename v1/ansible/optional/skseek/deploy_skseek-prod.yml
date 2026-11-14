@@ -222,7 +222,7 @@
           name: "{{ skseek.AUTHENTIK_TILE_NAME | default('SKSeek (Perplexica)', true) }}"
           launch_url: "https://skseek{{ '' if env == 'prod' else '-' + env }}.{{ skseek.CLUSTERNAME | default(cluster_name) }}.{{ skseek.DOMAIN | default(domain) }}"
           group: "{{ skseek.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
-          icon: "{{ skseek.AUTHENTIK_TILE_ICON | default('fa://fa-magnifying-glass', true) }}"
+          icon: "{{ skseek.AUTHENTIK_TILE_ICON | default('fa://fa-search', true) }}"
           open_in_new_tab: "{{ skseek.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
           description: "{{ skseek.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
       tags:

@@ -1,7 +1,10 @@
-"""skfenceha dashboard protection, in order of preference:
-DASHBOARD_SSO_MIDDLEWARE (e.g. authentik@file) > DASHBOARD_AUTH_HASH (basic
-auth) > LAN-only allowlist. The dashboard router is never rendered without
-one of them, so a forgotten setting cannot leave the Traefik API public."""
+"""skfenceha dashboard protection, chosen by DASHBOARD_AUTH_MODE:
+sso (the default, the authentik forward-auth middleware and nothing else) |
+basic (DASHBOARD_AUTH_HASH, explicit opt-in) | lan (allowlist only). Basic auth
+used to be the default whenever a hash was set, which left the SSO portal tile
+for the dashboard on a 401 it could never satisfy. The dashboard router is
+never rendered without a gate, so a forgotten setting cannot leave the Traefik
+API public."""
 import pathlib
 
 import jinja2
@@ -27,17 +30,29 @@ def test_sso_middleware_replaces_basic_auth():
         "dashboard-chain@file", "authentik@file"]
 
 
-def test_hash_without_sso_uses_basic_auth():
-    assert dash_mw(DASHBOARD_AUTH_HASH=AUTH) == ["dashboard-chain@file", "traefikAuth@file"]
+def test_hash_without_explicit_basic_mode_is_still_sso_only():
+    assert dash_mw(DASHBOARD_AUTH_HASH=AUTH) == ["dashboard-chain@file", "authentik@file"]
     mw = render("dynamic-middlewares.yml.j2", DASHBOARD_AUTH_HASH=AUTH)["http"]["middlewares"]
+    assert "traefikAuth" not in mw
+
+
+def test_basic_mode_uses_the_hash():
+    assert dash_mw(DASHBOARD_AUTH_MODE="basic", DASHBOARD_AUTH_HASH=AUTH) == [
+        "dashboard-chain@file", "traefikAuth@file"]
+    mw = render("dynamic-middlewares.yml.j2", DASHBOARD_AUTH_MODE="basic", DASHBOARD_AUTH_HASH=AUTH)["http"]["middlewares"]
     assert mw["traefikAuth"]["basicAuth"]["users"] == [AUTH]
 
 
 @pytest.mark.parametrize("sso", [None, ""])
-def test_nothing_set_is_lan_only(sso):
+def test_nothing_set_is_sso_only(sso):
     v = {} if sso is None else {"DASHBOARD_SSO_MIDDLEWARE": sso}
-    assert dash_mw(**v) == ["dashboard-chain@file", "traefikAuth@file"]
-    assert "ipAllowList" in render("dynamic-middlewares.yml.j2", **v)["http"]["middlewares"]["traefikAuth"]
+    assert dash_mw(**v) == ["dashboard-chain@file", "authentik@file"]
+    assert "traefikAuth" not in render("dynamic-middlewares.yml.j2", **v)["http"]["middlewares"]
+
+
+def test_lan_mode_is_lan_only():
+    assert dash_mw(DASHBOARD_AUTH_MODE="lan") == ["dashboard-chain@file", "traefikAuth@file"]
+    assert "ipAllowList" in render("dynamic-middlewares.yml.j2", DASHBOARD_AUTH_MODE="lan")["http"]["middlewares"]["traefikAuth"]
 
 
 def test_dashboard_router_always_has_an_auth_middleware():

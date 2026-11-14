@@ -29,7 +29,8 @@ command line or in a process environment):
   icon                   - optional meta_icon ("fa://fa-..." or "application-icons/...")
   open_in_new_tab         - optional bool, default true
   description             - optional meta_description
-  category                - optional UI category (the Application's own "group" field)
+  category                - optional UI category (the Application's own "group" field);
+                            when empty the tile's existing section is left alone
 Output: one status line per object, never a secret. Exit non-zero on any
 API error (including: the named group does not exist - this script never
 creates a group, only looks one up, so a typo fails loudly instead of
@@ -106,8 +107,14 @@ def ensure_application(api, cfg):
         "meta_icon": cfg.get("icon", "") or "",
         "meta_description": cfg.get("description", "") or "",
         "policy_engine_mode": "any",
-        "group": cfg.get("category", "") or "",
     }
+    # The portal section is managed only when the role names one. An empty
+    # category used to PATCH `group` to "" on every run, which blanked a
+    # section an operator (or an earlier run) had set; now an unset category
+    # leaves an existing tile's section alone and a new tile starts ungrouped.
+    category = cfg.get("category", "") or ""
+    if category:
+        desired["group"] = category
     current = lookup()
     if current is None:
         obj = api.call("POST", "/core/applications/", desired)

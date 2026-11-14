@@ -84,7 +84,7 @@ CFG = {
     "name": "SKPulse (Uptime Kuma)",
     "launch_url": "https://skpulse.example.com",
     "group": "authentik Admins",
-    "icon": "fa://fa-heart-pulse",
+    "icon": "fa://fa-heartbeat",
     "open_in_new_tab": True,
     "description": "",
     "category": "",
@@ -109,7 +109,7 @@ def test_ensure_application_unchanged_is_a_noop():
         "launch_url": "https://skpulse.example.com",
         "meta_launch_url": "https://skpulse.example.com",
         "open_in_new_tab": True,
-        "meta_icon": "fa://fa-heart-pulse",
+        "meta_icon": "fa://fa-heartbeat",
         "meta_description": "",
         "policy_engine_mode": "any",
         "group": "",
@@ -128,7 +128,7 @@ def test_ensure_application_updates_only_changed_fields():
         "launch_url": "https://old.example.com",
         "meta_launch_url": "https://old.example.com",
         "open_in_new_tab": False,
-        "meta_icon": "fa://fa-heart-pulse",
+        "meta_icon": "fa://fa-heartbeat",
         "meta_description": "",
         "policy_engine_mode": "any",
         "group": "",
@@ -153,7 +153,7 @@ def test_ensure_application_keeps_an_existing_provider():
         "launch_url": "https://old.example.com",
         "meta_launch_url": "https://old.example.com",
         "open_in_new_tab": True,
-        "meta_icon": "fa://fa-heart-pulse",
+        "meta_icon": "fa://fa-heartbeat",
         "meta_description": "",
         "policy_engine_mode": "any",
         "group": "",
@@ -176,7 +176,7 @@ def test_ensure_application_provider_backed_and_otherwise_unchanged_is_a_noop():
         "launch_url": "https://skpulse.example.com",
         "meta_launch_url": "https://skpulse.example.com",
         "open_in_new_tab": True,
-        "meta_icon": "fa://fa-heart-pulse",
+        "meta_icon": "fa://fa-heartbeat",
         "meta_description": "",
         "policy_engine_mode": "any",
         "group": "",
@@ -240,3 +240,41 @@ def test_api_call_raises_on_http_error(monkeypatch):
     api = tile.Api("http://sksso-prod_server:9000", "sso.example.com", "token")
     with pytest.raises(tile.ApiError, match="HTTP 404"):
         api.call("GET", "/core/applications/nope/")
+
+
+def _section_app(group):
+    return {
+        "slug": "skpulse",
+        "name": "SKPulse (Uptime Kuma)",
+        "provider": None,
+        "launch_url": "https://skpulse.example.com",
+        "meta_launch_url": "https://skpulse.example.com",
+        "open_in_new_tab": True,
+        "meta_icon": "fa://fa-heartbeat",
+        "meta_description": "",
+        "policy_engine_mode": "any",
+        "group": group,
+    }
+
+
+def test_unset_category_leaves_an_existing_section_alone():
+    """The tile task used to PATCH `group` to "" on every run, blanking a
+    section an operator had set. An empty category now means "not managed"."""
+    api = FakeApi(application=_section_app("Monitoring"))
+    tile.ensure_application(api, CFG)  # CFG has category ""
+    assert [c[0] for c in api.calls] == ["GET"]  # no PATCH
+    assert api.application["group"] == "Monitoring"
+
+
+def test_set_category_still_moves_the_tile():
+    api = FakeApi(application=_section_app("Monitoring"))
+    tile.ensure_application(api, {**CFG, "category": "Security"})
+    patch = [c for c in api.calls if c[0] == "PATCH"]
+    assert len(patch) == 1 and patch[0][2] == {"group": "Security"}
+
+
+def test_new_tile_without_category_has_no_section_key():
+    api = FakeApi(application=None)
+    tile.ensure_application(api, CFG)
+    post = [c for c in api.calls if c[0] == "POST"][0]
+    assert "group" not in post[2]

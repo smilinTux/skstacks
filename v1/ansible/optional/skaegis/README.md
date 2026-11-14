@@ -121,7 +121,7 @@ Every other key is optional. Defaults are the playbook's own.
 | `AUTHENTIK_TILE` | `true` | Create or update the portal tile (the same application sksso's blueprint creates). |
 | `AUTHENTIK_TILE_SLUG`, `AUTHENTIK_TILE_NAME` | `OIDC_CLIENT_ID`, `skaegis` | Tile slug (must match the OAuth2 application) and name. |
 | `AUTHENTIK_TILE_GROUP` | `skadmin` | The gate group. Never "authentik Admins". |
-| `AUTHENTIK_TILE_ICON`, `AUTHENTIK_TILE_DESCRIPTION`, `AUTHENTIK_TILE_CATEGORY`, `AUTHENTIK_TILE_OPEN_IN_NEW_TAB` | `fa://fa-shield-halved`, a one-line text, `Security`, `true` | Tile presentation. |
+| `AUTHENTIK_TILE_ICON`, `AUTHENTIK_TILE_DESCRIPTION`, `AUTHENTIK_TILE_CATEGORY`, `AUTHENTIK_TILE_OPEN_IN_NEW_TAB` | `fa://fa-shield-alt`, a one-line text, `Security`, `true` | Tile presentation. |
 
 Minimal vault:
 
