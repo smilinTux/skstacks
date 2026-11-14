@@ -3,7 +3,7 @@ read-only dashboard report it relies on, src/skpatch-hosts/dashboard_report.js).
 
 The analysis is tested on synthetic ansible.posix.json output and a synthetic
 dashboard report, the report script against a fake dashboard API, and the
-de-duplication through a real hook script."""
+deduplication through a real hook script."""
 import base64
 import hashlib
 import hmac
@@ -196,7 +196,12 @@ class FakeDash:
              "isReachable": 1, "needsReboot": 1, "bootId": "b-1", "packageIssueCount": 2, "updateCount": 5,
              "securityCount": 1, "osLifecycleStatus": "eol", "osLifecycleLabel": "Arch", "osLifecycleEolDate": "2026-01-01",
              "osLifecycleDaysUntilEol": -10},
+            {"id": 3, "name": "wsl-1", "hostname": "10.0.0.3", "port": 22, "pkgManager": "apt"},
+            {"id": 4, "name": "noisy-1", "hostname": "10.0.0.4", "port": 22, "pkgManager": "apt"},
         ]
+        self.issues = {2: [{"pkgManager": "apt", "issueKey": "apt_dpkg_interrupted", "title": "APT needs repair",
+                            "message": "dpkg was interrupted.", "active": 1, "detectedAt": fmt(now - 86400)},
+                           {"pkgManager": "apt", "issueKey": "old", "title": "gone", "active": 0}]}
         self.schedules = [{"id": 3, "name": "Nightly", "type": "update", "enabled": 1, "config": {"cron": "0 3 * * *"},
                            "lastRunAt": fmt(now - 600), "lastRunStatus": "warning",
                            "lastRunMessage": "Checked 2 systems, upgraded 1, skipped 0, 1 failed"}]
@@ -213,6 +218,22 @@ class FakeDash:
                  "error": "[pacman]\nWe trust you have received the usual lecture from the local System", "output": ""},
                 {"action": "upgrade", "pkgManager": "pacman", "status": "failed", "startedAt": fmt(now - 100),
                  "error": "error: target not found: foo", "output": ""}],
+            # sudo with `Defaults insults` on; an upgrade cut off mid-download
+            # and superseded by a later clean check
+            3: [{"action": "upgrade_package", "pkgManager": "apt", "status": "failed", "startedAt": fmt(now - 900),
+                 "command": "# Sudoers-relevant command: apt-get install --only-upgrade -y vim\nsudo ...",
+                 "error": "sudo: I'm sorry skpatch-ro. I'm afraid I can't do that\n", "output": ""},
+                {"action": "upgrade_all", "pkgManager": "apt", "status": "failed", "startedAt": fmt(now - 7200),
+                 "error": "", "output": "Reading package lists...\nGet:1 http://deb.example a [1 MB]\nGet:2 http://deb.example b [15.4 M"},
+                {"action": "check", "pkgManager": "apt", "status": "success", "startedAt": fmt(now - 60), "error": None, "output": "ok"}],
+            4: [{"action": "upgrade_all", "pkgManager": "apt", "status": "failed", "startedAt": fmt(now - 300), "error": "",
+                 "output": "Reading package lists...\nBuilding dependency tree...\nThe following packages will be upgraded:\n"
+                           "  foo bar\n2 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.\n"
+                           "Get:1 http://deb.example foo [1 kB]\nSetting up foo (1.2) ...\n"
+                           "dpkg: error processing package bar (--configure):\n"
+                           " installed bar package post-installation script subprocess returned error exit status 1\n"
+                           "Errors were encountered while processing:\n bar\nE: Sub-process /usr/bin/dpkg returned an error code (1)"},
+                {"action": "check", "pkgManager": "apt", "status": "warning", "startedAt": fmt(now - 60), "error": "", "output": ""}],
         }
 
     def user_ok(self, headers):
@@ -250,6 +271,8 @@ def fake(tmp_path):
                 return self._send(401, {"error": "Unauthorized"})
             if self.path == "/api/systems":
                 return self._send(200, {"systems": d.systems})
+            if self.path.startswith("/api/systems/") and self.path.count("/") == 3:
+                return self._send(200, {"system": {}, "packageIssues": d.issues.get(int(self.path.split("/")[3]), [])})
             if self.path == "/api/schedules":
                 return self._send(200, {"schedules": d.schedules})
             if self.path.startswith("/api/systems/") and self.path.endswith("/history"):
@@ -296,12 +319,26 @@ def test_report_lists_systems_and_only_the_latest_sudo_denial_per_action(fake):
     assert [d["action"] for d in systems["arch-1"]["sudo_denied"]] == ["check"]
     # a failed non-check action that did not hit sudo is its own class; a
     # sudo-denied upgrade is not counted twice
-    assert systems["arch-1"]["failed"] == [{"action": "upgrade", "at": systems["arch-1"]["failed"][0]["at"],
-                                            "error": "error: target not found: foo"}]
+    f = systems["arch-1"]["failed"]
+    assert [x["action"] for x in f] == ["upgrade"] and f[0]["tail"] == ["error: target not found: foo"]
     assert systems["mgr-1"]["failed"] == []
     a = systems["arch-1"]
     assert (a["reachable"], a["needs_reboot"], a["boot_id"], a["package_issues"], a["updates"]) == (True, True, "b-1", 2, 5)
     assert a["lifecycle"]["status"] == "eol" and a["lifecycle"]["days_to_eol"] == -10
+    assert a["package_issue_list"] == [{"pkgManager": "apt", "key": "apt_dpkg_interrupted", "title": "APT needs repair",
+                                        "message": "dpkg was interrupted.", "detected_at": a["package_issue_list"][0]["detected_at"]}]
+    w = systems["wsl-1"]
+    # an insult is still sudo refusing; the cut-off upgrade is older than a clean check: not reported
+    assert [(d["action"], d["error"], d["command"]) for d in w["sudo_denied"]] == [
+        ("upgrade_package", "sudo: I'm sorry skpatch-ro. I'm afraid I can't do that", "apt-get install --only-upgrade -y vim")]
+    assert w["failed"] == [] and w["last_clean_check"] and "check" in w["last_ok"]
+    n = systems["noisy-1"]["failed"][0]
+    # progress, package lists and summaries are dropped; the failure is kept
+    assert n["tail"] == ["dpkg: error processing package bar (--configure):",
+                         " installed bar package post-installation script subprocess returned error exit status 1",
+                         "Errors were encountered while processing:",
+                         "E: Sub-process /usr/bin/dpkg returned an error code (1)"]
+    assert n["tail_is_raw"] is False
     assert systems["mgr-1"]["reachable"] is None and systems["mgr-1"]["needs_reboot"] is False
     sched = json.loads(line[len("@@SKP-REPORT@@"):])["schedules"]
     assert sched == [{"name": "Nightly", "type": "update", "enabled": True, "last_run_at": sched[0]["last_run_at"],
@@ -352,12 +389,23 @@ def test_talk_hook_posts_raise_resolve_and_post_to_the_room(tmp_path):
     assert all("[https://cloud.example.test/ocs/v2.php/apps/spreed/api/v1/chat/abc123xy]" in c for c in calls)
     assert all("[OCS-APIRequest: true]" in c for c in calls)
     assert "[message=🔴 skpatch: host-1|sudo-denied:check\nmsg one\n\n@\"ops.lead\"]" in calls[0]
-    assert "[message=✅ skpatch resolved: host-1|sudo-denied:check\ncleared]" in calls[1]
+    assert "[message=✅ resolved: host-1|sudo-denied:check: cleared]" in calls[1]
     assert "[message=the summary]" in calls[2] and "ops.lead" not in calls[2]
     # the password reaches curl on stdin only, never in argv
     for c in calls:
         argv, stdin = c.split("\nstdin:")
         assert "app-pw-secret" not in argv and 'user = "agent:app-pw-secret"' in stdin
+
+
+def test_talk_hook_prints_the_message_id_and_replies_in_its_thread(tmp_path):
+    env, log = _talk_env(tmp_path, code='\'{"ocs":{"meta":{"status":"ok"},"data":{"id":15564,"token":"x"}}}\\n201\'')
+    r = subprocess.run(["sh", str(TALK_HOOK), "raise", "k|x", "warn", "m"], env=env, capture_output=True, text=True)
+    assert r.returncode == 0 and r.stdout.strip() == "15564"
+    r = subprocess.run(["sh", str(TALK_HOOK), "resolve", "k|x", "info", "fixed", "15564"], env=env, capture_output=True, text=True)
+    assert r.returncode == 0 and "[replyTo=15564]" in log.read_text().split("[-sS]")[-1]
+    # a ref that is not a message id is ignored, never passed on
+    subprocess.run(["sh", str(TALK_HOOK), "resolve", "k|x", "info", "fixed", "1;rm"], env=env, capture_output=True)
+    assert "replyTo" not in log.read_text().split("[-sS]")[-1]
 
 
 def test_talk_hook_fails_on_a_rejected_post_and_on_bad_usage(tmp_path):

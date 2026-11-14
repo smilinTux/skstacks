@@ -457,6 +457,34 @@ Setup per estate:
    `systemctl --user start skpatch-watch@<estate>` (posts the real open
    issues once; a second run posts nothing).
 
+**Every alert resolves itself.** The watch re-reads the dashboard every run
+and posts one short "resolved" reply in the alert's own Talk thread (the hook
+returns the posted message id, the state keeps it) when the condition is gone:
+
+| Issue | Resolves when |
+|---|---|
+| `upgrade-failed:<action>` | a later success of that action, of any upgrade action, or a later clean check |
+| `sudo-denied:<action>` | a later success of that action, or the host's sudoers was rewritten after the denial (the coverage stamp below) |
+| `package-manager` | the dashboard no longer shows the repair banner |
+| `reboot-pending` | the host rebooted or no longer needs it |
+
+History older than the last good run of the same operation on that host is
+never alerted on.
+
+**What an alert says.** The run's last meaningful lines (apt and dpkg
+progress, package lists and summaries stripped; a run the app cut off is
+quoted raw and labelled so), a link to the system (`--dashboard-url`, so
+`<url>/systems/<id>`), and the next action in plain words. A sudo denial
+the framework already has a fix for (`src/skpatch-hosts/known-gaps.json`,
+e.g. "upgrade selected" before the v2.26.22 wrappers) says "known gap, fix in
+<PR>" and what to do until then, instead of "reprovision".
+
+**Coverage stamp.** Every provisioning run that writes a host's sudoers
+records it in `skpatch-coverage.json` beside the staged registrar on the
+dashboard's node (`{host: {provisioned_at, actions}}`, never under
+`--check`). The watch reads it in the same ssh call: a sudo denial older than
+the stamp of a host with actions granted is resolved as "sudoers now covers it".
+
 The hook's state survives a failed post: an issue whose raise did not reach
 the room is retried on the next run instead of being recorded as sent.
 

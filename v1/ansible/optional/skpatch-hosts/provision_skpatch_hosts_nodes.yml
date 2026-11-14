@@ -339,6 +339,7 @@
         group: root
         mode: '0440'
         validate: '/usr/sbin/visudo -cf %s'
+      register: skp_sudoers_write
       when: skpatch_state == 'present'
 
     - name: Remove the sudoers rule (absent)
