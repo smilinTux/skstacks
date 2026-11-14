@@ -95,6 +95,24 @@
         skp_node_allow_actions: "{{ (skpatch_hosts_allow_actions if skpatch_hosts_allow_actions is defined else (skpatch_hosts.ALLOW_ACTIONS | default(false))) | bool }}"
       tags: [config]
 
+    - name: Detect Proxmox VE (the reboot guard needs pvesh)
+      # The app's reboot runs a pvesh backup-activity guard first on any host
+      # that has pvesh, and refuses to reboot when that guard cannot run. A
+      # host var skpatch_hosts_proxmox (true/false) overrides the detection.
+      stat:
+        path: /usr/bin/pvesh
+      register: skp_pvesh
+      when: skpatch_hosts_proxmox is not defined
+      tags: [config]
+
+    - name: Resolve whether this host is Proxmox VE
+      set_fact:
+        skp_node_is_proxmox: "{{ (skpatch_hosts_proxmox if skpatch_hosts_proxmox is defined else (skp_pvesh.stat.exists | default(false))) | bool }}"
+        # Unattended upgrades keep a locally changed conffile instead of
+        # stopping at dpkg's prompt (see the dpkg.cfg.d task below).
+        skp_keep_conffiles: "{{ skpatch_hosts.DPKG_KEEP_CONFFILES | default(true) | bool }}"
+      tags: [config]
+
   tasks:
     - name: Report the posture for this host
       debug:
@@ -162,6 +180,35 @@
         - skpatch-apt-only-upgrade
         - skpatch-snap-refresh
       when: skpatch_state == 'absent' or not (skp_node_allow_actions | bool)
+
+    - name: Keep local conffiles during unattended upgrades (present, actions allowed)
+      # The app runs apt and `dpkg --configure -a` with stdin on /dev/null. A
+      # package that ships a new version of a conffile the host has changed
+      # then stops at dpkg's "keep or install?" prompt, reads EOF and fails
+      # its configure step, leaving dpkg interrupted (found live 2026-11-13 on
+      # a Raspberry Pi OS desktop package). force-confdef takes the package's
+      # default answer where it has one, force-confold otherwise keeps the
+      # file the host has: the same answer the prompt itself defaults to.
+      # dpkg.cfg.d (not apt.conf.d) so the Repair action is covered too.
+      # Off with skpatch_hosts.DPKG_KEEP_CONFFILES: false.
+      copy:
+        dest: /etc/dpkg/dpkg.cfg.d/90-skpatch-hosts
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          # Managed by SKStacks optional/skpatch-hosts (provision_skpatch_hosts_nodes.yml).
+          # Unattended upgrades from the patch dashboard have no terminal: answer
+          # dpkg's conffile prompt with the package default, else keep the local file.
+          force-confdef
+          force-confold
+      when: skpatch_state == 'present' and skp_node_allow_actions | bool and skp_keep_conffiles | bool
+
+    - name: Remove the conffile policy (absent, actions off, or DPKG_KEEP_CONFFILES false)
+      file:
+        path: /etc/dpkg/dpkg.cfg.d/90-skpatch-hosts
+        state: absent
+      when: skpatch_state == 'absent' or not (skp_node_allow_actions | bool) or not (skp_keep_conffiles | bool)
 
     - name: Write the sudoers rule (present)
       template:

@@ -379,3 +379,20 @@ def test_dashboard_healthcheck_does_not_use_wget_or_curl(base_out):
     joined = " ".join(test)
     assert "wget" not in joined and "curl" not in joined, joined
     assert "node" in joined
+
+
+# --- EXTRA_HOSTS (a name the container must reach on another address) ------
+
+def test_no_extra_hosts_by_default(base_out):
+    assert "extra_hosts" not in compose(base_out)["services"]["dashboard"]
+
+
+def test_extra_hosts_render_as_given(tmp_path):
+    out = ok(tmp_path, BASE | {"EXTRA_HOSTS": ["mail.example.org:10.0.0.15", "sso.example.org:10.0.0.20"]})
+    assert compose(out)["services"]["dashboard"]["extra_hosts"] == [
+        "mail.example.org:10.0.0.15", "sso.example.org:10.0.0.20"]
+
+
+@pytest.mark.parametrize("bad", ["mail.example.org:10.0.0.15", ["mail.example.org"], ["a b:10.0.0.1"], ["x:1;rm"]])
+def test_malformed_extra_hosts_fail_loudly(tmp_path, bad):
+    assert "EXTRA_HOSTS" in fails(tmp_path, BASE | {"EXTRA_HOSTS": bad})
