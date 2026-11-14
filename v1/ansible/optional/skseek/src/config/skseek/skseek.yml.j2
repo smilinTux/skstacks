@@ -58,6 +58,30 @@ services:
         - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
         - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares={{ skseek.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file', true) }}"
         - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}.service=skseek{% if env != 'prod' %}-{{ env }}{% endif %}"
+{# === API ROUTER (raw upstream status codes) ===
+    Perplexica's Next.js API routes (`/api/search`, `/api/chat`, `/api/config`...).
+    The main router's chain carries error-pages@file, which swaps every 4xx/5xx for an
+    HTML page from the error-pages service and replays the ORIGINAL method there, so API
+    clients never saw the app's real status or JSON error. This router sends the machine
+    paths through the main chain with each error-pages-bearing chain swapped for its
+    no-error-pages form (rate limit and security headers stay; the upload chains keep their
+    buffering). skseek.API_MIDDLEWARES replaces the derived chain. #}
+{% set _api_swap = {'default@file': 'default-no-error-pages@file', 'default-no-crowdsec@file': 'default-no-error-pages@file', 'upload-chain@file': 'large-upload-buffering@file,default-security-headers@file', 'upload-chain-no-crowdsec@file': 'large-upload-buffering@file,default-security-headers@file', 'skai-chain@file': 'skai-headers@file,gzip@file', 'error-pages@file': '', 'error-pages-all@file': ''} %}
+{% set _api_mw = [] %}
+{% for _m in (skseek.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file', true)).split(',') %}
+{% set _s = _api_swap.get(_m | trim, _m | trim) %}
+{% if _s %}
+{% set _ = _api_mw.append(_s) %}
+{% endif %}
+{% endfor %}
+        - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}-api.rule=Host(`skseek{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skseek.CLUSTERNAME | default(cluster_name) }}.{{ skseek.DOMAIN | default(domain) }}`) && (PathPrefix(`/api/`))"
+        - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}-api.entrypoints=websecure"
+        - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}-api.tls=true"
+        - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}-api.tls.certresolver=main"
+        - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}-api.tls.options=intermediate@file"
+        - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}-api.priority=150"
+        - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}-api.middlewares={{ skseek.API_MIDDLEWARES | default(_api_mw | unique | join(','), true) }}"
+        - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}-api.service=skseek{% if env != 'prod' %}-{{ env }}{% endif %}"
         # === TRAEFIK: SERVICES ===
         - "traefik.http.services.skseek{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port={{ skseek.PORT | default('3000') }}"
 
