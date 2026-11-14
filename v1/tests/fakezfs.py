@@ -111,6 +111,15 @@ def zfs(args):
             if target not in st["datasets"]:
                 die(f"cannot open '{target}': dataset does not exist")
             print(st["datasets"][target])
+        elif prop == "referenced":
+            if target in st["snaps"]:
+                root = snapdir(st, target)
+            elif target in st["datasets"]:
+                root = Path(st["datasets"][target])
+            else:
+                die(f"cannot open '{target}': dataset does not exist")
+            print(sum(f.stat().st_size for f in Path(root).rglob("*")
+                      if f.is_file() and ".zfs" not in f.relative_to(root).parts))
         elif prop == "creation":
             if target not in st["snaps"]:
                 die(f"cannot open '{target}': dataset does not exist")

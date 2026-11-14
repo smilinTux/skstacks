@@ -28,6 +28,8 @@ BAK_ROOT={{ q(skb['copy'].target if (skb['copy'].enabled | bool) else '') }}
 APPS_FILE={{ q(skb_confdir ~ '/apps.conf') }}
 SNAP_PREFIX_SYNC={{ q(skb_short) }}
 RSYNC_BWLIMIT={{ skb['copy'].bwlimit_kbps | int }}
+COPY_TIMEOUT_S={{ skb['copy'].timeout_seconds | int }}
+SYNC_CAP_WARN={{ skb['copy'].precheck_capacity_pct | int }}
 
 # tier 3: dump hooks and freshness
 HOOKS_FILE={{ q(skb_confdir ~ '/hooks.conf') }}
@@ -62,6 +64,9 @@ CHECK_RESTIC_REPO={{ 1 if (skb.alerts.check_repo | bool) else 0 }}
 POOL_CAP_WARN={{ skb.alerts.pool_capacity_pct | int }}
 THINPOOL={{ q(skb.alerts.thinpool) }}
 THINPOOL_WARN={{ skb.alerts.thinpool_pct | int }}
+THIN_LVS={{ q(skb.alerts.thin_volumes | join(' ')) }}
+COPY_SHRINK_PCT={{ skb.alerts.copy_shrink_pct | int }}
+COPY_SHRINK_MIN_MIB={{ skb.alerts.copy_shrink_min_mib | int }}
 NOTIFY_MODE={{ q(skb.alerts.notifier) }}
 NOTIFY_LOG={{ q(skb_statedir ~ '/alerts.log') }}
 NOTIFY_COMMAND={{ q(skb.alerts.command) }}

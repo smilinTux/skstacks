@@ -173,7 +173,9 @@ Tier 2, `skbackup.copy`:
 | `enabled` | `false` | |
 | `target` | | Parent dataset on the backup pool (one child per app). Required when enabled. |
 | `bwlimit_kbps` | `10000` | rsync `--bwlimit` in KiB/s. Measured: 40000 on a USB SSD pool pushed NFS writes from a node to 45 s; 10000 kept them under 1.4 s. Raise only with your own measurement. |
-| `retention` | 7 daily, 4 weekly, 3 monthly | History snapshots per app; weekly on Sundays, monthly on the 1st. |
+| `timeout_seconds` | `7200` | Per-app copy budget (`0` = none). A hung app is killed and the run goes on to the next one, so one stuck app cannot use up the whole run and skip every app after it. A first seed that needs longer resumes on the next run. |
+| `precheck_capacity_pct` | `85` | `sync` alerts (through the notifier) before the copy when the backup pool is this full (`0` = off). The copy still runs. |
+| `retention` | 7 daily, 4 weekly, 3 monthly | History snapshots per app; weekly on Sundays, monthly on the 1st. The prune runs for every app whether its copy succeeded or not, so a failing copy never stops history from expiring. |
 | `apps` | `[]` | `[{name, src, retention, excludes, newest, dump}]`: `name` names the copy dataset; `src` (default `name`) is the path under the data dataset; `retention` overrides per app (`{daily: 14}`); `excludes` are rsync patterns (`/x/` anchored at the app root, no whitespace); `newest: [{dir, keep}]` keeps only the newest N files of a dump dir; `dump: DIR` flags the app when DIR has no non-empty file newer than `dumps.max_age_hours`. |
 
 Tier 3, `skbackup.dumps`:
@@ -218,6 +220,8 @@ Tier 6, `skbackup.alerts`:
 | `max_age` | snapshot 120 min, copy 26 h, offsite 36 h | Staleness thresholds. |
 | `pool_capacity_pct` | `80` | Warn when the data or backup pool is this full (or not ONLINE). |
 | `thinpool` / `thinpool_pct` | `""` / `85` | An LVM thin pool under the backup pool (for example `pve/data`): if it fills, every VM on it pauses. |
+| `thin_volumes` | `[]` | Thin volumes to watch at `thinpool_pct`, typically the LV the backup pool sits on. A full thin volume stops the pool on it even when the pool reports free space. |
+| `copy_shrink_pct` / `copy_shrink_min_mib` | `50` / `64` | WARN when a copy lost more than this percent of its size: the live copy against its newest snapshot (a run that deleted before it could write) and the newest daily against the previous one (a source that emptied). Copies under the minimum are ignored. `0` = off. |
 
 The deploy fails closed on: an empty or path-shaped `data_dataset`; copy on
 without a target or apps, an app name or path that is not safe, an exclude
@@ -256,6 +260,15 @@ systemd one-shot timer (`OnCalendar=<date>`, `ExecStart=zfs destroy
 `at`: `at` is often not installed and leaves no unit to inspect.
 
 ### Tier 2: per-app copy
+
+Keep reproducible bulk out of the copy with `excludes`: CI artifacts
+(`/data/forgejo/actions_artifacts/` on a Forgejo app), packages, caches. CI
+output is restored by re-running CI, not from a backup, and a busy pipeline
+can fill a backup pool in days. The copy deletes after the transfer
+(`--delete-after`): a run that runs out of space leaves the previous copy
+whole instead of half deleted. Schedule `check --notify` (the default
+`check` timer does) so a pool that passes `pool_capacity_pct` alerts days
+before it fills.
 
 Pick apps by what they hold, not by size (see "Choosing apps"). The copy pool
 sits on a different disk. If it is a thin LV on the hypervisor's own NVMe,
