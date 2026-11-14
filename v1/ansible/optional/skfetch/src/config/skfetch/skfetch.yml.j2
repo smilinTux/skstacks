@@ -33,7 +33,7 @@ name: {{ app }}-{{ env }}
 
 services:
   gluetun:
-    image: {{ skfetch.GLUETUN_IMAGE | default('qmcgaw/gluetun@sha256:44a82caf5b866193bfdfe8ffffbb11b20ce8138a917466c2c9bff9a52861c1a5') }}
+    image: {{ skfetch.GLUETUN_IMAGE | default('qmcgaw/gluetun@sha256:cbafe0945d0fe5a3c55ca64d43a85c5db270458f4c645ee65797b527f6f57a64') }}
     restart: on-failure
     logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
     cap_add: [NET_ADMIN]
@@ -56,7 +56,7 @@ services:
     mem_limit: {{ skfetch.GLUETUN_MEM_LIMIT | default('256m') }}
 
   qbittorrent:
-    image: {{ skfetch.QBITTORRENT_IMAGE | default('lscr.io/linuxserver/qbittorrent@sha256:05c1454f9a32967affc1f34f67f8cc0cc57dd805dca45489fe797095a6286556') }}
+    image: {{ skfetch.QBITTORRENT_IMAGE | default('lscr.io/linuxserver/qbittorrent@sha256:3d4c4545d51a690a0df15a2ff99038823a88a9822df8e794526447b9afbd7384') }}
     restart: on-failure
     logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
     # Never published: only reachable inside the VPN namespace and the bridge.
@@ -79,13 +79,13 @@ services:
 
   {{ a[0] }}:
 {% if a[0] == 'prowlarr' %}
-    image: {{ skfetch.PROWLARR_IMAGE | default('lscr.io/linuxserver/prowlarr@sha256:431d7efebcef466e56adaa40a7a2fa2b0e85159a037b8bf465eaadbf0cf5bedf') }}
+    image: {{ skfetch.PROWLARR_IMAGE | default('lscr.io/linuxserver/prowlarr@sha256:6660787a99b2e58203539583663c973b48979fc00ff2cb78dc0ea17429e1f6ef') }}
 {% elif a[0] == 'sonarr' %}
-    image: {{ skfetch.SONARR_IMAGE | default('lscr.io/linuxserver/sonarr@sha256:673dc4609a5672bc8e46069c86ffcea283a86b48d34a6c93d8da8c24a1b87571') }}
+    image: {{ skfetch.SONARR_IMAGE | default('lscr.io/linuxserver/sonarr@sha256:c7d1df25e428da6c9ace05daea0d34e59522978a3843ea1944812f855af4086c') }}
 {% elif a[0] == 'radarr' %}
-    image: {{ skfetch.RADARR_IMAGE | default('lscr.io/linuxserver/radarr@sha256:ade5937813c6ae415b29db729386e53fea3ecf067a019849bafbe2d2a6ec02ba') }}
+    image: {{ skfetch.RADARR_IMAGE | default('lscr.io/linuxserver/radarr@sha256:51a9ac2a9eb47afc833541e5fd6c11b86eb9f810694c22fa2429e3078e9194b2') }}
 {% elif a[0] == 'lidarr' %}
-    image: {{ skfetch.LIDARR_IMAGE | default('lscr.io/linuxserver/lidarr@sha256:d5707cfe084da21a3864c7ef0edd9c0543b5e26c79c551f84dad5ef8683af8c7') }}
+    image: {{ skfetch.LIDARR_IMAGE | default('lscr.io/linuxserver/lidarr@sha256:a91ef0642c15c9bd7c4260fee98fa99972c61601e37c8a96411d6a9cf0e9ad40') }}
 {% endif %}
     restart: on-failure
     logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
