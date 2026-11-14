@@ -153,7 +153,7 @@ def test_the_watch_units_share_state_and_the_talk_env():
     watch = (units / "skpatch-watch@.service").read_text()
     digest = (units / "skpatch-watch-digest@.service").read_text()
     for u in (watch, digest):
-        assert "StateDirectory=skpatch-watch" in u and '--state "$STATE_DIRECTORY/%i.json"' in u
+        assert "StateDirectory=skpatch-hosts/watch" in u and '--state "$STATE_DIRECTORY/%i.json"' in u
         assert "EnvironmentFile=-%h/.config/skpatch-talk/%i.env" in u
     assert "SuccessExitStatus=1" in watch and "--digest" in digest
     assert "OnCalendar=*:0/15" in (units / "skpatch-watch@.timer").read_text()
