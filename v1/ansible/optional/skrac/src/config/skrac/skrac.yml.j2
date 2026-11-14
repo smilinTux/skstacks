@@ -105,7 +105,7 @@ services:
    its no-error-pages form, so an agent sees MeshCentral's own status and not the error-pages HTML. #}
 {% set _api_swap = {'default@file': 'default-no-error-pages@file', 'default-no-crowdsec@file': 'default-no-error-pages@file', 'upload-chain@file': 'large-upload-buffering@file,default-security-headers@file', 'upload-chain-no-crowdsec@file': 'large-upload-buffering@file,default-security-headers@file', 'skai-chain@file': 'skai-headers@file,gzip@file', 'error-pages@file': '', 'error-pages-all@file': ''} %}
 {% set _api_mw = [] %}
-{% for _m in (skr_agent_middlewares).split(',') %}
+{% for _m in (skr_agent_middlewares | default('', true)).split(',') %}
 {% set _s = _api_swap.get(_m | trim, _m | trim) %}
 {% if _s %}
 {% set _ = _api_mw.append(_s) %}
