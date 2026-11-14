@@ -366,8 +366,22 @@ dashboard action needs, all confirmed against the pinned image's own
 | Any apt action | `Defaults:<account> env_keep += "DEBIAN_FRONTEND"`, so the app's own `DEBIAN_FRONTEND=noninteractive` reaches apt instead of being dropped by sudo's `env_reset` (without it debconf falls back to Teletype, reads EOF and fails the package) |
 | Any apt or dpkg action | `/etc/dpkg/dpkg.cfg.d/90-skpatch-hosts` with `force-confdef` and `force-confold`: a changed conffile is kept instead of dpkg stopping at its prompt with no terminal. `DPKG_KEEP_CONFFILES: false` leaves dpkg's default behaviour |
 
-A report-only host gets none of these, and a rerun with actions off removes
-the wrappers and the dpkg policy file.
+On a host with **pacman** or **flatpak** (detected by `/usr/bin/pacman` and
+`/usr/bin/flatpak`; host var `skpatch_hosts_pkg_managers: [pacman, flatpak]`
+overrides), the check gets `pacman -Sy --noconfirm` and
+`flatpak update --appstream` (also on a report-only host: they only refresh
+metadata), and an armed host also gets `pacman -Syu --noconfirm`,
+`flatpak update -y`, `flatpak uninstall --unused -y` and two more wrappers,
+`/usr/local/sbin/skpatch-pacman-upgrade` (validated names, each must already
+be installed, then `pacman -S --noconfirm -- <names>`) and
+`/usr/local/sbin/skpatch-flatpak-update` (validated application ids, then
+`flatpak update -y --noninteractive -- <ids>`). The app's pacman autoremove
+(`pacman -Rns --noconfirm -`, names from stdin) is not granted: it would
+remove any package it is fed. The dpkg conffile policy is only written where
+dpkg exists.
+
+A report-only host gets none of the action lines, and a rerun with actions off
+removes the wrappers and the dpkg policy file.
 
 ## Notification delivery
 

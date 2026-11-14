@@ -105,6 +105,24 @@
       when: skpatch_hosts_proxmox is not defined
       tags: [config]
 
+    - name: Detect the package managers beyond apt (pacman, flatpak) and dpkg
+      # The sudoers lines for pacman and flatpak (and their wrappers) are only
+      # written where that manager exists; the dpkg conffile policy only where
+      # dpkg does. A host var skpatch_hosts_pkg_managers (a list, e.g.
+      # [pacman, flatpak]) overrides the pacman/flatpak detection.
+      stat:
+        path: "{{ item }}"
+      loop: [/usr/bin/pacman, /usr/bin/flatpak, /usr/bin/dpkg]
+      register: skp_pm_bins
+      tags: [config]
+
+    - name: Resolve the package managers on this host
+      set_fact:
+        skp_has_pacman: "{{ ('pacman' in skpatch_hosts_pkg_managers) if skpatch_hosts_pkg_managers is defined else (skp_pm_bins.results[0].stat.exists | default(false)) }}"
+        skp_has_flatpak: "{{ ('flatpak' in skpatch_hosts_pkg_managers) if skpatch_hosts_pkg_managers is defined else (skp_pm_bins.results[1].stat.exists | default(false)) }}"
+        skp_has_dpkg: "{{ skp_pm_bins.results[2].stat.exists | default(false) }}"
+      tags: [config]
+
     - name: Resolve whether this host is Proxmox VE
       set_fact:
         skp_node_is_proxmox: "{{ (skpatch_hosts_proxmox if skpatch_hosts_proxmox is defined else (skp_pvesh.stat.exists | default(false))) | bool }}"
@@ -167,9 +185,7 @@
         owner: root
         group: root
         mode: '0755'
-      loop:
-        - skpatch-apt-only-upgrade
-        - skpatch-snap-refresh
+      loop: "{{ ['skpatch-apt-only-upgrade', 'skpatch-snap-refresh'] + (['skpatch-pacman-upgrade'] if skp_has_pacman | bool else []) + (['skpatch-flatpak-update'] if skp_has_flatpak | bool else []) }}"
       when: skpatch_state == 'present' and skp_node_allow_actions | bool
 
     - name: Remove the selected-package upgrade wrappers (absent, or actions no longer allowed)
@@ -180,6 +196,15 @@
         - skpatch-apt-only-upgrade
         - skpatch-snap-refresh
       when: skpatch_state == 'absent' or not (skp_node_allow_actions | bool)
+
+    - name: Remove the pacman/flatpak wrappers where that manager is gone (or absent, or actions off)
+      file:
+        path: "/usr/local/sbin/{{ item.name }}"
+        state: absent
+      loop:
+        - {name: skpatch-pacman-upgrade, present: "{{ skp_has_pacman }}"}
+        - {name: skpatch-flatpak-update, present: "{{ skp_has_flatpak }}"}
+      when: skpatch_state == 'absent' or not (skp_node_allow_actions | bool) or not (item.present | bool)
 
     - name: Keep local conffiles during unattended upgrades (present, actions allowed)
       # The app runs apt and `dpkg --configure -a` with stdin on /dev/null. A
@@ -202,7 +227,7 @@
           # dpkg's conffile prompt with the package default, else keep the local file.
           force-confdef
           force-confold
-      when: skpatch_state == 'present' and skp_node_allow_actions | bool and skp_keep_conffiles | bool
+      when: skpatch_state == 'present' and skp_node_allow_actions | bool and skp_keep_conffiles | bool and skp_has_dpkg | bool
 
     - name: Remove the conffile policy (absent, actions off, or DPKG_KEEP_CONFFILES false)
       file:
