@@ -131,6 +131,7 @@ skpatch-hosts:
   DATA_PATH: ""                             # default /var/data/skpatch-hosts-<env>/data
   DATA_NODE: ""                             # pin dashboard to this node (required with a local path)
   PLACEMENT_CONSTRAINTS: []                 # default ["node.role == worker"]
+  EXTRA_HOSTS: []                           # ["host:address", ...] added to the container's /etc/hosts (README "Notification delivery")
   HEALTH_CHECK_INTERVAL: 30s
   HEALTH_CHECK_TIMEOUT: 10s
   HEALTH_CHECK_RETRIES: 3
@@ -150,6 +151,7 @@ skpatch-hosts:
   PROVISION_USER: skpatch-ro                # the low-privilege account's name
   PROVISION_UID: 5201                       # its fixed uid and gid; never a system uid (containers share the host's uid space)
   SSH_PUBLIC_KEY: ""                        # required by provision_skpatch_hosts_nodes.yml; one keypair per estate
+  DPKG_KEEP_CONFFILES: true                 # armed hosts answer dpkg's conffile prompt with its default (README "What an armed host gets")
   # Host auto-registration (see "Automatic host registration" below); REGISTER_AS plus a credential, else skipped
   REGISTER_AS: ""                           # an existing dashboard admin's username (local or OIDC)
   SSH_PRIVATE_KEY: ""                       # private half of SSH_PUBLIC_KEY; the registrar creates the credential from it
@@ -318,9 +320,12 @@ has to respect** (read from `server/services/scheduler.ts`):
 - Upgrades run under `nohup setsid` on the host and survive the dashboard
   container restarting; the schedule itself does not. Put the node that runs
   the dashboard last in its window.
-- A Proxmox reboot is blocked by the app's own backup guard unless sudoers
-  grants `pvesh get /cluster/tasks`, which this role does not (sudoers
-  template). Hypervisors are rebooted from Proxmox, not from here.
+- A Proxmox reboot runs the app's own backup guard first
+  (`pvesh get /cluster/tasks --output-format json`) and is blocked when that
+  guard cannot run. On an armed host where `/usr/bin/pvesh` exists (or
+  `skpatch_hosts_proxmox: true`) sudoers grants exactly that read-only argv, so
+  a hypervisor can be rebooted from the app by hand. Whether it also gets a
+  reboot schedule is the operator's choice; most estates give hypervisors none.
 - An enabled **Telegram** channel starts a `getUpdates` long-poll worker and
   rewrites that bot's command menu, whatever `commandsEnabled` says
   (`server/services/telegram-bot.ts` `sync()`). Never point it at a bot
@@ -344,6 +349,41 @@ skpatch_hosts_schedules:
   - {name: Reboot mgr-2, type: reboot, cron: "30 4 * * 2", only_if_required: true, systems: [mgr-2]}
   - {name: Daily digest, type: notification_digest, cron: "0 7 * * *", notifications: [Patch digest]}
 ```
+
+## What an armed host gets
+
+On a host where actions are allowed (`skpatch_hosts_allow_actions`, else
+`ALLOW_ACTIONS`), `provision_skpatch_hosts_nodes.yml` writes everything each
+dashboard action needs, all confirmed against the pinned image's own
+"Sudoers-relevant command" lines:
+
+| Dashboard action | What the host gets |
+|---|---|
+| Upgrade all / full upgrade / autoremove | the exact `apt-get -o DPkg::Lock::Timeout=60 ...` lines, plus `snap refresh` |
+| Upgrade selected | the two wrappers (below), never an `apt-get` or `snap` wildcard |
+| Repair ("package manager needs repair") | `/usr/bin/dpkg --configure -a` |
+| Reboot | `/usr/sbin/reboot`; on Proxmox VE also the guard's `pvesh get /cluster/tasks --output-format json` |
+| Any apt action | `Defaults:<account> env_keep += "DEBIAN_FRONTEND"`, so the app's own `DEBIAN_FRONTEND=noninteractive` reaches apt instead of being dropped by sudo's `env_reset` (without it debconf falls back to Teletype, reads EOF and fails the package) |
+| Any apt or dpkg action | `/etc/dpkg/dpkg.cfg.d/90-skpatch-hosts` with `force-confdef` and `force-confold`: a changed conffile is kept instead of dpkg stopping at its prompt with no terminal. `DPKG_KEEP_CONFFILES: false` leaves dpkg's default behaviour |
+
+A report-only host gets none of these, and a rerun with actions off removes
+the wrappers and the dpkg policy file.
+
+## Notification delivery
+
+The dashboard resolves names through Docker's DNS, which follows the node's
+resolver. When an SMTP (or OIDC) host resolves to the estate's own public
+address and the router does not hairpin NAT, the connection from inside the
+container times out and every email notification and digest fails, while the
+same name works from a host on a split-horizon resolver. `EXTRA_HOSTS` pins
+such a name for the container only:
+
+```yaml
+skpatch_hosts:
+  EXTRA_HOSTS: ["mail.example.org:10.0.0.15"]
+```
+
+Each entry is `host:address`; the deploy refuses anything else.
 
 ## Selected-package upgrades (wrappers, and a known limitation)
 
