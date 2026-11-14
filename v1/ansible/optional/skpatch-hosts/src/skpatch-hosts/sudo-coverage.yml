@@ -22,6 +22,18 @@
 # "only where pvesh exists".
 supported: [apt, snap, pacman, flatpak]
 
+# Every other manager the pinned image knows, with the binary provisioning
+# looks for. A host where one exists is REFUSED (no sudoers change at all)
+# unless its host var skpatch_hosts_unsupported_managers_ok lists it, which
+# says "the dashboard has this manager disabled for that system"; the
+# compliance check then verifies exactly that. The coverage test fails when
+# the image learns a manager that is in neither list.
+unsupported:
+  apk: /sbin/apk
+  deb-get: /usr/bin/deb-get
+  dnf: /usr/bin/dnf
+  yum: /usr/bin/yum
+
 # Absolute paths the sudoers template uses (Debian/Ubuntu, Proxmox VE, Arch
 # and Manjaro all agree on these).
 paths:

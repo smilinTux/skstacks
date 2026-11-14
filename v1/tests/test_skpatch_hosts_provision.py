@@ -68,9 +68,11 @@ STALE_CMDS = ("NOPASSWD: /usr/bin/apt list --upgradable",
               "NOPASSWD: /usr/bin/apt-get -y autoremove")
 
 
-def run(tmp: Path, vault: dict | None, extra_vars: dict | None = None) -> dict:
+def run(tmp: Path, vault: dict | None, extra_vars: dict | None = None, mutate=None) -> dict:
     work = tmp / "work"
     shutil.copytree(rp.ANSIBLE, work / "ansible")
+    if mutate is not None:
+        mutate(work / "ansible")
     for task_file in (work / "ansible").glob("**/tasks/*.yml"):
         if task_file.name != "select_vault_file.yml":
             rp.rewrite_task_file(task_file)
@@ -493,3 +495,54 @@ def test_arch_wrappers_are_installed_only_where_the_manager_exists(tmp_path):
 def test_conffile_policy_needs_dpkg():
     put = _task(PB.read_text(), "Keep local conffiles during unattended upgrades (present, actions allowed)")
     assert "skp_has_dpkg | bool" in put
+
+
+# --- onboarding guards: maintenance pause, uncovered package managers ------
+
+def test_paused_host_is_left_completely_alone(tmp_path):
+    res = run(tmp_path, {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True},
+              extra_vars={"skpatch_hosts_paused": True})
+    assert res["rc"] == 0, res["log"][-4000:]
+    assert "PAUSED" in res["log"]
+    assert not (tmp_path / "run/out/etc/sudoers.d/skpatch").exists()
+    assert not (tmp_path / "run/out/_copy/usr/local/sbin").exists()
+
+
+def test_pause_marker_file_is_checked_and_the_pause_ends_the_host_before_any_change():
+    text = PB.read_text()
+    assert "/etc/skpatch-hosts.paused" in text
+    pause = text.index("Look for the maintenance pause marker")
+    assert pause < text.index("Create the skpatch-hosts account (present)")
+    assert pause < text.index("Write the sudoers rule (present)")
+    assert "meta: end_host" in text[pause:text.index("Select vault file")]
+
+
+def test_paused_host_is_not_registered_in_the_dashboard():
+    collect = _task(PB.read_text(), "Collect this run's target systems (name, hostname, port) from the play's own hosts")
+    assert "hostvars[item].skp_paused" in collect
+
+
+def test_unsupported_manager_is_refused_unless_acknowledged():
+    text = PB.read_text()
+    refuse = _task(text, "Refuse a host with an uncovered package manager")
+    assert "skpatch_hosts_unsupported_managers_ok" in refuse
+    assert "sudo-coverage.yml" in _task(text, "Load the sudo coverage policy (which managers this role covers)")
+    assert text.index("Refuse a host with an uncovered package manager") < text.index("Write the sudoers rule (present)")
+
+
+def test_unsupported_manager_detection_fails_the_render(tmp_path):
+    # Point one "unsupported" binary at a path that exists on every test host
+    # (in the test's own copy of the tree), so detection fires for real
+    # through Ansible's stat.
+    def fake_dnf(ansible):
+        cov = ansible / "optional" / "skpatch-hosts" / "src" / "skpatch-hosts" / "sudo-coverage.yml"
+        cov.write_text(cov.read_text().replace("dnf: /usr/bin/dnf", "dnf: /bin/sh"))
+
+    vault = {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True}
+    (tmp_path / "bad").mkdir()
+    res = run(tmp_path / "bad", vault, mutate=fake_dnf)
+    assert res["rc"] != 0 and "does not cover" in res["log"] and "dnf" in res["log"]
+    assert not (tmp_path / "bad/run/out/etc/sudoers.d/skpatch").exists()
+    (tmp_path / "ok").mkdir()
+    res = run(tmp_path / "ok", vault, {"skpatch_hosts_unsupported_managers_ok": ["dnf"]}, mutate=fake_dnf)
+    assert res["rc"] == 0, res["log"][-4000:]

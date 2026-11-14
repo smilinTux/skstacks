@@ -171,3 +171,14 @@ def test_every_granted_rule_is_backed_by_a_decision(renders):
         assert grants <= allowed, f"{name}: rules no decision accounts for: {sorted(grants - allowed)}"
         assert not [r for r in grants if "*" in r]
     assert_visudo_accepts(renders["full"][0])
+
+
+def test_every_manager_the_image_knows_is_supported_or_refused():
+    known = set(fixture["managers"])
+    listed = set(SUPPORTED) | set(coverage["unsupported"])
+    assert known == listed, (
+        f"the pinned image knows managers {sorted(known - listed)} that sudo-coverage.yml neither "
+        f"supports nor lists as unsupported; stale entries: {sorted(listed - known)}")
+    assert not set(SUPPORTED) & set(coverage["unsupported"])
+    for path in coverage["unsupported"].values():
+        assert path.startswith("/")
