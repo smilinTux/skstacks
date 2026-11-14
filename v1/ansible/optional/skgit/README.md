@@ -1,6 +1,6 @@
 # skgit (Forgejo)
 
-Forgejo git hosting with a Postgres database, a dump sidecar and optional Actions runners. Router middleware chain: vault knob `TRAEFIK_MIDDLEWARES` (default `default-no-crowdsec@file`). Postgres data is bind-mounted from `/var/data/runtime/skgit-<env>/postgres`.
+Forgejo git hosting with a Postgres database, a dump sidecar and optional Actions runners. Router middleware chain: vault knob `TRAEFIK_MIDDLEWARES` (default `default-no-crowdsec@file`). API and git traffic (`/api/`, `info/refs`, `git-upload-pack`, `git-receive-pack`, `info/lfs/`) goes through the `skgit[-env]-api` router, whose chain is the main one without error pages (vault knob `API_MIDDLEWARES` replaces it), so clients get Forgejo's own status codes and JSON errors instead of the HTML error page. Postgres data is bind-mounted from `/var/data/runtime/skgit-<env>/postgres`.
 
 ## Upgrading Postgres to 18
 
