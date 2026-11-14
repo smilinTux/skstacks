@@ -38,7 +38,15 @@ empty chain, so an estate that never set the hash served its dashboard and API
 to the internet.
 
 These are dynamic configuration: a redeploy re-renders them and the workers
-reload the files without a restart.
+reload the files without a restart. Traefik reads the dynamic directories
+recursively, hidden directories included, and the first definition of a name
+wins, so a leftover `.bak-*` directory inside `dynamic/` or `dynamic_acme/`
+shadows every rendered file: the deploy reports changed and the edge keeps
+serving the old config. The play refuses to render while one exists (keep
+backups under `/var/data/backups`; `skfenceha.ALLOW_DYNAMIC_SUBDIRS: true`
+opts out). On shared NFS a write from one manager does not wake the file watch
+on the other managers: after a dynamic-only change, `touch` the changed files
+on each manager.
 
 **Behind a tunnel or CDN (`TRUSTED_PROXIES` + `DROP_FORWARDED_HEADERS`)**:
 `TRUSTED_PROXIES` (list) renders `forwardedHeaders.trustedIPs` on the

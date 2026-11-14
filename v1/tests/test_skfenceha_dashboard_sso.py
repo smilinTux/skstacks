@@ -58,3 +58,28 @@ def test_lan_mode_is_lan_only():
 def test_dashboard_router_always_has_an_auth_middleware():
     for v in ({}, {"DASHBOARD_AUTH_HASH": AUTH}, {"DASHBOARD_SSO_MIDDLEWARE": "authentik@file"}):
         assert len(dash_mw(**v)) == 2, v
+
+
+# -- the dynamic directory must not contain subdirectories (shadowing) --------
+
+PLAYBOOKS = sorted((SRC.parents[2]).glob("deploy_skfenceha-*.yml"))
+
+
+@pytest.mark.parametrize("playbook", PLAYBOOKS, ids=lambda p: p.stem)
+def test_dynamic_dir_subdirectory_guard_runs_before_the_render(playbook):
+    """Traefik reads the dynamic directory recursively and the first definition
+    wins, so a leftover `.bak-*` directory silently shadowed every rendered
+    change on a production edge. The play must refuse to render over one."""
+    tasks = yaml.safe_load(playbook.read_text())[2]["tasks"]
+    names = [t.get("name", "") for t in tasks]
+    guard = names.index("Refuse to deploy dynamic config while a subdirectory shadows it")
+    render = next(i for i, n in enumerate(names) if n.startswith("Deploy dynamic config"))
+    assert names.index("Find directories inside the dynamic config directories (they shadow the rendered files)") < guard < render
+    find = next(t for t in tasks if t.get("name", "").startswith("Find directories"))["find"]
+    assert find["hidden"] is True and find["file_type"] == "directory" and find["recurse"] is False
+    assert any("dynamic_acme" in p for p in find["paths"])
+
+
+def test_dynamic_dir_guard_has_an_explicit_opt_out():
+    text = PLAYBOOKS[0].read_text()
+    assert "skfenceha.ALLOW_DYNAMIC_SUBDIRS" in text
