@@ -78,6 +78,31 @@ services:
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-registry.tls.options=intermediate@file"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-registry.priority=100"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-registry.service=skgit{% if env != 'prod' %}-{{ env }}{% endif %}"
+{# === API AND GIT ROUTER (raw upstream status codes) ===
+    The main router's chain carries error-pages@file, which swaps every 4xx/5xx
+    for an HTML page from the error-pages service and replays the ORIGINAL
+    method there. API clients then saw "405/404 BaseHTTP Python" HTML instead
+    of Forgejo's JSON error (a failed PR merge read as a proxy block), and git
+    and LFS clients lost their real error text. This router sends /api/ and the
+    git smart-HTTP and LFS paths through the same chain with each
+    error-pages-bearing chain swapped for default-no-error-pages@file, so
+    CrowdSec, rate limit and security headers stay. Priority 150 sits below
+    runner-rpc (200) and above registry (100). skgit.API_MIDDLEWARES replaces
+    the derived chain (set it when your main chain relies on default@file's
+    ipwhitelist, which default-no-error-pages@file does not carry). #}
+{% set _api_swap = {'default@file': 'default-no-error-pages@file', 'default-no-crowdsec@file': 'default-no-error-pages@file'} %}
+{% set _api_mw = [] %}
+{% for _m in (skgit.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file', true)).split(',') %}
+{% set _ = _api_mw.append(_api_swap.get(_m | trim, _m | trim)) %}
+{% endfor %}
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-api.rule=Host(`{{ skgit.SUBDOMAIN_PREFIX | default('skgit') }}{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && (PathPrefix(`/api/`) || PathRegexp(`^/[^/]+/[^/]+/(info/refs|git-upload-pack|git-receive-pack|info/lfs/)`))"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-api.entrypoints=websecure"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-api.tls=true"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-api.tls.certresolver=main"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-api.tls.options=intermediate@file"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-api.priority=150"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-api.middlewares={{ skgit.API_MIDDLEWARES | default(_api_mw | join(','), true) }}"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-api.service=skgit{% if env != 'prod' %}-{{ env }}{% endif %}"
 {# Runner RPC router: skips the CrowdSec forward-auth.
     === RUNNER RPC ROUTER (skip the CrowdSec forward-auth) ===
     Rendered only when the main router runs crowdsec-bouncer (the only case it is
@@ -86,6 +111,7 @@ services:
     seconds. When the CrowdSec bouncer's LAPI lookup times out (~5 s) the bouncer
     fails closed with 403, so runners lose FetchTask/UpdateLog/UpdateTask calls.
     Forgejo still authenticates every runner RPC with the runner token.
+    Its chain also skips error-pages so runners see Forgejo's own status codes.
     Override with skgit.RUNNER_RPC_MIDDLEWARES to put the bouncer back. #}
 {% if 'crowdsec-bouncer' in (skgit.TRAEFIK_MIDDLEWARES | default('', true)) %}
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-runner-rpc.rule=Host(`{{ skgit.SUBDOMAIN_PREFIX | default('skgit') }}{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && PathPrefix(`/api/actions/runner.v1.RunnerService/`)"
@@ -94,7 +120,7 @@ services:
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-runner-rpc.tls.certresolver=main"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-runner-rpc.tls.options=intermediate@file"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-runner-rpc.priority=200"
-        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-runner-rpc.middlewares={{ skgit.RUNNER_RPC_MIDDLEWARES | default('default-no-crowdsec@file', true) }}"
+        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-runner-rpc.middlewares={{ skgit.RUNNER_RPC_MIDDLEWARES | default('default-no-error-pages@file', true) }}"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-runner-rpc.service=skgit{% if env != 'prod' %}-{{ env }}{% endif %}"
 {% endif %}
         # Service configuration
