@@ -4,7 +4,8 @@ behind sksec's fail-closed ``crowdsec-bouncer@file`` before widening it).
 Its three routers hardcoded ``default-no-crowdsec@file``, so a canary meant
 a hand edit of live service labels. ``skwhoami.MIDDLEWARES`` (map of
 service name -> Traefik middlewares string) overrides one router's chain;
-unset, every router renders exactly as before."""
+unset, every router uses ``default-no-error-pages@file`` (it was
+``default-no-crowdsec@file``; the echo service's status codes are the point)."""
 import pathlib
 
 import jinja2
@@ -34,14 +35,15 @@ def _mw(svc):
 def test_default_is_unchanged(env):
     svcs = _render(env)
     for name in SERVICES:
-        assert _mw(svcs[name]) == "default-no-crowdsec@file"
+        # the echo service's status codes are the point: no error-pages by default
+        assert _mw(svcs[name]) == "default-no-error-pages@file"
 
 
 def test_override_changes_only_the_named_router():
     svcs = _render(MIDDLEWARES={"whoami01": "crowdsec-bouncer@file,default@file"})
     assert _mw(svcs["whoami01"]) == "crowdsec-bouncer@file,default@file"
-    assert _mw(svcs["whoami02"]) == "default-no-crowdsec@file"
-    assert _mw(svcs["whoami03"]) == "default-no-crowdsec@file"
+    assert _mw(svcs["whoami02"]) == "default-no-error-pages@file"
+    assert _mw(svcs["whoami03"]) == "default-no-error-pages@file"
 
 
 def test_override_keeps_the_router_name():
