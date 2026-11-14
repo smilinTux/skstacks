@@ -98,7 +98,16 @@ def router_middlewares(text, svc, env, sfx):
 @pytest.mark.parametrize("env", ENVS)
 @pytest.mark.parametrize("svc", SERVICES)
 def test_unset_knobs_render_byte_identical_to_v2_26_4(svc, env):
-    assert normalize_images(render(svc, env)) == normalize_images((BASELINE / f"{svc}-{env}.yml").read_text())
+    # skgit's API router is new since v2.26.4 (test_skgit_api_router_*): the
+    # rest of the stack must still match the baseline byte for byte.
+    text = render(svc, env)
+    if svc == "skgit":
+        text = _drop_skgit_api(text)
+    assert normalize_images(text) == normalize_images((BASELINE / f"{svc}-{env}.yml").read_text())
+
+
+def _drop_skgit_api(text):
+    return "".join(l for l in text.splitlines(keepends=True) if "-api." not in l)
 
 
 @pytest.mark.parametrize("env", ENVS)
@@ -128,7 +137,9 @@ def test_override_replaces_only_that_routers_chain(svc, sfx, env):
     # Exception: putting crowdsec-bouncer on skgit's main router also renders the
     # skgit runner RPC router (test_skgit_runner_rpc_router_follows_the_crowdsec_knob).
     old = render(svc, env).splitlines()
-    new = [l for l in text.splitlines() if not (svc == "skgit" and "-runner-rpc." in l)]
+    # The skgit API router derives its chain from the main one, so it moves too.
+    old = [l for l in old if not (svc == "skgit" and "-api." in l)]
+    new = [l for l in text.splitlines() if not (svc == "skgit" and ("-runner-rpc." in l or "-api." in l))]
     assert len(old) == len(new)
     diff = [(a, b) for a, b in zip(old, new) if a != b]
     assert len(diff) == 1 and diff[0][1].rstrip().endswith(f'.middlewares={OVERRIDE}"'), diff
@@ -164,7 +175,7 @@ RUNNER_RPC_LIVE = [
     "traefik.http.routers.skgit-runner-rpc.tls.certresolver=main",
     "traefik.http.routers.skgit-runner-rpc.tls.options=intermediate@file",
     "traefik.http.routers.skgit-runner-rpc.priority=200",
-    "traefik.http.routers.skgit-runner-rpc.middlewares=default-no-crowdsec@file",
+    "traefik.http.routers.skgit-runner-rpc.middlewares=default-no-error-pages@file",
     "traefik.http.routers.skgit-runner-rpc.service=skgit",
 ]
 
@@ -189,3 +200,52 @@ def test_skgit_runner_rpc_router_follows_the_crowdsec_knob():
     assert _skgit_runner_labels(with_bouncer) == expected
     kept = render("skgit", "prod", TRAEFIK_MIDDLEWARES=OVERRIDE, RUNNER_RPC_MIDDLEWARES=OVERRIDE)
     assert f"traefik.http.routers.skgit-runner-rpc.middlewares={OVERRIDE}" in _skgit_runner_labels(kept)
+
+
+def _skgit_api_labels(text, env="prod"):
+    pre = f"traefik.http.routers.skgit{_sfx(env)}-api."
+    labels = []
+    for s in (yaml.safe_load(text).get("services") or {}).values():
+        labels += [l for l in ((s.get("deploy") or {}).get("labels") or []) if l.startswith(pre)]
+    return labels
+
+
+@pytest.mark.parametrize("env", ENVS)
+def test_skgit_api_router_skips_error_pages_by_default(env):
+    """API and git traffic must see Forgejo's own status codes and JSON.
+
+    error-pages@file replaced a failed PR merge's 405/409 JSON with an HTML page
+    from a Python BaseHTTP server, so API clients read it as a proxy block.
+    """
+    labels = _skgit_api_labels(render("skgit", env), env)
+    mw = [l.split("=", 1)[1] for l in labels if ".middlewares=" in l]
+    assert mw == ["default-no-error-pages@file"]
+    rule = next(l for l in labels if ".rule=" in l)
+    for part in ("PathPrefix(`/api/`)", "info/refs", "git-upload-pack", "git-receive-pack", "info/lfs/"):
+        assert part in rule
+    assert "$" not in rule  # docker stack deploy would interpolate it
+    assert f"traefik.http.routers.skgit{_sfx(env)}-api.priority=150" in labels
+    assert f"traefik.http.routers.skgit{_sfx(env)}-api.service=skgit{_sfx(env)}" in labels
+
+
+def test_skgit_api_router_keeps_crowdsec_and_drops_only_error_pages():
+    text = render("skgit", "prod", TRAEFIK_MIDDLEWARES="crowdsec-bouncer@file,default-no-crowdsec@file")
+    assert "traefik.http.routers.skgit-api.middlewares=crowdsec-bouncer@file,default-no-error-pages@file" in _skgit_api_labels(text)
+    text = render("skgit", "prod", TRAEFIK_MIDDLEWARES=OVERRIDE)
+    assert "traefik.http.routers.skgit-api.middlewares=crowdsec-bouncer@file,default-no-error-pages@file" in _skgit_api_labels(text)
+    # any custom middleware in the main chain is carried over unchanged
+    text = render("skgit", "prod", TRAEFIK_MIDDLEWARES="my-mw@file, default-no-crowdsec@file")
+    assert "traefik.http.routers.skgit-api.middlewares=my-mw@file,default-no-error-pages@file" in _skgit_api_labels(text)
+
+
+def test_skgit_api_middlewares_knob_overrides_the_derived_chain():
+    text = render("skgit", "prod", API_MIDDLEWARES="ipwhitelist@file,default-no-error-pages@file")
+    assert "traefik.http.routers.skgit-api.middlewares=ipwhitelist@file,default-no-error-pages@file" in _skgit_api_labels(text)
+    assert render("skgit", "prod", API_MIDDLEWARES="") == render("skgit", "prod")
+
+
+def test_skgit_api_router_never_names_an_error_pages_chain():
+    for over in ({}, {"TRAEFIK_MIDDLEWARES": OVERRIDE}, {"TRAEFIK_MIDDLEWARES": "crowdsec-bouncer@file,default-no-crowdsec@file"}):
+        mw = next(l for l in _skgit_api_labels(render("skgit", "prod", **over)) if ".middlewares=" in l)
+        assert "error-pages@file" not in mw.replace("default-no-error-pages@file", "")
+        assert "default@file" not in mw and "default-no-crowdsec@file" not in mw
