@@ -35,10 +35,13 @@
 #     vault_skfenceha_cloudflare_dns_token (no defaults; both instance vars).
 #
 # Security features beyond skfence:
-#   - skfenceha.DASHBOARD_AUTH_HASH: pre-hashed (htpasswd -nbB) dashboard
-#     basic-auth credential. Generate with src/skfenceha/create_user_password.sh.
-#   - skfenceha.DASHBOARD_SSO_MIDDLEWARE: e.g. authentik@file; replaces basic auth.
-#     Neither set: the dashboard is LAN-only (DASHBOARD_FALLBACK_ALLOW_CIDRS).
+#   - skfenceha.DASHBOARD_AUTH_MODE: sso (default) | basic | lan. sso gates the
+#     dashboard with the authentik forward-auth middleware only (no htpasswd is
+#     rendered); basic needs skfenceha.DASHBOARD_AUTH_HASH (pre-hashed,
+#     htpasswd -nbB; generate with src/skfenceha/create_user_password.sh);
+#     lan admits only DASHBOARD_FALLBACK_ALLOW_CIDRS.
+#   - skfenceha.DASHBOARD_SSO_MIDDLEWARE: sso mode's middleware name, default
+#     authentik@file.
 #   - skfenceha.WHITELIST_IPS: list of CIDRs/IPs, empty by default. When
 #     non-empty, an ipAllowList middleware is added to the default chain.
 #   - skfenceha.CROWDSEC_ENABLED: opt-in reference to an externally deployed
@@ -279,6 +282,39 @@
         owner: root
         group: root
         mode: '0755'
+
+    # Traefik's file provider reads the dynamic directory RECURSIVELY, hidden
+    # directories included, and the first definition of a router or
+    # middleware name wins. A leftover backup directory (for example a
+    # `.bak-<date>` copy of the old files) therefore shadows every file this
+    # play renders: the deploy reports changed, the edge keeps serving the old
+    # config. Found on a production edge where two such directories had
+    # silently disabled every dynamic change for three weeks. Fail loudly.
+    - name: Find directories inside the dynamic config directories (they shadow the rendered files)
+      find:
+        paths:
+          - "/var/data/config/{{ app }}-{{ env }}/dynamic"
+          - "/var/data/config/{{ app }}-{{ env }}/dynamic_acme"
+        file_type: directory
+        hidden: true
+        recurse: false
+      register: skfenceha_dynamic_subdirs
+      tags:
+        - config
+        - dynamic
+
+    - name: Refuse to deploy dynamic config while a subdirectory shadows it
+      assert:
+        that:
+          - (skfenceha_dynamic_subdirs.files | length == 0) or (skfenceha.ALLOW_DYNAMIC_SUBDIRS | default(false) | bool)
+        fail_msg: >-
+          Traefik's file provider reads these directories recursively and the first definition of a name wins, so
+          {{ skfenceha_dynamic_subdirs.files | map(attribute='path') | list }} shadow the files this play renders.
+          Move them out of the dynamic directories (backups belong under /var/data/backups), or set
+          skfenceha.ALLOW_DYNAMIC_SUBDIRS: true if they are intentional.
+      tags:
+        - config
+        - dynamic
 
     - name: Deploy dynamic config (routers, services, middlewares, TLS options) to both the worker and ACME-master directories
       template:

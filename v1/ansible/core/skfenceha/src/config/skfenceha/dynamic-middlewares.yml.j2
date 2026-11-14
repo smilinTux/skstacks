@@ -1,9 +1,18 @@
 # Traefik HTTP middlewares (dynamic/middlewares.yml).
 # This file is managed by Ansible - do not edit manually.
 
+{# skfenceha.DASHBOARD_AUTH_MODE: sso (default) | basic | lan. In sso mode the
+   dashboard router uses the authentik forward-auth middleware and NO
+   traefikAuth middleware is rendered, so no htpasswd hash reaches the edge.
+   Same expression as routers.yml.j2. #}
+{% set dashboard_auth_mode = skfenceha.DASHBOARD_AUTH_MODE | default('sso', true) %}
 http:
   middlewares:
-{% if skfenceha.DASHBOARD_AUTH_HASH | default('') != '' %}
+{% if dashboard_auth_mode == 'sso' %}
+    # Dashboard auth is SSO only (skfenceha.DASHBOARD_AUTH_MODE: sso, the
+    # default): routers.yml gates the dashboard with the forward-auth
+    # middleware below, so there is no basic-auth or allowlist middleware here.
+{% elif dashboard_auth_mode == 'basic' and skfenceha.DASHBOARD_AUTH_HASH | default('') != '' %}
     traefikAuth:
       basicAuth:
         users:
@@ -14,9 +23,9 @@ http:
         realm: "{{ skfenceha.DASHBOARD_AUTH_REALM | default('TraefikDashboard') }}"
 {% endif %}
 {% else %}
-    # No dashboard credentials configured (skfenceha.DASHBOARD_AUTH_HASH is
-    # empty). Fail safe: the dashboard and API answer only private/LAN source
-    # addresses (skfenceha.DASHBOARD_FALLBACK_ALLOW_CIDRS), never the whole
+    # Mode lan, or mode basic with no credentials configured
+    # (skfenceha.DASHBOARD_AUTH_HASH is empty). Fail safe: the dashboard and
+    # API answer only private/LAN source addresses (skfenceha.DASHBOARD_FALLBACK_ALLOW_CIDRS), never the whole
     # internet. Before 2026-11-09 this was an empty chain, i.e. an open
     # dashboard on any estate that forgot the hash.
     traefikAuth:

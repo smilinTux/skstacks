@@ -304,7 +304,7 @@ sksso side (the Authentik blueprint).
 On by default (`sksec_web.AUTHENTIK_TILE`, default `true`; set to `false` to opt out): the next deploy creates
 or updates an Authentik `core.Application` named `AUTHENTIK_TILE_NAME`
 (default `SKSec Web (CrowdSec)`), launch URL `https://<the public host above>`, icon
-`AUTHENTIK_TILE_ICON` (default `fa://fa-shield-halved`), bound to the group
+`AUTHENTIK_TILE_ICON` (default `fa://fa-shield-alt`), bound to the group
 `AUTHENTIK_TILE_GROUP` (default `skadmin`, which must already exist).
 **`AUTH_MODE: sso`/`local`:** this adds a provider-less dashboard bookmark only;
 it creates no provider and changes nothing about
