@@ -345,6 +345,73 @@ skpatch_hosts_schedules:
   - {name: Daily digest, type: notification_digest, cron: "0 7 * * *", notifications: [Patch digest]}
 ```
 
+## Selected-package upgrades (wrappers, and a known limitation)
+
+The dashboard's "upgrade selected packages" action runs
+`apt-get -o DPkg::Lock::Timeout=60 install --only-upgrade -y <pkg>...` (and
+`snap refresh <name>...` for snaps), with names that change on every call. A
+sudoers line for that needs a wildcard, and a wildcard on `apt-get` or `snap`
+is root: the caller can append `-o APT::Update::Pre-Invoke::=<cmd>` (or a
+snap flag) and run anything. This role therefore never writes one. On a host
+where actions are armed (`skpatch_hosts_allow_actions`, same gate as the other
+upgrade lines), `provision_skpatch_hosts_nodes.yml` instead installs two
+root-owned wrappers, `root:root`, mode `0755`, and sudoers grants only those,
+by absolute path with no `*`:
+
+| Wrapper | Accepts | Runs exactly |
+|---|---|---|
+| `/usr/local/sbin/skpatch-apt-only-upgrade` | one or more args, each matching `^[a-z0-9][a-z0-9+.:-]*$` | `apt-get -o DPkg::Lock::Timeout=60 install --only-upgrade -y -- <pkgs>` |
+| `/usr/local/sbin/skpatch-snap-refresh` | one or more args, each matching `^[a-z0-9][a-z0-9-]*$` | `snap refresh -- <names>` |
+
+Any bad argument (empty, option-shaped, uppercase, whitespace, a shell
+metacharacter, `=`/`/` version or release pins) rejects the whole call with
+exit 2 before anything runs. Both run through `env -i` with a fixed `PATH`, so
+nothing in the caller's environment (`APT_CONFIG`, `LD_PRELOAD`, ...) reaches
+apt or snap. The snap regex is the lowercase, digit and hyphen alphabet snap
+names use; it is a guard, not a name validator (snapd still rejects a
+malformed name that passes it), and parallel-install instance names
+(`name_key`) are refused on purpose. `snap refresh` accepts `--` (checked on
+snap 2.78), so it is a second guard there. Rerunning the playbook with
+actions off, or with `skpatch_hosts_provision_state=absent`, removes both
+wrappers.
+
+**Known limitation: selected-package upgrades need the wrapper, and the
+dashboard still calls `apt-get` directly.** In the pinned image
+(linux-update-dashboard 2026.10.9), `builtinUpgradeSelectedCommand` in
+`server/services/script-service.ts` builds the command: line 1134 for apt
+(`apt-get -o DPkg::Lock::Timeout=60 install --only-upgrade -y {{packages}}`),
+line 1147 for snap (`snap refresh {{packages}}`). There is no environment
+variable, setting or config file that changes it, so the role cannot point the
+dashboard at the wrappers at deploy time. The only override is the app's own
+custom script, per system and package manager: `POST /api/scripts` to create
+it, then `PUT /api/systems/:id/script-overrides` (`API.md` line 121) or the
+system's Scripts tab in the UI. That API refuses API tokens (`API.md` lines
+17 and 18), is stored in the dashboard database, and is not something the
+registrar sets, so it is a one-time operator step per system, not part of this
+role. Until it is done, a selected-package upgrade on an armed host still ends
+"sudo: a password is required"; "Upgrade all" is unaffected.
+
+To use the wrappers, create two custom scripts for operation
+`upgrade_selected` and assign them to the system (override keys
+`apt/upgrade_selected` and `snap/upgrade_selected`):
+
+```sh
+# apt
+export DEBIAN_FRONTEND=noninteractive
+sudo -S -p '' /usr/local/sbin/skpatch-apt-only-upgrade {{packages}} 2>&1
+```
+
+```sh
+# snap
+sudo -S -p '' /usr/local/sbin/skpatch-snap-refresh {{packages}} 2>&1
+```
+
+`{{packages}}` is the app's own validated, space-joined name list. This recipe
+was written from the upstream source and was not exercised against a live
+dashboard: try it on one armed host first. The app's own sudoers preview shows
+the wildcard form as a commented-out suggestion ("Selected-package upgrades
+are disabled by default"); do not uncomment it.
+
 ## Related projects / See also
 
 - ⬆️ **Depends on:** [skfence / skfenceha](https://github.com/smilinTux/skstacks/blob/main/docs/v1-service-catalog.md#skfence), Traefik ingress every router here assumes; [sksso](https://github.com/smilinTux/skstacks/blob/main/docs/v1-service-catalog.md#sksso), Authentik, for the default `AUTH_MODE: sso`.
