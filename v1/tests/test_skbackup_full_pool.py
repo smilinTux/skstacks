@@ -6,7 +6,9 @@ successful copy (so nothing ever expired), one app's rsync hung until the
 whole run was killed (every later app skipped), a failed run had already
 deleted a copy's only dump, and nothing alerted because no check ran.
 """
+import subprocess
 import time
+from pathlib import Path
 
 from skbackup_support import FakeHost
 
@@ -129,3 +131,28 @@ def test_check_watches_thin_volumes(tmp_path):
     assert "OK thin pool vg/pool 50%" in out
     assert "WARN thin volume vg/backup data 96%" in out
     assert "WARN thin volume vg/missing not found" in out
+
+
+ALERT_HOST_CHECK = Path(__file__).resolve().parent.parent / "ansible/optional/skbackup/src/skbackup/alert-host-check"
+
+
+def alert_key_for(tmp_path, report: str) -> str:
+    fake_ssh = tmp_path / "ssh"
+    fake_ssh.write_text(f"#!/bin/sh\ncat <<'X'\n{report}\nX\nexit 1\n")
+    fake_ssh.chmod(0o755)
+    script = ALERT_HOST_CHECK.read_text().replace("/usr/bin/ssh", str(fake_ssh))
+    copy = tmp_path / "ahc"
+    copy.write_text(script)
+    rec = tmp_path / "rec"
+    proc = subprocess.run(["bash", str(copy), "host", "/x/cli", "PFX", "sh", "-c", f'echo "$1" > {rec}', "-", "{key}"],
+                          capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    return rec.read_text().strip()
+
+
+def test_alert_host_key_is_stable_while_a_condition_persists(tmp_path):
+    a = alert_key_for(tmp_path, "STALE tier2: app1 newest x@daily-20261112T103001Z is 38h old\nWARN pool backup 96% full")
+    b = alert_key_for(tmp_path, "STALE tier2: app1 newest x@daily-20261112T103001Z is 39h old\nWARN pool backup 97% full")
+    c = alert_key_for(tmp_path, "WARN pool backup 97% full")
+    assert a == b, "an hourly-new key opens a new alert every hour and buries the condition"
+    assert a != c
