@@ -5,6 +5,22 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+### Machine and API traffic bypasses the error-pages middleware on every app
+
+- **Fix: API errors were hidden behind the SKStacks error page.** The shared Traefik chains end in
+  `error-pages@file`, which replaced any backend 400 and 402-599 with an HTML page and replayed the
+  original method there (a failed POST read as a 405 or 501 from the error page). API clients, webhook
+  senders, S3 and WebDAV clients, git, OIDC clients and probes never saw the app's real status or JSON
+  error. It hid a real skgit merge failure for three days (skgit was fixed first). Now skorch, skport,
+  skpdf, skseek, skpeek, skboard, skgallery, skflow, skaegis, skpayment, skhub, skbook, skstream and
+  sksso have an `-api` router for their machine paths (derived chain without error pages, knob
+  `<app>.API_MIDDLEWARES`); skpulse's public and metrics routers, skrac's agent router and skpayment's
+  webhook router drop error pages from their default chain; skstor (S3), skvector and skwhoami are
+  API-only and drop it from the default. See "API routers" in `docs/v1-service-catalog.md`. Needs the
+  operator: nothing, unless the main chain is `default@file` with an IP allowlist or CrowdSec, in which
+  case set `<app>.API_MIDDLEWARES` to keep them on the API router. skbook, skstream, sksso and skhub take
+  the chain from the instance vault, so their API router follows whatever `router_middlewares` says.
+
 ### skhub: MariaDB buffer pool and memory limit are knobs
 
 - **skhub: `DB_INNODB_BUFFER_POOL_SIZE` and `DB_MEMORY_LIMIT`.** The db service took MariaDB's 128M

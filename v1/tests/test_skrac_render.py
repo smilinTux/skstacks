@@ -123,7 +123,8 @@ def test_default_router_splits_agent_paths_from_everything_else(base_out):
         "PathPrefix(`/meshsettings.ashx`) || PathPrefix(`/devicefile.ashx`) || "
         "PathPrefix(`/health.ashx`))")
     assert lab["traefik.http.routers.skrac-agent.priority"] == "100"
-    assert lab["traefik.http.routers.skrac-agent.middlewares"] == "default-no-crowdsec@file"
+    # agents are machine traffic: no error-pages (test_error_pages_api_paths.py)
+    assert lab["traefik.http.routers.skrac-agent.middlewares"] == "default-no-error-pages@file"
     assert lab["traefik.http.routers.skrac.rule"] == "Host(`skrac.render.example.test`)"
     # Above skfenceha's per-domain catch-all routers (priority 1, error
     # pages): at 1 the tie went to the catch-all and the UI answered 404

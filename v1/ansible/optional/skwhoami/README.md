@@ -37,7 +37,7 @@ skwhoami:
   DOMAIN: "example.com"
   whoami_version: "v1.12.0"   # pinned tag; never :latest
   # optional: per-router Traefik middlewares, keyed by service name.
-  # Unset routers keep default-no-crowdsec@file.
+  # Unset routers use default-no-error-pages@file (the echo service's status codes are the point).
   MIDDLEWARES:
     whoami01: "crowdsec-bouncer@file,default@file"
 ```

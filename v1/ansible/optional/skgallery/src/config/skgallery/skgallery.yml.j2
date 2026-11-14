@@ -117,6 +117,31 @@ services:
         # buffering issues (ECONNRESET) on large file uploads through the proxy.
         - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares={{ skgallery.TRAEFIK_MIDDLEWARES | default('upload-chain-no-crowdsec@file') }}"
         - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.service=skgallery{% if env != 'prod' %}-{{ env }}{% endif %}"
+{# === API ROUTER (raw upstream status codes) ===
+    Immich's API (`/api/`, including `/api/socket.io` and the mobile app's
+    uploads) and the `/.well-known/immich` discovery document.
+    The main router's chain carries error-pages@file, which swaps every 4xx/5xx for an
+    HTML page from the error-pages service and replays the ORIGINAL method there, so API
+    clients never saw the app's real status or JSON error. This router sends the machine
+    paths through the main chain with each error-pages-bearing chain swapped for its
+    no-error-pages form (rate limit and security headers stay; the upload chains keep their
+    buffering). skgallery.API_MIDDLEWARES replaces the derived chain. #}
+{% set _api_swap = {'default@file': 'default-no-error-pages@file', 'default-no-crowdsec@file': 'default-no-error-pages@file', 'upload-chain@file': 'large-upload-buffering@file,default-security-headers@file', 'upload-chain-no-crowdsec@file': 'large-upload-buffering@file,default-security-headers@file', 'skai-chain@file': 'skai-headers@file,gzip@file', 'error-pages@file': '', 'error-pages-all@file': ''} %}
+{% set _api_mw = [] %}
+{% for _m in (skgallery.TRAEFIK_MIDDLEWARES | default('upload-chain-no-crowdsec@file')).split(',') %}
+{% set _s = _api_swap.get(_m | trim, _m | trim) %}
+{% if _s %}
+{% set _ = _api_mw.append(_s) %}
+{% endif %}
+{% endfor %}
+        - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}-api.rule=Host(`skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && (PathPrefix(`/api/`) || PathPrefix(`/.well-known/`))"
+        - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}-api.entrypoints={{ skgallery.TRAEFIK_ENTRYPOINT | default('websecure') }}"
+        - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}-api.tls=true"
+        - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}-api.tls.certresolver={{ skgallery.TRAEFIK_CERTRESOLVER | default('main') }}"
+        - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}-api.tls.options={{ skgallery.TRAEFIK_TLS_OPTIONS | default('intermediate@file') }}"
+        - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}-api.priority=150"
+        - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}-api.middlewares={{ skgallery.API_MIDDLEWARES | default(_api_mw | unique | join(','), true) }}"
+        - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}-api.service=skgallery{% if env != 'prod' %}-{{ env }}{% endif %}"
 
         # === TRAEFIK: Service Configuration ===
         - "traefik.http.services.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=2283"

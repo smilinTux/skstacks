@@ -35,7 +35,21 @@ version: '3.8'
 {% set skp_auth_mode = (skpulse.AUTH_MODE | default('sso', true) | string | lower) %}
 {% set skp_sso_middleware = ((skpulse.SSO_MIDDLEWARE | default('authentik@file', true) | string) if skp_auth_mode == 'sso' else '') %}
 {% set skp_middlewares = (skpulse.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file', true)) %}
-{% set skp_bypass_middlewares = (skpulse.BYPASS_TRAEFIK_MIDDLEWARES | default(skp_middlewares, true)) %}
+{# The bypass router (push heartbeats, status pages, badges) and the metrics router carry machine
+   traffic: a monitor's push call and a Prometheus scrape must see Kuma's own status and JSON, not
+   the error-pages HTML (which also replays the original method). Their default chain is the main
+   one with each error-pages-bearing chain swapped for its no-error-pages form; the BYPASS and
+   METRICS knobs still replace it whole. #}
+{% set _api_swap = {'default@file': 'default-no-error-pages@file', 'default-no-crowdsec@file': 'default-no-error-pages@file', 'upload-chain@file': 'large-upload-buffering@file,default-security-headers@file', 'upload-chain-no-crowdsec@file': 'large-upload-buffering@file,default-security-headers@file', 'skai-chain@file': 'skai-headers@file,gzip@file', 'error-pages@file': '', 'error-pages-all@file': ''} %}
+{% set _api_mw = [] %}
+{% for _m in (skp_middlewares).split(',') %}
+{% set _s = _api_swap.get(_m | trim, _m | trim) %}
+{% if _s %}
+{% set _ = _api_mw.append(_s) %}
+{% endif %}
+{% endfor %}
+{% set skp_machine_middlewares = _api_mw | unique | join(',') %}
+{% set skp_bypass_middlewares = (skpulse.BYPASS_TRAEFIK_MIDDLEWARES | default(skp_machine_middlewares, true)) %}
 {% set skp_metrics_bypass = (skpulse.METRICS_BYPASS_SSO | default(false, true) | bool) %}
 {% set skp_metrics_middlewares = (skpulse.METRICS_TRAEFIK_MIDDLEWARES | default(skp_bypass_middlewares, true)) %}
 {% set skp_router = 'skpulse' + ('' if env == 'prod' else '-' + env) %}

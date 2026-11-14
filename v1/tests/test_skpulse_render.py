@@ -114,7 +114,8 @@ def test_bypass_router_present_with_push_status_badge_and_assets_never_sso(base_
                    "PathPrefix(`/assets`)", "PathPrefix(`/upload`)"):
         assert needle in rule, rule
     assert lab["traefik.http.routers.skpulse-public.priority"] == "100"
-    assert lab["traefik.http.routers.skpulse-public.middlewares"] == "default-no-crowdsec@file"
+    # machine traffic (push heartbeats, status pages, badges): no error-pages (test_error_pages_api_paths.py)
+    assert lab["traefik.http.routers.skpulse-public.middlewares"] == "default-no-error-pages@file"
     assert "authentik" not in lab["traefik.http.routers.skpulse-public.middlewares"]
     assert lab["traefik.http.routers.skpulse-public.service"] == "skpulse"
 

@@ -56,6 +56,30 @@ services:
         # Bare name resolves within the same (swarm) provider, i.e. ...-upload@swarm.
         - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares={{ skpdf.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file,skpdf' ~ ('' if env == 'prod' else '-' ~ env) ~ '-upload', true) }}"
         - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.service=skpdf{% if env != 'prod' %}-{{ env }}{% endif %}"
+{# === API ROUTER (raw upstream status codes) ===
+    Stirling-PDF's REST API (`/api/v1/...`) and its OpenAPI document.
+    The main router's chain carries error-pages@file, which swaps every 4xx/5xx for an
+    HTML page from the error-pages service and replays the ORIGINAL method there, so API
+    clients never saw the app's real status or JSON error. This router sends the machine
+    paths through the main chain with each error-pages-bearing chain swapped for its
+    no-error-pages form (rate limit and security headers stay; the upload chains keep their
+    buffering). skpdf.API_MIDDLEWARES replaces the derived chain. #}
+{% set _api_swap = {'default@file': 'default-no-error-pages@file', 'default-no-crowdsec@file': 'default-no-error-pages@file', 'upload-chain@file': 'large-upload-buffering@file,default-security-headers@file', 'upload-chain-no-crowdsec@file': 'large-upload-buffering@file,default-security-headers@file', 'skai-chain@file': 'skai-headers@file,gzip@file', 'error-pages@file': '', 'error-pages-all@file': ''} %}
+{% set _api_mw = [] %}
+{% for _m in (skpdf.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file,skpdf' ~ ('' if env == 'prod' else '-' ~ env) ~ '-upload', true)).split(',') %}
+{% set _s = _api_swap.get(_m | trim, _m | trim) %}
+{% if _s %}
+{% set _ = _api_mw.append(_s) %}
+{% endif %}
+{% endfor %}
+        - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}-api.rule=Host(`skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.{{ skpdf.CLUSTERNAME }}.{{ skpdf.DOMAIN }}`) && (PathPrefix(`/api/`) || PathPrefix(`/v3/api-docs`))"
+        - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}-api.entrypoints=websecure"
+        - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}-api.tls=true"
+        - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}-api.tls.certresolver=main"
+        - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}-api.tls.options=intermediate@file"
+        - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}-api.priority=150"
+        - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}-api.middlewares={{ skpdf.API_MIDDLEWARES | default(_api_mw | unique | join(','), true) }}"
+        - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}-api.service=skpdf{% if env != 'prod' %}-{{ env }}{% endif %}"
         # === TRAEFIK: SERVICES ===
         - "traefik.http.services.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=8080"
 {% if skpdf.LARGE_FILE_UPLOAD | default(true) %}

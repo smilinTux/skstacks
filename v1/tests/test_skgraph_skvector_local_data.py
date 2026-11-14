@@ -107,7 +107,12 @@ def mount_source(svc, target):
 @pytest.mark.parametrize("env", ENVS)
 @pytest.mark.parametrize("stack", STACKS)
 def test_unset_knobs_render_byte_identical_to_v2_26_1(stack, env):
-    assert normalize_images(render(stack, env)) == normalize_images((BASELINE / f"{stack}-{env}.yml").read_text())
+    text = render(stack, env)
+    if stack == "skvector":
+        # skvector is API-only: its default chains dropped error-pages after v2.26.1
+        # (test_error_pages_api_paths.py). Nothing else may move.
+        text = text.replace("default-no-error-pages@file", "default-no-crowdsec@file")
+    assert normalize_images(text) == normalize_images((BASELINE / f"{stack}-{env}.yml").read_text())
 
 
 @pytest.mark.parametrize("env", ENVS)

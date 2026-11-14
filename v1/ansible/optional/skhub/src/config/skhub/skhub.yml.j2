@@ -77,6 +77,33 @@ services:
 {% if skhub.tls_options | default('') %}
         - "traefik.http.routers.skhub-secure.tls.options={{ skhub.tls_options }}"
 {% endif %}
+{# === API ROUTER (raw upstream status codes) ===
+    What Nextcloud clients and scripts call: OCS (`/ocs/`, `/index.php/ocs/`), WebDAV and CalDAV
+    (`/remote.php/`, `/public.php/`), `/status.php`, `/.well-known/`, the login flow (`/index.php/login/v2`)
+    and the apps' own APIs (`/apps/<app>/api/`). The instance's chain (router_middlewares) can
+    carry error-pages@file, which swaps every 4xx/5xx for an HTML page and replays the ORIGINAL
+    method there, so a failed WebDAV PUT or an OCS error reads as a proxy block (and the desktop
+    and mobile clients lose the real status). This router sends those paths through the same chain
+    with each error-pages-bearing chain swapped for its no-error-pages form; skhub and skhub-dav
+    and anything else in the chain are kept. skhub.API_MIDDLEWARES replaces the derived chain. #}
+{% set _api_swap = {'default@file': 'default-no-error-pages@file', 'default-no-crowdsec@file': 'default-no-error-pages@file', 'upload-chain@file': 'large-upload-buffering@file,default-security-headers@file', 'upload-chain-no-crowdsec@file': 'large-upload-buffering@file,default-security-headers@file', 'skai-chain@file': 'skai-headers@file,gzip@file', 'error-pages@file': '', 'error-pages-all@file': ''} %}
+{% set _api_mw = [] %}
+{% for _m in (_skhub_secure_middlewares | join(',')).split(',') %}
+{% set _s = _api_swap.get(_m | trim, _m | trim) %}
+{% if _s %}
+{% set _ = _api_mw.append(_s) %}
+{% endif %}
+{% endfor %}
+        - "traefik.http.routers.skhub-api.rule=Host(`{{ skhub.SKHUB_HOSTNAME | default('skhub' + ('-staging' if env == 'staging' else '-dev' if env == 'dev' else '') + '.' + _base_domain) }}`) && (PathPrefix(`/ocs/`) || PathPrefix(`/ocs-provider/`) || PathPrefix(`/remote.php/`) || PathPrefix(`/public.php/`) || PathPrefix(`/index.php/ocs/`) || PathPrefix(`/index.php/login/v2`) || Path(`/status.php`) || PathPrefix(`/.well-known/`) || PathRegexp(`^/(index[.]php/)?apps/[^/]+/api/`))"
+        - "traefik.http.routers.skhub-api.priority=50"
+        - "traefik.http.routers.skhub-api.entrypoints=websecure"
+        - "traefik.http.routers.skhub-api.tls=true"
+        - "traefik.http.routers.skhub-api.tls.certresolver=main"
+{% if skhub.tls_options | default('') %}
+        - "traefik.http.routers.skhub-api.tls.options={{ skhub.tls_options }}"
+{% endif %}
+        - "traefik.http.routers.skhub-api.middlewares={{ skhub.API_MIDDLEWARES | default(_api_mw | unique | join(','), true) }}"
+        - "traefik.http.routers.skhub-api.service=skhub-secure"
         # STICKY SESSIONS: required for a stateful web app (Nextcloud) behind
         # more than one Traefik instance.
         - "traefik.http.services.skhub-secure.loadbalancer.sticky=true"
