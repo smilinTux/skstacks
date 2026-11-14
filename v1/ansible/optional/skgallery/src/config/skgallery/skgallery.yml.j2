@@ -46,7 +46,7 @@ services:
   # Immich Server - Main API and Web Interface
   # ===========================================================================
   immich-server:
-    image: ghcr.io/immich-app/immich-server:{{ skgallery.IMMICH_VERSION | default('v2.7.5') }}
+    image: ghcr.io/immich-app/immich-server:{{ skgallery.IMMICH_VERSION | default('v3.4.1') }}
     env_file: /var/data/config/skgallery-{{ env }}/skgallery.env
 {% if _split %}
     # SPLIT_WORKERS: this service runs only the API (uploads, web, mobile).
@@ -146,7 +146,7 @@ services:
   # Traefik labels: it serves no HTTP. The image's built-in healthcheck probes
   # the API port, which this worker does not open, so it is disabled.
   immich-microservices:
-    image: ghcr.io/immich-app/immich-server:{{ skgallery.IMMICH_VERSION | default('v2.7.5') }}
+    image: ghcr.io/immich-app/immich-server:{{ skgallery.IMMICH_VERSION | default('v3.4.1') }}
     env_file: /var/data/config/skgallery-{{ env }}/skgallery.env
     environment:
       - IMMICH_WORKERS_EXCLUDE=api
@@ -198,7 +198,7 @@ services:
   # ===========================================================================
   # Handles: face detection, object recognition, smart search, CLIP embeddings
   immich-machine-learning:
-    image: ghcr.io/immich-app/immich-machine-learning:{{ skgallery.IMMICH_VERSION | default('v2.7.5') }}
+    image: ghcr.io/immich-app/immich-machine-learning:{{ skgallery.IMMICH_VERSION | default('v3.4.1') }}
     env_file: /var/data/config/skgallery-{{ env }}/skgallery.env
     volumes:
       # === DIRECT BIND MOUNT ===
