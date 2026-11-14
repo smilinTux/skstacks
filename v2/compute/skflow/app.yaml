@@ -59,7 +59,7 @@ healthcheck:
 # server, workers, Postgres and the dump sidecar; database comes from skdata here.
 deploy:
   container: skflow
-  image: "ghcr.io/windmill-labs/windmill:1.864.1@sha256:4ec428ad7e4e970e2e38b791fc9aaca658fa0b9142cd94b88c3112c0577e2836"
+  image: "ghcr.io/windmill-labs/windmill:1.873.1@sha256:360f2c13f903a2d70bc7ab10308e140d1ed99d3db1398321fbb5df9422f327c2"
   ports:
     - "8000:8000"
   volumes:
