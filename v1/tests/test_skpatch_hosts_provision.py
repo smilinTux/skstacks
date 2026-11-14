@@ -364,3 +364,73 @@ def test_absent_terminates_the_accounts_sessions_then_forces_userdel():
     assert "pkill -KILL -u" in sessions
     assert "when: skpatch_state == 'absent'" in sessions
     assert "force: true" in _task(pb_text, "Remove the account and its home, key included (absent)")
+
+
+# --- repair, debconf, Proxmox reboot guard, conffile policy -----------------
+# Each closes a dashboard action that failed closed on a real host: the Repair
+# banner (`dpkg --configure -a`), debconf prompting with no terminal because
+# sudo dropped DEBIAN_FRONTEND, a Proxmox reboot blocked by the app's own pvesh
+# backup guard, and dpkg stopping at a conffile prompt with stdin on /dev/null.
+
+PVESH = "/usr/bin/pvesh get /cluster/tasks --output-format json"
+REPAIR = "skpatch-ro ALL=(root) NOPASSWD: /usr/bin/dpkg --configure -a"
+ENV_KEEP = 'Defaults:skpatch-ro env_keep += "DEBIAN_FRONTEND"'
+DPKG_CFG = "run/out/_copy/etc/dpkg/dpkg.cfg.d/90-skpatch-hosts"
+
+
+def test_actions_grant_the_repair_command_and_keep_debian_frontend(tmp_path):
+    text = sudoers(tmp_path, {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True})
+    assert REPAIR in text
+    assert ENV_KEEP in text
+    # exactly one env_keep, for exactly one variable
+    assert [r for r in _rules(text) if "env_keep" in r] == [ENV_KEEP]
+
+
+def test_read_only_has_no_repair_no_env_keep_and_no_pvesh(tmp_path):
+    text = sudoers(tmp_path, {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": False},
+                   extra_vars={"skpatch_hosts_proxmox": True})
+    rules = "\n".join(_rules(text))
+    assert "--configure" not in rules
+    assert "env_keep" not in rules
+    assert "pvesh" not in rules
+
+
+def test_pvesh_guard_is_granted_only_on_proxmox_with_actions(tmp_path):
+    (tmp_path / "pve").mkdir()
+    (tmp_path / "plain").mkdir()
+    pve = sudoers(tmp_path / "pve", {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True},
+                  extra_vars={"skpatch_hosts_proxmox": True})
+    plain = sudoers(tmp_path / "plain", {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True})
+    assert f"skpatch-ro ALL=(root) NOPASSWD: {PVESH}" in pve
+    # the render host has no /usr/bin/pvesh: detection says not Proxmox
+    assert "pvesh" not in "\n".join(_rules(plain))
+    assert_visudo_accepts(pve)
+
+
+def test_pvesh_rule_is_the_exact_read_only_argv(tmp_path):
+    text = sudoers(tmp_path, {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True},
+                   extra_vars={"skpatch_hosts_proxmox": True})
+    pvesh_rules = [r for r in _rules(text) if "pvesh" in r]
+    assert pvesh_rules == [f"skpatch-ro ALL=(root) NOPASSWD: {PVESH}"]
+    assert " set " not in pvesh_rules[0] and " create " not in pvesh_rules[0]
+
+
+def test_conffile_policy_is_written_only_where_actions_are_allowed(tmp_path):
+    for sub in ("on", "off", "optout"):
+        (tmp_path / sub).mkdir()
+    sudoers(tmp_path / "on", {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True})
+    sudoers(tmp_path / "off", {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": False})
+    sudoers(tmp_path / "optout", {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True, "DPKG_KEEP_CONFFILES": False})
+    body = (tmp_path / "on" / DPKG_CFG).read_text()
+    assert [l for l in body.splitlines() if l and not l.startswith("#")] == ["force-confdef", "force-confold"]
+    assert not (tmp_path / "off" / DPKG_CFG).exists()
+    assert not (tmp_path / "optout" / DPKG_CFG).exists()
+
+
+def test_conffile_policy_is_removed_when_off_and_written_before_sudoers():
+    pb = PB.read_text()
+    put = _task(pb, "Keep local conffiles during unattended upgrades (present, actions allowed)")
+    assert "dest: /etc/dpkg/dpkg.cfg.d/90-skpatch-hosts" in put and "mode: '0644'" in put
+    gone = _task(pb, "Remove the conffile policy (absent, actions off, or DPKG_KEEP_CONFFILES false)")
+    assert "state: absent" in gone
+    assert "not (skp_keep_conffiles | bool)" in gone and "skpatch_state == 'absent'" in gone

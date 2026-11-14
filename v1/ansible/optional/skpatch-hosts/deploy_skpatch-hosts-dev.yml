@@ -104,6 +104,23 @@
         # provision_skpatch_hosts_nodes.yml: it never arms a sudoers rule by
         # itself. Default false: report-only.
         skp_allow_actions: "{{ skpatch_hosts.ALLOW_ACTIONS | default(false) | bool }}"
+        # host:address pairs added to the container's /etc/hosts, for a name
+        # the container cannot reach the way its DNS answers it (an SMTP or
+        # OIDC host on the estate's own public address, behind a router with
+        # no hairpin NAT). Empty by default.
+        skp_extra_hosts: "{{ skpatch_hosts.EXTRA_HOSTS | default([], true) }}"
+      tags: [config]
+
+    - name: Validate EXTRA_HOSTS
+      assert:
+        that:
+          - skp_extra_hosts is sequence and skp_extra_hosts is not string
+          - skp_extra_hosts | select('match', '^[A-Za-z0-9.-]+:[A-Za-z0-9.:-]+$') | list | length == skp_extra_hosts | length
+        fail_msg: >-
+          ERROR: skpatch_hosts.EXTRA_HOSTS must be a list of "host:address"
+          entries (e.g. ["mail.example.org:10.0.0.15"]). See README.md
+          "Notification delivery".
+        quiet: true
       tags: [config]
 
     - name: Resolve the public host
