@@ -699,3 +699,13 @@ move `<sksso.POSTGRES_DATA_PATH, default /var/data/runtime/sksso-<env>/postgres>
 
 Order matters: if the deploy runs before step 2 the guard stops it with the message that names this
 section. That is the intended behaviour, not a fault.
+
+## API router (raw status codes for machine traffic)
+
+The router chain usually ends in `error-pages@file`, which replaces any backend 4xx/5xx with an HTML page and
+replays the original method there, so API clients never see the app's own status or JSON error. `sksso[-env]-server-api` carries the
+machine paths (`/application/o/` (OIDC), `/api/v3/`, `/-/` (health, metrics), `/.well-known/` (rendered when `router_middlewares` is set)) through the same chain with each error-pages-bearing chain swapped for its
+no-error-pages form; anything else in the chain (CrowdSec, SSO, custom middlewares) is kept. Vault key
+`API_MIDDLEWARES` replaces the derived chain whole. `default-no-error-pages@file` has neither `default@file`'s
+optional IP allowlist nor CrowdSec: set `API_MIDDLEWARES` if the main chain relies on them. See "API routers" in
+`docs/v1-service-catalog.md`.

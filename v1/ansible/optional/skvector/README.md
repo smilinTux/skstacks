@@ -75,8 +75,8 @@ vault; unset (or empty) renders exactly as before:
 
 | Key | Router | Default |
 |---|---|---|
-| `skvector.TRAEFIK_MIDDLEWARES` | HTTP (`skvector[-env]`, port 6333) | `skvector[-env]-buffering,default-no-crowdsec@file` |
-| `skvector.TRAEFIK_MIDDLEWARES_GRPC` | gRPC (`skvector[-env]-grpc`, port 6334) | `default-no-crowdsec@file` |
+| `skvector.TRAEFIK_MIDDLEWARES` | HTTP (`skvector[-env]`, port 6333) | `skvector[-env]-buffering,default-no-error-pages@file` |
+| `skvector.TRAEFIK_MIDDLEWARES_GRPC` | gRPC (`skvector[-env]-grpc`, port 6334) | `default-no-error-pages@file` |
 
 The value replaces the chain, it is not appended: keep
 `skvector[-env]-buffering` in the HTTP chain when you override it (for example

@@ -569,3 +569,13 @@ the deploy turns both off (`t2i_provider_enabled`, `tts_provider_enabled`).
 The vision provider (`analyze_image_provider_enabled`) needs no separate
 call: `integration_openai` only defaults it on while `url` is still OpenAI's
 own cloud endpoint, so pointing `url` at the gateway already turns it off.
+
+## API router (raw status codes for machine traffic)
+
+The router chain usually ends in `error-pages@file`, which replaces any backend 4xx/5xx with an HTML page and
+replays the original method there, so API clients never see the app's own status or JSON error. `skhub-api` carries the
+machine paths (`/ocs/`, `/index.php/ocs/`, `/remote.php/`, `/public.php/`, `/status.php`, `/.well-known/`, `/index.php/login/v2`, `/apps/<app>/api/`) through the same chain with each error-pages-bearing chain swapped for its
+no-error-pages form; anything else in the chain (CrowdSec, SSO, custom middlewares) is kept. Vault key
+`API_MIDDLEWARES` replaces the derived chain whole. `default-no-error-pages@file` has neither `default@file`'s
+optional IP allowlist nor CrowdSec: set `API_MIDDLEWARES` if the main chain relies on them. See "API routers" in
+`docs/v1-service-catalog.md`.

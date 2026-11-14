@@ -205,3 +205,13 @@ Add a movie or show to the Plex watchlist (Plex app or web: Discover, then
 adds it to Real-Debrid, and the zurg hook makes Plex scan it in. Cached titles
 usually appear within minutes. A whole show pulls every episode unless
 `CUTOFF_DATE` limits it.
+
+## API router (raw status codes for machine traffic)
+
+The router chain usually ends in `error-pages@file`, which replaces any backend 4xx/5xx with an HTML page and
+replays the original method there, so API clients never see the app's own status or JSON error. `skstream[-env]-api` carries the
+machine paths (every path except the Plex web UI `/web` (rendered when `router_middlewares` is set)) through the same chain with each error-pages-bearing chain swapped for its
+no-error-pages form; anything else in the chain (CrowdSec, SSO, custom middlewares) is kept. Vault key
+`API_MIDDLEWARES` replaces the derived chain whole. `default-no-error-pages@file` has neither `default@file`'s
+optional IP allowlist nor CrowdSec: set `API_MIDDLEWARES` if the main chain relies on them. See "API routers" in
+`docs/v1-service-catalog.md`.
