@@ -126,18 +126,23 @@ def run_check(playbook: Path, inv_args, limit, rest, report_path: Path) -> dict:
 
 
 def analyse(result: dict, hosts: dict[str, dict], paused: set[str], report: dict | None,
-            supported: list[str]) -> tuple[dict[str, str], dict[str, str]]:
-    """Return (issues {host|issue: message}, status {host: summary})."""
+            supported: list[str], outside: dict[str, dict] | None = None) -> tuple[dict[str, str], dict[str, str]]:
+    """Return (issues {host|issue: message}, status {host: summary}).
+
+    `outside` holds inventory hosts the --limit left out: a dashboard system
+    that matches one is reported as "not checked", never as dashboard-only."""
     issues: dict[str, str] = {}
     status: dict[str, str] = {h: "paused (host var)" for h in paused}
     plays = result.get("plays", [])
     stats = result.get("stats", {})
     provision = plays[0] if plays else {"tasks": []}
     changed: dict[str, list[str]] = {}
+    marker_paused: set[str] = set()
     for task in provision.get("tasks", []):
         name = task.get("task", {}).get("name", "")
         for host, r in task.get("hosts", {}).items():
             if name == PAUSE_TASK and not r.get("skipped"):
+                marker_paused.add(host)
                 status[host] = "paused (/etc/skpatch-hosts.paused)"
                 issues[f"{host}|paused-marker-file"] = "paused by /etc/skpatch-hosts.paused on the host (remove it to resume)"
             if r.get("unreachable"):
@@ -163,9 +168,10 @@ def analyse(result: dict, hosts: dict[str, dict], paused: set[str], report: dict
                                          "or the registration play failed): see the ansible output")
         return issues, status
 
-    by_name = {h: h for h in hosts}
+    outside = outside or {}
+    by_name = {h: h for h in list(hosts) + list(outside)}
     by_addr = {}
-    for h, hv in hosts.items():
+    for h, hv in list(outside.items()) + list(hosts.items()):
         for addr in (hv.get("skpatch_hosts_dashboard_address"), hv.get("ansible_host"), h):
             if addr:
                 by_addr[str(addr)] = h
@@ -177,8 +183,11 @@ def analyse(result: dict, hosts: dict[str, dict], paused: set[str], report: dict
             issues[f"{label}|dashboard-only"] = (f"dashboard system {s['name']} ({s.get('hostname')}) matches no host "
                                                  "in this inventory and limit: provision it, or remove it from the dashboard")
             continue
+        if host not in hosts:
+            status[host] = "not checked (outside --limit)"
+            continue
         matched.add(host)
-        if host in paused:
+        if host in paused or host in marker_paused:
             continue
         active = [m for m in s.get("detected", []) if m not in s.get("disabled", [])]
         uncovered = sorted(set(active) - set(supported))
@@ -189,13 +198,13 @@ def analyse(result: dict, hosts: dict[str, dict], paused: set[str], report: dict
             issues[f"{host}|sudo-denied:{d['action']}"] = (f"{d['action']} ({d.get('pkgManager') or '-'}) at {d['at']}: "
                                                            f"{d['error']}")
     for host in hosts:
-        if host in paused or host in matched:
+        if host in paused or host in marker_paused or host in matched:
             continue
-        if any(f"{host}|{k}" in issues for k in ("unreachable", "not-provisioned", "check-failed")):
+        if any(f"{host}|{k}" in issues for k in ("unreachable", "not-provisioned", "check-failed", "uncovered-manager")):
             continue
         issues[f"{host}|not-in-dashboard"] = "provisioned, but no dashboard system has this name or address"
     for host in hosts:
-        if host not in paused:
+        if host not in paused and host not in marker_paused:
             status[host] = "issues" if any(k.startswith(host + "|") for k in issues) else "compliant"
     return issues, status
 
@@ -246,6 +255,7 @@ def main() -> int:
     inv_args, limit, rest = split_args(passthrough)
     try:
         hosts = inventory(inv_args, limit)
+        outside = {h: hv for h, hv in inventory(inv_args, None).items() if h not in hosts} if limit else {}
         paused = {h for h, hv in hosts.items() if truthy(hv.get("skpatch_hosts_paused", False))}
         active_limit = ",".join([limit or "all"] + [f"!{h}" for h in sorted(paused)])
         with tempfile.TemporaryDirectory(prefix="skpatch-compliance-") as tmp:
@@ -257,7 +267,7 @@ def main() -> int:
         print(f"compliance check failed: {err}\n{detail[-2000:]}", file=sys.stderr)
         return 2
 
-    issues, status = analyse(result, hosts, paused, report, load_supported())
+    issues, status = analyse(result, hosts, paused, report, load_supported(), outside)
     changes = reconcile(args.state, issues, args.alert_hook)
 
     width = max([len(h) for h in status] + [4])
