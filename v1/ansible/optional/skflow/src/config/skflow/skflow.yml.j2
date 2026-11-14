@@ -88,12 +88,28 @@ services:
         - "traefik.http.routers.{{ sf_router }}.priority=5"
         - "traefik.http.routers.{{ sf_router }}.middlewares={{ sf_middlewares }}{{ ',' + sf_sso_middleware if sf_sso_middleware else '' }}"
         - "traefik.http.routers.{{ sf_router }}.service={{ sf_router }}"
-{% if sf_sso_middleware %}
-{% if sf_sso_exempt | length > 0 %}
-        # Paths Windmill authenticates itself (API tokens, webhooks, the
-        # UI's own cookie-authenticated calls): never behind forward auth,
-        # or every webhook and token client breaks.
-        - "traefik.http.routers.{{ sf_router }}-api.rule=Host(`{{ sf_host }}`) && ({% for p in sf_sso_exempt %}PathPrefix(`{{ p }}`){{ ' || ' if not loop.last else '' }}{% endfor %})"
+{# === API ROUTER (raw upstream status codes) ===
+    Windmill's API (`/api/`: webhooks, job runs, tokens, `/api/version`) is what scripts, CI and
+    every webhook caller use. The main chain carries error-pages@file, which swaps every 4xx/5xx
+    for an HTML page and replays the ORIGINAL method there, so those callers never saw
+    Windmill's own status or JSON error. This router sends the API paths through the same chain
+    with each error-pages-bearing chain swapped for its no-error-pages form (anything else in
+    the chain is kept). skflow.API_MIDDLEWARES replaces the derived chain.
+    Without SSO the paths are `/api/`. With SSO_MIDDLEWARE the router also exists to keep the
+    forward-auth off them (paths Windmill authenticates itself: API tokens, webhooks, the UI's
+    own cookie-authenticated calls), so it takes SSO_EXEMPT_PREFIXES, and is not rendered when
+    that list is empty. #}
+{% set _sf_api_paths = (sf_sso_exempt if sf_sso_middleware else ['/api/']) %}
+{% if _sf_api_paths | length > 0 %}
+{% set _api_swap = {'default@file': 'default-no-error-pages@file', 'default-no-crowdsec@file': 'default-no-error-pages@file', 'upload-chain@file': 'large-upload-buffering@file,default-security-headers@file', 'upload-chain-no-crowdsec@file': 'large-upload-buffering@file,default-security-headers@file', 'skai-chain@file': 'skai-headers@file,gzip@file', 'error-pages@file': '', 'error-pages-all@file': ''} %}
+{% set _api_mw = [] %}
+{% for _m in (sf_middlewares).split(',') %}
+{% set _s = _api_swap.get(_m | trim, _m | trim) %}
+{% if _s %}
+{% set _ = _api_mw.append(_s) %}
+{% endif %}
+{% endfor %}
+        - "traefik.http.routers.{{ sf_router }}-api.rule=Host(`{{ sf_host }}`) && ({% for p in _sf_api_paths %}PathPrefix(`{{ p }}`){{ ' || ' if not loop.last else '' }}{% endfor %})"
         - "traefik.http.routers.{{ sf_router }}-api.entrypoints=websecure"
         - "traefik.http.routers.{{ sf_router }}-api.tls=true"
         - "traefik.http.routers.{{ sf_router }}-api.tls.certresolver=main"
@@ -101,9 +117,10 @@ services:
         - "traefik.http.routers.{{ sf_router }}-api.tls.options={{ sf_tls_options }}"
 {% endif %}
         - "traefik.http.routers.{{ sf_router }}-api.priority=50"
-        - "traefik.http.routers.{{ sf_router }}-api.middlewares={{ sf_middlewares }}"
+        - "traefik.http.routers.{{ sf_router }}-api.middlewares={{ skflow.API_MIDDLEWARES | default(_api_mw | unique | join(','), true) }}"
         - "traefik.http.routers.{{ sf_router }}-api.service={{ sf_router }}"
 {% endif %}
+{% if sf_sso_middleware %}
         # The Authentik outpost callback on this host goes to sksso's own
         # Traefik service (SSO_OUTPOST_SERVICE), so the forward-auth login
         # round trip completes without a hand-placed dynamic file.

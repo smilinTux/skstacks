@@ -194,6 +194,34 @@ services:
         - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.middlewares={{ sksso.router_middlewares | join(',') }}"
 {% endif %}
         - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.service={{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server"
+{% if sksso.router_middlewares | default([]) %}
+{# === API ROUTER (raw upstream status codes) ===
+    Authentik's machine endpoints: the OIDC provider (`/application/o/`: token, userinfo, jwks,
+    introspect, revoke, device, discovery), the API (`/api/v3/`), the health and metrics probes (`/-/`)
+    and `/.well-known/`.
+    The instance's router chain (router_middlewares) usually carries error-pages@file, which
+    swaps every 4xx/5xx for an HTML page and replays the ORIGINAL method there, so API
+    clients never saw the app's real status or JSON error. This router sends the machine
+    paths through the same chain with each error-pages-bearing chain swapped for its
+    no-error-pages form; anything else in the chain (SSO, custom middlewares) is kept.
+    sksso.API_MIDDLEWARES replaces the derived chain. #}
+{% set _api_swap = {'default@file': 'default-no-error-pages@file', 'default-no-crowdsec@file': 'default-no-error-pages@file', 'upload-chain@file': 'large-upload-buffering@file,default-security-headers@file', 'upload-chain-no-crowdsec@file': 'large-upload-buffering@file,default-security-headers@file', 'skai-chain@file': 'skai-headers@file,gzip@file', 'error-pages@file': '', 'error-pages-all@file': ''} %}
+{% set _api_mw = [] %}
+{% for _m in (sksso.router_middlewares | join(',')).split(',') %}
+{% set _s = _api_swap.get(_m | trim, _m | trim) %}
+{% if _s %}
+{% set _ = _api_mw.append(_s) %}
+{% endif %}
+{% endfor %}
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server-api.rule=Host(`sso{% if env != 'prod' %}-{{ env }}{% endif %}.${BASE_DOMAIN}`) && (PathPrefix(`/application/o/`) || PathPrefix(`/api/v3/`) || PathPrefix(`/-/`) || PathPrefix(`/.well-known/`))"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server-api.entrypoints=websecure"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server-api.tls=true"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server-api.tls.certresolver=main"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server-api.tls.options=intermediate@file"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server-api.priority=150"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server-api.middlewares={{ sksso.API_MIDDLEWARES | default(_api_mw | unique | join(','), true) }}"
+        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server-api.service={{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server"
+{% endif %}
 {% set _sso_https = (sksso.SERVER_BACKEND_SCHEME | default('http')) == 'https' %}
         - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.loadbalancer.server.scheme={{ 'https' if _sso_https else 'http' }}"
         - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.loadbalancer.server.port={{ '9443' if _sso_https else '9000' }}"

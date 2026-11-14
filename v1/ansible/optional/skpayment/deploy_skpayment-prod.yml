@@ -91,7 +91,7 @@
         # callers must never be banned; the app verifies every webhook's signature).
         # WEBHOOK_PATH none = one router for everything (the pre-v2.26.7 layout).
         skp_webhook_path: "{{ skpayment.WEBHOOK_PATH | default('/webhook/stripe', true) | string }}"
-        skp_webhook_middlewares: "{{ skpayment.WEBHOOK_MIDDLEWARES | default('default-no-crowdsec@file', true) }}"
+        skp_webhook_middlewares: "{{ skpayment.WEBHOOK_MIDDLEWARES | default('default-no-error-pages@file', true) }}"
         skp_webhook_priority: "{{ skpayment.WEBHOOK_PRIORITY | default(1000, true) | string }}"
         skp_webhook_ip_allowlist: "{{ skpayment.WEBHOOK_IP_ALLOWLIST | default(false) | bool }}"
         skp_webhook_source_ranges: "{{ skpayment.WEBHOOK_SOURCE_RANGES | default(skp_default_stripe_webhook_ips, true) }}"

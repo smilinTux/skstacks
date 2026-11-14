@@ -63,7 +63,7 @@ skpayment:
   DATA_NODE: ""                   # pin the service to this node (required with a local DATA_PATH)
   MIDDLEWARES: ""                 # site router; default default@file (see "CrowdSec" below)
   WEBHOOK_PATH: ""                # default /webhook/stripe; "none" = one router for everything
-  WEBHOOK_MIDDLEWARES: ""         # webhook router; default default-no-crowdsec@file
+  WEBHOOK_MIDDLEWARES: ""         # webhook router; default default-no-error-pages@file
   WEBHOOK_PRIORITY: ""            # webhook router priority; default 1000
   WEBHOOK_IP_ALLOWLIST: false     # true: only WEBHOOK_SOURCE_RANGES reach the webhook path
   WEBHOOK_SOURCE_RANGES: []       # default: Stripe's published webhook IPs (below)
@@ -109,7 +109,7 @@ the role renders two routers on the same host and service:
 | Router | Rule | Middlewares (default) | Priority |
 |---|---|---|---|
 | `skpayment[-env]` (site) | `Host(<HOSTNAME>)` | `MIDDLEWARES`: `default@file` | Traefik default (the rule's length) |
-| `skpayment[-env]-webhook` | `Host(<HOSTNAME>) && Path(<WEBHOOK_PATH>)` | `WEBHOOK_MIDDLEWARES`: `default-no-crowdsec@file` | `WEBHOOK_PRIORITY`: 1000 |
+| `skpayment[-env]-webhook` | `Host(<HOSTNAME>) && Path(<WEBHOOK_PATH>)` | `WEBHOOK_MIDDLEWARES`: `default-no-error-pages@file` | `WEBHOOK_PRIORITY`: 1000 |
 
 `default@file` includes the CrowdSec bouncer when the instance's skfenceha
 has `CROWDSEC_ENABLED` (and sksec runs); otherwise it is the same chain
@@ -124,8 +124,9 @@ Why the exemption is safe: the app verifies every webhook's
 400 to a missing, wrong or (from v1.1.0) replayed signature, and 503 to every
 webhook when no webhook secret is set. The deploy already refuses the one
 app release that accepted unsigned webhooks without a secret (see "Stripe not
-configured"). The webhook router keeps the rate limit, security headers and
-error pages of `default-no-crowdsec@file`.
+configured"). The webhook router keeps the rate limit and security headers
+of `default-no-crowdsec@file` but not its error pages (`default-no-error-pages@file`):
+Stripe reads the status code to decide whether to retry, so it must see the app's own.
 
 `WEBHOOK_PATH: none` restores the single-router layout (everything on
 `MIDDLEWARES`); before v2.26.7 the only router used

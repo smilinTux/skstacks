@@ -71,6 +71,33 @@ services:
 {% endif %}
         - "traefik.http.routers.{{ skp_router }}.middlewares={{ skp_middlewares }}"
         - "traefik.http.routers.{{ skp_router }}.service={{ skp_router }}"
+{# === API ROUTER (raw upstream status codes) ===
+    skpayment is an API: apps call `POST /checkout/<app>` and `/portal/<app>` and read the status
+    and JSON back, and `/health` and `/status` are probes. The main chain carries error-pages@file,
+    which swaps every 4xx/5xx for an HTML page and replays the ORIGINAL method there. This router
+    sends those paths through the main chain with each error-pages-bearing chain swapped for its
+    no-error-pages form. skpayment.API_MIDDLEWARES replaces the derived chain. Note default@file's
+    optional IP allowlist and CrowdSec are not part of default-no-error-pages@file: set
+    API_MIDDLEWARES if the main chain relies on them. #}
+{% set _api_swap = {'default@file': 'default-no-error-pages@file', 'default-no-crowdsec@file': 'default-no-error-pages@file', 'upload-chain@file': 'large-upload-buffering@file,default-security-headers@file', 'upload-chain-no-crowdsec@file': 'large-upload-buffering@file,default-security-headers@file', 'skai-chain@file': 'skai-headers@file,gzip@file', 'error-pages@file': '', 'error-pages-all@file': ''} %}
+{% set _api_mw = [] %}
+{% for _m in (skp_middlewares).split(',') %}
+{% set _s = _api_swap.get(_m | trim, _m | trim) %}
+{% if _s %}
+{% set _ = _api_mw.append(_s) %}
+{% endif %}
+{% endfor %}
+{% set _skp_api_default = _api_mw | unique | join(',') %}
+        - "traefik.http.routers.{{ skp_router }}-api.rule=Host(`{{ skp_host }}`) && (PathPrefix(`/checkout/`) || PathPrefix(`/portal/`) || Path(`/health`) || Path(`/status`))"
+        - "traefik.http.routers.{{ skp_router }}-api.entrypoints=websecure"
+        - "traefik.http.routers.{{ skp_router }}-api.tls=true"
+        - "traefik.http.routers.{{ skp_router }}-api.tls.certresolver=main"
+{% if skp_tls_options != 'none' %}
+        - "traefik.http.routers.{{ skp_router }}-api.tls.options={{ skp_tls_options }}"
+{% endif %}
+        - "traefik.http.routers.{{ skp_router }}-api.priority=150"
+        - "traefik.http.routers.{{ skp_router }}-api.middlewares={{ skpayment.API_MIDDLEWARES | default(_skp_api_default, true) }}"
+        - "traefik.http.routers.{{ skp_router }}-api.service={{ skp_router }}"
         - "traefik.http.services.{{ skp_router }}.loadbalancer.server.port=8000"
         - "traefik.http.services.{{ skp_router }}.loadbalancer.healthcheck.path=/health"
         - "traefik.http.services.{{ skp_router }}.loadbalancer.healthcheck.interval=30s"

@@ -98,6 +98,34 @@ services:
 {% set _mw = (skstream.router_middlewares_pre | default([])) + (skstream.router_middlewares | default([])) %}
 {% if _mw %}
         - "traefik.http.routers.skstream{{ sfx }}.middlewares={{ _mw | join(',') }}"
+{# === API ROUTER (raw upstream status codes) ===
+    Plex is an API first: apps, TVs, Tautulli and the plex.tv relay call `/library`, `/identity`,
+    `/:/`, `/hubs`, `/status`, `/media` and many more. Only the browser UI (`/web`) is a page, so this
+    router takes every path except `/web`.
+    The instance's router chain (router_middlewares) usually carries error-pages@file, which
+    swaps every 4xx/5xx for an HTML page and replays the ORIGINAL method there, so API
+    clients never saw the app's real status or JSON error. This router sends the machine
+    paths through the same chain with each error-pages-bearing chain swapped for its
+    no-error-pages form; anything else in the chain (SSO, custom middlewares) is kept.
+    skstream.API_MIDDLEWARES replaces the derived chain. #}
+{% set _api_swap = {'default@file': 'default-no-error-pages@file', 'default-no-crowdsec@file': 'default-no-error-pages@file', 'upload-chain@file': 'large-upload-buffering@file,default-security-headers@file', 'upload-chain-no-crowdsec@file': 'large-upload-buffering@file,default-security-headers@file', 'skai-chain@file': 'skai-headers@file,gzip@file', 'error-pages@file': '', 'error-pages-all@file': ''} %}
+{% set _api_mw = [] %}
+{% for _m in (_mw | join(',')).split(',') %}
+{% set _s = _api_swap.get(_m | trim, _m | trim) %}
+{% if _s %}
+{% set _ = _api_mw.append(_s) %}
+{% endif %}
+{% endfor %}
+        - "traefik.http.routers.skstream{{ sfx }}-api.rule=Host(`skstream{{ sfx }}.{{ skstream.CLUSTERNAME }}.{{ skstream.DOMAIN }}`) && !PathPrefix(`/web`)"
+        - "traefik.http.routers.skstream{{ sfx }}-api.entrypoints=websecure"
+        - "traefik.http.routers.skstream{{ sfx }}-api.tls=true"
+        - "traefik.http.routers.skstream{{ sfx }}-api.tls.certresolver=main"
+{% if skstream.tls_options | default('') %}
+        - "traefik.http.routers.skstream{{ sfx }}-api.tls.options={{ skstream.tls_options }}"
+{% endif %}
+        - "traefik.http.routers.skstream{{ sfx }}-api.priority=150"
+        - "traefik.http.routers.skstream{{ sfx }}-api.middlewares={{ skstream.API_MIDDLEWARES | default(_api_mw | unique | join(','), true) }}"
+        - "traefik.http.routers.skstream{{ sfx }}-api.service=skstream{{ sfx }}"
 {% endif %}
 {% if skstream.KOMETA_ENABLED | default(false) | bool %}
 
