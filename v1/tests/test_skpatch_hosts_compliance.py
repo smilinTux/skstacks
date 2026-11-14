@@ -143,7 +143,14 @@ def test_tool_never_writes_hosts_it_only_checks():
     text = TOOL.read_text()
     assert '"--check"' in text
     assert "skpatch_hosts_compliance_report" in text
-    assert "!{h}" in text  # paused hosts are added to the limit, never contacted
+    assert "with_exclusions(limit, paused)" in text  # paused hosts are never contacted
+
+
+def test_paused_hosts_join_the_limit_as_one_ansible_pattern():
+    assert sc.with_exclusions("grp:!a", {"p2", "p1"}) == "grp,!a,!p1,!p2"
+    assert sc.with_exclusions("g1,g2:x", {"p"}) == "g1,g2:x,!p"
+    assert sc.with_exclusions(None, {"p"}) == "all,!p"
+    assert sc.with_exclusions("grp", set()) == "grp"
 
 
 # --- playbook wiring --------------------------------------------------------
