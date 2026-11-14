@@ -70,6 +70,10 @@
   become: true
   register: skp_reg_dashboard_node
   changed_when: false
+  # Read-only: runs under --check too, so a check run reaches the registrar
+  # step (which check mode then skips) instead of failing here with "no
+  # running task" because this lookup was skipped.
+  check_mode: false
 
 - name: Use the dashboard's node
   set_fact:
