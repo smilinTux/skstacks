@@ -21,6 +21,8 @@ One read-only pass, nothing is changed anywhere:
        uncovered-manager     the host (or its dashboard system) has a package
                              manager sudo-coverage.yml does not cover
        check-failed          another provisioning task failed
+       dns-conflict          a host that serves DNS has NetBird DNS enabled
+                             or something else bound to port 53
        dashboard-only        a dashboard system no inventory host matches
        not-in-dashboard      a provisioned host the dashboard does not know
        sudo-denied:<action>  the dashboard's latest <action> on that system
@@ -57,6 +59,7 @@ PLAYBOOK = ROLE / "provision_skpatch_hosts_nodes.yml"
 ACCOUNT_TASK = "Create the skpatch-hosts account (present)"
 REFUSE_TASK = "Refuse a host with an uncovered package manager"
 PAUSE_TASK = "Report the pause"
+DNS_TASK = "Warn about a DNS port conflict"
 PROVISION_PLAY_SKIP = {"Report the posture for this host"}
 
 
@@ -156,6 +159,8 @@ def analyse(result: dict, hosts: dict[str, dict], paused: set[str], report: dict
                 marker_paused.add(host)
                 status[host] = "paused (/etc/skpatch-hosts.paused)"
                 issues[f"{host}|paused-marker-file"] = "paused by /etc/skpatch-hosts.paused on the host (remove it to resume)"
+            if name == DNS_TASK and not r.get("skipped"):
+                issues[f"{host}|dns-conflict"] = str(r.get("msg", ""))[:400]
             if r.get("unreachable"):
                 issues[f"{host}|unreachable"] = f"ssh failed: {str(r.get('msg', ''))[:200]}"
             elif r.get("failed"):

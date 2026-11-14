@@ -193,6 +193,32 @@
         skp_has_dpkg: "{{ skp_pm_bins.results[2].stat.exists | default(false) }}"
       tags: [config]
 
+    - name: Check a DNS server host for anything else on port 53 (read-only)
+      # A host that serves DNS (Pi-hole and the like; detected, or host var
+      # skpatch_hosts_dns_server: true) must not run NetBird's DNS: NetBird can
+      # bind <netbird-ip>:53 at boot before the DNS server, which then fails to
+      # start, and every package run on the host fails after that. The probe
+      # only lists port 53 listeners and reads NetBird's config; it runs under
+      # --check too, so the compliance check sees it. Warns, never fails: the
+      # fix (`netbird up --disable-dns`) is an operator decision on the host.
+      script: "{{ playbook_dir }}/src/skpatch-hosts/skpatch-dns-check.sh {{ 'true' if (skpatch_hosts_dns_server | default(false) | bool) else 'false' }}"
+      register: skp_dns_check
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: skpatch_state == 'present'
+      tags: [config]
+
+    - name: Warn about a DNS port conflict
+      debug:
+        msg: >-
+          {{ inventory_hostname }} serves DNS and has a port 53 conflict:
+          {{ skp_dns_check.stdout_lines | default([]) | select('match', '^conflict: ') | map('regex_replace', '^conflict: ', '') | join('; ') }}
+      when: >-
+        skpatch_state == 'present'
+        and (skp_dns_check.stdout_lines | default([]) | select('match', '^conflict: ') | list | length > 0)
+      tags: [config]
+
     - name: Resolve whether this host is Proxmox VE
       set_fact:
         skp_node_is_proxmox: "{{ (skpatch_hosts_proxmox if skpatch_hosts_proxmox is defined else (skp_pvesh.stat.exists | default(false))) | bool }}"

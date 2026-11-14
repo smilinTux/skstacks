@@ -316,3 +316,11 @@ def test_example_hook_maps_raise_and_resolve_to_one_thread_per_key(tmp_path):
         "[-g][skpatch/host-1/sudo-denied/check][--resolve][cleared]",
     ]
     assert subprocess.run(["sh", str(hook), "bogus", "k", "info", "m"], env=env, capture_output=True).returncode == 2
+
+
+def test_dns_conflict_warning_becomes_its_own_issue():
+    res = result(task(sc.DNS_TASK, **{"ok-1": {"changed": False, "msg": "ok-1 serves DNS and has a port 53 conflict: netbird ..."},
+                                     "ok-2": {"skipped": True}}))
+    hosts = {"ok-1": {}, "ok-2": {}}
+    issues, _ = sc.analyse(res, hosts, set(), {"systems": [system("ok-1", "a"), system("ok-2", "b")]}, SUPPORTED)
+    assert set(issues) == {"ok-1|dns-conflict"} and "netbird" in issues["ok-1|dns-conflict"]
