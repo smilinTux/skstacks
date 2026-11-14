@@ -546,3 +546,40 @@ def test_unsupported_manager_detection_fails_the_render(tmp_path):
     (tmp_path / "ok").mkdir()
     res = run(tmp_path / "ok", vault, {"skpatch_hosts_unsupported_managers_ok": ["dnf"]}, mutate=fake_dnf)
     assert res["rc"] == 0, res["log"][-4000:]
+
+
+# --- Ubuntu phased updates ---------------------------------------------------
+
+PHASED_PUT = "Install phased updates at once on Ubuntu (present)"
+PHASED_GONE = "Remove the phased-updates override (absent)"
+
+
+def test_phased_updates_are_always_included_on_ubuntu():
+    put = _task(PB.read_text(), PHASED_PUT)
+    assert "dest: /etc/apt/apt.conf.d/99skpatch-phased" in put and "mode: '0644'" in put
+    assert 'APT::Get::Always-Include-Phased-Updates "true";' in put
+    assert "ansible_facts.distribution | default('') == 'Ubuntu'" in put
+    assert "skpatch_state == 'present'" in put
+
+
+def test_phased_updates_do_not_depend_on_actions_or_other_set_facts():
+    # `--tags phased` must run the pair alone (the NAM config-only rollout),
+    # so neither task may read a fact that an untagged set_fact computes.
+    pb = PB.read_text()
+    for name in (PHASED_PUT, PHASED_GONE):
+        body = _task(pb, name)
+        assert "skp_" not in body, name
+        assert "tags: [config, phased]" in body, name
+
+
+def test_phased_override_is_removed_when_absent():
+    gone = _task(PB.read_text(), PHASED_GONE)
+    assert "path: /etc/apt/apt.conf.d/99skpatch-phased" in gone
+    assert "state: absent" in gone and "skpatch_state == 'absent'" in gone
+
+
+def test_phased_override_is_a_valid_apt_config_line():
+    put = _task(PB.read_text(), PHASED_PUT)
+    lines = [l.strip() for l in put.split("content: |", 1)[1].splitlines()]
+    cfg = [l for l in lines if l and not l.startswith("//") and not l.startswith(("when:", "tags:"))]
+    assert cfg == ['APT::Get::Always-Include-Phased-Updates "true";']
