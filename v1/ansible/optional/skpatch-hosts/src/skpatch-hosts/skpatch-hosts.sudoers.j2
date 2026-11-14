@@ -50,6 +50,20 @@
 # (sudoersRelevantCommand("snap refresh") in the same bundle). Without it,
 # every upgrade on such a host ended "warning" on the snap step.
 {{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/snap refresh
+# "Upgrade selected packages" runs `apt-get ... install --only-upgrade -y
+# <pkg>...` (and `snap refresh <name>...` for snaps), with names that change
+# on every call. These are NOT granted as apt-get or snap rules: any
+# wildcard on apt-get lets the caller add `-o APT::Update::Pre-Invoke::=<cmd>`
+# and become root, and a wildcard on snap has the same shape. Instead, only
+# these two root-owned wrapper scripts (installed by the same playbook run,
+# src/skpatch-hosts/skpatch-{apt-only-upgrade,snap-refresh}.sh) are
+# granted, by absolute path with NO "*" and no arguments pinned: a sudoers
+# command with no argument list accepts any arguments, and the wrapper itself
+# rejects every argument that is not a plain package or snap name before it
+# runs anything. The dashboard reaches the wrappers through its per-system
+# script override, see README "Selected-package upgrades".
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/local/sbin/skpatch-apt-only-upgrade
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/local/sbin/skpatch-snap-refresh
 {% endif %}
 # Not granted, on purpose: `pvesh get /cluster/tasks --output-format json`,
 # the app's pre-reboot backup guard on Proxmox VE. Without it a reboot of a

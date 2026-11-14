@@ -137,6 +137,32 @@
         state: present
       when: skpatch_state == 'present'
 
+    - name: Install the selected-package upgrade wrappers (present, actions allowed)
+      # Root-owned scripts that sudoers grants by absolute path instead of an
+      # apt-get/snap wildcard (see the sudoers template and README
+      # "Selected-package upgrades"). Installed before the sudoers rule that
+      # names them, and only where this host may run actions at all: the same
+      # condition the apt upgrade lines use.
+      copy:
+        src: "{{ playbook_dir }}/src/skpatch-hosts/{{ item }}.sh"
+        dest: "/usr/local/sbin/{{ item }}"
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - skpatch-apt-only-upgrade
+        - skpatch-snap-refresh
+      when: skpatch_state == 'present' and skp_node_allow_actions | bool
+
+    - name: Remove the selected-package upgrade wrappers (absent, or actions no longer allowed)
+      file:
+        path: "/usr/local/sbin/{{ item }}"
+        state: absent
+      loop:
+        - skpatch-apt-only-upgrade
+        - skpatch-snap-refresh
+      when: skpatch_state == 'absent' or not (skp_node_allow_actions | bool)
+
     - name: Write the sudoers rule (present)
       template:
         src: "{{ playbook_dir }}/src/skpatch-hosts/skpatch-hosts.sudoers.j2"
