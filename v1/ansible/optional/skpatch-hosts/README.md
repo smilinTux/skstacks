@@ -502,7 +502,7 @@ image. Three checks keep the template and the fleet honest:
    command's own arguments, runs the provisioning playbook under `--check`
    (same template and tasks, nothing is written), reads the dashboard through
    a read-only report step, and reports per host: `not-provisioned`, `drift`,
-   `uncovered-manager`, `check-failed`, `unreachable`, `dashboard-only` (a
+   `uncovered-manager`, `check-failed`, `dns-conflict`, `unreachable`, `dashboard-only` (a
    dashboard system no inventory host matches), `not-in-dashboard` and
    `sudo-denied:<action>`. It keeps open issues in a state file and calls an
    alert hook once when an issue opens and once when it clears, keyed
@@ -519,6 +519,27 @@ and yum) are refused at provisioning time. To onboard such a host anyway,
 disable that manager for the system in the dashboard and set the host var
 `skpatch_hosts_unsupported_managers_ok: [dnf]`; the compliance check then
 verifies the dashboard really has it disabled.
+
+## DNS server hosts and NetBird
+
+A host that serves DNS (Pi-hole and the like) must not run NetBird's own DNS.
+NetBird can bind `<netbird-ip>:53` at boot before the DNS server starts; the
+DNS server then fails to bind `0.0.0.0:53`, the estate loses that resolver,
+and every package run on the host fails after it. Every provisioning run
+(also under `--check`) runs a read-only probe, `src/skpatch-hosts/skpatch-dns-check.sh`:
+it lists port 53 listeners and reads NetBird's profiles. On a DNS host
+(Pi-hole installed, a DNS server listening on a non-loopback :53, or host var
+`skpatch_hosts_dns_server: true`) it flags:
+
+- NetBird bound to port 53;
+- NetBird DNS left on in any profile (`"DisableDNS": true` missing);
+- any other process on a non-loopback :53;
+- no DNS server listening at all.
+
+Provisioning prints a warning ("Warn about a DNS port conflict") and the
+compliance check raises `dns-conflict`. The fix on the host is
+`netbird up --disable-dns`. Set `skpatch_hosts_dns_server: true` on every
+resolver, so a resolver that is down right now is still checked.
 
 ## Maintenance pause
 
