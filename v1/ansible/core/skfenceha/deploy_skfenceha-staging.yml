@@ -306,10 +306,10 @@
     - name: Refuse to deploy dynamic config while a subdirectory shadows it
       assert:
         that:
-          - (skfenceha_dynamic_subdirs.files | length == 0) or (skfenceha.ALLOW_DYNAMIC_SUBDIRS | default(false) | bool)
+          - ((skfenceha_dynamic_subdirs.files | default([])) | length == 0) or (skfenceha.ALLOW_DYNAMIC_SUBDIRS | default(false) | bool)
         fail_msg: >-
           Traefik's file provider reads these directories recursively and the first definition of a name wins, so
-          {{ skfenceha_dynamic_subdirs.files | map(attribute='path') | list }} shadow the files this play renders.
+          {{ (skfenceha_dynamic_subdirs.files | default([])) | map(attribute='path') | list }} shadow the files this play renders.
           Move them out of the dynamic directories (backups belong under /var/data/backups), or set
           skfenceha.ALLOW_DYNAMIC_SUBDIRS: true if they are intentional.
       tags:
