@@ -104,3 +104,10 @@ def test_dashboard_lookup_runs_in_check_mode_and_the_registrar_does_not():
     assert "check_mode: false" in lookup
     registrar = text.split("- name: Register this run's target nodes")[1]
     assert "check_mode" not in registrar.split("- name:")[0]
+
+
+def test_a_skipped_registrar_under_check_is_not_reported_as_a_failure():
+    text = (Path(__file__).resolve().parents[1] / "ansible/optional/skpatch-hosts/tasks/register_systems.yml").read_text()
+    gate = text.split("- name: Fail if host registration failed")[1]
+    assert "not (skp_reg_result.skipped | default(false))" in gate
+    assert "'registration: ok' not in" in gate

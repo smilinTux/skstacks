@@ -136,6 +136,9 @@
 - name: Fail if host registration failed
   fail:
     msg: "skpatch-hosts host registration failed (rc={{ skp_reg_result.rc | default('?') }}), see the lines above"
+  # Under --check the registrar is skipped (it writes), so there is no result
+  # to judge: a check run reports it skipped instead of failing here.
   when: >-
-    (skp_reg_result.rc | default(1)) != 0
-    or 'registration: ok' not in (skp_reg_result.stdout | default(''))
+    not (skp_reg_result.skipped | default(false))
+    and ((skp_reg_result.rc | default(1)) != 0
+         or 'registration: ok' not in (skp_reg_result.stdout | default('')))
