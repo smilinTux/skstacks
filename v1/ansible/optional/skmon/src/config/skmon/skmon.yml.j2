@@ -45,7 +45,7 @@ name: "skmon_{{ env }}_{{ key }}_{{ (skmon_secrets[key] | hash('sha256'))[:12] }
 
 services:
   victoriametrics:
-    image: {{ skmon.VICTORIAMETRICS_IMAGE | default('victoriametrics/victoria-metrics:v1.155.0@sha256:f60dc268b54ecf87f6e09d740c2b732838aa9193090cc741417c9f6386a130df') }}
+    image: {{ skmon.VICTORIAMETRICS_IMAGE | default('victoriametrics/victoria-metrics:v1.156.0@sha256:da8a90ac0912f16589be2b96a6441a2fca4bca415c83783d972d92e3b5b66970') }}
     command:
       - '-storageDataPath=/storage'
       - '-retentionPeriod={{ skmon.METRICS_RETENTION | default("90d") }}'
@@ -92,7 +92,7 @@ services:
       start_period: 30s
 
   grafana:
-    image: {{ skmon.GRAFANA_IMAGE | default('grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205') }}
+    image: {{ skmon.GRAFANA_IMAGE | default('grafana/grafana:13.3.1@sha256:0615ec4fbd4072004b7d86b46ded63013a74b7d6eb1119273dd89e8fa25c13cf') }}
     env_file:
       - /var/data/config/skmon-{{ env }}/skmon.env
     secrets:
@@ -146,7 +146,7 @@ services:
       start_period: {{ skmon.GRAFANA_HEALTH_START_PERIOD | default('60s') }}
 
   loki:
-    image: {{ skmon.LOKI_IMAGE | default('grafana/loki:3.7.9@sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28') }}
+    image: {{ skmon.LOKI_IMAGE | default('grafana/loki:3.7.10@sha256:b43c257ccfc925d4a50b8717cac61a3b51df8c48d01847936057e5c4075a24a7') }}
     command: -config.file=/etc/loki/local-config.yaml
     volumes:
       - {{ data }}/loki:/loki
@@ -183,7 +183,7 @@ services:
   # Evaluates the curated rules (spec 8) against VictoriaMetrics and sends to Alertmanager.
   # Internal only: no router, no published port, no volume (rules are Swarm configs).
   vmalert:
-    image: {{ skmon.VMALERT_IMAGE | default('victoriametrics/vmalert:v1.155.0@sha256:3256cba5ddaca5974eae6141105cec4ce37871f1c213f0a5c267ec0111bc68e1') }}
+    image: {{ skmon.VMALERT_IMAGE | default('victoriametrics/vmalert:v1.156.0@sha256:4fea7d1a888d4db4ff18804434ef0f3ca8eb6482e289c50d32001c2db218287c') }}
     command:
       - '-evaluationInterval=15s'
       - '-datasource.url=http://skmon-{{ env }}_victoriametrics:8428'
@@ -225,7 +225,7 @@ services:
       start_period: 30s
 
   alertmanager:
-    image: {{ skmon.ALERTMANAGER_IMAGE | default('prom/alertmanager:v0.34.2@sha256:39d8bb3966c694a124428a3a88fbcffd40bd069129ecd47c059f8a3f17c55f3b') }}
+    image: {{ skmon.ALERTMANAGER_IMAGE | default('prom/alertmanager:v0.35.0@sha256:e638797febd034838eca8b98cdbd46f951e9bf7f178777aa8669167406a9946c') }}
     command:
       - '--config.file=/etc/alertmanager/config.yml'
       - '--storage.path=/alertmanager'
@@ -273,7 +273,7 @@ services:
   # healthz port is published on DATA_NODE for the outside monitor (tasks/port_allowlist.yml
   # filters it by the original destination port, so target equals published).
   bridge:
-    image: {{ skmon.BRIDGE_IMAGE | default('python:3.13.18-bookworm@sha256:cc55e4ded9c95f6ce2133b3d096db43f214d280c2a8af65d83e246c8fa7d168c') }}
+    image: {{ skmon.BRIDGE_IMAGE | default('python:3.15.2-bookworm@sha256:6f060cab421d9509c6c6a6a7762c651baf03c3f1d0145befe16b688762b7fe81') }}
     command: ["python3", "/opt/skmon/skmon_bridge.py"]
     user: "{{ bridge_uid }}:{{ bridge_uid }}"
     environment:
@@ -362,7 +362,7 @@ services:
   # a pinned Python base image. It joins docker-api (to reach the proxy) and the skmon overlay
   # (VictoriaMetrics scrapes it on 9323), and publishes no port.
   skswarm-exporter:
-    image: {{ skmon.SKSWARM_EXPORTER_IMAGE | default('python:3.13.18-slim-bookworm@sha256:a5a7017efc5969e00ae2b91c8eb0631049a569652aa4ffc4501769049ae45c72') }}
+    image: {{ skmon.SKSWARM_EXPORTER_IMAGE | default('python:3.15.2-slim-bookworm@sha256:96599df822d0e1c6bb700014a05c7f3c8cabc6e0f7ff3c4f9f69cee033b4b5d9') }}
     command: ["python3", "/opt/skmon/skswarm_exporter.py"]
     user: "{{ swarm_uid }}:{{ swarm_uid }}"
     environment:
@@ -403,7 +403,7 @@ services:
   # target parameter. Always present in the stack so a toggle is one redeploy; replicas 0 when
   # PVE is off or skmon is parked.
   pve-exporter:
-    image: {{ skmon.PVE_EXPORTER_IMAGE | default('prompve/prometheus-pve-exporter:3.10.2@sha256:7ed5dbff1b145e62e94003cb78d70226d9a7c4d4d1c928b3c7daed21ae9a84d8') }}
+    image: {{ skmon.PVE_EXPORTER_IMAGE | default('prompve/prometheus-pve-exporter:3.11.0@sha256:290756c34fd13e1d9972b8e64344d49a15ab99dd0053b29d9716f1ca4ae4c069') }}
     command: ["--config.file=/etc/prometheus/pve.yml"]
     user: "{{ pve_uid }}:{{ pve_uid }}"
     secrets:
@@ -432,7 +432,7 @@ services:
   # -compactor.blocks-retention-period is the v1 storage flag, -retention-period the v2 one (both
   # exist in the pinned release; Pyroscope reads the one that matches its storage).
   pyroscope:
-    image: {{ skmon.PYROSCOPE_IMAGE | default('grafana/pyroscope:2.4.2@sha256:ef9b48976386aa2781e84664dfdba7cc33a1b6793c0cc9d130812173a926ca1f') }}
+    image: {{ skmon.PYROSCOPE_IMAGE | default('grafana/pyroscope:2.4.3@sha256:bf667534cd403320573063894e3faba20a5a5d1bfb92eddaecfabeb2446c502b') }}
     command:
       - '-config.file=/etc/pyroscope/config.yaml'
       - '-server.http-listen-port={{ pyro_port }}'

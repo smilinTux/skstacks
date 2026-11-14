@@ -30,7 +30,7 @@ services:
     deploy: { replicas: 1, restart_policy: { condition: any } }
 
   grafana:
-    image: grafana/grafana:13.3.0
+    image: grafana/grafana:13.3.1
     environment:
       - GF_SECURITY_ADMIN_PASSWORD__FILE=/run/secrets/grafana_admin_password
     secrets: [grafana_admin_password]
@@ -41,7 +41,7 @@ services:
     deploy: { replicas: 1, restart_policy: { condition: any } }
 
   alloy:
-    image: grafana/alloy:v1.21.3
+    image: grafana/alloy:v1.22.0
     command: ["run", "/etc/alloy/config.alloy"]
     volumes:
       - ${SKMON_CONFIG_DIR}/config.alloy:/etc/alloy/config.alloy:ro
