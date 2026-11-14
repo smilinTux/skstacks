@@ -93,3 +93,14 @@ def test_old_api_token_settings_are_refused_with_the_migration_path():
     refuse = next(t for p in plays for t in _tasks(p) if t.get("name") == "Refuse the old API-token registration settings")
     assert "API_TOKEN" in refuse["when"]
     assert "API tokens cannot configure SSH connections" in refuse["fail"]["msg"] and "REGISTER_AS" in refuse["fail"]["msg"]
+
+
+def test_dashboard_lookup_runs_in_check_mode_and_the_registrar_does_not():
+    """A --check --diff run must not fail on the read-only dashboard lookup
+    (found live: it was skipped, so the next task saw "no running task"), and
+    the registrar itself, which writes, must stay skipped under --check."""
+    text = (Path(__file__).resolve().parents[1] / "ansible/optional/skpatch-hosts/tasks/register_systems.yml").read_text()
+    lookup = text.split("- name: Find the node running the dashboard")[1].split("- name:")[0]
+    assert "check_mode: false" in lookup
+    registrar = text.split("- name: Register this run's target nodes")[1]
+    assert "check_mode" not in registrar.split("- name:")[0]
