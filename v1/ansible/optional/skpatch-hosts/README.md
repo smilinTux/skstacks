@@ -131,6 +131,11 @@ skpatch-hosts:
   DATA_PATH: ""                             # default /var/data/skpatch-hosts-<env>/data
   DATA_NODE: ""                             # pin dashboard to this node (required with a local path)
   PLACEMENT_CONSTRAINTS: []                 # default ["node.role == worker"]
+  EXTRA_HOSTS: []                           # ["host:address", ...] added to the container's /etc/hosts (README "Notification delivery")
+  MAX_CMD_TIMEOUT: 1800                     # ceiling for the app's command timeout (env LUDASH_MAX_CMD_TIMEOUT; the app's own cap is 600), 600 to 7200
+  DASHBOARD_SETTINGS:                       # app settings the provisioning run converges (PUT /api/settings, only when different)
+    cmd_timeout_seconds: 1800               #   long upgrades (a Pi with a backlog) outlast 600 s; clamped to MAX_CMD_TIMEOUT
+    ssh_timeout_seconds: 60                 #   app maximum 120
   HEALTH_CHECK_INTERVAL: 30s
   HEALTH_CHECK_TIMEOUT: 10s
   HEALTH_CHECK_RETRIES: 3
@@ -150,6 +155,7 @@ skpatch-hosts:
   PROVISION_USER: skpatch-ro                # the low-privilege account's name
   PROVISION_UID: 5201                       # its fixed uid and gid; never a system uid (containers share the host's uid space)
   SSH_PUBLIC_KEY: ""                        # required by provision_skpatch_hosts_nodes.yml; one keypair per estate
+  DPKG_KEEP_CONFFILES: true                 # armed hosts answer dpkg's conffile prompt with its default (README "What an armed host gets")
   # Host auto-registration (see "Automatic host registration" below); REGISTER_AS plus a credential, else skipped
   REGISTER_AS: ""                           # an existing dashboard admin's username (local or OIDC)
   SSH_PRIVATE_KEY: ""                       # private half of SSH_PUBLIC_KEY; the registrar creates the credential from it
@@ -158,6 +164,7 @@ skpatch-hosts:
   SYNC_CREDENTIAL: false                    # true: rewrite the credential's key from SSH_PRIVATE_KEY (key rotation)
   UPGRADE_MODE: ""                          # upgrade | full-upgrade: APT default for registered systems; "" leaves it
   NOTIFICATIONS: []                         # [{name, type, enabled, notify_on, systems, config}], secrets allowed
+  TALK: {}                                  # {URL, ROOM_TOKEN, USER, APP_PASSWORD, MENTION}: immediate alerts to a Talk room ("Alert routing")
   SCHEDULES: []                             # [{name, type, cron, enabled, systems, only_if_required, cache_hours, notifications}]
 ```
 
@@ -289,6 +296,7 @@ own configuration, so a redeploy or a fresh `dashboard.db` reproduces it:
 |---|---|---|
 | `SCHEDULES` | vault, or `skpatch_hosts_schedules` (e.g. `-e @<file>.yml`, which wins) | Refresh / update / autoremove / reboot / notification_digest schedules. `systems` is a list of dashboard system **names**, or absent for all. |
 | `NOTIFICATIONS` | vault (channel configs carry SMTP passwords, tokens) | Notification channels; a digest channel is one a `notification_digest` schedule lists in `notifications`. |
+| `TALK` | vault (carries an app password) | One more channel: a webhook that posts the dashboard's immediate events to a Nextcloud Talk room (README "Alert routing"). A `NOTIFICATIONS` entry of the same name wins. |
 | `UPGRADE_MODE` / `skpatch_hosts_upgrade_mode` | vault / host var | APT default upgrade mode of each registered system. |
 | `SYNC_CREDENTIAL` | vault | Rewrites the estate credential's key from `SSH_PRIVATE_KEY` (key rotation, SOP §5). |
 | `skpatch_hosts_dashboard_address` / `_port` | host var | The address the dashboard container dials, when the controller's (an ssh alias, a tailnet name) does not resolve there. |
@@ -318,9 +326,12 @@ has to respect** (read from `server/services/scheduler.ts`):
 - Upgrades run under `nohup setsid` on the host and survive the dashboard
   container restarting; the schedule itself does not. Put the node that runs
   the dashboard last in its window.
-- A Proxmox reboot is blocked by the app's own backup guard unless sudoers
-  grants `pvesh get /cluster/tasks`, which this role does not (sudoers
-  template). Hypervisors are rebooted from Proxmox, not from here.
+- A Proxmox reboot runs the app's own backup guard first
+  (`pvesh get /cluster/tasks --output-format json`) and is blocked when that
+  guard cannot run. On an armed host where `/usr/bin/pvesh` exists (or
+  `skpatch_hosts_proxmox: true`) sudoers grants exactly that read-only argv, so
+  a hypervisor can be rebooted from the app by hand. Whether it also gets a
+  reboot schedule is the operator's choice; most estates give hypervisors none.
 - An enabled **Telegram** channel starts a `getUpdates` long-poll worker and
   rewrites that bot's command menu, whatever `commandsEnabled` says
   (`server/services/telegram-bot.ts` `sync()`). Never point it at a bot
@@ -344,6 +355,139 @@ skpatch_hosts_schedules:
   - {name: Reboot mgr-2, type: reboot, cron: "30 4 * * 2", only_if_required: true, systems: [mgr-2]}
   - {name: Daily digest, type: notification_digest, cron: "0 7 * * *", notifications: [Patch digest]}
 ```
+
+## What an armed host gets
+
+On a host where actions are allowed (`skpatch_hosts_allow_actions`, else
+`ALLOW_ACTIONS`), `provision_skpatch_hosts_nodes.yml` writes everything each
+dashboard action needs, all confirmed against the pinned image's own
+"Sudoers-relevant command" lines:
+
+| Dashboard action | What the host gets |
+|---|---|
+| Upgrade all / full upgrade / autoremove | the exact `apt-get -o DPkg::Lock::Timeout=60 ...` lines, plus `snap refresh` |
+| Upgrade selected | the two wrappers (below), never an `apt-get` or `snap` wildcard |
+| Repair ("package manager needs repair") | `/usr/bin/dpkg --configure -a` |
+| Reboot | `/usr/sbin/reboot`; on Proxmox VE also the guard's `pvesh get /cluster/tasks --output-format json` |
+| Any apt action | `Defaults:<account> env_keep += "DEBIAN_FRONTEND"`, so the app's own `DEBIAN_FRONTEND=noninteractive` reaches apt instead of being dropped by sudo's `env_reset` (without it debconf falls back to Teletype, reads EOF and fails the package) |
+| Any apt or dpkg action | `/etc/dpkg/dpkg.cfg.d/90-skpatch-hosts` with `force-confdef` and `force-confold`: a changed conffile is kept instead of dpkg stopping at its prompt with no terminal. `DPKG_KEEP_CONFFILES: false` leaves dpkg's default behaviour |
+| Every Ubuntu host (armed or not) | `/etc/apt/apt.conf.d/99skpatch-phased` with `APT::Get::Always-Include-Phased-Updates "true";`: apt installs phased updates at once instead of deferring them ("deferred due to phasing ... 0 upgraded" while the dashboard keeps listing them). The staged rollout is the nightly schedule order. Config only: `--tags phased` rolls out just this file |
+
+On a host with **pacman** or **flatpak** (detected by `/usr/bin/pacman` and
+`/usr/bin/flatpak`; host var `skpatch_hosts_pkg_managers: [pacman, flatpak]`
+overrides), the check gets `pacman -Sy --noconfirm` and
+`flatpak update --appstream` (also on a report-only host: they only refresh
+metadata), and an armed host also gets `pacman -Syu --noconfirm`,
+`flatpak update -y`, `flatpak uninstall --unused -y` and two more wrappers,
+`/usr/local/sbin/skpatch-pacman-upgrade` (validated names, each must already
+be installed, then `pacman -S --noconfirm -- <names>`) and
+`/usr/local/sbin/skpatch-flatpak-update` (validated application ids, then
+`flatpak update -y --noninteractive -- <ids>`). The app's pacman autoremove
+(`pacman -Rns --noconfirm -`, names from stdin) is not granted: it would
+remove any package it is fed. The dpkg conffile policy is only written where
+dpkg exists.
+
+A report-only host gets none of the action lines, and a rerun with actions off
+removes the wrappers and the dpkg policy file.
+
+## Notification delivery
+
+The dashboard resolves names through Docker's DNS, which follows the node's
+resolver. When an OIDC (or webhook) host resolves to the estate's own public
+address and the router does not hairpin NAT that port, the connection from
+inside the container times out, while the same name works from a host on a
+split-horizon resolver. `EXTRA_HOSTS` pins such a name for the container only:
+
+```yaml
+skpatch_hosts:
+  EXTRA_HOSTS: ["sso.example.org:10.0.0.15"]
+```
+
+Each entry is `host:address`; the deploy refuses anything else.
+
+**Email is different.** The email channel's mailer (nodemailer) resolves the
+SMTP host with DNS queries first and reads `/etc/hosts` only when DNS has no
+answer, so an `EXTRA_HOSTS` pin does nothing for a name that has a public
+record (a wildcard counts). Check from inside the container:
+`node -e 'require("dns").resolve4("<smtp host>",console.log)'`. If that
+returns the public address and the router forwards no mail port, the fixes
+are: a split-horizon record on the resolver the node uses, a port forward or
+hairpin for the submission port, or a relay the container can reach. Do not
+set `allowInsecureTls` to talk to an IP: that drops certificate checking for
+the SMTP password.
+
+## Alert routing (Talk room, email as fallback)
+
+Recommended layout: one Nextcloud Talk room per estate for patching, posted
+to by a dedicated account, and email kept for the daily digest only.
+
+| What | Sent by | When |
+|---|---|---|
+| Host unreachable | the dashboard's webhook channel from `TALK` | immediately (on the reachable-to-unreachable transition) |
+| Upgrade failed, sudo denied (a provisioning gap), package manager issue (Repair), reboot required for more than 8 days on one boot | `tools/skpatch_watch.py` (timer every 15 min) | once when it opens, once when it clears |
+| Drift, unprovisioned, uncovered manager, DNS port 53 conflict | `tools/skpatch_compliance.py` (daily timer) | once when it opens, once when it clears |
+| Daily summary: pending updates, the last 24 h of scheduled runs, OS end-of-life and end-of-support warnings, open issues | `skpatch_watch.py --digest` | 07:00 |
+| Reboot required (normal) | nobody | never an alert |
+| Email digest | the dashboard's email channel in the `notification_digest` schedule | 07:00 (fallback) |
+
+The dashboard itself has no "upgrade failed" event, and a channel that is in
+a digest schedule sends every event to the digest, so only `unreachable` goes
+through a dashboard channel; the rest come from the watch, which reads the
+dashboard (GET only, `dashboard_report.js`) and never a managed host.
+
+Setup per estate:
+
+1. Create the room as the posting account through the Talk API (not `occ`),
+   add the people, and give the account a dedicated app password
+   (`occ user:auth-tokens:add --name "skpatch-hosts notifier" <user>`
+   creates one without the login password). Keep it in your secret store.
+2. Vault: `TALK: {URL, ROOM_TOKEN, USER, APP_PASSWORD, MENTION}` and set
+   `enabled: false` on any immediate email channel in `NOTIFICATIONS`. The
+   next provisioning run converges the dashboard. `MENTION` is the user id
+   to @mention, which is what notifies someone in a room left at the
+   default "mentions only" level.
+3. On a machine that can ssh to the dashboard node: install
+   `tools/systemd/skpatch-watch@.{service,timer}` and
+   `skpatch-watch-digest@.{service,timer}`, write
+   `~/.config/skpatch-watch/<estate>.env` and
+   `~/.config/skpatch-talk/<estate>.env` (the unit headers list the keys;
+   the app password lives in a 0600 file named there), enable both timers.
+   Point the compliance unit's `SKPC_HOOK` at `tools/skpatch-talk-notify.sh`;
+   it reads the same `skpatch-talk` env file.
+4. Test: `POST /api/notifications/<id>/test` on the dashboard channel, then
+   `systemctl --user start skpatch-watch@<estate>` (posts the real open
+   issues once; a second run posts nothing).
+
+**Every alert resolves itself.** The watch re-reads the dashboard every run
+and posts one short "resolved" reply in the alert's own Talk thread (the hook
+returns the posted message id, the state keeps it) when the condition is gone:
+
+| Issue | Resolves when |
+|---|---|
+| `upgrade-failed:<action>` | a later success of that action, of any upgrade action, or a later clean check |
+| `sudo-denied:<action>` | a later success of that action, or the host's sudoers was rewritten after the denial (the coverage stamp below) |
+| `package-manager` | the dashboard no longer shows the repair banner |
+| `reboot-pending` | the host rebooted or no longer needs it |
+
+History older than the last good run of the same operation on that host is
+never alerted on.
+
+**What an alert says.** The run's last meaningful lines (apt and dpkg
+progress, package lists and summaries stripped; a run the app cut off is
+quoted raw and labelled so), a link to the system (`--dashboard-url`, so
+`<url>/systems/<id>`), and the next action in plain words. A sudo denial
+the framework already has a fix for (`src/skpatch-hosts/known-gaps.json`,
+e.g. "upgrade selected" before the v2.26.22 wrappers) says "known gap, fix in
+<PR>" and what to do until then, instead of "reprovision".
+
+**Coverage stamp.** Every provisioning run that writes a host's sudoers
+records it in `skpatch-coverage.json` beside the staged registrar on the
+dashboard's node (`{host: {provisioned_at, actions}}`, never under
+`--check`). The watch reads it in the same ssh call: a sudo denial older than
+the stamp of a host with actions granted is resolved as "sudoers now covers it".
+
+The hook's state survives a failed post: an issue whose raise did not reach
+the room is retried on the next run instead of being recorded as sent.
 
 ## Selected-package upgrades (wrappers, and a known limitation)
 
@@ -375,42 +519,124 @@ snap 2.78), so it is a second guard there. Rerunning the playbook with
 actions off, or with `skpatch_hosts_provision_state=absent`, removes both
 wrappers.
 
-**Known limitation: selected-package upgrades need the wrapper, and the
-dashboard still calls `apt-get` directly.** In the pinned image
-(linux-update-dashboard 2026.10.9), `builtinUpgradeSelectedCommand` in
-`server/services/script-service.ts` builds the command: line 1134 for apt
-(`apt-get -o DPkg::Lock::Timeout=60 install --only-upgrade -y {{packages}}`),
-line 1147 for snap (`snap refresh {{packages}}`). There is no environment
-variable, setting or config file that changes it, so the role cannot point the
-dashboard at the wrappers at deploy time. The only override is the app's own
-custom script, per system and package manager: `POST /api/scripts` to create
-it, then `PUT /api/systems/:id/script-overrides` (`API.md` line 121) or the
-system's Scripts tab in the UI. That API refuses API tokens (`API.md` lines
-17 and 18), is stored in the dashboard database, and is not something the
-registrar sets, so it is a one-time operator step per system, not part of this
-role. Until it is done, a selected-package upgrade on an armed host still ends
-"sudo: a password is required"; "Upgrade all" is unaffected.
+**How the dashboard reaches the wrappers.** The pinned image builds the
+selected-package command itself (`builtinUpgradeSelectedCommand`), with no
+setting to change it. What it does have is custom scripts with `isDefault`
+per package manager and operation, which replace the built-in for every
+system with that manager. `src/skpatch-hosts/dashboard-scripts.json` holds one
+default `upgrade_selected` script per wrapper (apt, snap, pacman, flatpak),
+each calling `sudo -S -p '' /usr/local/sbin/<wrapper> {{quotedPackages}}`,
+and the registrar converges them by name on every provisioning run (created
+when missing, put back when someone edits one, never deleted). There is no
+per-system step. `test_skpatch_hosts_sudo_coverage.py` fails if a wrapper has
+no default script calling it.
 
-To use the wrappers, create two custom scripts for operation
-`upgrade_selected` and assign them to the system (override keys
-`apt/upgrade_selected` and `snap/upgrade_selected`):
+The app's own sudoers preview shows the wildcard form as a commented-out
+suggestion ("Selected-package upgrades are disabled by default"); do not
+uncomment it.
 
-```sh
-# apt
-export DEBIAN_FRONTEND=noninteractive
-sudo -S -p '' /usr/local/sbin/skpatch-apt-only-upgrade {{packages}} 2>&1
+## Onboarding a host (one command)
+
+Adding a host to the dashboard is one idempotent run of
+`provision_skpatch_hosts_nodes.yml`, with no manual sudo or dashboard step:
+
+1. Add the host to the estate's skpatch inventory group (name it after the
+   host; set `skpatch_hosts_allow_actions: false` if it must stay report-only).
+2. Run the playbook limited to it, `--check --diff` first:
+
+```bash
+ansible-playbook -i <inventory> -i <skpatch targets> \
+  framework/v1/ansible/optional/skpatch-hosts/provision_skpatch_hosts_nodes.yml \
+  -l <new-host> -e skpatch_hosts_provision_env=prod \
+  -e skpatch_hosts_register_manager_group=<swarm managers group> \
+  -e @<schedules file> -e skstacks_vault_dir=<instance root> \
+  --vault-password-file <file> --check --diff
+# then the same without --check --diff
 ```
 
-```sh
-# snap
-sudo -S -p '' /usr/local/sbin/skpatch-snap-refresh {{packages}} 2>&1
-```
+That one run creates the account (fixed uid) and its key, detects the package
+managers (apt and dpkg always; pacman, flatpak and Proxmox's `pvesh` where
+present), refuses the host before any change if it has a manager the template
+does not cover (see below), renders the sudoers file for exactly what it
+found, validates it with `visudo -cf` before install, installs the wrappers
+and the dpkg conffile policy, and registers the host in the dashboard (with
+the default wrapper scripts, the app settings, schedules and channels).
 
-`{{packages}}` is the app's own validated, space-joined name list. This recipe
-was written from the upstream source and was not exercised against a live
-dashboard: try it on one armed host first. The app's own sudoers preview shows
-the wildcard form as a commented-out suggestion ("Selected-package upgrades
-are disabled by default"); do not uncomment it.
+A build playbook for a new VM or LXC should end by importing this playbook
+for the new host (`import_playbook` with `skpatch_hosts_provision_hosts` set
+to it), or print the command above as its last step. A host that is in the
+dashboard but was never provisioned is found by the compliance check.
+
+## Sudo coverage and drift detection
+
+The commands the dashboard runs with sudo are a contract with one pinned
+image. Three checks keep the template and the fleet honest:
+
+1. **Build time (CI).** `tools/extract_sudo_commands.py` runs the pinned
+   image's own `buildCommandReference()` (the code behind its sudoers preview)
+   in a throwaway container with no network, and writes
+   `v1/tests/fixtures/skpatch_hosts_sudo_commands.json`, keyed to the image
+   reference. `src/skpatch-hosts/sudo-coverage.yml` decides every command:
+   `exact` (granted verbatim), `wrapper` (only the validated wrapper is
+   granted) or `denied` (with the reason). `test_skpatch_hosts_sudo_coverage.py`
+   fails when the pinned image is not the fixture's (so a Renovate bump fails
+   CI), when the image runs a command with no decision, and when the rendered
+   template misses an exact rule or grants anything no decision backs. After
+   an image bump: rerun the extractor, review the fixture diff, update
+   `sudo-coverage.yml` and the template, rerun the tests.
+2. **Fleet (runtime).** `tools/skpatch_compliance.py` takes the provisioning
+   command's own arguments, runs the provisioning playbook under `--check`
+   (same template and tasks, nothing is written), reads the dashboard through
+   a read-only report step, and reports per host: `not-provisioned`, `drift`,
+   `uncovered-manager`, `check-failed`, `dns-conflict`, `unreachable`, `dashboard-only` (a
+   dashboard system no inventory host matches), `not-in-dashboard` and
+   `sudo-denied:<action>`. It keeps open issues in a state file and calls an
+   alert hook once when an issue opens and once when it clears, keyed
+   `host|issue`. `tools/systemd/skpatch-compliance@.{service,timer}` run it
+   daily per estate; `tools/skpatch-talk-notify.sh` is the hook (README
+   "Alert routing").
+3. **Dashboard.** A history entry that failed because sudo asked for a
+   password ("a password is required", sudo's lecture text, "not in the
+   sudoers file", "not allowed to execute") is its own issue class,
+   `sudo-denied:<action>`, from the latest run of that action only, so it
+   clears itself once a later run of the action succeeds.
+
+Managers the template does not cover (the image also knows apk, deb-get, dnf
+and yum) are refused at provisioning time. To onboard such a host anyway,
+disable that manager for the system in the dashboard and set the host var
+`skpatch_hosts_unsupported_managers_ok: [dnf]`; the compliance check then
+verifies the dashboard really has it disabled.
+
+## DNS server hosts and NetBird
+
+A host that serves DNS (Pi-hole and the like) must not run NetBird's own DNS.
+NetBird can bind `<netbird-ip>:53` at boot before the DNS server starts; the
+DNS server then fails to bind `0.0.0.0:53`, the estate loses that resolver,
+and every package run on the host fails after it. Every provisioning run
+(also under `--check`) runs a read-only probe, `src/skpatch-hosts/skpatch-dns-check.sh`:
+it lists port 53 listeners and reads NetBird's profiles. On a DNS host
+(Pi-hole installed, a DNS server listening on a non-loopback :53, or host var
+`skpatch_hosts_dns_server: true`) it flags:
+
+- NetBird bound to port 53;
+- NetBird DNS left on in any profile (`"DisableDNS": true` missing);
+- any other process on a non-loopback :53;
+- no DNS server listening at all.
+
+Provisioning prints a warning ("Warn about a DNS port conflict") and the
+compliance check raises `dns-conflict`. The fix on the host is
+`netbird up --disable-dns`. Set `skpatch_hosts_dns_server: true` on every
+resolver, so a resolver that is down right now is still checked.
+
+## Maintenance pause
+
+Pause a host (for example a hypervisor during a major upgrade) with the host
+var `skpatch_hosts_paused: true` in the instance repo, or in an emergency
+with the file `/etc/skpatch-hosts.paused` on the host. A paused host is left
+exactly as it is: provisioning changes nothing on it and does not register
+it, and the compliance check reports it as `paused`, never as drift, and does
+not even connect to a host paused by host var. Remove the marker and rerun
+the provisioning playbook to resume.
 
 ## Related projects / See also
 

@@ -200,7 +200,23 @@ async function main() {
 //                   the whole-config PUT. A system whose package manager has
 //                   not been detected yet (first check still pending) is
 //                   reported and picked up by the next run.
+//   scripts         [{name, description, type, operation, pkgManager,
+//                     isDefault, steps}]: custom scripts matched by name
+//                   (dashboard-scripts.json: the wrapper-backed "upgrade
+//                   selected" defaults). Created when missing, updated when
+//                   any of those fields differ.
+//   settings        {key: value}: app settings, written only when a value
+//                   differs (PUT /api/settings with just those keys).
 //   notifications   [{name, type, enabled, notify_on, systems, config}]
+//   talk            {URL, ROOM_TOKEN, USER, APP_PASSWORD, MENTION, NAME,
+//                    NOTIFY_ON}: adds one more notification, a webhook
+//                   channel that posts the dashboard's immediate events
+//                   (default: unreachable) to a Nextcloud Talk room as USER
+//                   (a room participant, with a dedicated app password),
+//                   @mentioning MENTION. Named NAME (default "SK Patching
+//                   (immediate)"); a notification of that name declared in
+//                   `notifications` wins. The daily summary and the other
+//                   immediate classes come from tools/skpatch_watch.py.
 //   schedules       [{name, type, enabled, cron, systems, only_if_required,
 //                     cache_hours, notifications}]
 // `systems` is a list of dashboard system NAMES (any system in the dashboard,
@@ -231,11 +247,96 @@ function aptMode(system) {
   return (configs && configs.apt && configs.apt.defaultUpgradeMode) || "upgrade";
 }
 
+// The Talk webhook channel the `talk` input stands for. The body is a form
+// (Talk's chat endpoint takes message=...), so no JSON escaping of the
+// rendered text is needed.
+function talkChannel(t) {
+  for (const k of ["URL", "ROOM_TOKEN", "USER", "APP_PASSWORD"]) {
+    if (!t[k]) fail(`talk: ${k} is required`);
+  }
+  if (!/^https:\/\//.test(t.URL)) fail("talk: URL must be https");
+  if (!/^[a-z0-9]+$/i.test(t.ROOM_TOKEN)) fail("talk: ROOM_TOKEN is not a Talk room token");
+  const mention = t.MENTION ? `\n\n@"${t.MENTION}"` : "";
+  return {
+    name: t.NAME || "SK Patching (immediate)",
+    type: "webhook",
+    notify_on: t.NOTIFY_ON || ["unreachable"],
+    systems: null,
+    config: {
+      preset: "custom",
+      method: "POST",
+      url: `${t.URL.replace(/\/+$/, "")}/ocs/v2.php/apps/spreed/api/v1/chat/${t.ROOM_TOKEN}`,
+      query: [],
+      headers: [
+        { name: "OCS-APIRequest", value: "true", sensitive: false },
+        { name: "Accept", value: "application/json", sensitive: false },
+      ],
+      auth: { mode: "basic", username: t.USER, password: t.APP_PASSWORD },
+      body: { mode: "form", fields: [{ name: "message", value: `{{event.decoratedTitle}}\n\n{{event.body}}${mention}`, sensitive: false }] },
+      timeoutMs: 10000,
+      retryAttempts: 2,
+      retryDelayMs: 5000,
+      allowInsecureTls: false,
+    },
+  };
+}
+
 async function configure(call, cfg) {
   const wantsModes = cfg.upgrade_mode || cfg.systems.some((w) => w.upgrade_mode);
-  const notifs = Array.isArray(cfg.notifications) ? cfg.notifications : [];
+  const notifs = Array.isArray(cfg.notifications) ? [...cfg.notifications] : [];
+  if (cfg.talk && typeof cfg.talk === "object" && Object.keys(cfg.talk).length) {
+    const ch = talkChannel(cfg.talk);
+    if (!notifs.some((n) => n.name === ch.name)) notifs.push(ch);
+  }
   const scheds = Array.isArray(cfg.schedules) ? cfg.schedules : [];
-  if (!wantsModes && !notifs.length && !scheds.length) return;
+  const scripts = Array.isArray(cfg.scripts) ? cfg.scripts : [];
+  const settings = cfg.settings && typeof cfg.settings === "object" ? cfg.settings : {};
+  if (!wantsModes && !notifs.length && !scheds.length && !scripts.length && !Object.keys(settings).length) return;
+
+  if (Object.keys(settings).length) {
+    const got = (await call("GET", "/settings")) || {};
+    const cur = got.settings || {};
+    const rules = got.numericSettingRules || {};
+    const diff = {};
+    for (const [k, v] of Object.entries(settings)) {
+      let want = String(v);
+      // The app silently clamps a numeric setting to its maximum (for
+      // cmd_timeout_seconds that is 600 unless LUDASH_MAX_CMD_TIMEOUT is set):
+      // clamp here too, say so, and do not rewrite it on every run.
+      const r = rules[k];
+      if (r && Number.isFinite(Number(want)) && Number(want) > r.max) {
+        console.log(`settings: ${k} ${want} is above the dashboard's maximum ${r.max}, using ${r.max} (raise MAX_CMD_TIMEOUT and redeploy)`);
+        want = String(r.max);
+      }
+      if (String(cur[k]) !== want) diff[k] = want;
+    }
+    if (Object.keys(diff).length) {
+      await call("PUT", "/settings", diff);
+      console.log(`settings: set ${Object.keys(diff).sort().join(", ")}`);
+    } else {
+      console.log(`settings: unchanged (${Object.keys(settings).sort().join(", ")})`);
+    }
+  }
+
+  if (scripts.length) {
+    const fields = ["description", "type", "operation", "pkgManager", "isDefault", "steps"];
+    const shape = (s) => sortedJson(fields.reduce((o, f) => ((o[f] = f === "steps"
+      ? (s.steps || []).map((x) => ({ label: x.label, command: x.command })) : s[f] ?? null), o), {}));
+    const have = ((await call("GET", "/scripts")).scripts || []).filter((s) => !s.readonly);
+    for (const want of scripts) {
+      if (!want.name || !want.operation || !Array.isArray(want.steps)) fail("every script needs name, operation and steps");
+      const cur = have.find((s) => s.name === want.name);
+      if (!cur) {
+        const out = await call("POST", "/scripts", want);
+        console.log(`script ${want.name}: created (${out.script ? out.script.id : "?"})`);
+      } else if (shape(cur) === shape(want)) {
+        console.log(`script ${want.name}: unchanged (${cur.id})`);
+      } else {
+        await call("PUT", `/scripts/${encodeURIComponent(cur.id)}`, want);
+        console.log(`script ${want.name}: updated (${cur.id})`);
+      }
+    }
+  }
 
   const all = (await call("GET", "/systems")).systems || [];
   const byKey = new Map(all.map((s) => [`${s.hostname}:${Number(s.port || 22)}`, s]));

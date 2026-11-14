@@ -16,6 +16,7 @@ import base64
 import hashlib
 import hmac
 import json
+import urllib.parse
 import secrets
 import shutil
 import sqlite3
@@ -51,6 +52,10 @@ class Dashboard:
         self.notifications: list[dict] = []
         self.schedules: list[dict] = []
         self.modes: dict[int, str] = {}
+        self.scripts: list[dict] = [{"id": "builtin:apt:detect", "readonly": True, "name": "Detect APT"}]
+        self.settings: dict[str, str] = {"cmd_timeout_seconds": "120", "cache_duration_hours": "12"}
+        self.rules: dict[str, dict] = {"cmd_timeout_seconds": {"min": 10, "max": 1800, "fallback": 120},
+                                       "ssh_timeout_seconds": {"min": 5, "max": 120, "fallback": 30}}
 
     def session_user(self, headers) -> dict | None:
         if headers.get("Authorization", "").startswith("Bearer "):
@@ -130,6 +135,22 @@ def _handler(dash: Dashboard):
                 s = next(s for s in dash.systems if s["id"] == sid)
                 s["pkgManagerConfigs"] = {"apt": {"defaultUpgradeMode": "full-upgrade" if body["fullUpgrade"] else "upgrade"}}
                 return self._send(200, {"status": "ok"})
+            if method == "GET" and self.path == "/api/settings":
+                return self._send(200, {"settings": dict(dash.settings), "numericSettingRules": dash.rules})
+            if method == "PUT" and self.path == "/api/settings":
+                assert all(isinstance(v, str) for v in body.values())
+                dash.settings.update(body)
+                return self._send(200, {"ok": True})
+            if method == "GET" and self.path == "/api/scripts":
+                return self._send(200, {"scripts": dash.scripts, "packageManagers": []})
+            if method == "POST" and self.path == "/api/scripts":
+                s = {"id": f"custom:{len(dash.scripts)}", "readonly": False, **body}
+                dash.scripts.append(s)
+                return self._send(201, {"script": s})
+            if method == "PUT" and self.path.startswith("/api/scripts/"):
+                sid = urllib.parse.unquote(self.path.rsplit("/", 1)[1])
+                next(s for s in dash.scripts if s["id"] == sid).update(body)
+                return self._send(200, {"script": {"id": sid}})
             for coll, key in (("notifications", "notifications"), ("schedules", "schedules")):
                 items = getattr(dash, coll)
                 if method == "GET" and self.path == f"/api/{coll}":
@@ -340,3 +361,91 @@ def test_upgrade_mode_skips_a_package_manager_without_one(dash):
     assert out.returncode == 0, out.stderr
     assert "wkr-1: upgrade mode n/a (pacman has none)" in out.stdout
     assert not any(p.endswith("/upgrade-mode") for _, p in dash.calls)
+
+
+DASH_SCRIPTS = json.loads((SCRIPT.parent / "dashboard-scripts.json").read_text())["scripts"]
+
+
+def test_wrapper_scripts_and_settings_converge_by_name_and_value(dash):
+    first = _run(dash, _cfg(scripts=DASH_SCRIPTS, settings={"cmd_timeout_seconds": 600}))
+    assert first.returncode == 0, first.stderr
+    assert "settings: set cmd_timeout_seconds" in first.stdout
+    assert dash.settings == {"cmd_timeout_seconds": "600", "cache_duration_hours": "12"}
+    for s in DASH_SCRIPTS:
+        assert f"script {s['name']}: created" in first.stdout
+    custom = [s for s in dash.scripts if not s["readonly"]]
+    assert sorted(s["pkgManager"] for s in custom) == ["apt", "flatpak", "pacman", "snap"]
+    assert all(s["isDefault"] and s["operation"] == "upgrade_selected" for s in custom)
+
+    second = _run(dash, _cfg(scripts=DASH_SCRIPTS, settings={"cmd_timeout_seconds": 600}))
+    assert second.returncode == 0, second.stderr
+    assert "settings: unchanged" in second.stdout
+    assert "created" not in second.stdout and "updated" not in second.stdout
+
+    # someone edits one by hand: the next run puts it back, keeping its id
+    apt = next(s for s in dash.scripts if s.get("pkgManager") == "apt" and not s["readonly"])
+    apt["steps"] = [{"label": "x", "command": "sudo apt-get install -y {{packages}}"}]
+    third = _run(dash, _cfg(scripts=DASH_SCRIPTS))
+    assert f"script {apt['name']}: updated ({apt['id']})" in third.stdout
+    assert apt["steps"][0]["command"] == DASH_SCRIPTS[0]["steps"][0]["command"]
+    assert len([s for s in dash.scripts if not s["readonly"]]) == 4
+    assert not any(m == "DELETE" for m, _ in dash.calls)
+
+
+def test_a_setting_above_the_dashboards_maximum_is_clamped_once_not_rewritten_every_run(dash):
+    # a dashboard deployed without LUDASH_MAX_CMD_TIMEOUT caps the timeout at 600
+    dash.rules["cmd_timeout_seconds"]["max"] = 600
+    want = {"cmd_timeout_seconds": 1800, "ssh_timeout_seconds": 60}
+    first = _run(dash, _cfg(settings=want))
+    assert first.returncode == 0, first.stderr
+    assert "cmd_timeout_seconds 1800 is above the dashboard's maximum 600, using 600" in first.stdout
+    assert dash.settings["cmd_timeout_seconds"] == "600" and dash.settings["ssh_timeout_seconds"] == "60"
+    second = _run(dash, _cfg(settings=want))
+    assert "settings: unchanged" in second.stdout
+    # with the ceiling raised (redeploy), the next run converges to 1800
+    dash.rules["cmd_timeout_seconds"]["max"] = 1800
+    third = _run(dash, _cfg(settings=want))
+    assert "settings: set cmd_timeout_seconds" in third.stdout and dash.settings["cmd_timeout_seconds"] == "1800"
+
+
+def test_the_default_settings_are_the_long_upgrade_timeouts():
+    text = (SCRIPT.parent.parent.parent / "tasks" / "register_systems.yml").read_text()
+    assert "default({'cmd_timeout_seconds': 1800, 'ssh_timeout_seconds': 60}, true)" in text
+
+
+TALK = {"URL": "https://cloud.example.test/", "ROOM_TOKEN": "abc123xy", "USER": "agent",
+        "APP_PASSWORD": "talk-app-pw-secret", "MENTION": "ops.lead"}
+
+
+def test_talk_adds_one_immediate_webhook_channel_that_posts_to_the_room(dash):
+    first = _run(dash, _cfg(talk=TALK, notifications=NOTIFS))
+    assert first.returncode == 0, first.stderr
+    assert "notification SK Patching (immediate): created" in first.stdout
+    ch = next(n for n in dash.notifications if n["name"] == "SK Patching (immediate)")
+    assert ch["type"] == "webhook" and ch["notifyOn"] == ["unreachable"] and ch["systemIds"] is None
+    c = ch["config"]
+    assert c["url"] == "https://cloud.example.test/ocs/v2.php/apps/spreed/api/v1/chat/abc123xy"
+    assert c["method"] == "POST" and c["auth"] == {"mode": "basic", "username": "agent", "password": "talk-app-pw-secret"}
+    assert {"name": "OCS-APIRequest", "value": "true", "sensitive": False} in c["headers"]
+    field = c["body"]["fields"][0]
+    assert c["body"]["mode"] == "form" and field["name"] == "message"
+    assert field["value"].startswith("{{event.decoratedTitle}}") and field["value"].endswith('@"ops.lead"')
+    assert "talk-app-pw-secret" not in first.stdout + first.stderr
+    second = _run(dash, _cfg(talk=TALK, notifications=NOTIFS))
+    assert "notification SK Patching (immediate): synced" in second.stdout
+    assert len(dash.notifications) == 2
+
+
+def test_a_declared_notification_of_the_same_name_wins_over_talk(dash):
+    mine = [{"name": "SK Patching (immediate)", "type": "email", "notify_on": ["unreachable"], "config": {"x": 1}}]
+    out = _run(dash, _cfg(talk=TALK, notifications=mine))
+    assert out.returncode == 0, out.stderr
+    assert [n["type"] for n in dash.notifications] == ["email"]
+
+
+@pytest.mark.parametrize("bad, msg", [({"USER": ""}, "USER is required"),
+                                      ({"URL": "http://cloud.example.test"}, "URL must be https"),
+                                      ({"ROOM_TOKEN": "../x"}, "not a Talk room token")])
+def test_talk_refuses_an_incomplete_or_unsafe_config(dash, bad, msg):
+    out = _run(dash, _cfg(talk={**TALK, **bad}))
+    assert out.returncode != 0 and msg in out.stderr

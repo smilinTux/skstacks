@@ -1,0 +1,13 @@
+# Every 15 minutes: the immediate classes (failed upgrade, sudo denied,
+# package manager issue, reboot pending too long) reach the room within
+# about a quarter of an hour, once per problem.
+[Unit]
+Description=skpatch-hosts dashboard watch (%i), every 15 minutes
+
+[Timer]
+OnCalendar=*:0/15
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target

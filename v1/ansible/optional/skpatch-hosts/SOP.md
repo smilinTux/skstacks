@@ -93,6 +93,17 @@ python -m pytest v1/tests/test_skpatch_hosts_provision.py -v
 # dashboard that enforces the session signature and CSRF, plus the include
 python -m pytest v1/tests/test_skpatch_hosts_register_systems_js.py v1/tests/test_skpatch_hosts_registration_include.py -v
 
+# Sudo coverage: the template against the pinned image's own sudo commands
+# (fails after an image bump until the fixture is regenerated and reviewed)
+python -m pytest v1/tests/test_skpatch_hosts_sudo_coverage.py -v
+python3 v1/ansible/optional/skpatch-hosts/tools/extract_sudo_commands.py   # regenerate (docker)
+
+# Fleet compliance tool and its read-only dashboard report, the Talk hook
+python -m pytest v1/tests/test_skpatch_hosts_compliance.py -v
+
+# Dashboard watch (immediate classes) and the daily summary
+python -m pytest v1/tests/test_skpatch_hosts_watch.py -v
+
 # Repo-wide gate this role must also keep passing
 python -m pytest v1/tests/test_no_latest_images.py -v
 python -m pytest v1/tests/test_portal_tile_lint.py -v
@@ -261,6 +272,7 @@ skpatch-hosts:
   DATA_PATH: ""                             # default /var/data/skpatch-hosts-<env>/data
   DATA_NODE: ""                             # pin dashboard to this node (required with a local path)
   PLACEMENT_CONSTRAINTS: []                 # default ["node.role == worker"]
+  EXTRA_HOSTS: []                           # ["host:address", ...] added to the container's /etc/hosts (README "Notification delivery")
   HEALTH_CHECK_INTERVAL: 30s
   HEALTH_CHECK_TIMEOUT: 10s
   HEALTH_CHECK_RETRIES: 3
@@ -280,6 +292,7 @@ skpatch-hosts:
   PROVISION_USER: skpatch-ro                # the low-privilege account's name
   PROVISION_UID: 5201                       # its fixed uid and gid; never a system uid (containers share the host's uid space)
   SSH_PUBLIC_KEY: ""                        # required by provision_skpatch_hosts_nodes.yml; one keypair per estate
+  DPKG_KEEP_CONFFILES: true                 # armed hosts answer dpkg's conffile prompt with its default (README "What an armed host gets")
   # Host auto-registration (README.md "Automatic host registration"); REGISTER_AS plus a credential, else skipped
   REGISTER_AS: ""                           # an existing dashboard admin's username (local or OIDC)
   SSH_PRIVATE_KEY: ""                       # private half of SSH_PUBLIC_KEY; the registrar creates the credential from it
@@ -355,8 +368,27 @@ self-signed five-minute session for `REGISTER_AS`), and ships two playbooks:
 | A schedule or channel you changed in the dashboard reverted | It is declared in `SCHEDULES`/`NOTIFICATIONS` (or `skpatch_hosts_schedules`); every registrar run converges it back. Change it there. |
 | `upgrade mode pending (package manager not detected yet ...)` | Expected right after a system is registered; the next run sets it. |
 | Upgrade-all ends "warning" on the snap step | The host was provisioned before the `snap refresh` sudoers line existed; rerun the provisioning playbook against it. |
-| "Upgrade selected" fails with `sudo: a password is required` | The dashboard runs `apt-get ... install --only-upgrade -y <pkgs>` (or `snap refresh <names>`) directly and sudoers deliberately has no wildcard for it. Rerun the provisioning playbook so the wrappers exist, then set the per-system custom script override that calls them (README "Selected-package upgrades"). A wrapper exiting 2 with `refusing invalid ... name` means an argument failed its regex, by design. |
-| A scheduled reboot of a Proxmox host says "Reboot blocked" | By design: the role does not grant the app's `pvesh` backup guard, so hypervisors are rebooted from Proxmox. Take them out of the reboot schedule. |
+| "Upgrade selected" fails with `sudo: a password is required` | The dashboard runs `apt-get ... install --only-upgrade -y <pkgs>` (or `snap refresh <names>`) directly and sudoers deliberately has no wildcard for it. Rerun the provisioning playbook: it installs the wrappers and converges the default "upgrade selected" scripts that call them (README "Selected-package upgrades"). A wrapper exiting 2 with `refusing invalid ... name` means an argument failed its regex, by design. |
+| A reboot of a Proxmox host says "Reboot blocked: could not verify Proxmox backup activity" | The host was provisioned before the `pvesh` guard line existed, or actions are off for it. Rerun the provisioning playbook (it detects `/usr/bin/pvesh`; `skpatch_hosts_proxmox: true` forces it). "Reboot blocked: Proxmox backup task is running" is the guard working: wait for the backup. |
+| Repair fails with `sudo: a password is required` | The host was provisioned before the `dpkg --configure -a` line existed; rerun the provisioning playbook. |
+| An upgrade fails with `debconf: unable to initialize frontend` or `end of file on stdin at conffile prompt` | The host predates the `DEBIAN_FRONTEND` env_keep and the dpkg conffile policy; rerun the provisioning playbook, then press Repair. |
+| Upgrade all succeeds with "The following upgrades have been deferred due to phasing" and "0 upgraded", and the dashboard still lists the packages (Ubuntu) | The host lacks `/etc/apt/apt.conf.d/99skpatch-phased`. Run the provisioning playbook with `--tags phased` (config only), then Check. |
+| Every email notification and the digest fail with "Connection timeout", the SMTP host works from a shell | The mailer resolves the SMTP host by DNS and gets the estate's public address; `EXTRA_HOSTS` does not help email while the name has a public record. Fix DNS or the port forward (README "Notification delivery"), or rely on the Talk room. |
+| Nothing reaches the Talk room | `POST /api/notifications/<id>/test` on the Talk channel: HTTP 401 is the app password, 404 the room token or the account is not a participant. For the watch: `journalctl --user -u skpatch-watch@<estate>`; "Talk post failed: HTTP ..." is the hook. A failed post is retried next run. |
+| The same problem is posted again and again | It should not be: the watch and the compliance check post once per `host|issue`. Check that the unit's `StateDirectory` is writable and not shared between estates. |
+| A host that needs a reboot was never posted | Expected for 8 days: a pending reboot alerts only after `--reboot-days` on the same boot (the normal case is no alert). |
+| Provisioning fails: "has package manager(s) ... that the skpatch-hosts sudoers template does not cover" | By design: every dashboard action for that manager would fail on sudo. Add coverage (README "Sudo coverage and drift detection"), or disable the manager for that system in the dashboard and set `skpatch_hosts_unsupported_managers_ok`. |
+| `test_fixture_is_for_the_pinned_image` fails | The dashboard image was bumped. Run `tools/extract_sudo_commands.py`, review the fixture diff, update `sudo-coverage.yml` and the sudoers template, rerun the tests. |
+| Compliance reports `drift` | Provisioning would change that host (listed tasks). Usually the framework moved on: rerun the provisioning playbook for it (`--check --diff` first). |
+| The watch posts `upgrade-failed:<action>` | The dashboard's latest run of that action failed (not on sudo). Read the run in the system's history; the issue clears with the next successful run of the action. |
+| The watch posts `package-manager` | The dashboard reports a package manager issue on that system: open it and press Repair. If the banner says "dpkg was interrupted" but `dpkg --audit` on the host shows no half-configured package (for example only a warning about a foreign architecture such as i386 that dpkg has not registered), Repair cannot clear it: the app treats any audit output as "interrupted". Fix what the audit names. |
+| A `sudo-denied` alert says "known gap, fix in PR #..." | Expected until that host is provisioned with the fix: the framework knows the cause (`src/skpatch-hosts/known-gaps.json`). Provision the host with that release; the alert resolves by itself through the coverage stamp. |
+| A sudo denial never resolves after reprovisioning | Check `skpatch-coverage.json` on the dashboard's node for the host: no entry means the sudoers task did not run for it (paused, failed, or run under `--check`). |
+| Compliance reports `sudo-denied:<action>` | The dashboard's latest run of that action hit sudo. Rerun provisioning for the host; the issue clears with the next successful run of the action. |
+| Compliance reports `dashboard-only` | A dashboard system matches no inventory host: provision it, fix its name/address, or remove it from the dashboard. |
+| Provisioning warns "serves DNS and has a port 53 conflict", or compliance reports `dns-conflict` | On a resolver host, NetBird's DNS (or another process) can take port 53 before the DNS server. Run `netbird up --disable-dns` on that host, restart the DNS server, rerun the check (README "DNS server hosts and NetBird"). |
+| An upgrade or check fails on a resolver host right after a reboot | Check `ss -lnptu 'sport = :53'` on it: NetBird holding :53 means the DNS server never started. Same fix as the row above. |
+| A host was skipped with "skpatch-hosts PAUSED" | Expected: host var `skpatch_hosts_paused` or `/etc/skpatch-hosts.paused`. Remove it and rerun to resume. |
 | A retired node still shows in the dashboard | Expected: registration never deletes. Remove it by hand once its history is no longer needed. |
 
 ## 9. Maturity-tier + Version reference

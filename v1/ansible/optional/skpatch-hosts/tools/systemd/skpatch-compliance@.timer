@@ -1,0 +1,12 @@
+# Daily, after the nightly update window has settled, with jitter so two
+# estates on one controller do not start together. Change OnCalendar to taste.
+[Unit]
+Description=skpatch-hosts fleet compliance (%i), daily
+
+[Timer]
+OnCalendar=*-*-* 08:15:00
+RandomizedDelaySec=20min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

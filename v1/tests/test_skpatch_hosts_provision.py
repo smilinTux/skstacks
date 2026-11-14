@@ -22,6 +22,7 @@ sudoers-mismatch fix for the live evidence. The commands used to be
 that mismatch is why every live update check failed closed with
 "sudo: a password is required" the first time this code path was ever
 reached."""
+import re
 import shutil
 import subprocess
 import sys
@@ -67,9 +68,11 @@ STALE_CMDS = ("NOPASSWD: /usr/bin/apt list --upgradable",
               "NOPASSWD: /usr/bin/apt-get -y autoremove")
 
 
-def run(tmp: Path, vault: dict | None, extra_vars: dict | None = None) -> dict:
+def run(tmp: Path, vault: dict | None, extra_vars: dict | None = None, mutate=None) -> dict:
     work = tmp / "work"
     shutil.copytree(rp.ANSIBLE, work / "ansible")
+    if mutate is not None:
+        mutate(work / "ansible")
     for task_file in (work / "ansible").glob("**/tasks/*.yml"):
         if task_file.name != "select_vault_file.yml":
             rp.rewrite_task_file(task_file)
@@ -364,3 +367,219 @@ def test_absent_terminates_the_accounts_sessions_then_forces_userdel():
     assert "pkill -KILL -u" in sessions
     assert "when: skpatch_state == 'absent'" in sessions
     assert "force: true" in _task(pb_text, "Remove the account and its home, key included (absent)")
+
+
+# --- repair, debconf, Proxmox reboot guard, conffile policy -----------------
+# Each closes a dashboard action that failed closed on a real host: the Repair
+# banner (`dpkg --configure -a`), debconf prompting with no terminal because
+# sudo dropped DEBIAN_FRONTEND, a Proxmox reboot blocked by the app's own pvesh
+# backup guard, and dpkg stopping at a conffile prompt with stdin on /dev/null.
+
+PVESH = "/usr/bin/pvesh get /cluster/tasks --output-format json"
+REPAIR = "skpatch-ro ALL=(root) NOPASSWD: /usr/bin/dpkg --configure -a"
+ENV_KEEP = 'Defaults:skpatch-ro env_keep += "DEBIAN_FRONTEND"'
+DPKG_CFG = "run/out/_copy/etc/dpkg/dpkg.cfg.d/90-skpatch-hosts"
+
+
+def test_actions_grant_the_repair_command_and_keep_debian_frontend(tmp_path):
+    text = sudoers(tmp_path, {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True})
+    assert REPAIR in text
+    assert ENV_KEEP in text
+    # exactly one env_keep, for exactly one variable
+    assert [r for r in _rules(text) if "env_keep" in r] == [ENV_KEEP]
+
+
+def test_read_only_has_no_repair_no_env_keep_and_no_pvesh(tmp_path):
+    text = sudoers(tmp_path, {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": False},
+                   extra_vars={"skpatch_hosts_proxmox": True})
+    rules = "\n".join(_rules(text))
+    assert "--configure" not in rules
+    assert "env_keep" not in rules
+    assert "pvesh" not in rules
+
+
+def test_pvesh_guard_is_granted_only_on_proxmox_with_actions(tmp_path):
+    (tmp_path / "pve").mkdir()
+    (tmp_path / "plain").mkdir()
+    pve = sudoers(tmp_path / "pve", {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True},
+                  extra_vars={"skpatch_hosts_proxmox": True})
+    plain = sudoers(tmp_path / "plain", {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True})
+    assert f"skpatch-ro ALL=(root) NOPASSWD: {PVESH}" in pve
+    # the render host has no /usr/bin/pvesh: detection says not Proxmox
+    assert "pvesh" not in "\n".join(_rules(plain))
+    assert_visudo_accepts(pve)
+
+
+def test_pvesh_rule_is_the_exact_read_only_argv(tmp_path):
+    text = sudoers(tmp_path, {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True},
+                   extra_vars={"skpatch_hosts_proxmox": True})
+    pvesh_rules = [r for r in _rules(text) if "pvesh" in r]
+    assert pvesh_rules == [f"skpatch-ro ALL=(root) NOPASSWD: {PVESH}"]
+    assert " set " not in pvesh_rules[0] and " create " not in pvesh_rules[0]
+
+
+def test_conffile_policy_is_written_only_where_actions_are_allowed(tmp_path):
+    for sub in ("on", "off", "optout"):
+        (tmp_path / sub).mkdir()
+    sudoers(tmp_path / "on", {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True})
+    sudoers(tmp_path / "off", {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": False})
+    sudoers(tmp_path / "optout", {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True, "DPKG_KEEP_CONFFILES": False})
+    body = (tmp_path / "on" / DPKG_CFG).read_text()
+    assert [l for l in body.splitlines() if l and not l.startswith("#")] == ["force-confdef", "force-confold"]
+    assert not (tmp_path / "off" / DPKG_CFG).exists()
+    assert not (tmp_path / "optout" / DPKG_CFG).exists()
+
+
+def test_conffile_policy_is_removed_when_off_and_written_before_sudoers():
+    pb = PB.read_text()
+    put = _task(pb, "Keep local conffiles during unattended upgrades (present, actions allowed)")
+    assert "dest: /etc/dpkg/dpkg.cfg.d/90-skpatch-hosts" in put and "mode: '0644'" in put
+    gone = _task(pb, "Remove the conffile policy (absent, actions off, or DPKG_KEEP_CONFFILES false)")
+    assert "state: absent" in gone
+    assert "not (skp_keep_conffiles | bool)" in gone and "skpatch_state == 'absent'" in gone
+
+
+# --- pacman and flatpak (an Arch-family workstation) -------------------------
+
+PACMAN_RO = "skpatch-ro ALL=(root) NOPASSWD: /usr/bin/pacman -Sy --noconfirm"
+FLATPAK_RO = "skpatch-ro ALL=(root) NOPASSWD: /usr/bin/flatpak update --appstream"
+PACMAN_ACT = ("skpatch-ro ALL=(root) NOPASSWD: /usr/bin/pacman -Syu --noconfirm",
+              "skpatch-ro ALL=(root) NOPASSWD: /usr/local/sbin/skpatch-pacman-upgrade")
+FLATPAK_ACT = ("skpatch-ro ALL=(root) NOPASSWD: /usr/bin/flatpak update -y",
+               "skpatch-ro ALL=(root) NOPASSWD: /usr/bin/flatpak uninstall --unused -y",
+               "skpatch-ro ALL=(root) NOPASSWD: /usr/local/sbin/skpatch-flatpak-update")
+ARCH = {"skpatch_hosts_pkg_managers": ["pacman", "flatpak"]}
+
+
+def test_pacman_and_flatpak_lines_only_where_the_manager_exists(tmp_path):
+    (tmp_path / "arch").mkdir()
+    (tmp_path / "deb").mkdir()
+    arch = sudoers(tmp_path / "arch", {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True}, extra_vars=ARCH)
+    deb = sudoers(tmp_path / "deb", {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True},
+                  extra_vars={"skpatch_hosts_pkg_managers": []})
+    for line in (PACMAN_RO, FLATPAK_RO) + PACMAN_ACT + FLATPAK_ACT:
+        assert line in arch
+    rules = "\n".join(_rules(deb))
+    assert "pacman" not in rules and "flatpak" not in rules
+    assert_visudo_accepts(arch)
+
+
+def test_pacman_and_flatpak_report_only_get_just_the_refresh(tmp_path):
+    text = sudoers(tmp_path, {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": False}, extra_vars=ARCH)
+    assert PACMAN_RO in text and FLATPAK_RO in text
+    for line in PACMAN_ACT + FLATPAK_ACT:
+        assert line not in text
+
+
+def test_pacman_autoremove_and_selected_forms_are_never_granted(tmp_path):
+    text = sudoers(tmp_path, {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True}, extra_vars=ARCH)
+    rules = _rules(text)
+    assert not [r for r in rules if "-Rns" in r]
+    assert not [r for r in rules if re.search(r"/usr/bin/pacman -S( |$)", r)]
+    assert not [r for r in rules if "*" in r]
+    assert [r for r in rules if "/usr/bin/flatpak update" in r] == [FLATPAK_RO, FLATPAK_ACT[0]]
+
+
+def test_arch_wrappers_are_installed_only_where_the_manager_exists(tmp_path):
+    (tmp_path / "arch").mkdir()
+    (tmp_path / "deb").mkdir()
+    sudoers(tmp_path / "arch", {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True}, extra_vars=ARCH)
+    sudoers(tmp_path / "deb", {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True},
+            extra_vars={"skpatch_hosts_pkg_managers": []})
+    for name in ("skpatch-pacman-upgrade", "skpatch-flatpak-update"):
+        shipped = (ROLE / "src" / "skpatch-hosts" / f"{name}.sh").read_bytes()
+        assert (tmp_path / "arch/run/out/_copy/usr/local/sbin" / name).read_bytes() == shipped
+        assert not (tmp_path / "deb/run/out/_copy/usr/local/sbin" / name).exists()
+
+
+def test_conffile_policy_needs_dpkg():
+    put = _task(PB.read_text(), "Keep local conffiles during unattended upgrades (present, actions allowed)")
+    assert "skp_has_dpkg | bool" in put
+
+
+# --- onboarding guards: maintenance pause, uncovered package managers ------
+
+def test_paused_host_is_left_completely_alone(tmp_path):
+    res = run(tmp_path, {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True},
+              extra_vars={"skpatch_hosts_paused": True})
+    assert res["rc"] == 0, res["log"][-4000:]
+    assert "PAUSED" in res["log"]
+    assert not (tmp_path / "run/out/etc/sudoers.d/skpatch").exists()
+    assert not (tmp_path / "run/out/_copy/usr/local/sbin").exists()
+
+
+def test_pause_marker_file_is_checked_and_the_pause_ends_the_host_before_any_change():
+    text = PB.read_text()
+    assert "/etc/skpatch-hosts.paused" in text
+    pause = text.index("Look for the maintenance pause marker")
+    assert pause < text.index("Create the skpatch-hosts account (present)")
+    assert pause < text.index("Write the sudoers rule (present)")
+    assert "meta: end_host" in text[pause:text.index("Select vault file")]
+
+
+def test_paused_host_is_not_registered_in_the_dashboard():
+    collect = _task(PB.read_text(), "Collect this run's target systems (name, hostname, port) from the play's own hosts")
+    assert "hostvars[item].skp_paused" in collect
+
+
+def test_unsupported_manager_is_refused_unless_acknowledged():
+    text = PB.read_text()
+    refuse = _task(text, "Refuse a host with an uncovered package manager")
+    assert "skpatch_hosts_unsupported_managers_ok" in refuse
+    assert "sudo-coverage.yml" in _task(text, "Load the sudo coverage policy (which managers this role covers)")
+    assert text.index("Refuse a host with an uncovered package manager") < text.index("Write the sudoers rule (present)")
+
+
+def test_unsupported_manager_detection_fails_the_render(tmp_path):
+    # Point one "unsupported" binary at a path that exists on every test host
+    # (in the test's own copy of the tree), so detection fires for real
+    # through Ansible's stat.
+    def fake_dnf(ansible):
+        cov = ansible / "optional" / "skpatch-hosts" / "src" / "skpatch-hosts" / "sudo-coverage.yml"
+        cov.write_text(cov.read_text().replace("dnf: /usr/bin/dnf", "dnf: /bin/sh"))
+
+    vault = {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True}
+    (tmp_path / "bad").mkdir()
+    res = run(tmp_path / "bad", vault, mutate=fake_dnf)
+    assert res["rc"] != 0 and "does not cover" in res["log"] and "dnf" in res["log"]
+    assert not (tmp_path / "bad/run/out/etc/sudoers.d/skpatch").exists()
+    (tmp_path / "ok").mkdir()
+    res = run(tmp_path / "ok", vault, {"skpatch_hosts_unsupported_managers_ok": ["dnf"]}, mutate=fake_dnf)
+    assert res["rc"] == 0, res["log"][-4000:]
+
+
+# --- Ubuntu phased updates ---------------------------------------------------
+
+PHASED_PUT = "Install phased updates at once on Ubuntu (present)"
+PHASED_GONE = "Remove the phased-updates override (absent)"
+
+
+def test_phased_updates_are_always_included_on_ubuntu():
+    put = _task(PB.read_text(), PHASED_PUT)
+    assert "dest: /etc/apt/apt.conf.d/99skpatch-phased" in put and "mode: '0644'" in put
+    assert 'APT::Get::Always-Include-Phased-Updates "true";' in put
+    assert "ansible_facts.distribution | default('') == 'Ubuntu'" in put
+    assert "skpatch_state == 'present'" in put
+
+
+def test_phased_updates_do_not_depend_on_actions_or_other_set_facts():
+    # `--tags phased` must run the pair alone (the NAM config-only rollout),
+    # so neither task may read a fact that an untagged set_fact computes.
+    pb = PB.read_text()
+    for name in (PHASED_PUT, PHASED_GONE):
+        body = _task(pb, name)
+        assert "skp_" not in body, name
+        assert "tags: [config, phased]" in body, name
+
+
+def test_phased_override_is_removed_when_absent():
+    gone = _task(PB.read_text(), PHASED_GONE)
+    assert "path: /etc/apt/apt.conf.d/99skpatch-phased" in gone
+    assert "state: absent" in gone and "skpatch_state == 'absent'" in gone
+
+
+def test_phased_override_is_a_valid_apt_config_line():
+    put = _task(PB.read_text(), PHASED_PUT)
+    lines = [l.strip() for l in put.split("content: |", 1)[1].splitlines()]
+    cfg = [l for l in lines if l and not l.startswith("//") and not l.startswith(("when:", "tags:"))]
+    assert cfg == ['APT::Get::Always-Include-Phased-Updates "true";']

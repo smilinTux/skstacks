@@ -29,6 +29,17 @@
 # the provisioned account after installing this file).
 {{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/dpkg --audit
 {{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout\=60 update -qq
+{% if skp_has_pacman | default(false) | bool %}
+# Arch family (pacman): the check's database refresh, exact argv from the
+# same bundle's builtinCheckSteps ("pacman -Sy --noconfirm"). Listing updates
+# (`pacman -Qu`) runs as the plain user.
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/pacman -Sy --noconfirm
+{% endif %}
+{% if skp_has_flatpak | default(false) | bool %}
+# Flatpak: the check's appstream refresh. Listing installed apps and remote
+# updates runs as the plain user.
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/flatpak update --appstream
+{% endif %}
 
 {% if skp_node_allow_actions | bool %}
 # Actions (upgrade/reboot): only present when this host's
@@ -45,6 +56,19 @@
 {{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout\=60 full-upgrade -y
 {{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout\=60 autoremove -y
 {{ skpatch_user }} ALL=(root) NOPASSWD: /usr/sbin/reboot
+# The "package manager needs repair" banner (dpkg was interrupted) runs this
+# exact argv (builtinRepairIssueCommand in the same bundle). Without it the
+# Repair button ends "sudo: a password is required" and the host stays
+# blocked until someone logs in by hand.
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/dpkg --configure -a
+# The app exports DEBIAN_FRONTEND=noninteractive before every apt action, but
+# sudo's env_reset drops it, so debconf falls back to its Teletype frontend,
+# reads EOF from the app's /dev/null stdin and fails the package's configure
+# step (found live 2026-11-12: console-setup failed mid full-upgrade and left
+# dpkg interrupted). Keeping this ONE variable lets the app's own value reach
+# apt. The frontends that could do anything else (Passthrough, Editor) need
+# variables that env_reset still drops (DEBCONF_PIPE, EDITOR, VISUAL).
+Defaults:{{ skpatch_user }} env_keep += "DEBIAN_FRONTEND"
 # Upgrade-all also refreshes Snap packages on a host where the app detected
 # snap (every Ubuntu server image), with this exact argv
 # (sudoersRelevantCommand("snap refresh") in the same bundle). Without it,
@@ -64,16 +88,37 @@
 # script override, see README "Selected-package upgrades".
 {{ skpatch_user }} ALL=(root) NOPASSWD: /usr/local/sbin/skpatch-apt-only-upgrade
 {{ skpatch_user }} ALL=(root) NOPASSWD: /usr/local/sbin/skpatch-snap-refresh
+{% if skp_has_pacman | default(false) | bool %}
+# pacman: upgrade all (exact argv), and "upgrade selected" only through the
+# wrapper (pacman -S <name> would also install a missing package, and a
+# pacman wildcard is root via --config/--hookdir/-U). Not granted on purpose:
+# the app's pacman autoremove, `pacman -Rns --noconfirm -`, which removes
+# whatever names arrive on stdin, so it could remove any package.
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/pacman -Syu --noconfirm
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/local/sbin/skpatch-pacman-upgrade
 {% endif %}
-# Not granted, on purpose: `pvesh get /cluster/tasks --output-format json`,
-# the app's pre-reboot backup guard on Proxmox VE. Without it a reboot of a
-# Proxmox host fails closed ("Reboot blocked: could not verify Proxmox backup
-# activity"), so hypervisors are never rebooted from this app, by schedule or
-# by hand; reboot them from Proxmox itself.
+{% if skp_has_flatpak | default(false) | bool %}
+# Flatpak: upgrade all and remove unused runtimes (exact argv), and "upgrade
+# selected" only through the wrapper.
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/flatpak update -y
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/flatpak uninstall --unused -y
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/local/sbin/skpatch-flatpak-update
+{% endif %}
+{% if skp_node_is_proxmox | bool %}
+# Proxmox VE only: the app's pre-reboot backup guard (getProxmoxBackupGuardCommand
+# in the same bundle) runs this exact read-only argv and blocks the reboot
+# ("Reboot blocked: could not verify Proxmox backup activity") when it fails.
+# Without it a hypervisor could never be rebooted from the app, even by hand.
+# Granted only where pvesh exists (or skpatch_hosts_proxmox is set), and only
+# with the reboot line above. Whether a hypervisor gets a reboot SCHEDULE is
+# the operator's choice in the dashboard, not this file's.
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/pvesh get /cluster/tasks --output-format json
+{% endif %}
+{% endif %}
 
-# Debian/Ubuntu (apt) is every host in both estates today. A non-Debian
-# target needs its own read (and, if ALLOW_ACTIONS, action) lines added
-# here by hand before provisioning it, confirmed the SAME way this file
-# was corrected: read the shipped image's own server bundle for the exact
-# "# Sudoers-relevant command: ..." lines that package manager emits,
-# never the upstream project's README alone.
+# apt and snap lines are always written; pacman and flatpak lines only where
+# that binary exists (provision_skpatch_hosts_nodes.yml detects them). Any
+# other manager (dnf, apk, ...) needs its lines added here first, confirmed
+# the SAME way this file was: read the shipped image's own server bundle for
+# the exact "# Sudoers-relevant command: ..." lines that manager emits, never
+# the upstream project's README alone.

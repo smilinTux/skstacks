@@ -1,0 +1,67 @@
+{
+  "_comment": [
+    "Default 'upgrade selected' scripts, one per supported manager, that call the root-owned",
+    "wrappers instead of the app's built-in apt-get/snap/pacman/flatpak argv (which sudoers never grants).",
+    "register_systems.js converges them by name on every provisioning run (created when missing,",
+    "updated when they differ, never deleted). test_skpatch_hosts_sudo_coverage.py checks there is one",
+    "per wrapper in sudo-coverage.yml."
+  ],
+  "scripts": [
+    {
+      "name": "APT upgrade selected (skpatch wrapper)",
+      "description": "Selected-package APT upgrade via /usr/local/sbin/skpatch-apt-only-upgrade (skstacks skpatch-hosts).",
+      "type": "package_manager",
+      "operation": "upgrade_selected",
+      "pkgManager": "apt",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "Upgrading selected APT packages",
+          "command": "# Upgrade only the selected APT packages through the root-owned wrapper\n# (skstacks optional/skpatch-hosts: sudoers grants the wrapper, never an apt-get wildcard).\n# Sudoers-relevant command: /usr/local/sbin/skpatch-apt-only-upgrade <pkgs>\nexport DEBIAN_FRONTEND=noninteractive\nif [ \"$(id -u)\" = \"0\" ]; then /usr/local/sbin/skpatch-apt-only-upgrade {{quotedPackages}}; else sudo -S -p '' /usr/local/sbin/skpatch-apt-only-upgrade {{quotedPackages}}; fi 2>&1"
+        }
+      ]
+    },
+    {
+      "name": "Snap refresh selected (skpatch wrapper)",
+      "description": "Selected-snap refresh via /usr/local/sbin/skpatch-snap-refresh (skstacks skpatch-hosts).",
+      "type": "package_manager",
+      "operation": "upgrade_selected",
+      "pkgManager": "snap",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "Refreshing selected Snap packages",
+          "command": "# Refresh only the selected Snap packages through the root-owned wrapper.\n# Sudoers-relevant command: /usr/local/sbin/skpatch-snap-refresh <names>\nif [ \"$(id -u)\" = \"0\" ]; then /usr/local/sbin/skpatch-snap-refresh {{quotedPackages}}; else sudo -S -p '' /usr/local/sbin/skpatch-snap-refresh {{quotedPackages}}; fi 2>&1"
+        }
+      ]
+    },
+    {
+      "name": "Pacman upgrade selected (skpatch wrapper)",
+      "description": "Selected-package pacman upgrade via /usr/local/sbin/skpatch-pacman-upgrade (installed packages only).",
+      "type": "package_manager",
+      "operation": "upgrade_selected",
+      "pkgManager": "pacman",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "Upgrading selected Pacman packages",
+          "command": "# Upgrade only the selected Pacman packages through the root-owned wrapper\n# (installed packages only; skstacks optional/skpatch-hosts).\n# Sudoers-relevant command: /usr/local/sbin/skpatch-pacman-upgrade <pkgs>\nif [ \"$(id -u)\" = \"0\" ]; then /usr/local/sbin/skpatch-pacman-upgrade {{quotedPackages}}; else sudo -S -p '' /usr/local/sbin/skpatch-pacman-upgrade {{quotedPackages}}; fi 2>&1"
+        }
+      ]
+    },
+    {
+      "name": "Flatpak update selected (skpatch wrapper)",
+      "description": "Selected Flatpak update via /usr/local/sbin/skpatch-flatpak-update.",
+      "type": "package_manager",
+      "operation": "upgrade_selected",
+      "pkgManager": "flatpak",
+      "isDefault": true,
+      "steps": [
+        {
+          "label": "Updating selected Flatpak apps",
+          "command": "# Update only the selected Flatpak apps through the root-owned wrapper.\n# Sudoers-relevant command: /usr/local/sbin/skpatch-flatpak-update <ids>\nif [ \"$(id -u)\" = \"0\" ]; then /usr/local/sbin/skpatch-flatpak-update {{quotedPackages}}; else sudo -S -p '' /usr/local/sbin/skpatch-flatpak-update {{quotedPackages}}; fi 2>&1"
+        }
+      ]
+    }
+  ]
+}

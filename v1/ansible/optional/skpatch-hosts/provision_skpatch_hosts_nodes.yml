@@ -60,6 +60,35 @@
     # host account must never sit on one of their numbers.
     skpatch_uid: "{{ skpatch_hosts.PROVISION_UID | default(5201, true) }}"
   pre_tasks:
+    - name: Look for the maintenance pause marker
+      # A host is paused by its host var skpatch_hosts_paused: true (set in
+      # the instance repo, reviewed like any other change) or, for an
+      # emergency on the host itself, by the file /etc/skpatch-hosts.paused.
+      # A paused host is left exactly as it is: no account, key, wrapper,
+      # sudoers or dashboard change. The compliance check reports it as
+      # "paused", never as drift. Remove the marker and rerun to resume.
+      stat:
+        path: /etc/skpatch-hosts.paused
+      register: skp_pause_file
+      when: not (skpatch_hosts_paused | default(false) | bool)
+      tags: [config]
+
+    - name: Skip a paused host (no changes at all)
+      when: (skpatch_hosts_paused | default(false) | bool) or (skp_pause_file.stat.exists | default(false))
+      block:
+        - name: Report the pause
+          debug:
+            msg: >-
+              {{ inventory_hostname }}: skpatch-hosts PAUSED
+              ({{ 'host var skpatch_hosts_paused' if (skpatch_hosts_paused | default(false) | bool) else '/etc/skpatch-hosts.paused' }}),
+              nothing changed. Remove the marker and rerun to resume.
+        - name: Mark the pause for the registration play
+          set_fact:
+            skp_paused: true
+        - name: End this host's play
+          meta: end_host
+      tags: [config]
+
     - name: Select vault file based on domain and cluster
       import_tasks: ../../shared/tasks/select_vault_file.yml
 
@@ -93,6 +122,109 @@
       # skpatch_hosts.ALLOW_ACTIONS says.
       set_fact:
         skp_node_allow_actions: "{{ (skpatch_hosts_allow_actions if skpatch_hosts_allow_actions is defined else (skpatch_hosts.ALLOW_ACTIONS | default(false))) | bool }}"
+      tags: [config]
+
+    - name: Detect Proxmox VE (the reboot guard needs pvesh)
+      # The app's reboot runs a pvesh backup-activity guard first on any host
+      # that has pvesh, and refuses to reboot when that guard cannot run. A
+      # host var skpatch_hosts_proxmox (true/false) overrides the detection.
+      stat:
+        path: /usr/bin/pvesh
+      register: skp_pvesh
+      when: skpatch_hosts_proxmox is not defined
+      tags: [config]
+
+    - name: Detect the package managers beyond apt (pacman, flatpak) and dpkg
+      # The sudoers lines for pacman and flatpak (and their wrappers) are only
+      # written where that manager exists; the dpkg conffile policy only where
+      # dpkg does. A host var skpatch_hosts_pkg_managers (a list, e.g.
+      # [pacman, flatpak]) overrides the pacman/flatpak detection.
+      stat:
+        path: "{{ item }}"
+      loop: [/usr/bin/pacman, /usr/bin/flatpak, /usr/bin/dpkg]
+      register: skp_pm_bins
+      tags: [config]
+
+    - name: Load the sudo coverage policy (which managers this role covers)
+      include_vars:
+        file: "{{ playbook_dir }}/src/skpatch-hosts/sudo-coverage.yml"
+        name: skp_coverage
+      tags: [config]
+
+    - name: Detect package managers the sudoers template does not cover
+      stat:
+        path: "{{ item.value }}"
+      loop: "{{ skp_coverage.unsupported | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      register: skp_unsupported_bins
+      when: skpatch_state == 'present'
+      tags: [config]
+
+    - name: Refuse a host with an uncovered package manager
+      # The dashboard would detect it and every check or action on it would
+      # end "sudo: a password is required". Fail BEFORE touching the host, so
+      # nobody finds out from a failed run weeks later. Either add the
+      # manager to sudo-coverage.yml and the sudoers template (verified
+      # against the pinned image, see tools/extract_sudo_commands.py), or
+      # disable it for this system in the dashboard and list it in the host
+      # var skpatch_hosts_unsupported_managers_ok.
+      vars:
+        skp_found_unsupported: >-
+          {{ skp_unsupported_bins.results | default([]) | selectattr('stat', 'defined')
+             | selectattr('stat.exists') | map(attribute='item.key') | list
+             | difference(skpatch_hosts_unsupported_managers_ok | default([])) }}
+      assert:
+        that: skp_found_unsupported | length == 0
+        fail_msg: >-
+          {{ inventory_hostname }} has package manager(s) {{ skp_found_unsupported | join(', ') }}
+          that the skpatch-hosts sudoers template does not cover. Add them to
+          src/skpatch-hosts/sudo-coverage.yml and the template (checked against the
+          pinned image), or disable them for this system in the dashboard and set
+          skpatch_hosts_unsupported_managers_ok: {{ skp_found_unsupported | to_json }} for this host.
+        quiet: true
+      when: skpatch_state == 'present'
+      tags: [config]
+
+    - name: Resolve the package managers on this host
+      set_fact:
+        skp_has_pacman: "{{ ('pacman' in skpatch_hosts_pkg_managers) if skpatch_hosts_pkg_managers is defined else (skp_pm_bins.results[0].stat.exists | default(false)) }}"
+        skp_has_flatpak: "{{ ('flatpak' in skpatch_hosts_pkg_managers) if skpatch_hosts_pkg_managers is defined else (skp_pm_bins.results[1].stat.exists | default(false)) }}"
+        skp_has_dpkg: "{{ skp_pm_bins.results[2].stat.exists | default(false) }}"
+      tags: [config]
+
+    - name: Check a DNS server host for anything else on port 53 (read-only)
+      # A host that serves DNS (Pi-hole and the like; detected, or host var
+      # skpatch_hosts_dns_server: true) must not run NetBird's DNS: NetBird can
+      # bind <netbird-ip>:53 at boot before the DNS server, which then fails to
+      # start, and every package run on the host fails after that. The probe
+      # only lists port 53 listeners and reads NetBird's config; it runs under
+      # --check too, so the compliance check sees it. Warns, never fails: the
+      # fix (`netbird up --disable-dns`) is an operator decision on the host.
+      script: "{{ playbook_dir }}/src/skpatch-hosts/skpatch-dns-check.sh {{ 'true' if (skpatch_hosts_dns_server | default(false) | bool) else 'false' }}"
+      register: skp_dns_check
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: skpatch_state == 'present'
+      tags: [config]
+
+    - name: Warn about a DNS port conflict
+      debug:
+        msg: >-
+          {{ inventory_hostname }} serves DNS and has a port 53 conflict:
+          {{ skp_dns_check.stdout_lines | default([]) | select('match', '^conflict: ') | map('regex_replace', '^conflict: ', '') | join('; ') }}
+      when: >-
+        skpatch_state == 'present'
+        and (skp_dns_check.stdout_lines | default([]) | select('match', '^conflict: ') | list | length > 0)
+      tags: [config]
+
+    - name: Resolve whether this host is Proxmox VE
+      set_fact:
+        skp_node_is_proxmox: "{{ (skpatch_hosts_proxmox if skpatch_hosts_proxmox is defined else (skp_pvesh.stat.exists | default(false))) | bool }}"
+        # Unattended upgrades keep a locally changed conffile instead of
+        # stopping at dpkg's prompt (see the dpkg.cfg.d task below).
+        skp_keep_conffiles: "{{ skpatch_hosts.DPKG_KEEP_CONFFILES | default(true) | bool }}"
       tags: [config]
 
   tasks:
@@ -149,9 +281,7 @@
         owner: root
         group: root
         mode: '0755'
-      loop:
-        - skpatch-apt-only-upgrade
-        - skpatch-snap-refresh
+      loop: "{{ ['skpatch-apt-only-upgrade', 'skpatch-snap-refresh'] + (['skpatch-pacman-upgrade'] if skp_has_pacman | bool else []) + (['skpatch-flatpak-update'] if skp_has_flatpak | bool else []) }}"
       when: skpatch_state == 'present' and skp_node_allow_actions | bool
 
     - name: Remove the selected-package upgrade wrappers (absent, or actions no longer allowed)
@@ -163,6 +293,72 @@
         - skpatch-snap-refresh
       when: skpatch_state == 'absent' or not (skp_node_allow_actions | bool)
 
+    - name: Remove the pacman/flatpak wrappers where that manager is gone (or absent, or actions off)
+      file:
+        path: "/usr/local/sbin/{{ item.name }}"
+        state: absent
+      loop:
+        - {name: skpatch-pacman-upgrade, present: "{{ skp_has_pacman }}"}
+        - {name: skpatch-flatpak-update, present: "{{ skp_has_flatpak }}"}
+      when: skpatch_state == 'absent' or not (skp_node_allow_actions | bool) or not (item.present | bool)
+
+    - name: Keep local conffiles during unattended upgrades (present, actions allowed)
+      # The app runs apt and `dpkg --configure -a` with stdin on /dev/null. A
+      # package that ships a new version of a conffile the host has changed
+      # then stops at dpkg's "keep or install?" prompt, reads EOF and fails
+      # its configure step, leaving dpkg interrupted (found live 2026-11-13 on
+      # a Raspberry Pi OS desktop package). force-confdef takes the package's
+      # default answer where it has one, force-confold otherwise keeps the
+      # file the host has: the same answer the prompt itself defaults to.
+      # dpkg.cfg.d (not apt.conf.d) so the Repair action is covered too.
+      # Off with skpatch_hosts.DPKG_KEEP_CONFFILES: false.
+      copy:
+        dest: /etc/dpkg/dpkg.cfg.d/90-skpatch-hosts
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          # Managed by SKStacks optional/skpatch-hosts (provision_skpatch_hosts_nodes.yml).
+          # Unattended upgrades from the patch dashboard have no terminal: answer
+          # dpkg's conffile prompt with the package default, else keep the local file.
+          force-confdef
+          force-confold
+      when: skpatch_state == 'present' and skp_node_allow_actions | bool and skp_keep_conffiles | bool and skp_has_dpkg | bool
+
+    - name: Remove the conffile policy (absent, actions off, or DPKG_KEEP_CONFFILES false)
+      file:
+        path: /etc/dpkg/dpkg.cfg.d/90-skpatch-hosts
+        state: absent
+      when: skpatch_state == 'absent' or not (skp_node_allow_actions | bool) or not (skp_keep_conffiles | bool)
+
+    # Ubuntu phased updates: apt holds back a share of hosts from a new
+    # package version for days ("The following upgrades have been deferred
+    # due to phasing"), so Upgrade All ends "0 upgraded" while the dashboard
+    # keeps listing the update. This fleet is managed: what the dashboard
+    # shows is what gets installed, and the staged rollout is our own nightly
+    # schedule order. Ubuntu only (Debian has no phasing). Tag `phased` runs
+    # just this pair: `--tags phased`.
+    - name: Install phased updates at once on Ubuntu (present)
+      copy:
+        dest: /etc/apt/apt.conf.d/99skpatch-phased
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          // Managed by SKStacks optional/skpatch-hosts (provision_skpatch_hosts_nodes.yml).
+          // A managed fleet installs what the patch dashboard lists; the staged
+          // rollout is the dashboard's nightly schedule order, not apt's phasing.
+          APT::Get::Always-Include-Phased-Updates "true";
+      when: skpatch_state == 'present' and ansible_facts.distribution | default('') == 'Ubuntu'
+      tags: [config, phased]
+
+    - name: Remove the phased-updates override (absent)
+      file:
+        path: /etc/apt/apt.conf.d/99skpatch-phased
+        state: absent
+      when: skpatch_state == 'absent'
+      tags: [config, phased]
+
     - name: Write the sudoers rule (present)
       template:
         src: "{{ playbook_dir }}/src/skpatch-hosts/skpatch-hosts.sudoers.j2"
@@ -171,6 +367,7 @@
         group: root
         mode: '0440'
         validate: '/usr/sbin/visudo -cf %s'
+      register: skp_sudoers_write
       when: skpatch_state == 'present'
 
     - name: Remove the sudoers rule (absent)
@@ -277,7 +474,8 @@
                'port': hostvars[item].skpatch_hosts_dashboard_port | default(hostvars[item].ansible_port | default(22), true) | int,
                'upgrade_mode': hostvars[item].skpatch_hosts_upgrade_mode | default('', true) | string}] }}
       loop: "{{ ansible_play_hosts_all | default(ansible_play_hosts) }}"
-      when: skpatch_state == 'present' and skp_reg_on | bool
+      # A paused host (see the first play) is not registered or re-synced.
+      when: skpatch_state == 'present' and skp_reg_on | bool and not (hostvars[item].skp_paused | default(false) | bool)
 
     - name: Register this run's target nodes as dashboard systems (only when registration is configured)
       include_tasks: tasks/register_systems.yml
