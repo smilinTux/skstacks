@@ -93,6 +93,14 @@ python -m pytest v1/tests/test_skpatch_hosts_provision.py -v
 # dashboard that enforces the session signature and CSRF, plus the include
 python -m pytest v1/tests/test_skpatch_hosts_register_systems_js.py v1/tests/test_skpatch_hosts_registration_include.py -v
 
+# Sudo coverage: the template against the pinned image's own sudo commands
+# (fails after an image bump until the fixture is regenerated and reviewed)
+python -m pytest v1/tests/test_skpatch_hosts_sudo_coverage.py -v
+python3 v1/ansible/optional/skpatch-hosts/tools/extract_sudo_commands.py   # regenerate (docker)
+
+# Fleet compliance tool and its read-only dashboard report
+python -m pytest v1/tests/test_skpatch_hosts_compliance.py -v
+
 # Repo-wide gate this role must also keep passing
 python -m pytest v1/tests/test_no_latest_images.py -v
 python -m pytest v1/tests/test_portal_tile_lint.py -v
@@ -357,11 +365,17 @@ self-signed five-minute session for `REGISTER_AS`), and ships two playbooks:
 | A schedule or channel you changed in the dashboard reverted | It is declared in `SCHEDULES`/`NOTIFICATIONS` (or `skpatch_hosts_schedules`); every registrar run converges it back. Change it there. |
 | `upgrade mode pending (package manager not detected yet ...)` | Expected right after a system is registered; the next run sets it. |
 | Upgrade-all ends "warning" on the snap step | The host was provisioned before the `snap refresh` sudoers line existed; rerun the provisioning playbook against it. |
-| "Upgrade selected" fails with `sudo: a password is required` | The dashboard runs `apt-get ... install --only-upgrade -y <pkgs>` (or `snap refresh <names>`) directly and sudoers deliberately has no wildcard for it. Rerun the provisioning playbook so the wrappers exist, then set the per-system custom script override that calls them (README "Selected-package upgrades"). A wrapper exiting 2 with `refusing invalid ... name` means an argument failed its regex, by design. |
+| "Upgrade selected" fails with `sudo: a password is required` | The dashboard runs `apt-get ... install --only-upgrade -y <pkgs>` (or `snap refresh <names>`) directly and sudoers deliberately has no wildcard for it. Rerun the provisioning playbook: it installs the wrappers and converges the default "upgrade selected" scripts that call them (README "Selected-package upgrades"). A wrapper exiting 2 with `refusing invalid ... name` means an argument failed its regex, by design. |
 | A reboot of a Proxmox host says "Reboot blocked: could not verify Proxmox backup activity" | The host was provisioned before the `pvesh` guard line existed, or actions are off for it. Rerun the provisioning playbook (it detects `/usr/bin/pvesh`; `skpatch_hosts_proxmox: true` forces it). "Reboot blocked: Proxmox backup task is running" is the guard working: wait for the backup. |
 | Repair fails with `sudo: a password is required` | The host was provisioned before the `dpkg --configure -a` line existed; rerun the provisioning playbook. |
 | An upgrade fails with `debconf: unable to initialize frontend` or `end of file on stdin at conffile prompt` | The host predates the `DEBIAN_FRONTEND` env_keep and the dpkg conffile policy; rerun the provisioning playbook, then press Repair. |
 | Every email notification and the digest fail, the SMTP host works from a shell | The container resolves the SMTP host to the estate's public address with no hairpin NAT. Set `EXTRA_HOSTS` (README "Notification delivery"). |
+| Provisioning fails: "has package manager(s) ... that the skpatch-hosts sudoers template does not cover" | By design: every dashboard action for that manager would fail on sudo. Add coverage (README "Sudo coverage and drift detection"), or disable the manager for that system in the dashboard and set `skpatch_hosts_unsupported_managers_ok`. |
+| `test_fixture_is_for_the_pinned_image` fails | The dashboard image was bumped. Run `tools/extract_sudo_commands.py`, review the fixture diff, update `sudo-coverage.yml` and the sudoers template, rerun the tests. |
+| Compliance reports `drift` | Provisioning would change that host (listed tasks). Usually the framework moved on: rerun the provisioning playbook for it (`--check --diff` first). |
+| Compliance reports `sudo-denied:<action>` | The dashboard's latest run of that action hit sudo. Rerun provisioning for the host; the issue clears with the next successful run of the action. |
+| Compliance reports `dashboard-only` | A dashboard system matches no inventory host: provision it, fix its name/address, or remove it from the dashboard. |
+| A host was skipped with "skpatch-hosts PAUSED" | Expected: host var `skpatch_hosts_paused` or `/etc/skpatch-hosts.paused`. Remove it and rerun to resume. |
 | A retired node still shows in the dashboard | Expected: registration never deletes. Remove it by hand once its history is no longer needed. |
 
 ## 9. Maturity-tier + Version reference

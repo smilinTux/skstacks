@@ -429,42 +429,102 @@ snap 2.78), so it is a second guard there. Rerunning the playbook with
 actions off, or with `skpatch_hosts_provision_state=absent`, removes both
 wrappers.
 
-**Known limitation: selected-package upgrades need the wrapper, and the
-dashboard still calls `apt-get` directly.** In the pinned image
-(linux-update-dashboard 2026.10.9), `builtinUpgradeSelectedCommand` in
-`server/services/script-service.ts` builds the command: line 1134 for apt
-(`apt-get -o DPkg::Lock::Timeout=60 install --only-upgrade -y {{packages}}`),
-line 1147 for snap (`snap refresh {{packages}}`). There is no environment
-variable, setting or config file that changes it, so the role cannot point the
-dashboard at the wrappers at deploy time. The only override is the app's own
-custom script, per system and package manager: `POST /api/scripts` to create
-it, then `PUT /api/systems/:id/script-overrides` (`API.md` line 121) or the
-system's Scripts tab in the UI. That API refuses API tokens (`API.md` lines
-17 and 18), is stored in the dashboard database, and is not something the
-registrar sets, so it is a one-time operator step per system, not part of this
-role. Until it is done, a selected-package upgrade on an armed host still ends
-"sudo: a password is required"; "Upgrade all" is unaffected.
+**How the dashboard reaches the wrappers.** The pinned image builds the
+selected-package command itself (`builtinUpgradeSelectedCommand`), with no
+setting to change it. What it does have is custom scripts with `isDefault`
+per package manager and operation, which replace the built-in for every
+system with that manager. `src/skpatch-hosts/dashboard-scripts.json` holds one
+default `upgrade_selected` script per wrapper (apt, snap, pacman, flatpak),
+each calling `sudo -S -p '' /usr/local/sbin/<wrapper> {{quotedPackages}}`,
+and the registrar converges them by name on every provisioning run (created
+when missing, put back when someone edits one, never deleted). There is no
+per-system step. `test_skpatch_hosts_sudo_coverage.py` fails if a wrapper has
+no default script calling it.
 
-To use the wrappers, create two custom scripts for operation
-`upgrade_selected` and assign them to the system (override keys
-`apt/upgrade_selected` and `snap/upgrade_selected`):
+The app's own sudoers preview shows the wildcard form as a commented-out
+suggestion ("Selected-package upgrades are disabled by default"); do not
+uncomment it.
 
-```sh
-# apt
-export DEBIAN_FRONTEND=noninteractive
-sudo -S -p '' /usr/local/sbin/skpatch-apt-only-upgrade {{packages}} 2>&1
+## Onboarding a host (one command)
+
+Adding a host to the dashboard is one idempotent run of
+`provision_skpatch_hosts_nodes.yml`, with no manual sudo or dashboard step:
+
+1. Add the host to the estate's skpatch inventory group (name it after the
+   host; set `skpatch_hosts_allow_actions: false` if it must stay report-only).
+2. Run the playbook limited to it, `--check --diff` first:
+
+```bash
+ansible-playbook -i <inventory> -i <skpatch targets> \
+  framework/v1/ansible/optional/skpatch-hosts/provision_skpatch_hosts_nodes.yml \
+  -l <new-host> -e skpatch_hosts_provision_env=prod \
+  -e skpatch_hosts_register_manager_group=<swarm managers group> \
+  -e @<schedules file> -e skstacks_vault_dir=<instance root> \
+  --vault-password-file <file> --check --diff
+# then the same without --check --diff
 ```
 
-```sh
-# snap
-sudo -S -p '' /usr/local/sbin/skpatch-snap-refresh {{packages}} 2>&1
-```
+That one run creates the account (fixed uid) and its key, detects the package
+managers (apt and dpkg always; pacman, flatpak and Proxmox's `pvesh` where
+present), refuses the host before any change if it has a manager the template
+does not cover (see below), renders the sudoers file for exactly what it
+found, validates it with `visudo -cf` before install, installs the wrappers
+and the dpkg conffile policy, and registers the host in the dashboard (with
+the default wrapper scripts, the app settings, schedules and channels).
 
-`{{packages}}` is the app's own validated, space-joined name list. This recipe
-was written from the upstream source and was not exercised against a live
-dashboard: try it on one armed host first. The app's own sudoers preview shows
-the wildcard form as a commented-out suggestion ("Selected-package upgrades
-are disabled by default"); do not uncomment it.
+A build playbook for a new VM or LXC should end by importing this playbook
+for the new host (`import_playbook` with `skpatch_hosts_provision_hosts` set
+to it), or print the command above as its last step. A host that is in the
+dashboard but was never provisioned is found by the compliance check.
+
+## Sudo coverage and drift detection
+
+The commands the dashboard runs with sudo are a contract with one pinned
+image. Three checks keep the template and the fleet honest:
+
+1. **Build time (CI).** `tools/extract_sudo_commands.py` runs the pinned
+   image's own `buildCommandReference()` (the code behind its sudoers preview)
+   in a throwaway container with no network, and writes
+   `v1/tests/fixtures/skpatch_hosts_sudo_commands.json`, keyed to the image
+   reference. `src/skpatch-hosts/sudo-coverage.yml` decides every command:
+   `exact` (granted verbatim), `wrapper` (only the validated wrapper is
+   granted) or `denied` (with the reason). `test_skpatch_hosts_sudo_coverage.py`
+   fails when the pinned image is not the fixture's (so a Renovate bump fails
+   CI), when the image runs a command with no decision, and when the rendered
+   template misses an exact rule or grants anything no decision backs. After
+   an image bump: rerun the extractor, review the fixture diff, update
+   `sudo-coverage.yml` and the template, rerun the tests.
+2. **Fleet (runtime).** `tools/skpatch_compliance.py` takes the provisioning
+   command's own arguments, runs the provisioning playbook under `--check`
+   (same template and tasks, nothing is written), reads the dashboard through
+   a read-only report step, and reports per host: `not-provisioned`, `drift`,
+   `uncovered-manager`, `check-failed`, `unreachable`, `dashboard-only` (a
+   dashboard system no inventory host matches), `not-in-dashboard` and
+   `sudo-denied:<action>`. It keeps open issues in a state file and calls an
+   alert hook once when an issue opens and once when it clears, keyed
+   `host|issue`. `tools/systemd/skpatch-compliance@.{service,timer}` run it
+   daily per estate; `tools/skpatch-compliance-alert.example.sh` shows a hook.
+3. **Dashboard.** A history entry that failed because sudo asked for a
+   password ("a password is required", sudo's lecture text, "not in the
+   sudoers file", "not allowed to execute") is its own issue class,
+   `sudo-denied:<action>`, from the latest run of that action only, so it
+   clears itself once a later run of the action succeeds.
+
+Managers the template does not cover (the image also knows apk, deb-get, dnf
+and yum) are refused at provisioning time. To onboard such a host anyway,
+disable that manager for the system in the dashboard and set the host var
+`skpatch_hosts_unsupported_managers_ok: [dnf]`; the compliance check then
+verifies the dashboard really has it disabled.
+
+## Maintenance pause
+
+Pause a host (for example a hypervisor during a major upgrade) with the host
+var `skpatch_hosts_paused: true` in the instance repo, or in an emergency
+with the file `/etc/skpatch-hosts.paused` on the host. A paused host is left
+exactly as it is: provisioning changes nothing on it and does not register
+it, and the compliance check reports it as `paused`, never as drift, and does
+not even connect to a host paused by host var. Remove the marker and rerun
+the provisioning playbook to resume.
 
 ## Related projects / See also
 
