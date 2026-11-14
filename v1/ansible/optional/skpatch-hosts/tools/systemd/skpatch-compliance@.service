@@ -12,8 +12,11 @@
 #   SKPC_INSTANCE_DIR=/path/to/<instance-repo>/v1/ansible
 #   SKPC_TOOL=/path/to/skstacks/v1/ansible/optional/skpatch-hosts/tools/skpatch_compliance.py
 #   SKPC_PYTHON=/usr/bin/python3          # the interpreter ansible itself uses
-#   SKPC_HOOK=/path/to/alert-hook         # see skpatch-compliance-alert.example.sh
+#   SKPC_HOOK=/path/to/skstacks/v1/ansible/optional/skpatch-hosts/tools/skpatch-talk-notify.sh
 #   SKPC_ARGS=-i shared/hosts -i shared/skpatch_targets.ini -l <group> -e ... --vault-password-file <file>
+#
+# The Talk hook reads its room settings from ~/.config/skpatch-talk/<estate>.env
+# (shared with skpatch-watch@, see skpatch-talk-notify.sh).
 #
 # Exit 1 means "open issues found", which is a successful run: the alerts
 # went out through the hook. Only exit 2 (the check itself failed) fails the
@@ -26,6 +29,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 EnvironmentFile=%h/.config/skpatch-compliance/%i.env
+EnvironmentFile=-%h/.config/skpatch-talk/%i.env
 ExecStart=/bin/sh -c 'cd "$SKPC_INSTANCE_DIR" && exec "$SKPC_PYTHON" "$SKPC_TOOL" --state "$STATE_DIRECTORY/%i.json" --json-out "$STATE_DIRECTORY/%i.last.json" --alert-hook "$SKPC_HOOK" -- $SKPC_ARGS'
 StateDirectory=skpatch-compliance
 SuccessExitStatus=1

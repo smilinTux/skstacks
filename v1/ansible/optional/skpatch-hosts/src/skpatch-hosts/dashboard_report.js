@@ -5,7 +5,15 @@
 // Input (stdin): {register_as, history_days}
 // Output: one line "@@SKP-REPORT@@<json>":
 //   {systems: [{id, name, hostname, port, pkgManager, detected, disabled,
-//               sudo_denied: [{action, pkgManager, at, error}]}]}
+//               reachable, needs_reboot, boot_id, package_issues, updates,
+//               security, lifecycle: {status, label, eol, days_to_eol,
+//               support_end, days_to_support_end},
+//               sudo_denied: [{action, pkgManager, at, error}],
+//               failed: [{action, at, error}]}],
+//    schedules: [{name, type, enabled, last_run_at, status, message}]}
+// failed is the same "latest row per action" view for every action except
+// check: a failed upgrade, reboot or autoremove whose latest run did not hit
+// sudo (that is sudo_denied, its own class). A later success clears it.
 // sudo_denied holds, per action, the LATEST history row within history_days
 // when that row failed on sudo asking for a password. Keyed by action alone:
 // one check covers several managers and the app records them as a joined
@@ -24,6 +32,20 @@ const SUDO_DENIED = [
   /Sorry, user \S+ is not allowed to execute/,
   /sudo: a terminal is required/,
 ];
+
+// The most telling line of a failed run's error text: apt/dpkg "E:" lines and
+// the like first; when nothing in it explains the failure (the app keeps only
+// the first 2000 characters, often just download progress) say so rather
+// than quote a random progress line. At most 300 characters.
+const REASON = [/^E: /, /^(dpkg|error|fatal|failed)\b/i, /\b(error|failed|timed out|timeout|lost|refused|denied)\b/i];
+function reason(text) {
+  const lines = String(text || "").split("\n").map((l) => l.trim()).filter(Boolean);
+  for (const re of REASON) {
+    const hit = lines.filter((l) => re.test(l)).pop();
+    if (hit) return hit.slice(0, 300);
+  }
+  return "no error line recorded (see the run in the dashboard history)";
+}
 
 function fail(msg) {
   console.error("report failed: " + msg);
@@ -105,9 +127,18 @@ async function main() {
       if (!cur || at > cur.at) latest.set(key, { at, h });
     }
     const denied = [];
+    const failed = [];
     for (const { at, h } of latest.values()) {
       const text = `${h.error || ""}\n${h.output || ""}`;
-      if (h.status === "success" || !SUDO_DENIED.some((re) => re.test(text))) continue;
+      const sudo = SUDO_DENIED.some((re) => re.test(text));
+      if (h.status === "failed" && h.action !== "check" && !sudo) {
+        failed.push({
+          action: h.action,
+          at: new Date(at).toISOString(),
+          error: reason(h.error),
+        });
+      }
+      if (h.status === "success" || !sudo) continue;
       denied.push({
         action: h.action,
         pkgManager: h.pkgManager ?? h.pkg_manager ?? null,
@@ -123,10 +154,33 @@ async function main() {
       pkgManager: s.pkgManager || null,
       detected: asList(s.detectedPkgManagers),
       disabled: asList(s.disabledPkgManagers),
+      reachable: s.isReachable === undefined ? null : Boolean(Number(s.isReachable)),
+      needs_reboot: Boolean(Number(s.needsReboot || 0)),
+      boot_id: s.bootId || null,
+      package_issues: Number(s.packageIssueCount || 0),
+      updates: Number(s.updateCount || 0),
+      security: Number(s.securityCount || 0),
+      lifecycle: {
+        status: s.osLifecycleStatus || null,
+        label: s.osLifecycleLabel || null,
+        eol: s.osLifecycleEolDate || null,
+        days_to_eol: s.osLifecycleDaysUntilEol ?? null,
+        support_end: s.osLifecycleSupportEndDate || null,
+        days_to_support_end: s.osLifecycleDaysUntilSupportEnd ?? null,
+      },
       sudo_denied: denied.sort((a, b) => a.action.localeCompare(b.action)),
+      failed: failed.sort((a, b) => a.action.localeCompare(b.action)),
     });
   }
-  process.stdout.write("@@SKP-REPORT@@" + JSON.stringify({ systems: out }) + "\n");
+  const schedules = ((await get(base, session, "/schedules")).schedules || []).map((d) => ({
+    name: d.name,
+    type: d.type,
+    enabled: Boolean(d.enabled),
+    last_run_at: d.lastRunAt ? new Date(parseAt(d.lastRunAt)).toISOString() : null,
+    status: d.lastRunStatus || null,
+    message: d.lastRunMessage || null,
+  }));
+  process.stdout.write("@@SKP-REPORT@@" + JSON.stringify({ systems: out, schedules }) + "\n");
 }
 
 main().catch((err) => fail(err && err.message ? err.message : String(err)));

@@ -1,0 +1,17 @@
+# skpatch-hosts daily summary (%i): pending updates, the last 24 hours of
+# scheduled runs, OS end-of-life warnings and the watch's open issues, one
+# message through the same hook. Same env files as skpatch-watch@.service,
+# and the same state directory (it lists that watch's open issues).
+[Unit]
+Description=skpatch-hosts daily summary (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/skpatch-watch/%i.env
+EnvironmentFile=-%h/.config/skpatch-talk/%i.env
+ExecStart=/bin/sh -c 'exec /usr/bin/python3 "$SKPW_TOOL" --digest --state "$STATE_DIRECTORY/%i.json" --alert-hook "$SKPW_HOOK" $SKPW_ARGS'
+StateDirectory=skpatch-watch
+TimeoutStartSec=10min
+Nice=10

@@ -208,6 +208,15 @@ async function main() {
 //   settings        {key: value}: app settings, written only when a value
 //                   differs (PUT /api/settings with just those keys).
 //   notifications   [{name, type, enabled, notify_on, systems, config}]
+//   talk            {URL, ROOM_TOKEN, USER, APP_PASSWORD, MENTION, NAME,
+//                    NOTIFY_ON}: adds one more notification, a webhook
+//                   channel that posts the dashboard's immediate events
+//                   (default: unreachable) to a Nextcloud Talk room as USER
+//                   (a room participant, with a dedicated app password),
+//                   @mentioning MENTION. Named NAME (default "SK Patching
+//                   (immediate)"); a notification of that name declared in
+//                   `notifications` wins. The daily summary and the other
+//                   immediate classes come from tools/skpatch_watch.py.
 //   schedules       [{name, type, enabled, cron, systems, only_if_required,
 //                     cache_hours, notifications}]
 // `systems` is a list of dashboard system NAMES (any system in the dashboard,
@@ -238,9 +247,47 @@ function aptMode(system) {
   return (configs && configs.apt && configs.apt.defaultUpgradeMode) || "upgrade";
 }
 
+// The Talk webhook channel the `talk` input stands for. The body is a form
+// (Talk's chat endpoint takes message=...), so no JSON escaping of the
+// rendered text is needed.
+function talkChannel(t) {
+  for (const k of ["URL", "ROOM_TOKEN", "USER", "APP_PASSWORD"]) {
+    if (!t[k]) fail(`talk: ${k} is required`);
+  }
+  if (!/^https:\/\//.test(t.URL)) fail("talk: URL must be https");
+  if (!/^[a-z0-9]+$/i.test(t.ROOM_TOKEN)) fail("talk: ROOM_TOKEN is not a Talk room token");
+  const mention = t.MENTION ? `\n\n@"${t.MENTION}"` : "";
+  return {
+    name: t.NAME || "SK Patching (immediate)",
+    type: "webhook",
+    notify_on: t.NOTIFY_ON || ["unreachable"],
+    systems: null,
+    config: {
+      preset: "custom",
+      method: "POST",
+      url: `${t.URL.replace(/\/+$/, "")}/ocs/v2.php/apps/spreed/api/v1/chat/${t.ROOM_TOKEN}`,
+      query: [],
+      headers: [
+        { name: "OCS-APIRequest", value: "true", sensitive: false },
+        { name: "Accept", value: "application/json", sensitive: false },
+      ],
+      auth: { mode: "basic", username: t.USER, password: t.APP_PASSWORD },
+      body: { mode: "form", fields: [{ name: "message", value: `{{event.decoratedTitle}}\n\n{{event.body}}${mention}`, sensitive: false }] },
+      timeoutMs: 10000,
+      retryAttempts: 2,
+      retryDelayMs: 5000,
+      allowInsecureTls: false,
+    },
+  };
+}
+
 async function configure(call, cfg) {
   const wantsModes = cfg.upgrade_mode || cfg.systems.some((w) => w.upgrade_mode);
-  const notifs = Array.isArray(cfg.notifications) ? cfg.notifications : [];
+  const notifs = Array.isArray(cfg.notifications) ? [...cfg.notifications] : [];
+  if (cfg.talk && typeof cfg.talk === "object" && Object.keys(cfg.talk).length) {
+    const ch = talkChannel(cfg.talk);
+    if (!notifs.some((n) => n.name === ch.name)) notifs.push(ch);
+  }
   const scheds = Array.isArray(cfg.schedules) ? cfg.schedules : [];
   const scripts = Array.isArray(cfg.scripts) ? cfg.scripts : [];
   const settings = cfg.settings && typeof cfg.settings === "object" ? cfg.settings : {};
