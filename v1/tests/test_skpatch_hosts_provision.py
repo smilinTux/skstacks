@@ -22,6 +22,7 @@ sudoers-mismatch fix for the live evidence. The commands used to be
 that mismatch is why every live update check failed closed with
 "sudo: a password is required" the first time this code path was ever
 reached."""
+import re
 import shutil
 import subprocess
 import sys
@@ -434,3 +435,61 @@ def test_conffile_policy_is_removed_when_off_and_written_before_sudoers():
     gone = _task(pb, "Remove the conffile policy (absent, actions off, or DPKG_KEEP_CONFFILES false)")
     assert "state: absent" in gone
     assert "not (skp_keep_conffiles | bool)" in gone and "skpatch_state == 'absent'" in gone
+
+
+# --- pacman and flatpak (an Arch-family workstation) -------------------------
+
+PACMAN_RO = "skpatch-ro ALL=(root) NOPASSWD: /usr/bin/pacman -Sy --noconfirm"
+FLATPAK_RO = "skpatch-ro ALL=(root) NOPASSWD: /usr/bin/flatpak update --appstream"
+PACMAN_ACT = ("skpatch-ro ALL=(root) NOPASSWD: /usr/bin/pacman -Syu --noconfirm",
+              "skpatch-ro ALL=(root) NOPASSWD: /usr/local/sbin/skpatch-pacman-upgrade")
+FLATPAK_ACT = ("skpatch-ro ALL=(root) NOPASSWD: /usr/bin/flatpak update -y",
+               "skpatch-ro ALL=(root) NOPASSWD: /usr/bin/flatpak uninstall --unused -y",
+               "skpatch-ro ALL=(root) NOPASSWD: /usr/local/sbin/skpatch-flatpak-update")
+ARCH = {"skpatch_hosts_pkg_managers": ["pacman", "flatpak"]}
+
+
+def test_pacman_and_flatpak_lines_only_where_the_manager_exists(tmp_path):
+    (tmp_path / "arch").mkdir()
+    (tmp_path / "deb").mkdir()
+    arch = sudoers(tmp_path / "arch", {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True}, extra_vars=ARCH)
+    deb = sudoers(tmp_path / "deb", {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True},
+                  extra_vars={"skpatch_hosts_pkg_managers": []})
+    for line in (PACMAN_RO, FLATPAK_RO) + PACMAN_ACT + FLATPAK_ACT:
+        assert line in arch
+    rules = "\n".join(_rules(deb))
+    assert "pacman" not in rules and "flatpak" not in rules
+    assert_visudo_accepts(arch)
+
+
+def test_pacman_and_flatpak_report_only_get_just_the_refresh(tmp_path):
+    text = sudoers(tmp_path, {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": False}, extra_vars=ARCH)
+    assert PACMAN_RO in text and FLATPAK_RO in text
+    for line in PACMAN_ACT + FLATPAK_ACT:
+        assert line not in text
+
+
+def test_pacman_autoremove_and_selected_forms_are_never_granted(tmp_path):
+    text = sudoers(tmp_path, {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True}, extra_vars=ARCH)
+    rules = _rules(text)
+    assert not [r for r in rules if "-Rns" in r]
+    assert not [r for r in rules if re.search(r"/usr/bin/pacman -S( |$)", r)]
+    assert not [r for r in rules if "*" in r]
+    assert [r for r in rules if "/usr/bin/flatpak update" in r] == [FLATPAK_RO, FLATPAK_ACT[0]]
+
+
+def test_arch_wrappers_are_installed_only_where_the_manager_exists(tmp_path):
+    (tmp_path / "arch").mkdir()
+    (tmp_path / "deb").mkdir()
+    sudoers(tmp_path / "arch", {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True}, extra_vars=ARCH)
+    sudoers(tmp_path / "deb", {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True},
+            extra_vars={"skpatch_hosts_pkg_managers": []})
+    for name in ("skpatch-pacman-upgrade", "skpatch-flatpak-update"):
+        shipped = (ROLE / "src" / "skpatch-hosts" / f"{name}.sh").read_bytes()
+        assert (tmp_path / "arch/run/out/_copy/usr/local/sbin" / name).read_bytes() == shipped
+        assert not (tmp_path / "deb/run/out/_copy/usr/local/sbin" / name).exists()
+
+
+def test_conffile_policy_needs_dpkg():
+    put = _task(PB.read_text(), "Keep local conffiles during unattended upgrades (present, actions allowed)")
+    assert "skp_has_dpkg | bool" in put

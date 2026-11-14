@@ -29,6 +29,17 @@
 # the provisioned account after installing this file).
 {{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/dpkg --audit
 {{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/apt-get -o DPkg\:\:Lock\:\:Timeout\=60 update -qq
+{% if skp_has_pacman | default(false) | bool %}
+# Arch family (pacman): the check's database refresh, exact argv from the
+# same bundle's builtinCheckSteps ("pacman -Sy --noconfirm"). Listing updates
+# (`pacman -Qu`) runs as the plain user.
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/pacman -Sy --noconfirm
+{% endif %}
+{% if skp_has_flatpak | default(false) | bool %}
+# Flatpak: the check's appstream refresh. Listing installed apps and remote
+# updates runs as the plain user.
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/flatpak update --appstream
+{% endif %}
 
 {% if skp_node_allow_actions | bool %}
 # Actions (upgrade/reboot): only present when this host's
@@ -77,6 +88,22 @@ Defaults:{{ skpatch_user }} env_keep += "DEBIAN_FRONTEND"
 # script override, see README "Selected-package upgrades".
 {{ skpatch_user }} ALL=(root) NOPASSWD: /usr/local/sbin/skpatch-apt-only-upgrade
 {{ skpatch_user }} ALL=(root) NOPASSWD: /usr/local/sbin/skpatch-snap-refresh
+{% if skp_has_pacman | default(false) | bool %}
+# pacman: upgrade all (exact argv), and "upgrade selected" only through the
+# wrapper (pacman -S <name> would also install a missing package, and a
+# pacman wildcard is root via --config/--hookdir/-U). Not granted on purpose:
+# the app's pacman autoremove, `pacman -Rns --noconfirm -`, which removes
+# whatever names arrive on stdin, so it could remove any package.
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/pacman -Syu --noconfirm
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/local/sbin/skpatch-pacman-upgrade
+{% endif %}
+{% if skp_has_flatpak | default(false) | bool %}
+# Flatpak: upgrade all and remove unused runtimes (exact argv), and "upgrade
+# selected" only through the wrapper.
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/flatpak update -y
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/bin/flatpak uninstall --unused -y
+{{ skpatch_user }} ALL=(root) NOPASSWD: /usr/local/sbin/skpatch-flatpak-update
+{% endif %}
 {% if skp_node_is_proxmox | bool %}
 # Proxmox VE only: the app's pre-reboot backup guard (getProxmoxBackupGuardCommand
 # in the same bundle) runs this exact read-only argv and blocks the reboot
@@ -89,9 +116,9 @@ Defaults:{{ skpatch_user }} env_keep += "DEBIAN_FRONTEND"
 {% endif %}
 {% endif %}
 
-# Debian/Ubuntu (apt) is every host in both estates today. A non-Debian
-# target needs its own read (and, if ALLOW_ACTIONS, action) lines added
-# here by hand before provisioning it, confirmed the SAME way this file
-# was corrected: read the shipped image's own server bundle for the exact
-# "# Sudoers-relevant command: ..." lines that package manager emits,
-# never the upstream project's README alone.
+# apt and snap lines are always written; pacman and flatpak lines only where
+# that binary exists (provision_skpatch_hosts_nodes.yml detects them). Any
+# other manager (dnf, apk, ...) needs its lines added here first, confirmed
+# the SAME way this file was: read the shipped image's own server bundle for
+# the exact "# Sudoers-relevant command: ..." lines that manager emits, never
+# the upstream project's README alone.
