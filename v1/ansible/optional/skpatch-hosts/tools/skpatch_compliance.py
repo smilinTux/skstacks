@@ -109,6 +109,17 @@ def inventory(inv_args: list[str], limit: str | None) -> dict[str, dict]:
     return {h: hostvars.get(h, {}) for h in sorted(hosts)}
 
 
+def with_exclusions(limit: str | None, exclude: set[str]) -> str:
+    """`limit` plus `!host` for each excluded host, as one Ansible pattern.
+
+    Ansible splits a pattern on commas when it has any, else on colons, so a
+    "group:!host" limit cannot just get ",!other" appended: it would become one
+    unmatched pattern. Normalise to commas first."""
+    base = limit or "all"
+    parts = base.split(",") if "," in base else base.split(":")
+    return ",".join([p for p in parts if p] + [f"!{h}" for h in sorted(exclude)])
+
+
 def truthy(v) -> bool:
     return v is True or str(v).strip().lower() in ("true", "yes", "1", "on")
 
@@ -257,7 +268,7 @@ def main() -> int:
         hosts = inventory(inv_args, limit)
         outside = {h: hv for h, hv in inventory(inv_args, None).items() if h not in hosts} if limit else {}
         paused = {h for h, hv in hosts.items() if truthy(hv.get("skpatch_hosts_paused", False))}
-        active_limit = ",".join([limit or "all"] + [f"!{h}" for h in sorted(paused)])
+        active_limit = with_exclusions(limit, paused)
         with tempfile.TemporaryDirectory(prefix="skpatch-compliance-") as tmp:
             report_path = Path(tmp) / "dashboard.json"
             result = run_check(args.playbook, inv_args, active_limit, rest, report_path)
