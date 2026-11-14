@@ -5,7 +5,7 @@ traefik-worker services previously hardcoded the image literal with no
 override. This knob lets an instance stage a tactical version (ahead of or
 instead of a full framework release) by pinning a digest, same convention
 as every other <SVC>_IMAGE knob in this framework. Unset renders the
-current framework default (traefik:v3.7.16@sha256:...) in every service
+current framework default (traefik:v3.7.18@sha256:...) in every service
 that carries it; skfenceha's two Traefik services always move together
 (one knob, both services), since they are the same binary in the same HA
 deployment.
@@ -19,7 +19,7 @@ import yaml
 V1 = pathlib.Path(__file__).resolve().parents[1]
 SKFENCE = V1 / "ansible/core/skfence/src/config/skfence/skfence.yml.j2"
 SKFENCEHA = V1 / "ansible/core/skfenceha/src/config/skfenceha/skfenceha.yml.j2"
-DEFAULT_IMAGE = "traefik:v3.7.16@sha256:abb2b9c1b132b5b0be40d09c85bf8d3dab2a59fa0eb3aa955ab8be5efbb73de6"
+DEFAULT_IMAGE = "traefik:v3.7.18@sha256:9c437ac4f09ce6f4980a8544902d3475fdf70a1a7c578729581d2535dfa7d635"
 
 
 def _env():
