@@ -51,7 +51,8 @@ def test_included_file_selects_a_manager_then_registers_through_it():
     on_node = [t for t in tasks if t.get("delegate_to") == "{{ skp_reg_node }}"]
     assert [t["name"] for t in on_mgr] == ["Find the node running the dashboard"]
     assert {t["name"] for t in on_node} == {"Stage the registrar on the dashboard's node",
-                                            "Register this run's target nodes as dashboard systems (creates, never edits or deletes)"}
+                                            "Register this run's target nodes as dashboard systems (creates, never edits or deletes)",
+                                            "Read the dashboard's systems and recent sudo failures (compliance report)"}
     for t in on_mgr + on_node:
         assert "ansible_connection" in t.get("connection", "") and t.get("become") is True
     reg = next(t for t in on_node if t["name"].startswith("Register"))

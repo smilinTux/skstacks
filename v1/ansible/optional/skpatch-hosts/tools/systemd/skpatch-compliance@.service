@@ -1,0 +1,33 @@
+# skpatch-hosts fleet compliance, one instance per estate (%i), as a user unit
+# on the controller that provisions that estate (it needs the same inventory,
+# vault password and ssh access as the provisioning run).
+#
+#   install -D -m 0644 skpatch-compliance@.service skpatch-compliance@.timer -t ~/.config/systemd/user/
+#   $EDITOR ~/.config/skpatch-compliance/<estate>.env     (see below)
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now skpatch-compliance@<estate>.timer
+#
+# ~/.config/skpatch-compliance/<estate>.env (no secrets in it: the vault
+# password stays in its own file, named by path):
+#   SKPC_INSTANCE_DIR=/path/to/<instance-repo>/v1/ansible
+#   SKPC_TOOL=/path/to/skstacks/v1/ansible/optional/skpatch-hosts/tools/skpatch_compliance.py
+#   SKPC_PYTHON=/usr/bin/python3          # the interpreter ansible itself uses
+#   SKPC_HOOK=/path/to/alert-hook         # see skpatch-compliance-alert.example.sh
+#   SKPC_ARGS=-i shared/hosts -i shared/skpatch_targets.ini -l <group> -e ... --vault-password-file <file>
+#
+# Exit 1 means "open issues found", which is a successful run: the alerts
+# went out through the hook. Only exit 2 (the check itself failed) fails the
+# unit.
+[Unit]
+Description=skpatch-hosts fleet compliance (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/skpatch-compliance/%i.env
+ExecStart=/bin/sh -c 'cd "$SKPC_INSTANCE_DIR" && exec "$SKPC_PYTHON" "$SKPC_TOOL" --state "$STATE_DIRECTORY/%i.json" --json-out "$STATE_DIRECTORY/%i.last.json" --alert-hook "$SKPC_HOOK" -- $SKPC_ARGS'
+StateDirectory=skpatch-compliance
+SuccessExitStatus=1
+TimeoutStartSec=45min
+Nice=10
