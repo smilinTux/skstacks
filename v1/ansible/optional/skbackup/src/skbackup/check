@@ -58,6 +58,23 @@ if [ -n "$BAK_ROOT" ] && [ -r "$APPS_FILE" ]; then
     age=$(skb_age_h "$(skb_snap_epoch "$s")")
     if [ "$age" -ge "$MAX_AGE_SKBAK_H" ]; then bad STALE "tier2: $name newest $s is ${age}h old"
     else good "tier2: $name ${age}h"; fi
+    # A copy that lost most of its size: the live copy against its newest
+    # snapshot (a failed run that deleted before it could write), and the
+    # newest snapshot against the one before it (a source that emptied).
+    if [ "$COPY_SHRINK_PCT" -gt 0 ]; then
+      prev=$(zfs list -H -p -t snapshot -o name -s creation -d 1 "$BAK_ROOT/$name" 2>/dev/null \
+        | awk -F@ 'index($2, "daily-") == 1' | tail -n 2 | head -n 1)
+      for pair in "$BAK_ROOT/$name|$s|live copy" "$s|$prev|newest copy"; do
+        IFS='|' read -r now_ds ref_ds what <<<"$pair"
+        [ -n "$ref_ds" ] && [ "$ref_ds" != "$now_ds" ] || continue
+        cur=$(skb_referenced "$now_ds"); was=$(skb_referenced "$ref_ds")
+        [ -n "$cur" ] && [ -n "$was" ] || continue
+        [ "$was" -ge $(( COPY_SHRINK_MIN_MIB * 1048576 )) ] || continue
+        if [ $(( cur * 100 )) -lt $(( was * (100 - COPY_SHRINK_PCT) )) ]; then
+          bad WARN "tier2: $name $what shrank to $(( cur / 1048576 ))M from $(( was / 1048576 ))M (${ref_ds#*@})"
+        fi
+      done
+    fi
     [ -e "$STATE_DIR/dump-stale-$name" ] && bad WARN "tier3: $name dump older than ${DUMP_MAX_AGE_H}h at last sync"
   done < "$APPS_FILE"
 fi
@@ -113,11 +130,15 @@ for p in "${SRC_DATASET%%/*}" "${BAK_ROOT%%/*}"; do
   elif [ "${cap:-0}" -ge "$POOL_CAP_WARN" ]; then bad WARN "pool $p ${cap}% full"
   else good "pool $p $h ${cap}%"; fi
 done
-if [ -n "$THINPOOL" ]; then
-  d=$(lvs --noheadings -o data_percent "$THINPOOL" 2>/dev/null | tr -d ' ' | cut -d. -f1)
-  if [ "${d:-0}" -ge "$THINPOOL_WARN" ]; then bad WARN "thin pool $THINPOOL data ${d}%"
-  else good "thin pool $THINPOOL ${d}%"; fi
-fi
+# The thin pool, and any thin volume (for example the one under the backup
+# pool): a full thin volume stops the pool on it even with the pool "free".
+for lv in $THINPOOL $THIN_LVS; do
+  kind="thin pool"; [ "$lv" = "$THINPOOL" ] || kind="thin volume"
+  d=$(lvs --noheadings -o data_percent "$lv" 2>/dev/null | tr -d ' ' | cut -d. -f1)
+  if [ -z "$d" ]; then bad WARN "$kind $lv not found"
+  elif [ "$d" -ge "$THINPOOL_WARN" ]; then bad WARN "$kind $lv data ${d}%"
+  else good "$kind $lv ${d}%"; fi
+done
 
 summary="all fresh"
 [ "$rc" = 0 ] || summary="$(printf '%s\n' "${LINES[@]}" | grep -cE '^(STALE|WARN) ') finding(s)"

@@ -44,6 +44,12 @@ skbackup_defaults:
     # KiB/s. 40000 on a USB SSD pool pushed NFS writes from a node to 45 s;
     # 10000 kept them under 1.4 s. Raise only with measurements.
     bwlimit_kbps: 10000
+    # Per-app copy budget in seconds (0 = none): a hung app is killed and the
+    # run moves on instead of starving every app after it. A first seed of a
+    # big app that needs longer simply resumes on the next run.
+    timeout_seconds: 7200
+    # Alert before the copy when the backup pool is this full (0 = off).
+    precheck_capacity_pct: 85
     retention: {daily: 7, weekly: 4, monthly: 3}
     # [{name, src (default: name), retention: {daily: 14},
     #   excludes: [rsync patterns, "/x/" anchored at the app root],
@@ -100,6 +106,14 @@ skbackup_defaults:
     pool_capacity_pct: 80
     thinpool: ""        # an LVM thin pool under the backup pool, e.g. pve/data
     thinpool_pct: 85
+    # Thin VOLUMES to watch at thinpool_pct, e.g. the LV the backup pool sits
+    # on: [pve/backup]. A full thin volume stops its pool even with "free" space.
+    thin_volumes: []
+    # Warn when a copy lost more than this percent of its size (live copy vs
+    # its newest snapshot, newest vs the previous daily); 0 = off. Copies
+    # smaller than copy_shrink_min_mib are ignored.
+    copy_shrink_pct: 50
+    copy_shrink_min_mib: 64
 
   schedule:
     sync: "*-*-* 05:30:00"
