@@ -1,0 +1,37 @@
+# skpatch-hosts dashboard watch, one instance per estate (%i), as a user unit
+# on any machine that can ssh to a node running that estate's dashboard
+# container. Read-only: it reads the dashboard, never a managed host.
+#
+#   install -D -m 0644 skpatch-watch@.service skpatch-watch@.timer \
+#       skpatch-watch-digest@.service skpatch-watch-digest@.timer -t ~/.config/systemd/user/
+#   $EDITOR ~/.config/skpatch-watch/<estate>.env ~/.config/skpatch-talk/<estate>.env
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now skpatch-watch@<estate>.timer skpatch-watch-digest@<estate>.timer
+#
+# ~/.config/skpatch-watch/<estate>.env:
+#   SKPW_TOOL=/path/to/skstacks/v1/ansible/optional/skpatch-hosts/tools/skpatch_watch.py
+#   SKPW_HOOK=/path/to/skstacks/v1/ansible/optional/skpatch-hosts/tools/skpatch-talk-notify.sh
+#   SKPW_ARGS=--ssh <dashboard node> --register-as <dashboard admin>
+# ~/.config/skpatch-talk/<estate>.env (no secret in it, the app password is a file):
+#   SKP_TALK_URL=https://<nextcloud>
+#   SKP_TALK_ROOM=<room token>
+#   SKP_TALK_USER=<posting account>
+#   SKP_TALK_PASSWORD_FILE=/path/to/0600-file
+#   SKP_TALK_MENTION=<user id to notify>
+#
+# Exit 1 means "open issues", a successful run (they went out once each
+# through the hook); only exit 2 fails the unit.
+[Unit]
+Description=skpatch-hosts dashboard watch (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/skpatch-watch/%i.env
+EnvironmentFile=-%h/.config/skpatch-talk/%i.env
+ExecStart=/bin/sh -c 'exec /usr/bin/python3 "$SKPW_TOOL" --state "$STATE_DIRECTORY/%i.json" --alert-hook "$SKPW_HOOK" $SKPW_ARGS'
+StateDirectory=skpatch-watch
+SuccessExitStatus=1
+TimeoutStartSec=10min
+Nice=10

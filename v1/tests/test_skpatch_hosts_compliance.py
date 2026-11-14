@@ -192,8 +192,14 @@ class FakeDash:
             {"id": 1, "name": "mgr-1", "hostname": "10.0.0.1", "port": 22, "pkgManager": "apt",
              "detectedPkgManagers": ["apt", "snap"], "disabledPkgManagers": None},
             {"id": 2, "name": "arch-1", "hostname": "10.0.0.2", "port": 22, "pkgManager": "pacman",
-             "detectedPkgManagers": '["pacman","flatpak"]', "disabledPkgManagers": "[]"},
+             "detectedPkgManagers": '["pacman","flatpak"]', "disabledPkgManagers": "[]",
+             "isReachable": 1, "needsReboot": 1, "bootId": "b-1", "packageIssueCount": 2, "updateCount": 5,
+             "securityCount": 1, "osLifecycleStatus": "eol", "osLifecycleLabel": "Arch", "osLifecycleEolDate": "2026-01-01",
+             "osLifecycleDaysUntilEol": -10},
         ]
+        self.schedules = [{"id": 3, "name": "Nightly", "type": "update", "enabled": 1, "config": {"cron": "0 3 * * *"},
+                           "lastRunAt": fmt(now - 600), "lastRunStatus": "warning",
+                           "lastRunMessage": "Checked 2 systems, upgraded 1, skipped 0, 1 failed"}]
         self.history = {
             1: [{"action": "upgrade_package", "pkgManager": "apt", "status": "failed", "startedAt": fmt(now - 3600),
                  "error": "sudo: a password is required\n", "output": ""},
@@ -244,6 +250,8 @@ def fake(tmp_path):
                 return self._send(401, {"error": "Unauthorized"})
             if self.path == "/api/systems":
                 return self._send(200, {"systems": d.systems})
+            if self.path == "/api/schedules":
+                return self._send(200, {"schedules": d.schedules})
             if self.path.startswith("/api/systems/") and self.path.endswith("/history"):
                 return self._send(200, {"history": d.history[int(self.path.split("/")[3])]})
             return self._send(404, {})
@@ -286,6 +294,18 @@ def test_report_lists_systems_and_only_the_latest_sudo_denial_per_action(fake):
     # sudo's lecture means it asked for a password: same class; a plain
     # pacman error is not a sudo denial
     assert [d["action"] for d in systems["arch-1"]["sudo_denied"]] == ["check"]
+    # a failed non-check action that did not hit sudo is its own class; a
+    # sudo-denied upgrade is not counted twice
+    assert systems["arch-1"]["failed"] == [{"action": "upgrade", "at": systems["arch-1"]["failed"][0]["at"],
+                                            "error": "error: target not found: foo"}]
+    assert systems["mgr-1"]["failed"] == []
+    a = systems["arch-1"]
+    assert (a["reachable"], a["needs_reboot"], a["boot_id"], a["package_issues"], a["updates"]) == (True, True, "b-1", 2, 5)
+    assert a["lifecycle"]["status"] == "eol" and a["lifecycle"]["days_to_eol"] == -10
+    assert systems["mgr-1"]["reachable"] is None and systems["mgr-1"]["needs_reboot"] is False
+    sched = json.loads(line[len("@@SKP-REPORT@@"):])["schedules"]
+    assert sched == [{"name": "Nightly", "type": "update", "enabled": True, "last_run_at": sched[0]["last_run_at"],
+                      "status": "warning", "message": "Checked 2 systems, upgraded 1, skipped 0, 1 failed"}]
     assert fake.methods == {"GET"}
 
 
@@ -296,26 +316,71 @@ def test_systemd_unit_treats_open_issues_as_a_successful_run():
     assert "SuccessExitStatus=1" in unit and "Type=oneshot" in unit
     assert '--state "$STATE_DIRECTORY/%i.json"' in unit and "StateDirectory=skpatch-compliance" in unit
     assert "EnvironmentFile=%h/.config/skpatch-compliance/%i.env" in unit
+    assert "EnvironmentFile=-%h/.config/skpatch-talk/%i.env" in unit
     timer = (ROLE / "tools" / "systemd" / "skpatch-compliance@.timer").read_text()
     assert "OnCalendar=" in timer and "Persistent=true" in timer
 
 
-def test_example_hook_maps_raise_and_resolve_to_one_thread_per_key(tmp_path):
-    log = tmp_path / "calls"
-    stub = tmp_path / "bin" / "sk-alert"
-    stub.parent.mkdir()
-    stub.write_text(f'#!/bin/sh\nfor a in "$@"; do printf "[%s]" "$a"; done >> {log}\necho >> {log}\n')
+def _talk_env(tmp_path, code="201"):
+    log = tmp_path / "curl.log"
+    stub = tmp_path / "bin" / "curl"
+    stub.parent.mkdir(exist_ok=True)
+    # records argv and the -K config it gets on stdin, prints an HTTP code
+    stub.write_text(f'#!/bin/sh\nfor a in "$@"; do printf "[%s]" "$a"; done >> {log}\n'
+                    f'printf "\\nstdin:" >> {log}; cat >> {log}; echo >> {log}\nprintf {code}\n')
     stub.chmod(0o755)
-    hook = ROLE / "tools" / "skpatch-compliance-alert.example.sh"
-    env = {"PATH": f"{stub.parent}:/usr/bin:/bin"}
-    for args in (["raise", "host-1|sudo-denied:check", "warn", "msg one"],
-                 ["resolve", "host-1|sudo-denied:check", "info", "cleared"]):
-        assert subprocess.run(["sh", str(hook), *args], env=env).returncode == 0
-    assert log.read_text().splitlines() == [
-        "[-l][warn][-g][skpatch/host-1/sudo-denied/check][--title][skpatch: host-1|sudo-denied:check][msg one]",
-        "[-g][skpatch/host-1/sudo-denied/check][--resolve][cleared]",
-    ]
-    assert subprocess.run(["sh", str(hook), "bogus", "k", "info", "m"], env=env, capture_output=True).returncode == 2
+    pw = tmp_path / "pw"
+    pw.write_text("app-pw-secret\n")
+    env = {"PATH": f"{stub.parent}:/usr/bin:/bin", "SKP_TALK_URL": "https://cloud.example.test/",
+           "SKP_TALK_ROOM": "abc123xy", "SKP_TALK_USER": "agent", "SKP_TALK_PASSWORD_FILE": str(pw),
+           "SKP_TALK_MENTION": "ops.lead"}
+    return env, log
+
+
+TALK_HOOK = ROLE / "tools" / "skpatch-talk-notify.sh"
+
+
+def test_talk_hook_posts_raise_resolve_and_post_to_the_room(tmp_path):
+    env, log = _talk_env(tmp_path)
+    for args in (["raise", "host-1|sudo-denied:check", "error", "msg one"],
+                 ["resolve", "host-1|sudo-denied:check", "info", "cleared"],
+                 ["post", "digest", "info", "the summary"]):
+        assert subprocess.run(["sh", str(TALK_HOOK), *args], env=env).returncode == 0
+    text = log.read_text()
+    calls = [c for c in text.split("[-sS]")[1:]]
+    assert len(calls) == 3
+    assert all("[https://cloud.example.test/ocs/v2.php/apps/spreed/api/v1/chat/abc123xy]" in c for c in calls)
+    assert all("[OCS-APIRequest: true]" in c for c in calls)
+    assert "[message=🔴 skpatch: host-1|sudo-denied:check\nmsg one\n\n@\"ops.lead\"]" in calls[0]
+    assert "[message=✅ skpatch resolved: host-1|sudo-denied:check\ncleared]" in calls[1]
+    assert "[message=the summary]" in calls[2] and "ops.lead" not in calls[2]
+    # the password reaches curl on stdin only, never in argv
+    for c in calls:
+        argv, stdin = c.split("\nstdin:")
+        assert "app-pw-secret" not in argv and 'user = "agent:app-pw-secret"' in stdin
+
+
+def test_talk_hook_fails_on_a_rejected_post_and_on_bad_usage(tmp_path):
+    env, _ = _talk_env(tmp_path, code="401")
+    r = subprocess.run(["sh", str(TALK_HOOK), "raise", "k", "warn", "m"], env=env, capture_output=True, text=True)
+    assert r.returncode == 1 and "HTTP 401" in r.stderr
+    assert subprocess.run(["sh", str(TALK_HOOK), "bogus", "k", "info", "m"], env=env, capture_output=True).returncode == 2
+
+
+def test_a_failed_hook_call_is_retried_on_the_next_run(tmp_path):
+    flag = tmp_path / "down"
+    hook = tmp_path / "hook.sh"
+    hook.write_text(f'#!/bin/sh\n[ -e {flag} ] && exit 1\nexit 0\n')
+    hook.chmod(0o755)
+    state = tmp_path / "s.json"
+    flag.touch()
+    assert sc.reconcile(state, {"a|x": "m"}, str(hook)) == {"opened": [], "closed": []}
+    assert json.loads(state.read_text()) == {}
+    flag.unlink()
+    assert sc.reconcile(state, {"a|x": "m"}, str(hook))["opened"] == ["a|x"]
+    flag.touch()
+    assert sc.reconcile(state, {}, str(hook)) == {"opened": [], "closed": []}
+    assert set(json.loads(state.read_text())) == {"a|x"}
 
 
 def test_dns_conflict_warning_becomes_its_own_issue():

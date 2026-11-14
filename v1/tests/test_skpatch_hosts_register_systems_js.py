@@ -411,3 +411,41 @@ def test_a_setting_above_the_dashboards_maximum_is_clamped_once_not_rewritten_ev
 def test_the_default_settings_are_the_long_upgrade_timeouts():
     text = (SCRIPT.parent.parent.parent / "tasks" / "register_systems.yml").read_text()
     assert "default({'cmd_timeout_seconds': 1800, 'ssh_timeout_seconds': 60}, true)" in text
+
+
+TALK = {"URL": "https://cloud.example.test/", "ROOM_TOKEN": "abc123xy", "USER": "agent",
+        "APP_PASSWORD": "talk-app-pw-secret", "MENTION": "ops.lead"}
+
+
+def test_talk_adds_one_immediate_webhook_channel_that_posts_to_the_room(dash):
+    first = _run(dash, _cfg(talk=TALK, notifications=NOTIFS))
+    assert first.returncode == 0, first.stderr
+    assert "notification SK Patching (immediate): created" in first.stdout
+    ch = next(n for n in dash.notifications if n["name"] == "SK Patching (immediate)")
+    assert ch["type"] == "webhook" and ch["notifyOn"] == ["unreachable"] and ch["systemIds"] is None
+    c = ch["config"]
+    assert c["url"] == "https://cloud.example.test/ocs/v2.php/apps/spreed/api/v1/chat/abc123xy"
+    assert c["method"] == "POST" and c["auth"] == {"mode": "basic", "username": "agent", "password": "talk-app-pw-secret"}
+    assert {"name": "OCS-APIRequest", "value": "true", "sensitive": False} in c["headers"]
+    field = c["body"]["fields"][0]
+    assert c["body"]["mode"] == "form" and field["name"] == "message"
+    assert field["value"].startswith("{{event.decoratedTitle}}") and field["value"].endswith('@"ops.lead"')
+    assert "talk-app-pw-secret" not in first.stdout + first.stderr
+    second = _run(dash, _cfg(talk=TALK, notifications=NOTIFS))
+    assert "notification SK Patching (immediate): synced" in second.stdout
+    assert len(dash.notifications) == 2
+
+
+def test_a_declared_notification_of_the_same_name_wins_over_talk(dash):
+    mine = [{"name": "SK Patching (immediate)", "type": "email", "notify_on": ["unreachable"], "config": {"x": 1}}]
+    out = _run(dash, _cfg(talk=TALK, notifications=mine))
+    assert out.returncode == 0, out.stderr
+    assert [n["type"] for n in dash.notifications] == ["email"]
+
+
+@pytest.mark.parametrize("bad, msg", [({"USER": ""}, "USER is required"),
+                                      ({"URL": "http://cloud.example.test"}, "URL must be https"),
+                                      ({"ROOM_TOKEN": "../x"}, "not a Talk room token")])
+def test_talk_refuses_an_incomplete_or_unsafe_config(dash, bad, msg):
+    out = _run(dash, _cfg(talk={**TALK, **bad}))
+    assert out.returncode != 0 and msg in out.stderr

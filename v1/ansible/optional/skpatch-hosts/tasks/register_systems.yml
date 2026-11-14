@@ -117,6 +117,7 @@
           'scripts': (lookup('file', playbook_dir ~ '/src/skpatch-hosts/dashboard-scripts.json') | from_json).scripts,
           'settings': skpatch_hosts.DASHBOARD_SETTINGS | default({'cmd_timeout_seconds': 1800, 'ssh_timeout_seconds': 60}, true),
           'notifications': skpatch_hosts.NOTIFICATIONS | default([], true),
+          'talk': skpatch_hosts.TALK | default({}, true),
           'schedules': skpatch_hosts_schedules | default(skpatch_hosts.SCHEDULES | default([], true), true),
           'systems': skp_reg_systems | default([])} | to_json }}
   delegate_to: "{{ skp_reg_node }}"

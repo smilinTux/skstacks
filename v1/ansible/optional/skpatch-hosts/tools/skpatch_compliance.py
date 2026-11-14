@@ -225,16 +225,25 @@ def analyse(result: dict, hosts: dict[str, dict], paused: set[str], report: dict
     return issues, status
 
 
-def alert(hook: str | None, action: str, key: str, level: str, message: str) -> None:
+def alert(hook: str | None, action: str, key: str, level: str, message: str) -> bool:
+    """Run the hook; True when it succeeded (or there is no hook)."""
     if not hook:
-        return
+        return True
     try:
-        subprocess.run([*shlex.split(hook), action, key, level, message], timeout=60, check=False)
+        rc = subprocess.run([*shlex.split(hook), action, key, level, message], timeout=60, check=False).returncode
     except (OSError, subprocess.SubprocessError) as err:
         print(f"alert hook failed for {key}: {err}", file=sys.stderr)
+        return False
+    if rc != 0:
+        print(f"alert hook failed for {key}: exit {rc}", file=sys.stderr)
+    return rc == 0
 
 
-def reconcile(state_path: Path | None, issues: dict[str, str], hook: str | None) -> dict:
+def reconcile(state_path: Path | None, issues: dict[str, str], hook: str | None,
+              label: str = "skpatch compliance", levels: dict[str, str] | None = None) -> dict:
+    """Raise each new issue once and resolve each cleared one once. A hook
+    call that fails leaves the state as it was, so the next run retries it
+    instead of losing the alert."""
     now = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     state = {}
     if state_path and state_path.exists():
@@ -242,13 +251,17 @@ def reconcile(state_path: Path | None, issues: dict[str, str], hook: str | None)
     opened = [k for k in issues if k not in state]
     closed = [k for k in state if k not in issues]
     for k in sorted(opened):
-        alert(hook, "raise", k, "warn", f"skpatch compliance: {k.split('|')[0]}: {issues[k]}")
-        state[k] = {"since": now, "message": issues[k]}
+        level = (levels or {}).get(k, "warn")
+        if alert(hook, "raise", k, level, f"{label}: {k.split('|')[0]}: {issues[k]}"):
+            state[k] = {"since": now, "message": issues[k]}
     for k in sorted(closed):
-        alert(hook, "resolve", k, "info", f"skpatch compliance: {k} is resolved")
-        del state[k]
+        if alert(hook, "resolve", k, "info", f"{label}: {k} is resolved"):
+            del state[k]
     for k in issues:
-        state[k]["message"] = issues[k]
+        if k in state:
+            state[k]["message"] = issues[k]
+    opened = [k for k in opened if k in state]
+    closed = [k for k in closed if k not in state]
     if state_path:
         state_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = state_path.with_suffix(".tmp")
