@@ -156,3 +156,10 @@ def test_alert_host_key_is_stable_while_a_condition_persists(tmp_path):
     c = alert_key_for(tmp_path, "WARN pool backup 97% full")
     assert a == b, "an hourly-new key opens a new alert every hour and buries the condition"
     assert a != c
+
+
+def test_dry_run_of_a_new_app_does_not_abort(tmp_path):
+    host = FakeHost(tmp_path, apps=["app2 app2 7 4 3"]).seed()
+    proc = host.run("sync", "--dry-run")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "DRY: zfs create -p backup/copies/app2" in proc.stdout

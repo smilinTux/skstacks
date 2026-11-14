@@ -118,7 +118,7 @@ prune_history() {  # prune_history DATASET KEEP_DAILY KEEP_WEEKLY KEEP_MONTHLY
   local dst=$1 k p n
   for k in "daily:$2" "weekly:$3" "monthly:$4"; do
     p=${k%%:*}; n=${k##*:}
-    zfs list -H -t snapshot -o name -s creation -d 1 "$dst" 2>/dev/null \
+    { zfs list -H -t snapshot -o name -s creation -d 1 "$dst" 2>/dev/null || true; } \
       | { grep -F "@$p-" || true; } | skb_prune_list "$n" \
       | while IFS= read -r s; do run zfs destroy "$s"; done
   done
