@@ -371,6 +371,7 @@ dashboard action needs, all confirmed against the pinned image's own
 | Reboot | `/usr/sbin/reboot`; on Proxmox VE also the guard's `pvesh get /cluster/tasks --output-format json` |
 | Any apt action | `Defaults:<account> env_keep += "DEBIAN_FRONTEND"`, so the app's own `DEBIAN_FRONTEND=noninteractive` reaches apt instead of being dropped by sudo's `env_reset` (without it debconf falls back to Teletype, reads EOF and fails the package) |
 | Any apt or dpkg action | `/etc/dpkg/dpkg.cfg.d/90-skpatch-hosts` with `force-confdef` and `force-confold`: a changed conffile is kept instead of dpkg stopping at its prompt with no terminal. `DPKG_KEEP_CONFFILES: false` leaves dpkg's default behaviour |
+| Every Ubuntu host (armed or not) | `/etc/apt/apt.conf.d/99skpatch-phased` with `APT::Get::Always-Include-Phased-Updates "true";`: apt installs phased updates at once instead of deferring them ("deferred due to phasing ... 0 upgraded" while the dashboard keeps listing them). The staged rollout is the nightly schedule order. Config only: `--tags phased` rolls out just this file |
 
 On a host with **pacman** or **flatpak** (detected by `/usr/bin/pacman` and
 `/usr/bin/flatpak`; host var `skpatch_hosts_pkg_managers: [pacman, flatpak]`

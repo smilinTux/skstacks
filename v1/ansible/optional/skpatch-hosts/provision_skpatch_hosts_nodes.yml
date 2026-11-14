@@ -331,6 +331,34 @@
         state: absent
       when: skpatch_state == 'absent' or not (skp_node_allow_actions | bool) or not (skp_keep_conffiles | bool)
 
+    # Ubuntu phased updates: apt holds back a share of hosts from a new
+    # package version for days ("The following upgrades have been deferred
+    # due to phasing"), so Upgrade All ends "0 upgraded" while the dashboard
+    # keeps listing the update. This fleet is managed: what the dashboard
+    # shows is what gets installed, and the staged rollout is our own nightly
+    # schedule order. Ubuntu only (Debian has no phasing). Tag `phased` runs
+    # just this pair: `--tags phased`.
+    - name: Install phased updates at once on Ubuntu (present)
+      copy:
+        dest: /etc/apt/apt.conf.d/99skpatch-phased
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          // Managed by SKStacks optional/skpatch-hosts (provision_skpatch_hosts_nodes.yml).
+          // A managed fleet installs what the patch dashboard lists; the staged
+          // rollout is the dashboard's nightly schedule order, not apt's phasing.
+          APT::Get::Always-Include-Phased-Updates "true";
+      when: skpatch_state == 'present' and ansible_facts.distribution | default('') == 'Ubuntu'
+      tags: [config, phased]
+
+    - name: Remove the phased-updates override (absent)
+      file:
+        path: /etc/apt/apt.conf.d/99skpatch-phased
+        state: absent
+      when: skpatch_state == 'absent'
+      tags: [config, phased]
+
     - name: Write the sudoers rule (present)
       template:
         src: "{{ playbook_dir }}/src/skpatch-hosts/skpatch-hosts.sudoers.j2"
