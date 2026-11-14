@@ -164,6 +164,7 @@ skpatch-hosts:
   SYNC_CREDENTIAL: false                    # true: rewrite the credential's key from SSH_PRIVATE_KEY (key rotation)
   UPGRADE_MODE: ""                          # upgrade | full-upgrade: APT default for registered systems; "" leaves it
   NOTIFICATIONS: []                         # [{name, type, enabled, notify_on, systems, config}], secrets allowed
+  TALK: {}                                  # {URL, ROOM_TOKEN, USER, APP_PASSWORD, MENTION}: immediate alerts to a Talk room ("Alert routing")
   SCHEDULES: []                             # [{name, type, cron, enabled, systems, only_if_required, cache_hours, notifications}]
 ```
 
@@ -295,6 +296,7 @@ own configuration, so a redeploy or a fresh `dashboard.db` reproduces it:
 |---|---|---|
 | `SCHEDULES` | vault, or `skpatch_hosts_schedules` (e.g. `-e @<file>.yml`, which wins) | Refresh / update / autoremove / reboot / notification_digest schedules. `systems` is a list of dashboard system **names**, or absent for all. |
 | `NOTIFICATIONS` | vault (channel configs carry SMTP passwords, tokens) | Notification channels; a digest channel is one a `notification_digest` schedule lists in `notifications`. |
+| `TALK` | vault (carries an app password) | One more channel: a webhook that posts the dashboard's immediate events to a Nextcloud Talk room (README "Alert routing"). A `NOTIFICATIONS` entry of the same name wins. |
 | `UPGRADE_MODE` / `skpatch_hosts_upgrade_mode` | vault / host var | APT default upgrade mode of each registered system. |
 | `SYNC_CREDENTIAL` | vault | Rewrites the estate credential's key from `SSH_PRIVATE_KEY` (key rotation, SOP §5). |
 | `skpatch_hosts_dashboard_address` / `_port` | host var | The address the dashboard container dials, when the controller's (an ssh alias, a tailnet name) does not resolve there. |
@@ -390,18 +392,73 @@ removes the wrappers and the dpkg policy file.
 ## Notification delivery
 
 The dashboard resolves names through Docker's DNS, which follows the node's
-resolver. When an SMTP (or OIDC) host resolves to the estate's own public
-address and the router does not hairpin NAT, the connection from inside the
-container times out and every email notification and digest fails, while the
-same name works from a host on a split-horizon resolver. `EXTRA_HOSTS` pins
-such a name for the container only:
+resolver. When an OIDC (or webhook) host resolves to the estate's own public
+address and the router does not hairpin NAT that port, the connection from
+inside the container times out, while the same name works from a host on a
+split-horizon resolver. `EXTRA_HOSTS` pins such a name for the container only:
 
 ```yaml
 skpatch_hosts:
-  EXTRA_HOSTS: ["mail.example.org:10.0.0.15"]
+  EXTRA_HOSTS: ["sso.example.org:10.0.0.15"]
 ```
 
 Each entry is `host:address`; the deploy refuses anything else.
+
+**Email is different.** The email channel's mailer (nodemailer) resolves the
+SMTP host with DNS queries first and reads `/etc/hosts` only when DNS has no
+answer, so an `EXTRA_HOSTS` pin does nothing for a name that has a public
+record (a wildcard counts). Check from inside the container:
+`node -e 'require("dns").resolve4("<smtp host>",console.log)'`. If that
+returns the public address and the router forwards no mail port, the fixes
+are: a split-horizon record on the resolver the node uses, a port forward or
+hairpin for the submission port, or a relay the container can reach. Do not
+set `allowInsecureTls` to talk to an IP: that drops certificate checking for
+the SMTP password.
+
+## Alert routing (Talk room, email as fallback)
+
+Recommended layout: one Nextcloud Talk room per estate for patching, posted
+to by a dedicated account, and email kept for the daily digest only.
+
+| What | Sent by | When |
+|---|---|---|
+| Host unreachable | the dashboard's webhook channel from `TALK` | immediately (on the reachable-to-unreachable transition) |
+| Upgrade failed, sudo denied (a provisioning gap), package manager issue (Repair), reboot required for more than 8 days on one boot | `tools/skpatch_watch.py` (timer every 15 min) | once when it opens, once when it clears |
+| Drift, unprovisioned, uncovered manager, DNS port 53 conflict | `tools/skpatch_compliance.py` (daily timer) | once when it opens, once when it clears |
+| Daily summary: pending updates, the last 24 h of scheduled runs, OS end-of-life and end-of-support warnings, open issues | `skpatch_watch.py --digest` | 07:00 |
+| Reboot required (normal) | nobody | never an alert |
+| Email digest | the dashboard's email channel in the `notification_digest` schedule | 07:00 (fallback) |
+
+The dashboard itself has no "upgrade failed" event, and a channel that is in
+a digest schedule sends every event to the digest, so only `unreachable` goes
+through a dashboard channel; the rest come from the watch, which reads the
+dashboard (GET only, `dashboard_report.js`) and never a managed host.
+
+Setup per estate:
+
+1. Create the room as the posting account through the Talk API (not `occ`),
+   add the people, and give the account a dedicated app password
+   (`occ user:auth-tokens:add --name "skpatch-hosts notifier" <user>`
+   creates one without the login password). Keep it in your secret store.
+2. Vault: `TALK: {URL, ROOM_TOKEN, USER, APP_PASSWORD, MENTION}` and set
+   `enabled: false` on any immediate email channel in `NOTIFICATIONS`. The
+   next provisioning run converges the dashboard. `MENTION` is the user id
+   to @mention, which is what notifies someone in a room left at the
+   default "mentions only" level.
+3. On a machine that can ssh to the dashboard node: install
+   `tools/systemd/skpatch-watch@.{service,timer}` and
+   `skpatch-watch-digest@.{service,timer}`, write
+   `~/.config/skpatch-watch/<estate>.env` and
+   `~/.config/skpatch-talk/<estate>.env` (the unit headers list the keys;
+   the app password lives in a 0600 file named there), enable both timers.
+   Point the compliance unit's `SKPC_HOOK` at `tools/skpatch-talk-notify.sh`;
+   it reads the same `skpatch-talk` env file.
+4. Test: `POST /api/notifications/<id>/test` on the dashboard channel, then
+   `systemctl --user start skpatch-watch@<estate>` (posts the real open
+   issues once; a second run posts nothing).
+
+The hook's state survives a failed post: an issue whose raise did not reach
+the room is retried on the next run instead of being recorded as sent.
 
 ## Selected-package upgrades (wrappers, and a known limitation)
 
@@ -507,7 +564,8 @@ image. Three checks keep the template and the fleet honest:
    `sudo-denied:<action>`. It keeps open issues in a state file and calls an
    alert hook once when an issue opens and once when it clears, keyed
    `host|issue`. `tools/systemd/skpatch-compliance@.{service,timer}` run it
-   daily per estate; `tools/skpatch-compliance-alert.example.sh` shows a hook.
+   daily per estate; `tools/skpatch-talk-notify.sh` is the hook (README
+   "Alert routing").
 3. **Dashboard.** A history entry that failed because sudo asked for a
    password ("a password is required", sudo's lecture text, "not in the
    sudoers file", "not allowed to execute") is its own issue class,

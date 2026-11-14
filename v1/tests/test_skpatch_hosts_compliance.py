@@ -314,7 +314,7 @@ def test_report_lists_systems_and_only_the_latest_sudo_denial_per_action(fake):
 def test_systemd_unit_treats_open_issues_as_a_successful_run():
     unit = (ROLE / "tools" / "systemd" / "skpatch-compliance@.service").read_text()
     assert "SuccessExitStatus=1" in unit and "Type=oneshot" in unit
-    assert '--state "$STATE_DIRECTORY/%i.json"' in unit and "StateDirectory=skpatch-compliance" in unit
+    assert '--state "$STATE_DIRECTORY/%i.json"' in unit and "StateDirectory=skpatch-hosts/compliance" in unit
     assert "EnvironmentFile=%h/.config/skpatch-compliance/%i.env" in unit
     assert "EnvironmentFile=-%h/.config/skpatch-talk/%i.env" in unit
     timer = (ROLE / "tools" / "systemd" / "skpatch-compliance@.timer").read_text()

@@ -98,8 +98,11 @@ python -m pytest v1/tests/test_skpatch_hosts_register_systems_js.py v1/tests/tes
 python -m pytest v1/tests/test_skpatch_hosts_sudo_coverage.py -v
 python3 v1/ansible/optional/skpatch-hosts/tools/extract_sudo_commands.py   # regenerate (docker)
 
-# Fleet compliance tool and its read-only dashboard report
+# Fleet compliance tool and its read-only dashboard report, the Talk hook
 python -m pytest v1/tests/test_skpatch_hosts_compliance.py -v
+
+# Dashboard watch (immediate classes) and the daily summary
+python -m pytest v1/tests/test_skpatch_hosts_watch.py -v
 
 # Repo-wide gate this role must also keep passing
 python -m pytest v1/tests/test_no_latest_images.py -v
@@ -369,10 +372,15 @@ self-signed five-minute session for `REGISTER_AS`), and ships two playbooks:
 | A reboot of a Proxmox host says "Reboot blocked: could not verify Proxmox backup activity" | The host was provisioned before the `pvesh` guard line existed, or actions are off for it. Rerun the provisioning playbook (it detects `/usr/bin/pvesh`; `skpatch_hosts_proxmox: true` forces it). "Reboot blocked: Proxmox backup task is running" is the guard working: wait for the backup. |
 | Repair fails with `sudo: a password is required` | The host was provisioned before the `dpkg --configure -a` line existed; rerun the provisioning playbook. |
 | An upgrade fails with `debconf: unable to initialize frontend` or `end of file on stdin at conffile prompt` | The host predates the `DEBIAN_FRONTEND` env_keep and the dpkg conffile policy; rerun the provisioning playbook, then press Repair. |
-| Every email notification and the digest fail, the SMTP host works from a shell | The container resolves the SMTP host to the estate's public address with no hairpin NAT. Set `EXTRA_HOSTS` (README "Notification delivery"). |
+| Every email notification and the digest fail with "Connection timeout", the SMTP host works from a shell | The mailer resolves the SMTP host by DNS and gets the estate's public address; `EXTRA_HOSTS` does not help email while the name has a public record. Fix DNS or the port forward (README "Notification delivery"), or rely on the Talk room. |
+| Nothing reaches the Talk room | `POST /api/notifications/<id>/test` on the Talk channel: HTTP 401 is the app password, 404 the room token or the account is not a participant. For the watch: `journalctl --user -u skpatch-watch@<estate>`; "Talk post failed: HTTP ..." is the hook. A failed post is retried next run. |
+| The same problem is posted again and again | It should not be: the watch and the compliance check post once per `host|issue`. Check that the unit's `StateDirectory` is writable and not shared between estates. |
+| A host that needs a reboot was never posted | Expected for 8 days: a pending reboot alerts only after `--reboot-days` on the same boot (the normal case is no alert). |
 | Provisioning fails: "has package manager(s) ... that the skpatch-hosts sudoers template does not cover" | By design: every dashboard action for that manager would fail on sudo. Add coverage (README "Sudo coverage and drift detection"), or disable the manager for that system in the dashboard and set `skpatch_hosts_unsupported_managers_ok`. |
 | `test_fixture_is_for_the_pinned_image` fails | The dashboard image was bumped. Run `tools/extract_sudo_commands.py`, review the fixture diff, update `sudo-coverage.yml` and the sudoers template, rerun the tests. |
 | Compliance reports `drift` | Provisioning would change that host (listed tasks). Usually the framework moved on: rerun the provisioning playbook for it (`--check --diff` first). |
+| The watch posts `upgrade-failed:<action>` | The dashboard's latest run of that action failed (not on sudo). Read the run in the system's history; the issue clears with the next successful run of the action. |
+| The watch posts `package-manager` | The dashboard reports a package manager issue on that system: open it and press Repair. |
 | Compliance reports `sudo-denied:<action>` | The dashboard's latest run of that action hit sudo. Rerun provisioning for the host; the issue clears with the next successful run of the action. |
 | Compliance reports `dashboard-only` | A dashboard system matches no inventory host: provision it, fix its name/address, or remove it from the dashboard. |
 | Provisioning warns "serves DNS and has a port 53 conflict", or compliance reports `dns-conflict` | On a resolver host, NetBird's DNS (or another process) can take port 53 before the DNS server. Run `netbird up --disable-dns` on that host, restart the DNS server, rerun the check (README "DNS server hosts and NetBird"). |
