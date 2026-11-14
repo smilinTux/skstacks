@@ -177,7 +177,7 @@
           name: "SKWhoami {{ item[-2:] }}"
           launch_url: "https://{{ item }}{{ '' if env == 'prod' else '-' + env }}.{{ skwhoami.CLUSTERNAME | default(cluster_name) }}.{{ skwhoami.DOMAIN | default(domain) }}"
           group: "{{ skwhoami.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
-          icon: "{{ skwhoami.AUTHENTIK_TILE_ICON | default('fa://fa-circle-info', true) }}"
+          icon: "{{ skwhoami.AUTHENTIK_TILE_ICON | default('fa://fa-info-circle', true) }}"
           open_in_new_tab: true
           description: ""
       loop:

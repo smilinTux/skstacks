@@ -62,23 +62,23 @@ def test_security_headers_override_keeps_cors_block():
 
 
 def test_dashboard_realm_default_unchanged():
-    assert middlewares(DASHBOARD_AUTH_HASH=AUTH)["traefikAuth"]["basicAuth"]["realm"] == "TraefikDashboard"
+    assert middlewares(DASHBOARD_AUTH_MODE="basic", DASHBOARD_AUTH_HASH=AUTH)["traefikAuth"]["basicAuth"]["realm"] == "TraefikDashboard"
 
 
 def test_dashboard_realm_empty_omits_realm():
-    ba = middlewares(DASHBOARD_AUTH_HASH=AUTH, DASHBOARD_AUTH_REALM="")["traefikAuth"]["basicAuth"]
+    ba = middlewares(DASHBOARD_AUTH_MODE="basic", DASHBOARD_AUTH_HASH=AUTH, DASHBOARD_AUTH_REALM="")["traefikAuth"]["basicAuth"]
     assert "realm" not in ba
     assert ba["users"] == [AUTH]
 
 
 def test_dashboard_realm_custom():
-    ba = middlewares(DASHBOARD_AUTH_HASH=AUTH, DASHBOARD_AUTH_REALM="Edge")["traefikAuth"]["basicAuth"]
+    ba = middlewares(DASHBOARD_AUTH_MODE="basic", DASHBOARD_AUTH_HASH=AUTH, DASHBOARD_AUTH_REALM="Edge")["traefikAuth"]["basicAuth"]
     assert ba["realm"] == "Edge"
 
 
 def test_auth_hash_rendered_verbatim():
     # The value goes through untouched: no $$ escaping, no quoting damage.
-    assert middlewares(DASHBOARD_AUTH_HASH=AUTH)["traefikAuth"]["basicAuth"]["users"] == [AUTH]
+    assert middlewares(DASHBOARD_AUTH_MODE="basic", DASHBOARD_AUTH_HASH=AUTH)["traefikAuth"]["basicAuth"]["users"] == [AUTH]
 
 
 # -- 3. router cert resolver -------------------------------------------------

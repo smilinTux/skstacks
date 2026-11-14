@@ -44,17 +44,17 @@ def test_whitelist_renders_source_range_when_set():
 def test_dashboard_auth_without_hash_is_lan_only_not_open():
     """No hash: the dashboard must not be public (was an empty chain until
     2026-11-09, which left one estate's dashboard and API open)."""
-    src = render()["traefikAuth"]["ipAllowList"]["sourceRange"]
+    src = render(DASHBOARD_AUTH_MODE="lan")["traefikAuth"]["ipAllowList"]["sourceRange"]
     assert "10.0.0.0/8" in src and "192.168.0.0/16" in src and "127.0.0.1/32" in src
     assert not any(c.startswith("0.0.0.0") or c == "::/0" for c in src)
 
 
 def test_dashboard_fallback_cidrs_override():
-    assert render(DASHBOARD_FALLBACK_ALLOW_CIDRS=["10.9.0.0/16"])["traefikAuth"]["ipAllowList"]["sourceRange"] == ["10.9.0.0/16"]
+    assert render(DASHBOARD_AUTH_MODE="lan", DASHBOARD_FALLBACK_ALLOW_CIDRS=["10.9.0.0/16"])["traefikAuth"]["ipAllowList"]["sourceRange"] == ["10.9.0.0/16"]
 
 
 def test_dashboard_auth_basic_auth_when_hash_set():
-    mw = render(DASHBOARD_AUTH_HASH="admin:$2y$10$examplehash")
+    mw = render(DASHBOARD_AUTH_MODE="basic", DASHBOARD_AUTH_HASH="admin:$2y$10$examplehash")
     assert mw["traefikAuth"]["basicAuth"]["users"] == ["admin:$2y$10$examplehash"]
 
 
@@ -105,3 +105,55 @@ def test_rate_limit_disabled_via_flag():
     # The middleware definition itself still exists (harmless, reusable by
     # a future custom chain), only the built-in chains stop referencing it.
     assert "rate-limit" in mw
+
+
+# -- dashboard auth mode (2026-11-14): SSO forward-auth is the only gate by default --
+
+ROUTERS = MIDDLEWARES.parent / "routers.yml.j2"
+
+
+def render_routers(**skfenceha_vars):
+    env = jinja2.Environment(undefined=jinja2.ChainableUndefined, trim_blocks=True)
+    out = env.from_string(ROUTERS.read_text()).render(
+        skfenceha=skfenceha_vars, env="prod", cluster_name="c", domain="example.test")
+    return yaml.safe_load(out)["http"]["routers"]
+
+
+def test_dashboard_default_is_sso_only():
+    """No basic auth and no allowlist by default: the forward-auth middleware
+    is the only gate, so the SSO portal tile can open the dashboard."""
+    assert "traefikAuth" not in render()
+    mws = render_routers()["dashboard"]["middlewares"]
+    assert "authentik@file" in mws
+    assert "traefikAuth@file" not in mws
+
+
+def test_dashboard_sso_mode_never_renders_the_htpasswd_even_if_the_hash_is_still_set():
+    secret = "admin:$2y$10$examplehash"
+    env = jinja2.Environment(undefined=jinja2.ChainableUndefined, trim_blocks=True)
+    out = env.from_string(MIDDLEWARES.read_text()).render(skfenceha={"DASHBOARD_AUTH_HASH": secret})
+    assert secret not in out and "basicAuth" not in out
+    assert "traefikAuth" not in yaml.safe_load(out)["http"]["middlewares"]
+
+
+def test_dashboard_sso_middleware_name_is_overridable():
+    mws = render_routers(DASHBOARD_SSO_MIDDLEWARE="authentik-admin@file")["dashboard"]["middlewares"]
+    assert "authentik-admin@file" in mws and "authentik@file" not in mws
+
+
+def test_dashboard_basic_mode_is_explicit_opt_in():
+    mws = render_routers(DASHBOARD_AUTH_MODE="basic")["dashboard"]["middlewares"]
+    assert "traefikAuth@file" in mws and "authentik@file" not in mws
+    assert render(DASHBOARD_AUTH_MODE="basic", DASHBOARD_AUTH_HASH="u:h")["traefikAuth"]["basicAuth"]["users"] == ["u:h"]
+
+
+def test_dashboard_basic_mode_without_a_hash_fails_safe_to_lan_only():
+    assert "ipAllowList" in render(DASHBOARD_AUTH_MODE="basic")["traefikAuth"]
+
+
+def test_dashboard_lan_mode_ignores_a_configured_hash():
+    assert "ipAllowList" in render(DASHBOARD_AUTH_MODE="lan", DASHBOARD_AUTH_HASH="u:h")["traefikAuth"]
+
+
+def test_authentik_forward_auth_middleware_is_always_defined():
+    assert "forwardAuth" in render()["authentik"]

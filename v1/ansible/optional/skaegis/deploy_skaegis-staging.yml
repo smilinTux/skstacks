@@ -470,7 +470,7 @@
           name: "{{ skaegis.AUTHENTIK_TILE_NAME | default('skaegis', true) }}"
           launch_url: "https://{{ ska_host }}"
           group: "{{ skaegis.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
-          icon: "{{ skaegis.AUTHENTIK_TILE_ICON | default('fa://fa-shield-halved', true) }}"
+          icon: "{{ skaegis.AUTHENTIK_TILE_ICON | default('fa://fa-shield-alt', true) }}"
           icon_file: "icon.png"
           icon_name: "skaegis"
           open_in_new_tab: "{{ skaegis.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"

@@ -301,7 +301,7 @@
           name: "{{ skbom.AUTHENTIK_TILE_NAME | default('SKBom (Dependency-Track)', true) }}"
           launch_url: "https://{{ skb_host }}"
           group: "{{ skbom.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
-          icon: "{{ skbom.AUTHENTIK_TILE_ICON | default('fa://fa-shield-halved', true) }}"
+          icon: "{{ skbom.AUTHENTIK_TILE_ICON | default('fa://fa-shield-alt', true) }}"
           icon_file: "{{ skbom.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
           icon_name: "{{ skbom.AUTHENTIK_TILE_ICON_NAME | default('skbom', true) }}"
           open_in_new_tab: "{{ skbom.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
