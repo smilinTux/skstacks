@@ -278,3 +278,19 @@ def test_new_tile_without_category_has_no_section_key():
     tile.ensure_application(api, CFG)
     post = [c for c in api.calls if c[0] == "POST"][0]
     assert "group" not in post[2]
+
+
+def test_unset_description_leaves_an_existing_description_alone():
+    app = _section_app("")
+    app["meta_description"] = "Forgejo git hosting"
+    api = FakeApi(application=app)
+    tile.ensure_application(api, CFG)  # CFG has description ""
+    assert [c[0] for c in api.calls] == ["GET"]
+    assert api.application["meta_description"] == "Forgejo git hosting"
+
+
+def test_set_description_is_written():
+    api = FakeApi(application=_section_app(""))
+    tile.ensure_application(api, {**CFG, "description": "New text"})
+    patch = [c for c in api.calls if c[0] == "PATCH"]
+    assert len(patch) == 1 and patch[0][2] == {"meta_description": "New text"}
