@@ -5,6 +5,15 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+### skgit: registration and anonymous-read knobs
+
+- **skgit: `DISABLE_REGISTRATION` and `REQUIRE_SIGNIN_VIEW`.** Forgejo defaults to open
+  self-registration and anonymous read of every public repo, and `app.ini.j2` had no `[service]`
+  section, so an instance could only close them with a live edit that the next deploy reverted.
+  Either key now renders a `[service]` section with that setting (lowercase boolean). Unset renders
+  byte-identical to before (no `[service]` section). Tests: `v1/tests/test_skgit_service_section.py`.
+  **Instance action**: none; an internet-facing skgit should set both to `true`.
+
 ### skhub: MariaDB buffer pool and memory limit are knobs
 
 - **skhub: `DB_INNODB_BUFFER_POOL_SIZE` and `DB_MEMORY_LIMIT`.** The db service took MariaDB's 128M

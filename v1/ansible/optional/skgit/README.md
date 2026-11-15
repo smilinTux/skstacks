@@ -81,3 +81,12 @@ move `/var/data/runtime/skgit-<env>/postgres.pg16` back to `/var/data/runtime/sk
 
 Order matters: if the deploy runs before step 2 the guard stops it with the message that names this
 section. That is the intended behaviour, not a fault.
+
+## Registration and anonymous read
+
+`skgit.DISABLE_REGISTRATION` and `skgit.REQUIRE_SIGNIN_VIEW` (both optional)
+render Forgejo's `[service]` section. Unset, Forgejo's defaults apply: anyone
+can register and anonymous visitors can read every public repo. An
+internet-facing instance should set both to `true`. Users are then created by
+an admin (web UI or `POST /api/v1/admin/users`), and API or git access needs a
+token or SSH key.
