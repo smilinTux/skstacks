@@ -296,7 +296,7 @@ def save_state(path, state):
 
 
 def run(plex, db, battery, rd, state, apply=False, max_resets=20, full=False, default_version="1080p",
-        now=None, log=print):
+        now=None, log=print, verbose=False):
     now = int(now or time.time())
     since = 0 if full else max(0, int(state.get("last_run", 0)) - 3600)
     keys = plex.items(since)
@@ -328,7 +328,8 @@ def run(plex, db, battery, rd, state, apply=False, max_resets=20, full=False, de
                 continue
             if verdict == "unknown" and (item is not None or None in codes or not codes):
                 summary["unknown"] += 1
-                log(f"UNKNOWN {name}: {why}")
+                if verbose:  # mostly old English TV with untagged audio: count, do not list
+                    log(f"UNKNOWN {name}: {why}")
                 continue
             if verdict == "bad":
                 summary["bad"] += 1
@@ -389,6 +390,7 @@ def main(argv=None):
     ap.add_argument("--max-resets", type=int, default=20)
     ap.add_argument("--default-version", default="1080p")
     ap.add_argument("--state", default=STATE)
+    ap.add_argument("--verbose", action="store_true", help="also list items it cannot judge")
     a = ap.parse_args(argv)
     spec = json.load(sys.stdin)
     with open(CLI_CONFIG) as f:
@@ -399,7 +401,7 @@ def main(argv=None):
     state = load_state(a.state)
     summary = run(Plex(spec["plex_token"], spec["machine_id"]), db, battery, RealDebrid(key), state,
                   apply=a.apply, max_resets=a.max_resets, full=a.full, default_version=a.default_version,
-                  log=lambda m: print(m, file=sys.stderr, flush=True))
+                  log=lambda m: print(m, file=sys.stderr, flush=True), verbose=a.verbose)
     save_state(a.state, state)
     print(json.dumps(summary))
 
