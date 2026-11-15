@@ -15,6 +15,10 @@ Security-only line on v2.26.21 (same base, no other changes from main).
   Either key now renders a `[service]` section with that setting (lowercase boolean). Unset renders
   byte-identical to before (no `[service]` section). Tests: `v1/tests/test_skgit_service_section.py`.
   **Instance action**: none; an internet-facing skgit should set both to `true` and redeploy skgit.
+- **skgit: the deploy's pre-admin wait probes `/api/healthz`.** With `REQUIRE_SIGNIN_VIEW: true`
+  every anonymous `/api/v1` request answers 403, so the old wait on `/api/v1/version` never turned
+  green and the deploy timed out after `first_install_wait_seconds`. `/api/healthz` stays public and
+  only answers 200 once the database is reachable. Found by the v2.26.22 lab gate.
 
 ### Portal tiles and skfenceha dashboard
 
