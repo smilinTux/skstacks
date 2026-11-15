@@ -241,7 +241,7 @@
         - { key: "skmon", host_prefix: "skmon", name: "SKMon (Grafana)", icon: "fa://fa-chart-line", icon_file: "grafana.png", icon_name: "grafana" }
         - { key: "prometheus", host_prefix: "prometheus", name: "Prometheus", icon: "fa://fa-fire", icon_file: "prometheus.png", icon_name: "prometheus" }
         - { key: "alertmanager", host_prefix: "alertmanager", name: "Alertmanager", icon: "fa://fa-bell", icon_file: "alertmanager.png", icon_name: "alertmanager" }
-        - { key: "jaeger", host_prefix: "jaeger", name: "Jaeger", icon: "fa://fa-diagram-project", icon_file: "jaeger.png", icon_name: "jaeger" }
+        - { key: "jaeger", host_prefix: "jaeger", name: "Jaeger", icon: "fa://fa-project-diagram", icon_file: "jaeger.png", icon_name: "jaeger" }
       loop_control:
         label: "{{ item.key }}"
       tags:
