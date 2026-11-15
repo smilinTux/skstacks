@@ -10,8 +10,9 @@ keys skstream owns and leaves everything else byte-for-byte as parsed:
                      by username), one "My Friends Plex RSS Watchlist" source, and
                      their content_source_check_period, hard filter_out
                      patterns on each managed scraping version (append only),
-                     each managed version's foreign_language_penalty and the
-                     global Scraping.minimum_scrape_score
+                     preferred_filter_out [pattern, weight] pairs (upsert by
+                     pattern), each managed version's foreign_language_penalty
+                     and the global Scraping.minimum_scrape_score
 
 Sources it did not create are never removed or edited. The desired state comes
 as JSON on stdin (it carries tokens, so never as argv):
@@ -21,10 +22,12 @@ as JSON on stdin (it carries tokens, so never as argv):
    "friends_rss_url": "https://rss.plex.tv/..." | "",
    "versions": ["1080p"], "cutoff_date": "", "check_minutes": 5,
    "filter_out": ["<regex>", ...] | null,
+   "preferred_filter_out": [["<regex>", 400], ...] | null,
    "foreign_language_penalty": 1000 | null, "minimum_scrape_score": 1.0 | null}
 
 filter_out null means DEFAULT_FILTER_OUT (the play sends null when
-CLI_DEBRID_FILTER_OUT is unset); absent or [] adds nothing.
+CLI_DEBRID_FILTER_OUT is unset); absent or [] adds nothing. The same goes for
+preferred_filter_out and DEFAULT_PREFERRED_FILTER_OUT.
 foreign_language_penalty / minimum_scrape_score null mean the DEFAULT_* values
 below (the play sends null when the knob is unset); absent leaves the key alone.
 
@@ -48,9 +51,32 @@ FRIENDS = "My Friends Plex RSS Watchlist"
 # language tags and the Russian dub/tracker groups as whole words, and any
 # Cyrillic letter (titles like "Благодетель / The Rainmaker"). cli_debrid
 # treats a pattern with regex metacharacters as a case-insensitive regex.
+#
+# Second pattern: 3D Blu-ray ISO torrents. cli_debrid does not count an .iso as
+# video, so on nor (2026-11-15) Ant-Man and Captain America: The Winter Soldier
+# (both ...1080p.3D.BluRay...-RARBG ISOs) were "collected" as the 0 MB
+# RARBG.com.mp4 promo clip the torrent also carries. A bare "3D" is not matched
+# (Piranha 3D, Jackass 3D are titles), only 3D next to a disc or SBS tag, SBS,
+# BDMV, ISO, COMPLETE BLURAY and RARBG.com.
 DEFAULT_FILTER_OUT = [
     r"(?i)\b(rus|ru|rudub|ukr|ultradox|lostfilm|newstudio|hdrezka|alexfilm|jaskier|baibako"
     r"|coldfilm|ideafilm|dublyazh|viruseproject|megapeer|rutor|rutracker)\b|[А-Яа-яЁё]",
+    r"(?i)\b3d[ ._-]+(blu-?ray|bd|h-?sbs|sbs|half|full|h?ou|tab)\b|\b(h-?sbs|bdmv|iso|complete[ ._-]?blu-?ray)\b"
+    r"|\brarbg\.com\b",
+]
+
+# Rank down, not drop, multi/dual-audio releases and the dub groups behind them.
+# They carry English but mark a foreign track as the default (Heart of the Beast
+# MULTi YTO: French default with French forced subs; a Plex scan on nor found
+# ~1150 such files: iTA-ENG CYBER/NAHOM/Licdom/MIRCrew, MULTi VF2/TRUEFRENCH,
+# Hindi dual audio, LATINO), and cli_debrid's language detection exempts
+# MULTi/DUAL. 400 puts them near 240 against ~640 for a plain English release,
+# still above minimum_scrape_score, so a title that only exists as multi-audio
+# is still found. "Multi.Sub" (subtitles) is not matched. skstream-langguard
+# then selects the English track per Plex user.
+DEFAULT_PREFERRED_FILTER_OUT = [
+    [r"(?i)\b(multi\d?|dual|ita|hin|hindi|latino|esp|vff|vf2|vfq|vfi|truefrench|french|lektor|hebdub"
+     r"|cyber|nahom|licdom|realdmdj|mircrew|icv|yto|selezen|exkinoray|new-team|hdhub4u)\b(?![ ._-]?subs?\b)", 400],
 ]
 
 # Drop, not just rank down, a release whose name tags an audio language other
@@ -158,6 +184,23 @@ def converge_cli(cfg, spec):
             for pat in patterns:
                 if pat not in have:
                     fo.append(pat)
+                    changed = True
+
+    if "preferred_filter_out" in spec:
+        pairs = spec["preferred_filter_out"]
+        if pairs is None:
+            pairs = DEFAULT_PREFERRED_FILTER_OUT
+        scraping = cfg.setdefault("Scraping", {}).setdefault("versions", {})
+        for v in versions:
+            pfo = scraping.setdefault(v, {}).setdefault("preferred_filter_out", [])
+            for pat, weight in pairs:
+                weight = int(weight) if float(weight).is_integer() else float(weight)
+                cur = next((x for x in pfo if isinstance(x, list) and x and x[0] == pat), None)
+                if cur is None:
+                    pfo.append([pat, weight])
+                    changed = True
+                elif len(cur) < 2 or cur[1] != weight:
+                    cur[1:] = [weight]
                     changed = True
 
     if "foreign_language_penalty" in spec:

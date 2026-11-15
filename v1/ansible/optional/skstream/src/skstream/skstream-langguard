@@ -1,0 +1,408 @@
+#!/usr/bin/env python3
+"""Audio-language guard for skstream: English audio for every Plex viewer.
+
+Release-name filters (skstream-converge) cannot see what is inside a file: an
+untagged Spanish or Italian dub scores like an English release, and a MULTi or
+iTA-ENG release carries English but marks a foreign track as the default. On
+nor (2026-11-15) a Plex scan found ~1150 files whose default audio was not
+English, ~60 of them with no English audio at all. This looks at the real audio
+tracks Plex indexed and enforces one rule:
+
+  An item must have English audio, unless its audio is the title's original
+  language (Parasite in Korean) AND it has English subtitles.
+
+Two passes, over items Plex added since the last run (everything on the first
+run, or with --full):
+
+  select   For the owner and every user the server is shared with (Plex Home
+           profiles and friends), where the selected audio is not English but
+           an English track exists, select it (and drop a selected non-English
+           subtitle). This is Plex's per-user stream choice on this server, the
+           same thing a viewer sets in the player. Friends' own account language
+           settings are theirs; this makes the server's choice for them.
+  enforce  An item that breaks the rule and that cli_debrid manages is reset to
+           Wanted (the rescrape route's own SQL; it skips the old torrent
+           title), its Real-Debrid torrent is deleted when no other collected
+           item uses it, and its Plex media entry is removed, so cli_debrid
+           fetches another release. Without --apply it only reports.
+           Never touched: audio with no language tag, titles whose original
+           language cli_debrid does not know, files cli_debrid does not manage,
+           and items already reset MAX_TRIES times (all reported instead).
+
+Runs inside the skstream-dumb container (python3, the plex hostname, the
+cli_debrid files under /data). The owner token comes as JSON on stdin, never as
+argv: {"plex_token": "...", "machine_id": "..."}. Prints a JSON summary with no
+secrets.
+"""
+import argparse
+import json
+import os
+import re
+import sqlite3
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
+from datetime import datetime
+
+DATA = "/data/cli_debrid"
+MEDIA_DB = f"{DATA}/db_content/media_items.db"
+BATTERY_DB = f"{DATA}/db_content/cli_battery.db"
+CLI_CONFIG = f"{DATA}/config/config.json"
+STATE = "/data/skstream-langguard.json"
+PLEX = "http://plex:32400"
+RD = "https://api.real-debrid.com/rest/1.0"
+MAX_TRIES = 3
+ACTIVE = ("Collected", "Upgrading", "Checking")
+
+# Plex reports ISO 639-2 (eng, ita; B and T forms); cli_battery stores TMDB's
+# ISO 639-1 original_language (ko, en; "cn" for Cantonese). Compare as 639-1.
+_ISO = {
+    "eng": "en", "ita": "it", "rus": "ru", "ukr": "uk", "spa": "es", "fre": "fr", "fra": "fr",
+    "ger": "de", "deu": "de", "por": "pt", "pol": "pl", "cze": "cs", "ces": "cs", "slo": "sk",
+    "slk": "sk", "hun": "hu", "rum": "ro", "ron": "ro", "bul": "bg", "hrv": "hr", "srp": "sr",
+    "slv": "sl", "gre": "el", "ell": "el", "tur": "tr", "ara": "ar", "heb": "he", "per": "fa",
+    "fas": "fa", "hin": "hi", "tam": "ta", "tel": "te", "mal": "ml", "kan": "kn", "ben": "bn",
+    "mar": "mr", "pan": "pa", "urd": "ur", "jpn": "ja", "kor": "ko", "chi": "zh", "zho": "zh",
+    "yue": "zh", "tha": "th", "vie": "vi", "ind": "id", "may": "ms", "msa": "ms", "fil": "tl",
+    "tgl": "tl", "dut": "nl", "nld": "nl", "swe": "sv", "nor": "no", "nob": "no", "nno": "no",
+    "dan": "da", "fin": "fi", "ice": "is", "isl": "is", "est": "et", "lav": "lv", "lit": "lt",
+    "cat": "ca", "baq": "eu", "eus": "eu", "glg": "gl", "arc": "arc",
+}
+_UNKNOWN = {"", "und", "unk", "mis", "mul", "zxx", "xx", "qaa"}
+
+
+def lang(code):
+    """Normalize a language code to ISO 639-1 (en-US, eng -> en). None if unknown."""
+    c = (code or "").strip().lower().replace("_", "-").split("-")[0]
+    if c in _UNKNOWN:
+        return None
+    if c == "cn":
+        return "zh"
+    return _ISO.get(c, c)
+
+
+def judge(audio, subs, original):
+    """Apply the rule to one Plex part.
+
+    audio, subs: lists of raw language codes (None for an untagged stream).
+    original: the title's original language (any form) or None.
+    Returns (verdict, reason); verdict is "ok", "bad" or "unknown".
+    """
+    a = [lang(x) for x in audio]
+    if not a:
+        return "unknown", "no audio streams indexed"
+    if "en" in a:
+        return "ok", "english audio"
+    if any(x is None for x in a):
+        return "unknown", "an audio track has no language tag"
+    orig = lang(original)
+    if orig is None:
+        return "unknown", "original language not known"
+    if orig == "en":
+        return "bad", f"english-language title with {'/'.join(sorted(set(a)))} audio only"
+    if orig not in a:
+        return "bad", f"dub: {'/'.join(sorted(set(a)))} audio, original is {orig}"
+    if not any(lang(s) == "en" for s in subs):
+        return "bad", f"original {orig} audio but no english subtitles"
+    return "ok", f"original {orig} audio with english subtitles"
+
+
+# ---- Plex ------------------------------------------------------------------------
+
+class Plex:
+    def __init__(self, token, machine_id, base=PLEX, opener=urllib.request.urlopen):
+        self.token, self.machine_id, self.base, self.open = token, machine_id, base, opener
+
+    def _xml(self, url, method="GET", timeout=60):
+        req = urllib.request.Request(url, method=method, headers={"Accept": "application/xml"})
+        body = self.open(req, timeout=timeout).read()
+        return ET.fromstring(body) if body else None
+
+    def _url(self, path, token=None, **q):
+        q["X-Plex-Token"] = token or self.token
+        return f"{self.base}{path}?{urllib.parse.urlencode(q)}"
+
+    def users(self):
+        """{user_id: (name, server_token)} for the owner and every shared user."""
+        out = {"owner": ("owner", self.token)}
+        url = (f"https://plex.tv/api/servers/{self.machine_id}/shared_servers?"
+               f"{urllib.parse.urlencode({'X-Plex-Token': self.token})}")
+        for s in self._xml(url).iter("SharedServer"):
+            if s.get("accessToken"):
+                out[s.get("userID")] = (s.get("username") or s.get("userID"), s.get("accessToken"))
+        return out
+
+    def items(self, since):
+        """Rating keys of movies and episodes added at or after `since` (epoch)."""
+        keys = []
+        for d in self._xml(self._url("/library/sections")).iter("Directory"):
+            kind = {"movie": 1, "show": 4}.get(d.get("type"))
+            if kind is None:
+                continue
+            q = {"type": kind}
+            if since:
+                q["addedAt>>"] = int(since)  # Plex for >=
+            for v in self._xml(self._url(f"/library/sections/{d.get('key')}/all", **q)).iter("Video"):
+                keys.append(v.get("ratingKey"))
+        return keys
+
+    def parts(self, key, token=None):
+        """[(media_id, part_id, file, [audio Stream], [subtitle Stream])] for one item."""
+        x = self._xml(self._url(f"/library/metadata/{key}", token))
+        out = []
+        for m in x.iter("Media"):
+            for p in m.iter("Part"):
+                st = list(p.iter("Stream"))
+                out.append((m.get("id"), p.get("id"), p.get("file") or "",
+                            [s for s in st if s.get("streamType") == "2"],
+                            [s for s in st if s.get("streamType") == "3"]))
+        return out
+
+    def select(self, part_id, token, **q):
+        self._xml(self._url(f"/library/parts/{part_id}", token, allParts=1, **q), method="PUT")
+
+    def delete_media(self, key, media_id):
+        self._xml(self._url(f"/library/metadata/{key}/media/{media_id}"), method="DELETE")
+
+
+def _code(s):
+    return s.get("languageCode") or s.get("languageTag") or s.get("language")
+
+
+def english_choice(audio, subs):
+    """The stream ids to PUT so a viewer gets English audio, or {} if nothing to do."""
+    sel = next((s for s in audio if s.get("selected") == "1"), None)
+    ens = [s for s in audio if lang(_code(s)) == "en"]
+    if not ens:
+        return {}
+    q = {}
+    if sel is None or lang(_code(sel)) != "en":
+        pick = next((s for s in ens if "comment" not in (s.get("title") or "").lower()), ens[0])
+        q["audioStreamID"] = pick.get("id")
+    ssel = next((s for s in subs if s.get("selected") == "1"), None)
+    if ssel is not None and lang(_code(ssel)) != "en":
+        q["subtitleStreamID"] = 0
+    return q
+
+
+# ---- cli_debrid ------------------------------------------------------------------
+
+def original_language(battery, imdb_id):
+    if not imdb_id or battery is None:
+        return None
+    row = battery.execute(
+        "SELECT m.value FROM metadata m JOIN items i ON i.id = m.item_id "
+        "WHERE i.imdb_id = ? AND m.key = 'language' LIMIT 1", (imdb_id,)).fetchone()
+    if not row:
+        return None
+    try:
+        v = json.loads(row[0])
+    except (TypeError, ValueError):
+        v = row[0]
+    return v if isinstance(v, str) else None
+
+
+def reset_item(db, item, default_version):
+    """The rescrape route's SQL (routes/database_routes.py rescrape_single_item).
+
+    The route needs a logged-in session; this is its DB side. A blank or '**'
+    version (rows cli_debrid's Plex sync made for files it did not scrape) gets
+    `default_version`: with no version cli_debrid scrapes with default settings
+    and applies none of the filters.
+    """
+    version = (item["version"] or "").replace("*", "") or default_version
+    cur = db.execute(
+        """UPDATE media_items SET state='Wanted', location_on_disk=NULL, original_path_for_symlink=NULL,
+             filled_by_file=NULL, filled_by_title=NULL, filled_by_magnet=NULL, filled_by_torrent_id=NULL,
+             debrid_folder_name=NULL, scrape_results=NULL, nzb_segment_id=NULL, real_debrid_original_title=NULL,
+             location_basename=NULL, collected_at=NULL, original_collected_at=NULL,
+             rescrape_original_torrent_title=?, original_scraped_torrent_title=NULL, upgrading_from=NULL,
+             upgrading=NULL, version=?, fall_back_to_single_scraper=0, last_updated=?
+           WHERE id=? AND state IN ('Collected','Upgrading','Checking')""",
+        (item["original_scraped_torrent_title"] or item["filled_by_title"], version, datetime.now().isoformat(" "), item["id"]))
+    db.commit()
+    return cur.rowcount == 1
+
+
+class RealDebrid:
+    def __init__(self, key, opener=urllib.request.urlopen):
+        self.h, self.open, self._list = {"Authorization": f"Bearer {key}"}, opener, None
+
+    def delete(self, tid):
+        try:
+            return self.open(urllib.request.Request(f"{RD}/torrents/delete/{tid}", method="DELETE",
+                                                    headers=self.h), timeout=30).status
+        except urllib.error.HTTPError as e:
+            return e.code
+
+    def by_folder(self, folder):
+        """Torrent ids whose name is `folder` (zurg names a torrent's folder after it)."""
+        if self._list is None:
+            self._list, page = [], 1
+            while True:
+                try:
+                    r = json.load(self.open(urllib.request.Request(
+                        f"{RD}/torrents?limit=2500&page={page}", headers=self.h), timeout=60))
+                except urllib.error.HTTPError as e:
+                    if e.code == 204:
+                        break
+                    raise
+                except json.JSONDecodeError:
+                    break
+                self._list += r or []
+                if not r or len(r) < 2500:
+                    break
+                page += 1
+        stem = folder.rsplit(".", 1)[0]
+        return [t["id"] for t in self._list if t.get("filename") in (folder, stem)]
+
+
+def drop_torrent(db, rd, item, path):
+    """Delete the item's RD torrent unless another collected item still uses it."""
+    tid = item["filled_by_torrent_id"]
+    if tid:
+        busy = db.execute("SELECT 1 FROM media_items WHERE filled_by_torrent_id=? AND state IN "
+                          "('Collected','Upgrading','Checking') AND id!=?", (tid, item["id"])).fetchone()
+        return "kept (shared)" if busy else rd.delete(tid)
+    folder = path.rstrip("/").split("/")[-2] if path.count("/") >= 2 else ""
+    if not folder:
+        return "no torrent id"
+    busy = db.execute("SELECT 1 FROM media_items WHERE state IN ('Collected','Upgrading','Checking') "
+                      "AND location_on_disk LIKE ? AND id!=?", (f"%/{folder}/%", item["id"])).fetchone()
+    if busy:
+        return "kept (shared)"
+    ids = rd.by_folder(folder)
+    return [rd.delete(t) for t in ids] if ids else "not found on RD"
+
+
+# ---- run -------------------------------------------------------------------------
+
+def load_state(path):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(path, state):
+    tmp = f"{path}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(state, f, indent=1, sort_keys=True)
+    os.replace(tmp, path)
+
+
+def run(plex, db, battery, rd, state, apply=False, max_resets=20, full=False, default_version="1080p",
+        now=None, log=print):
+    now = int(now or time.time())
+    since = 0 if full else max(0, int(state.get("last_run", 0)) - 3600)
+    keys = plex.items(since)
+    summary = {"items": len(keys), "selected": 0, "ok": 0, "bad": 0, "reset": 0, "unknown": 0,
+               "unmanaged": 0, "gave_up": 0, "errors": 0, "new_users": 0}
+    tries = state.setdefault("tries", {})
+    mixed = set(state.get("mixed", []))  # items with English and non-English audio
+    resets = 0
+
+    # enforce, as the owner; also notes which items need a per-user audio choice
+    for key in keys:
+        try:
+            parts = plex.parts(key)
+        except Exception as e:  # one bad item must not stop the pass
+            summary["errors"] += 1
+            log(f"enforce {key}: {type(e).__name__}")
+            continue
+        for media, _part, path, audio, subs in parts:
+            codes = [lang(_code(s)) for s in audio]
+            if "en" in codes and any(c != "en" for c in codes):
+                mixed.add(key)
+            item = db.execute("SELECT * FROM media_items WHERE location_on_disk=? AND state IN "
+                              "('Collected','Upgrading','Checking') LIMIT 1", (path,)).fetchone()
+            verdict, why = judge([_code(s) for s in audio], [_code(s) for s in subs],
+                                 original_language(battery, item["imdb_id"]) if item else None)
+            name = path.rsplit("/", 1)[-1]
+            if verdict == "ok":
+                summary["ok"] += 1
+                continue
+            if verdict == "unknown" and (item is not None or None in codes or not codes):
+                summary["unknown"] += 1
+                log(f"UNKNOWN {name}: {why}")
+                continue
+            if verdict == "bad":
+                summary["bad"] += 1
+            if item is None:  # no English audio, and cli_debrid does not manage the file
+                summary["unmanaged"] += 1
+                log(f"UNMANAGED {name}: {why}; not a cli_debrid item, left alone")
+                continue
+            n = int(tries.get(str(item["id"]), 0))
+            if n >= MAX_TRIES:
+                summary["gave_up"] += 1
+                log(f"GAVE UP {item['title']} (cli id {item['id']}) after {n} resets: {why}")
+                continue
+            if not apply or resets >= max_resets:
+                log(f"{'OVER CAP' if apply else 'WOULD RESET'} {item['title']} (cli id {item['id']}): {name}: {why}")
+                continue
+            rd_result = drop_torrent(db, rd, item, path)
+            if reset_item(db, item, default_version):
+                try:
+                    plex.delete_media(key, media)
+                except Exception as e:
+                    log(f"plex delete {key}/{media}: {type(e).__name__}")
+                mixed.discard(key)
+                tries[str(item["id"])] = n + 1
+                resets += 1
+                summary["reset"] += 1
+                log(f"RESET {item['title']} (cli id {item['id']}): {name}: {why}; rd {rd_result}")
+
+    # select, per viewer: new items for everyone, every mixed item for a new viewer
+    users = plex.users()
+    known = set(state.get("users", []))
+    fresh = set(keys) & mixed
+    for uid, (name, tok) in users.items():
+        new = bool(known) and uid not in known
+        summary["new_users"] += int(new)
+        for key in sorted(mixed if (new or full or not known) else fresh):
+            try:
+                for _media, part, _file, audio, subs in plex.parts(key, tok):
+                    q = english_choice(audio, subs)
+                    if q:
+                        if apply:
+                            plex.select(part, tok, **q)
+                        summary["selected"] += 1
+            except Exception as e:
+                summary["errors"] += 1
+                log(f"select {name} {key}: {type(e).__name__}")
+
+    state["mixed"] = sorted(mixed)
+    if apply:
+        state["users"] = sorted(users)
+        state["last_run"] = now
+    return summary
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--apply", action="store_true", help="change things; default only reports")
+    ap.add_argument("--full", action="store_true", help="whole library, not just items added since the last run")
+    ap.add_argument("--max-resets", type=int, default=20)
+    ap.add_argument("--default-version", default="1080p")
+    ap.add_argument("--state", default=STATE)
+    a = ap.parse_args(argv)
+    spec = json.load(sys.stdin)
+    with open(CLI_CONFIG) as f:
+        key = json.load(f)["Debrid Provider"]["api_key"]
+    db = sqlite3.connect(MEDIA_DB, timeout=60)
+    db.row_factory = sqlite3.Row
+    battery = sqlite3.connect(f"file:{BATTERY_DB}?mode=ro", uri=True) if os.path.exists(BATTERY_DB) else None
+    state = load_state(a.state)
+    summary = run(Plex(spec["plex_token"], spec["machine_id"]), db, battery, RealDebrid(key), state,
+                  apply=a.apply, max_resets=a.max_resets, full=a.full, default_version=a.default_version,
+                  log=lambda m: print(m, file=sys.stderr, flush=True))
+    save_state(a.state, state)
+    print(json.dumps(summary))
+
+
+if __name__ == "__main__":
+    main()

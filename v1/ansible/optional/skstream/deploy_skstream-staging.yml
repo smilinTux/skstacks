@@ -258,6 +258,7 @@
                                 if (skstream.PLEX_FRIENDS_WATCHLIST | default(false) | bool) else ''),
             'versions': ['1080p'],
             'filter_out': skstream.CLI_DEBRID_FILTER_OUT | default(None),
+            'preferred_filter_out': skstream.CLI_DEBRID_PREFERRED_FILTER_OUT | default(None),
             'foreign_language_penalty': skstream.CLI_DEBRID_FOREIGN_LANGUAGE_PENALTY | default(None),
             'minimum_scrape_score': skstream.CLI_DEBRID_MINIMUM_SCRAPE_SCORE | default(None),
             'cutoff_date': skstream.CUTOFF_DATE | default('') | string,
@@ -301,6 +302,36 @@
         - not (skstream_dumb_start.changed | default(false))
       delegate_to: "{{ skstream.MEDIA_NODE }}"
       tags: [host, deploy]
+
+    - name: Install the skstream audio-language guard on the media node
+      # The guard runs inside skstream-dumb (python3, the plex hostname, the
+      # cli_debrid files); the host wrapper hands it the Plex owner token on stdin.
+      copy: { src: "{{ playbook_dir }}/src/{{ app }}/{{ item.src }}", dest: "{{ item.dest }}", owner: "{{ item.owner }}", group: "{{ item.group }}", mode: '0755' }
+      loop:
+        - { src: skstream-langguard, dest: "{{ skstream_local_root }}/dumb-data/skstream-langguard", owner: "{{ skstream_uid }}", group: "{{ skstream_gid }}" }
+        - { src: skstream-langguard-run, dest: /usr/local/sbin/skstream-langguard-run, owner: root, group: root }
+      when: skstream.LANGGUARD_ENABLED | default(true) | bool
+      delegate_to: "{{ skstream.MEDIA_NODE }}"
+      tags: [host, langguard]
+
+    - name: Install the skstream-langguard service and timer
+      template: { src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item }}.j2", dest: "/etc/systemd/system/{{ item | replace('skstream-langguard', 'skstream-langguard' + skstream_sfx) }}", owner: root, group: root, mode: '0644' }
+      loop: [skstream-langguard.service, skstream-langguard.timer]
+      when: skstream.LANGGUARD_ENABLED | default(true) | bool
+      delegate_to: "{{ skstream.MEDIA_NODE }}"
+      tags: [host, langguard]
+
+    - name: Enable the skstream-langguard timer (or stop it when LANGGUARD_ENABLED is false)
+      systemd:
+        name: "skstream-langguard{{ skstream_sfx }}.timer"
+        enabled: "{{ skstream.LANGGUARD_ENABLED | default(true) | bool }}"
+        state: "{{ 'started' if (skstream.LANGGUARD_ENABLED | default(true) | bool) else 'stopped' }}"
+        daemon_reload: true
+      register: skstream_langguard_timer
+      # Disabling on a node that never had the timer is fine; enabling must work.
+      failed_when: (skstream_langguard_timer.failed | default(false)) and (skstream.LANGGUARD_ENABLED | default(true) | bool)
+      delegate_to: "{{ skstream.MEDIA_NODE }}"
+      tags: [host, langguard]
 
     - name: Create or update the skstream portal tile in Authentik
       # On by default (AUTHENTIK_TILE: true); opt out per instance with
