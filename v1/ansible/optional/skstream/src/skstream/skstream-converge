@@ -11,8 +11,9 @@ keys skstream owns and leaves everything else byte-for-byte as parsed:
                      their content_source_check_period, hard filter_out
                      patterns on each managed scraping version (append only),
                      preferred_filter_out [pattern, weight] pairs (upsert by
-                     pattern), each managed version's foreign_language_penalty
-                     and the global Scraping.minimum_scrape_score
+                     pattern), each managed version's foreign_language_penalty,
+                     the global Scraping.minimum_scrape_score and
+                     Reverse Parser.default_version
 
 Sources it did not create are never removed or edited. The desired state comes
 as JSON on stdin (it carries tokens, so never as argv):
@@ -23,13 +24,15 @@ as JSON on stdin (it carries tokens, so never as argv):
    "versions": ["1080p"], "cutoff_date": "", "check_minutes": 5,
    "filter_out": ["<regex>", ...] | null,
    "preferred_filter_out": [["<regex>", 400], ...] | null,
-   "foreign_language_penalty": 1000 | null, "minimum_scrape_score": 1.0 | null}
+   "foreign_language_penalty": 1000 | null, "minimum_scrape_score": 1.0 | null,
+   "reverse_parser_default_version": "1080p" | null}
 
 filter_out null means DEFAULT_FILTER_OUT (the play sends null when
 CLI_DEBRID_FILTER_OUT is unset); absent or [] adds nothing. The same goes for
 preferred_filter_out and DEFAULT_PREFERRED_FILTER_OUT.
 foreign_language_penalty / minimum_scrape_score null mean the DEFAULT_* values
 below (the play sends null when the knob is unset); absent leaves the key alone.
+reverse_parser_default_version null means the first managed version.
 
 Prints {"dumb_changed": bool, "cli_changed": bool} and nothing secret.
 """
@@ -218,6 +221,20 @@ def converge_cli(cfg, spec):
         sc = cfg.setdefault("Scraping", {})
         if sc.get("minimum_scrape_score") != score:
             sc["minimum_scrape_score"] = score
+            changed = True
+
+    # cli_debrid labels a file it did not scrape itself (Plex sync, reverse parser)
+    # "<Reverse Parser default_version>**", and never matches the generic 1080p /
+    # 2160p names, so with an empty default (the seed) every such row on nor was a
+    # bare "**". The rescrape route strips the stars to "", and an item with no
+    # version is scraped with default settings: no filter_out, no penalties. That
+    # is how a Russian Supersex pack and an Italian Tulsa King came back
+    # (2026-11-15). Default it to a managed version.
+    if "reverse_parser_default_version" in spec:
+        want = spec["reverse_parser_default_version"] or versions[0]
+        rp = cfg.setdefault("Reverse Parser", {})
+        if rp.get("default_version") != want:
+            rp["default_version"] = want
             changed = True
 
     minutes = spec.get("check_minutes")

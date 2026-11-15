@@ -437,3 +437,27 @@ def test_absent_or_empty_preferred_filter_out_changes_nothing():
 def test_playbooks_pass_the_preferred_filter_knob(env):
     text = PLAYBOOKS[env].read_text()
     assert "'preferred_filter_out': skstream.CLI_DEBRID_PREFERRED_FILTER_OUT | default(None)" in text
+
+
+# ---- Reverse Parser default version (version-less rows skip every filter) ---------
+
+def test_null_reverse_parser_default_is_the_first_managed_version():
+    cfg = seed_cli()
+    cfg["Reverse Parser"] = {"version_terms": {}, "default_version": ""}
+    assert sc.converge_cli(cfg, {"versions": ["1080p"], "reverse_parser_default_version": None})
+    assert cfg["Reverse Parser"] == {"version_terms": {}, "default_version": "1080p"}
+    assert not sc.converge_cli(cfg, {"versions": ["1080p"], "reverse_parser_default_version": None})
+
+
+def test_absent_reverse_parser_knob_changes_nothing():
+    cfg = seed_cli()
+    cfg["Reverse Parser"] = {"default_version": ""}
+    assert not sc.converge_cli(cfg, {"versions": ["1080p"]})
+    assert cfg["Reverse Parser"]["default_version"] == ""
+
+
+@pytest.mark.parametrize("env", ["dev", "staging", "prod"])
+def test_playbooks_pass_the_reverse_parser_knob(env):
+    text = PLAYBOOKS[env].read_text()
+    assert ("'reverse_parser_default_version': skstream.CLI_DEBRID_REVERSE_PARSER_DEFAULT_VERSION | default(None)"
+            in text)

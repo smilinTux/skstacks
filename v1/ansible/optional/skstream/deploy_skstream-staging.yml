@@ -261,6 +261,7 @@
             'preferred_filter_out': skstream.CLI_DEBRID_PREFERRED_FILTER_OUT | default(None),
             'foreign_language_penalty': skstream.CLI_DEBRID_FOREIGN_LANGUAGE_PENALTY | default(None),
             'minimum_scrape_score': skstream.CLI_DEBRID_MINIMUM_SCRAPE_SCORE | default(None),
+            'reverse_parser_default_version': skstream.CLI_DEBRID_REVERSE_PARSER_DEFAULT_VERSION | default(None),
             'cutoff_date': skstream.CUTOFF_DATE | default('') | string,
             'check_minutes': skstream.WATCHLIST_CHECK_MINUTES | default(5) | int
           } | to_json }}
