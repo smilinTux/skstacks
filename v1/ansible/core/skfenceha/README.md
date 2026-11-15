@@ -10,27 +10,43 @@ Vault vars, TLS modes, the dashboard host override and access-log header
 redaction are documented in `v1/ansible/core/skfence/README.md`; the
 published-service catalog entry is in `docs/v1-service-catalog.md`.
 
-**Dashboard protection (`DASHBOARD_SSO_MIDDLEWARE`, `DASHBOARD_AUTH_HASH`)**:
-the Traefik dashboard and API (`/dashboard/`, `/api`) always carry exactly one
-gate, chosen in this order:
+**Dashboard protection (`DASHBOARD_AUTH_MODE`)**: the Traefik dashboard and API
+(`/dashboard/`, `/api`) always carry exactly one gate, chosen by
+`DASHBOARD_AUTH_MODE`:
 
-1. `DASHBOARD_SSO_MIDDLEWARE` set (for example `authentik@file`): SSO, no
-   basic auth on top. The SSO side needs a forward-auth provider and
-   application for the dashboard host (in Authentik: a Proxy provider,
-   forward auth single application, on the embedded outpost, bound to the
-   admin group).
-2. `DASHBOARD_AUTH_HASH` set (`htpasswd -nbB user password`, or
-   `src/skfenceha/create_user_password.sh`): basic auth, realm
-   `DASHBOARD_AUTH_REALM`.
-3. Neither: LAN only. An ipAllowList admits `DASHBOARD_FALLBACK_ALLOW_CIDRS`
-   (default loopback and the RFC 1918 ranges; add a tailnet or VPN range here
-   to reach the dashboard over it) and
-   answers 403 to everyone else. Until 2026-11-09 this case rendered an empty
-   chain, so an estate that never set the hash served its dashboard and API
-   to the internet.
+1. `sso` (the default): the Authentik forward-auth middleware
+   (`DASHBOARD_SSO_MIDDLEWARE`, default `authentik@file`) and nothing else.
+   No basic-auth middleware and no htpasswd hash are rendered, so the
+   dashboard portal tile signs you in through SSO instead of landing on a
+   browser basic-auth prompt. The domain-wide forward-auth provider on the
+   embedded outpost covers the dashboard host like any other service host
+   (bind the group that may see it in Authentik). Needs sksso.
+2. `basic`: basic auth from `DASHBOARD_AUTH_HASH` (`htpasswd -nbB user
+   password`, or `src/skfenceha/create_user_password.sh`), realm
+   `DASHBOARD_AUTH_REALM`. Explicit opt-in for an estate without sksso. With
+   no hash it falls back to the `lan` behaviour.
+3. `lan`: an ipAllowList admits `DASHBOARD_FALLBACK_ALLOW_CIDRS` (default
+   loopback and the RFC 1918 ranges; add a tailnet or VPN range here to reach
+   the dashboard over it) and answers 403 to everyone else.
+
+Until 2026-11-14 the default depended on which variables were set: a hash meant
+basic auth even when sksso was deployed, which put a 401 in front of the SSO
+tile. Set `DASHBOARD_AUTH_MODE: basic` to keep the old behaviour on an estate
+that has no sksso, and drop `DASHBOARD_AUTH_HASH` from the vault once the mode
+is `sso` (it is ignored there). Until 2026-11-09 the no-gate case rendered an
+empty chain, so an estate that never set the hash served its dashboard and API
+to the internet.
 
 These are dynamic configuration: a redeploy re-renders them and the workers
-reload the files without a restart.
+reload the files without a restart. Traefik reads the dynamic directories
+recursively, hidden directories included, and the first definition of a name
+wins, so a leftover `.bak-*` directory inside `dynamic/` or `dynamic_acme/`
+shadows every rendered file: the deploy reports changed and the edge keeps
+serving the old config. The play refuses to render while one exists (keep
+backups under `/var/data/backups`; `skfenceha.ALLOW_DYNAMIC_SUBDIRS: true`
+opts out). On shared NFS a write from one manager does not wake the file watch
+on the other managers: after a dynamic-only change, `touch` the changed files
+on each manager.
 
 **Behind a tunnel or CDN (`TRUSTED_PROXIES` + `DROP_FORWARDED_HEADERS`)**:
 `TRUSTED_PROXIES` (list) renders `forwardedHeaders.trustedIPs` on the

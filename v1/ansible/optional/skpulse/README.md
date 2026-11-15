@@ -128,7 +128,7 @@ service as a monitor via the Uptime Kuma API, given an
 On by default (`skpulse.AUTHENTIK_TILE`, default `true`; set to `false` to opt out): the next deploy creates or
 updates a provider-less Authentik `core.Application` named `AUTHENTIK_TILE_NAME`
 (default `SKPulse (Uptime Kuma)`), launch URL `https://<the public host above>`,
-icon `AUTHENTIK_TILE_ICON` (default `fa://fa-heart-pulse`), bound to the group
+icon `AUTHENTIK_TILE_ICON` (default `fa://fa-heartbeat`), bound to the group
 `AUTHENTIK_TILE_GROUP` (default `skadmin`, which must already exist).
 This only adds a dashboard bookmark; it creates no provider and changes nothing
 about `AUTH_MODE`/forward auth above. Needs `sksso.api_token` in sksso's own vault

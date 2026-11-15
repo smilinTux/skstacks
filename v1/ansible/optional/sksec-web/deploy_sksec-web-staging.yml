@@ -373,7 +373,7 @@
           name: "{{ sksec_web.AUTHENTIK_TILE_NAME | default('SKSec Web (CrowdSec)', true) }}"
           launch_url: "https://{{ sksw_host }}"
           group: "{{ sksec_web.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
-          icon: "{{ sksec_web.AUTHENTIK_TILE_ICON | default('fa://fa-shield-halved', true) }}"
+          icon: "{{ sksec_web.AUTHENTIK_TILE_ICON | default('fa://fa-shield-alt', true) }}"
           open_in_new_tab: "{{ sksec_web.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
           description: "{{ sksec_web.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
       tags:

@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Run the skstream audio-language guard ({{ env }})
+
+[Timer]
+OnBootSec=15min
+OnUnitInactiveSec={{ skstream.LANGGUARD_INTERVAL | default('30min') }}
+Persistent=false
+
+[Install]
+WantedBy=timers.target
