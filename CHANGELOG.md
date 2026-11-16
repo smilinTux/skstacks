@@ -5,19 +5,6 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
-### skgit: registration and anonymous-read knobs
-
-- **skgit: `DISABLE_REGISTRATION` and `REQUIRE_SIGNIN_VIEW`.** Forgejo defaults to open
-  self-registration and anonymous read of every public repo, and `app.ini.j2` had no `[service]`
-  section, so an instance could only close them with a live edit that the next deploy reverted.
-  Either key now renders a `[service]` section with that setting (lowercase boolean). Unset renders
-  byte-identical to before (no `[service]` section). Tests: `v1/tests/test_skgit_service_section.py`.
-  **Instance action**: none; an internet-facing skgit should set both to `true`.
-- **skgit: the deploy's pre-admin wait probes `/api/healthz`.** With `REQUIRE_SIGNIN_VIEW: true`
-  every anonymous `/api/v1` request answers 403, so the old wait on `/api/v1/version` never turned
-  green and the deploy timed out after `first_install_wait_seconds`. `/api/healthz` stays public and
-  only answers 200 once the database is reachable. Found by the v2.26.22 lab gate.
-
 ### skhub: MariaDB buffer pool and memory limit are knobs
 
 - **skhub: `DB_INNODB_BUFFER_POOL_SIZE` and `DB_MEMORY_LIMIT`.** The db service took MariaDB's 128M
@@ -87,6 +74,40 @@ Each entry says what an instance must do, if anything.
   application and its `skadmin` binding). Agents: `provision_skaegis_agents.yml` (Debian and Ubuntu,
   pinned and held, `state=absent` to remove) and a Windows script delivered through skrac. It does not
   replace skpatch-hosts: skaegis detects, skpatch remediates.
+
+## skstacks-v2.26.22 - 2026-11-15
+
+Security-only line on v2.26.21 (same base, no other changes from main).
+
+### skgit: registration and anonymous-read knobs (security)
+
+- **skgit: `DISABLE_REGISTRATION` and `REQUIRE_SIGNIN_VIEW`.** Forgejo defaults to open
+  self-registration and anonymous read of every public repo, and `app.ini.j2` had no `[service]`
+  section, so an instance could only close them with a live edit that the next deploy reverted.
+  Either key now renders a `[service]` section with that setting (lowercase boolean). Unset renders
+  byte-identical to before (no `[service]` section). Tests: `v1/tests/test_skgit_service_section.py`.
+  **Instance action**: none; an internet-facing skgit should set both to `true` and redeploy skgit.
+- **skgit: the deploy's pre-admin wait probes `/api/healthz`.** With `REQUIRE_SIGNIN_VIEW: true`
+  every anonymous `/api/v1` request answers 403, so the old wait on `/api/v1/version` never turned
+  green and the deploy timed out after `first_install_wait_seconds`. `/api/healthz` stays public and
+  only answers 200 once the database is reachable. Found by the v2.26.22 lab gate.
+
+### Portal tiles and skfenceha dashboard
+
+- **Portal tile icons are Font Awesome 5 names.** The Authentik portal only draws FA5 names, so the
+  FA6-only defaults (`fa-shield-halved`, `fa-house`, `fa-magnifying-glass`, `fa-gears`, `fa-list-check`,
+  `fa-circle-info`, `fa-gauge`, `fa-heart-pulse`, skmon's Jaeger `fa-diagram-project`) rendered blank.
+  They now use FA5 equivalents; `v1/tests/test_portal_tile_icons_fa5.py` guards it.
+- **The tile task keeps a tile's portal section and description when the role leaves them unset**
+  (`AUTHENTIK_TILE_CATEGORY` empty no longer blanks a section set through the API).
+- **skfenceha: `DASHBOARD_AUTH_MODE` (`sso` default, `basic`, `lan`).** In `sso` mode only the
+  forward-auth middleware gates the Traefik dashboard and no `traefikAuth` basic-auth middleware or
+  htpasswd is rendered. **Needs the operator**: an instance that relies on the dashboard's Basic auth
+  sets `skfenceha.DASHBOARD_AUTH_MODE: basic` before redeploying skfenceha, or it becomes SSO only.
+- **skfenceha refuses to render dynamic config while a subdirectory sits in `dynamic/` or
+  `dynamic_acme/`.** Traefik reads them recursively and the first definition wins, so a leftover
+  backup directory silently shadowed every later router or middleware change. Move such directories
+  out before deploying.
 
 ## skstacks-v2.26.21 - 2026-11-14
 
