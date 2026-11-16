@@ -5,15 +5,6 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
-### skfence, skfenceha: Traefik v3.7.19
-
-- **Traefik v3.7.18 to v3.7.19**, pinned by tag and index digest
-  (`traefik:v3.7.19@sha256:aa942a00...`). A patch release with dependency bumps only: quic-go
-  v0.65.0 (HTTP/3), klauspost/compress v1.20.4 (Compress middleware) and golang.org/x/crypto
-  v0.59.0. No configuration change. Needs the operator: redeploy skfence or skfenceha (skfenceha
-  rolls `traefik-worker` one task at a time, so expect a short edge blip). An instance that pins
-  `skfence.TRAEFIK_IMAGE` or `skfenceha.TRAEFIK_IMAGE` keeps its own pin: move it.
-
 ### skhub: MariaDB buffer pool and memory limit are knobs
 
 - **skhub: `DB_INNODB_BUFFER_POOL_SIZE` and `DB_MEMORY_LIMIT`.** The db service took MariaDB's 128M
@@ -83,6 +74,19 @@ Each entry says what an instance must do, if anything.
   application and its `skadmin` binding). Agents: `provision_skaegis_agents.yml` (Debian and Ubuntu,
   pinned and held, `state=absent` to remove) and a Windows script delivered through skrac. It does not
   replace skpatch-hosts: skaegis detects, skpatch remediates.
+
+## skstacks-v2.26.23 - 2026-11-16
+
+Patch line on v2.26.22 (same base and release-line commits, no other changes from main).
+
+### skfence, skfenceha: Traefik v3.7.19
+
+- **Traefik v3.7.18 to v3.7.19**, pinned by tag and index digest
+  (`traefik:v3.7.19@sha256:aa942a00...`). A patch release with dependency bumps only: quic-go
+  v0.65.0 (HTTP/3), klauspost/compress v1.20.4 (Compress middleware) and golang.org/x/crypto
+  v0.59.0. No configuration change. Needs the operator: redeploy skfence or skfenceha (skfenceha
+  rolls `traefik-worker` one task at a time, so expect a short edge blip). An instance that pins
+  `skfence.TRAEFIK_IMAGE` or `skfenceha.TRAEFIK_IMAGE` keeps its own pin: move it.
 
 ## skstacks-v2.26.22 - 2026-11-15
 
