@@ -43,6 +43,7 @@
     skstream_local_root: "{{ skstream.LOCAL_ROOT | default('/var/lib/skstream' + skstream_sfx) }}"
     skstream_uid: "{{ skstream.PUID | default(1000) }}"
     skstream_gid: "{{ skstream.PGID | default(1000) }}"
+    skstream_plex_host: "{{ (skstream.PLEX_MODE | default('swarm') | string | lower) == 'host' }}"
   pre_tasks:
     - name: Select vault file based on domain and cluster
       import_tasks: ../../shared/tasks/select_vault_file.yml
@@ -121,6 +122,32 @@
       loop_control: { label: "{{ item.username | default('?') if item is mapping else '?' }}" }
       tags: [config]
 
+    - name: Validate the Plex mode (host needs a LAN bind; hardware transcoding needs host)
+      assert:
+        that:
+          - (skstream.PLEX_MODE | default('swarm') | string | lower) in ['swarm', 'host']
+          - skstream_plex_host | bool or not (skstream.PLEX_HW_TRANSCODE | default(false) | bool)
+          - not (skstream_plex_host | bool) or (skstream.PLEX_LAN_BIND_ADDRESS | default('') | string) is match('^[0-9.]+$')
+        fail_msg: >-
+          skstream.PLEX_MODE must be swarm (default) or host. PLEX_HW_TRANSCODE
+          needs PLEX_MODE host (a swarm service cannot get /dev/dri). PLEX_MODE
+          host needs PLEX_LAN_BIND_ADDRESS, the media node's LAN IPv4 that Plex
+          publishes 32400 on and the Traefik file route points at.
+      tags: [config]
+
+    - name: Validate skstream.PLEX_EXTRA_BINDS in host mode (absolute paths, no spaces or colons)
+      assert:
+        that:
+          - item is mapping
+          - (item.source | default('')) is match('^/[^\\s:]+$')
+          - (item.target | default('')) is match('^/[^\\s:]+$')
+        fail_msg: >-
+          With PLEX_MODE host each skstream.PLEX_EXTRA_BINDS entry becomes a
+          docker run -v source:target:ro argument: absolute paths without spaces
+          or colons, got {{ item }}.
+      loop: "{{ skstream.PLEX_EXTRA_BINDS | default([]) if skstream_plex_host | bool else [] }}"
+      tags: [config]
+
     - name: Create {{ app }} directories on the shared data mount (not recursive)
       file: { path: "{{ item.path }}", state: directory, owner: "{{ item.owner }}", group: "{{ item.owner }}", mode: "{{ item.mode }}" }
       loop:
@@ -143,6 +170,7 @@
         - { src: "{{ app }}.sh.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env", mode: "0640" }
         - { src: "plex.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/plex.env", mode: "0600" }
         - { src: "kometa.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/kometa.env", mode: "0600" }
+      register: skstream_env_files
       tags: [templates]
 
     - name: Process {{ app }} compose/stack template
@@ -275,6 +303,54 @@
       debug: { msg: "{{ skstream_converge.stdout }}" }
       tags: [host, watchlists]
 
+    - name: Stop host-level Plex before the stack deploy when PLEX_MODE is swarm
+      # One Plex per database: the swarm task must not start beside the unit.
+      systemd: { name: "skstream-plex{{ skstream_sfx }}.service", state: stopped, enabled: false }
+      failed_when: false
+      when: not (skstream_plex_host | bool)
+      delegate_to: "{{ skstream.MEDIA_NODE }}"
+      tags: [host, deploy]
+
+    - name: Remove the Plex Traefik file route when PLEX_MODE is swarm (the swarm labels route it)
+      file: { path: "{{ skstream.TRAEFIK_DYNAMIC_DIR }}/skstream{{ skstream_sfx }}.yml", state: absent }
+      when:
+        - not (skstream_plex_host | bool)
+        - (skstream.TRAEFIK_DYNAMIC_DIR | default('') | string) | length > 0
+      tags: [deploy]
+
+    - name: Find the render group of /dev/dri on the media node (hardware transcoding)
+      stat: { path: /dev/dri/renderD128 }
+      register: skstream_render_node
+      when: skstream_plex_host | bool and (skstream.PLEX_HW_TRANSCODE | default(false) | bool)
+      delegate_to: "{{ skstream.MEDIA_NODE }}"
+      tags: [host]
+
+    - name: Warn when hardware transcoding is on but the media node has no render node
+      debug:
+        msg: >-
+          PLEX_HW_TRANSCODE is true but /dev/dri/renderD128 does not exist on
+          {{ skstream.MEDIA_NODE }}; Plex starts and transcodes in software.
+      when:
+        - skstream_plex_host | bool and (skstream.PLEX_HW_TRANSCODE | default(false) | bool)
+        - not (skstream_render_node.stat.exists | default(false))
+      tags: [host]
+
+    - name: Install skstream-plex.service on the media node (PLEX_MODE host)
+      template: { src: "{{ playbook_dir }}/src/config/{{ app }}/skstream-plex.service.j2", dest: "/etc/systemd/system/skstream-plex{{ skstream_sfx }}.service", owner: root, group: root, mode: '0644' }
+      vars:
+        skstream_render_gid: "{{ skstream_render_node.stat.gid | default('') if (skstream_render_node.stat.exists | default(false)) else '' }}"
+      register: skstream_plex_unit
+      when: skstream_plex_host | bool
+      delegate_to: "{{ skstream.MEDIA_NODE }}"
+      tags: [host]
+
+    - name: Install the Plex Traefik file route (PLEX_MODE host)
+      template: { src: "{{ playbook_dir }}/src/config/{{ app }}/skstream-traefik.yml.j2", dest: "{{ skstream.TRAEFIK_DYNAMIC_DIR }}/skstream{{ skstream_sfx }}.yml", owner: root, group: root, mode: "0644" }
+      when:
+        - skstream_plex_host | bool
+        - (skstream.TRAEFIK_DYNAMIC_DIR | default('') | string) | length > 0
+      tags: [deploy]
+
     - name: Deploy {{ app }} stack
       shell: "cd /var/data/{{ app }}-{{ env }} && ./deploy"
       register: deploy_output
@@ -291,6 +367,18 @@
         daemon_reload: true
         state: "{{ 'restarted' if (skstream_unit.changed | default(false)) or ((skstream_converge.stdout | default('{}') | from_json).dumb_changed | default(false)) else 'started' }}"
       register: skstream_dumb_start
+      delegate_to: "{{ skstream.MEDIA_NODE }}"
+      tags: [host, deploy]
+
+    - name: Enable and start skstream-plex.service (PLEX_MODE host; restart when the unit or env changed)
+      # After the stack deploy, which removed any swarm Plex; the unit also
+      # waits for a swarm Plex task to be gone before it starts.
+      systemd:
+        name: "skstream-plex{{ skstream_sfx }}.service"
+        enabled: true
+        daemon_reload: true
+        state: "{{ 'restarted' if (skstream_plex_unit.changed | default(false)) or (skstream_env_files.changed | default(false)) else 'started' }}"
+      when: skstream_plex_host | bool
       delegate_to: "{{ skstream.MEDIA_NODE }}"
       tags: [host, deploy]
 
