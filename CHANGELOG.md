@@ -5,19 +5,6 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
-### skgit: API and git paths bypass error pages; forgejo runs under init
-
-- **skgit: new `skgit-api` router** (priority 150) for `/api/` and the git smart-HTTP and LFS paths. Its
-  chain is the main chain with `default@file` / `default-no-crowdsec@file` swapped for
-  `default-no-error-pages@file`, so CrowdSec, the rate limit and the security headers stay, but API and git
-  clients get Forgejo's own JSON errors instead of the HTML error page. The new `skgit.API_MIDDLEWARES` knob
-  replaces the derived chain. The runner RPC router's default chain is now `default-no-error-pages@file`.
-  The web UI keeps its error pages.
-- **skgit: `init: true` on the forgejo service.** The entrypoint override made forgejo PID 1, and it never
-  reaped reparented git children (one instance gathered about 5,300 zombies in 23 hours, toward the pids
-  limit, after which forks fail and pushes stall). Docker's init now reaps them.
-- **Instance action**: redeploy skgit. The forgejo task restarts once.
-
 ### skhub: MariaDB buffer pool and memory limit are knobs
 
 - **skhub: `DB_INNODB_BUFFER_POOL_SIZE` and `DB_MEMORY_LIMIT`.** The db service took MariaDB's 128M
@@ -87,6 +74,23 @@ Each entry says what an instance must do, if anything.
   application and its `skadmin` binding). Agents: `provision_skaegis_agents.yml` (Debian and Ubuntu,
   pinned and held, `state=absent` to remove) and a Windows script delivered through skrac. It does not
   replace skpatch-hosts: skaegis detects, skpatch remediates.
+
+## skstacks-v2.26.24 - 2026-11-17
+
+Patch line on v2.26.23 (same base and release-line commits, no other changes from main).
+
+### skgit: API and git paths bypass error pages; forgejo runs under init
+
+- **skgit: new `skgit-api` router** (priority 150) for `/api/` and the git smart-HTTP and LFS paths. Its
+  chain is the main chain with `default@file` / `default-no-crowdsec@file` swapped for
+  `default-no-error-pages@file`, so CrowdSec, the rate limit and the security headers stay, but API and git
+  clients get Forgejo's own JSON errors instead of the HTML error page. The new `skgit.API_MIDDLEWARES` knob
+  replaces the derived chain. The runner RPC router's default chain is now `default-no-error-pages@file`.
+  The web UI keeps its error pages.
+- **skgit: `init: true` on the forgejo service.** The entrypoint override made forgejo PID 1, and it never
+  reaped reparented git children (one instance gathered about 5,300 zombies in 23 hours, toward the pids
+  limit, after which forks fail and pushes stall). Docker's init now reaps them.
+- **Instance action**: redeploy skgit. The forgejo task restarts once.
 
 ## skstacks-v2.26.23 - 2026-11-16
 
