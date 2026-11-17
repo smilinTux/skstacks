@@ -5,6 +5,15 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+### skpdf: Stirling-PDF updates stop-first
+
+- **skpdf: `update_config.order` is `stop-first`, not `start-first`.** Stirling-PDF is one replica
+  whose state is files on shared storage (`/configs`, pipeline, logs). start-first ran the new
+  container next to the old one on the same files and needed two memory reservations at once, so
+  an update could stall at 0/1. The router baselines for skpdf carry the same one-line change.
+  Tests: `v1/tests/test_skpdf_update_order.py`. **Instance action**: none; the next skpdf deploy
+  applies it (a few seconds of downtime per update instead of an overlap).
+
 ### skgit: the postgres runtime directory is created 0700
 
 - **skgit: `/var/data/runtime/<app>-<env>/postgres` is created 0700, not 0755.** With a pinned postgres

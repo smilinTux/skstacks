@@ -27,7 +27,10 @@ services:
       update_config:
         parallelism: 1
         delay: 10s
-        order: start-first
+        # stop-first: one replica on file state (/configs, pipeline, logs) on shared
+        # storage. start-first ran two containers on the same files during an update
+        # and needs two memory reservations at once, so it can stall the update at 0/1.
+        order: stop-first
       restart_policy:
         condition: on-failure
         delay: 10s
