@@ -12,12 +12,18 @@ Each entry says what an instance must do, if anything.
   `branding/<pack>/`. `sksso.branding` still names the pack and its `media/public/<pack>/` dir and
   must now be a plain name. Default empty: unchanged behaviour for `skworld` and `nam`.
 
-### skmesh: the postgres runtime directory is created 0700
+### skmesh: the postgres runtime directory mode follows the Postgres major
 
-- **skmesh: `/var/data/runtime/skmesh-<env>/postgres` is created 0700, not 0755** (prod and dev
-  playbooks), the same fix skgit got in #426. With postgres older than 18 that directory is PGDATA,
-  and each deploy left it 0755 until the image entrypoint's chmod on the next start. Tests:
-  `v1/tests/test_skmesh_pgdata_mode.py`. **Instance action**: none; the next skmesh deploy applies it.
+- **skmesh: `/var/data/runtime/skmesh-<env>/postgres` is 0700 only when it is PGDATA** (prod and dev
+  playbooks), the same hardening skgit got in #426. With a pinned postgres older than 18 that
+  directory is PGDATA (mounted at `/var/lib/postgresql/data`) and is now created 0700 instead of
+  0755. With postgres 18 and up (the role default) it is the parent of PGDATA (mounted at
+  `/var/lib/postgresql`) and stays 0755: the alpine entrypoint runs as uid 70 and must traverse it,
+  and a 999-owned 0700 parent stopped initdb (`mkdir: can't create directory
+  '/var/lib/postgresql/18/': Permission denied`; the skstacks-v2.26.26 gate, which shipped without
+  the first version of this change, #429, see #436). The playbooks parse the major with the same
+  expression as `skmesh.yml.j2`'s bind-mount target. Tests: `v1/tests/test_skmesh_pgdata_mode.py`.
+  **Instance action**: none; the next skmesh deploy applies it.
 
 ### skhub: MariaDB buffer pool and memory limit are knobs
 
