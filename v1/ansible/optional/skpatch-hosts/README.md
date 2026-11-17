@@ -328,9 +328,46 @@ has to respect** (read from `server/services/scheduler.ts`):
 - Docker engine packages (`docker-ce`, `containerd.io`) upgrade like any
   other package and restart `dockerd`, moving that node's tasks. This role
   holds nothing (`apt-mark hold` is not in the sudoers and is not used);
-  the safety comes from ordering: swarm nodes are upgraded in serial chains,
-  managers in their own chain after the workers, so at most one `dockerd`
-  restarts at a time and manager quorum is never at risk.
+  the safety comes from ordering plus the swarm upgrade gate below: swarm
+  nodes are upgraded in serial chains, managers in their own chain after the
+  workers.
+
+### Swarm upgrade gate (managers)
+
+Ordering alone was not enough: a chain moves to the next system as soon as
+apt exits, and three managers in one chain restarted `dockerd` within about
+90 seconds of each other (2026-11-17). So `provision_skpatch_hosts_nodes.yml`
+installs an APT hook on every host that is a swarm manager
+(`/usr/local/sbin/sk-swarm-upgrade-gate`, wired in
+`/etc/apt/apt.conf.d/50sk-swarm-upgrade-gate`). It acts only when the batch
+contains `docker-ce` or `containerd.io`; every other upgrade passes through.
+
+- **Before** the engine is installed: refuse if any node has the label
+  `sk.skpatch.hold`; wait out `SWARM_GATE_GAP_S` (600) since the previous
+  manager's engine upgrade converged; wait at most `SWARM_GATE_PRE_TIMEOUT_S`
+  (900) for no other manager to carry a fresh `sk.skpatch.docker-upgrading`
+  label (overlapping schedules, a manual run) and for every manager to be
+  Ready and Leader/Reachable, else refuse. A
+  refusal aborts that apt run (nothing installed); the dashboard shows it
+  failed and the host is retried next window.
+- **After**: wait `SWARM_GATE_MIN_SETTLE_S` (60), then at most
+  `SWARM_GATE_POST_TIMEOUT_S` (900) until this node is Ready/Active, every
+  manager Ready and Leader/Reachable, and every replicated/global service is
+  at its desired replicas (services already short before the upgrade are
+  reported, not blamed). Success labels the node
+  `sk.skpatch.docker-upgraded-at`. Timeout labels it `sk.skpatch.hold` and
+  fails, so **no later manager upgrades the engine** until someone clears it:
+  `docker node update --label-rm sk.skpatch.hold <node>`.
+- Worst case per manager is about 40 minutes, inside the app's 3600 s
+  command limit. Space manager schedules accordingly.
+- Check without side effects on a manager:
+  `echo docker-ce_x_amd64.deb | sudo sk-swarm-upgrade-gate pre --dry-run`
+  and `sudo sk-swarm-upgrade-gate post --dry-run`. Bypass one manual run:
+  `sudo SK_SWARM_GATE_SKIP=1 apt-get ...` (logged).
+- Opt out per host with `skpatch_hosts_swarm_gate: false`, or estate-wide
+  with `skpatch_hosts.SWARM_GATE: false`; the next provision run removes it.
+  Workers are not gated (`docker node ls` needs a manager); keep them in
+  their own staggered schedules.
 
 Example (estate specifics, host names and times, belong in the estate's own
 prod repo):

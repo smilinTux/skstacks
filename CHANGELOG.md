@@ -5,6 +5,19 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+### skpatch-hosts: swarm managers upgrade the Docker engine one at a time, for real
+
+- **skpatch-hosts: new APT hook `sk-swarm-upgrade-gate` on swarm managers**, installed by
+  `provision_skpatch_hosts_nodes.yml`. The dashboard's chains only wait for apt to exit, so three
+  managers in one schedule restarted dockerd within about 90 seconds. On a batch containing
+  `docker-ce` or `containerd.io` the hook now refuses while the swarm is held, waits a 600 s gap
+  after the previous manager, requires all managers Reachable, and after the upgrade waits (900 s
+  max) for this node Ready/Active, all managers Reachable and every service at desired replicas.
+  A timeout sets the node label `sk.skpatch.hold`, which stops every later manager. Knobs
+  `SWARM_GATE*`, opt-out `skpatch_hosts_swarm_gate: false`. README "Swarm upgrade gate". Tests:
+  `v1/tests/test_skpatch_swarm_upgrade_gate.py` (runs the real script on a stub swarm and a
+  virtual clock). **Instance action**: rerun `provision_skpatch_hosts_nodes.yml` for the managers.
+
 ### skmesh: the postgres runtime directory is created 0700
 
 - **skmesh: `/var/data/runtime/skmesh-<env>/postgres` is created 0700, not 0755** (prod and dev
