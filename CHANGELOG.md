@@ -7,6 +7,16 @@ Each entry says what an instance must do, if anything.
 
 Patch line on v2.26.24 (same base and release-line commits, no other changes from main).
 
+### skhub: the Recognize model check asks Nextcloud where the app is
+
+- **skhub: the "models already present" check uses `occ app:getpath recognize`** instead of a
+  hardcoded `custom_apps/recognize/models` (dev, staging, prod). Where the image ships Recognize
+  under `apps/`, the old check never saw the models, so every deploy ran
+  `occ recognize:download-models` (over 1 GB, deleting the models first; an hour and more on a lab
+  cluster). If `app:getpath` fails the old path is the fallback. Tests:
+  `v1/tests/test_skhub_recognize_models_path.py` (runs the task's shell against a stub docker).
+  **Instance action**: none.
+
 ### skmesh: the postgres runtime directory is created 0700
 
 - **skmesh: `/var/data/runtime/skmesh-<env>/postgres` is created 0700, not 0755** (prod and dev
