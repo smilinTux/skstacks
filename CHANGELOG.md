@@ -5,6 +5,15 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+### skgit: the postgres runtime directory is created 0700
+
+- **skgit: `/var/data/runtime/<app>-<env>/postgres` is created 0700, not 0755.** With a pinned postgres
+  older than 18 that directory is PGDATA itself, and PostgreSQL refuses to start on a group- or
+  world-readable data directory. Each deploy reset it to 0755 and only the image entrypoint's own
+  chmod on the next container start put it back, so a start without that step would fail. With
+  postgres 18+ (the default) it is the mount's parent, where 0700 is also fine. Tests:
+  `v1/tests/test_skgit_pgdata_mode.py`. **Instance action**: none; the next skgit deploy applies it.
+
 ### skhub: MariaDB buffer pool and memory limit are knobs
 
 - **skhub: `DB_INNODB_BUFFER_POOL_SIZE` and `DB_MEMORY_LIMIT`.** The db service took MariaDB's 128M
