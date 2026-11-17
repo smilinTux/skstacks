@@ -345,7 +345,9 @@ contains `docker-ce` or `containerd.io`; every other upgrade passes through.
 - **Before** the engine is installed: refuse if any node has the label
   `sk.skpatch.hold`; wait out `SWARM_GATE_GAP_S` (600) since the previous
   manager's engine upgrade converged; wait at most `SWARM_GATE_PRE_TIMEOUT_S`
-  (900) for every manager to be Ready and Leader/Reachable, else refuse. A
+  (900) for no other manager to carry a fresh `sk.skpatch.docker-upgrading`
+  label (overlapping schedules, a manual run) and for every manager to be
+  Ready and Leader/Reachable, else refuse. A
   refusal aborts that apt run (nothing installed); the dashboard shows it
   failed and the host is retried next window.
 - **After**: wait `SWARM_GATE_MIN_SETTLE_S` (60), then at most

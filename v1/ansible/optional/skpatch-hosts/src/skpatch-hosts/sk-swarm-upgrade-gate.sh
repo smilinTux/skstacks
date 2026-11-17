@@ -23,7 +23,11 @@
 #        docker upgrade (label sk.skpatch.docker-upgraded-at, epoch seconds)
 #     3. wait (at most PRE_TIMEOUT_S) until every manager is Ready and
 #        Leader/Reachable and this node is Ready/Active; refuse on timeout
-#     4. record which services are already short of their desired replicas
+#     4. wait (same bound) while another manager carries a fresh
+#        sk.skpatch.docker-upgrading label (overlapping schedules, a manual
+#        run); it is set when an upgrade is let through and removed by post,
+#        and ignored once older than BUSY_STALE_S (3600)
+#     5. record which services are already short of their desired replicas
 #        (a pre-existing failure is reported, not blamed on this upgrade)
 #   post (after dpkg, only if pre let a docker upgrade through):
 #     wait MIN_SETTLE_S, then (at most POST_TIMEOUT_S) until this node is
@@ -60,6 +64,8 @@ DOCKER=${DOCKER:-docker}
 
 LABEL_HOLD=sk.skpatch.hold
 LABEL_DONE=sk.skpatch.docker-upgraded-at
+LABEL_BUSY=sk.skpatch.docker-upgrading
+BUSY_STALE_S=${BUSY_STALE_S:-3600}
 ENGINE_RE='(^|/)(docker-ce|containerd\.io)_[^/]*\.deb$'
 
 log() {
@@ -111,6 +117,9 @@ unconverged() {
     done
 }
 
+# Separate call: docker refuses --label-rm of a missing key and then changes nothing.
+clear_busy() { $DOCKER node update --label-rm "$LABEL_BUSY" "$(self_id)" >/dev/null 2>&1 || true; }
+
 pre() {
     debs=$(cat)
     if [ "${SK_SWARM_GATE_SKIP:-0}" = 1 ]; then
@@ -138,6 +147,18 @@ pre() {
     fi
 
     deadline=$(( $(now) + PRE_TIMEOUT_S ))
+    me=$(self_id)
+    while :; do
+        busy=$(label_values "$LABEL_BUSY" | awk -v me="$me" -v t="$(now)" -v stale="$BUSY_STALE_S" \
+            '$1 != me && $2 ~ /^[0-9]+$/ && t - $2 < stale {print $1}')
+        [ -z "$busy" ] && break
+        if [ "$DRY" = 1 ] || [ "$(now)" -ge "$deadline" ]; then
+            log "REFUSED docker engine upgrade ($engine): another manager is still upgrading ($LABEL_BUSY on: $(echo "$busy" | tr '\n' ' '))"
+            exit 1
+        fi
+        pause "$POLL_S"
+    done
+
     while :; do
         problem=$(nodes_problem)
         [ -z "$problem" ] && break
@@ -157,6 +178,8 @@ pre() {
     mkdir -p "$STATE_DIR"
     echo "$base" > "$STATE_DIR/baseline"
     : > "$STATE_DIR/pending"
+    $DOCKER node update --label-add "$LABEL_BUSY=$(now)" "$me" >/dev/null 2>&1 \
+        || log "could not set $LABEL_BUSY on this node"
     log "letting the docker engine upgrade through ($engine); post will wait for the swarm"
     exit 0
 }
@@ -200,6 +223,7 @@ post() {
             stamp="$(date -u +%Y%m%dT%H%M%SZ)-$(hostname)"
             $DOCKER node update --label-add "$LABEL_HOLD=$stamp" "$(self_id)" >/dev/null 2>&1 \
                 || log "could not set $LABEL_HOLD on this node"
+            clear_busy
             log "FAILED: swarm not back ${POST_TIMEOUT_S}s after the docker engine upgrade: $(echo "$problem" | tr '\n' ';'). Set $LABEL_HOLD=$stamp: no further manager upgrades docker until it is cleared"
             exit 1
         fi
@@ -207,6 +231,7 @@ post() {
     done
     $DOCKER node update --label-add "$LABEL_DONE=$(now)" "$(self_id)" >/dev/null 2>&1 \
         || log "could not set $LABEL_DONE on this node"
+    clear_busy
     log "swarm converged after the docker engine upgrade; next manager may go after ${GAP_S}s"
     exit 0
 }

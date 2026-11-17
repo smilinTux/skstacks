@@ -60,8 +60,18 @@ if a[:2] == ["node", "inspect"]:
     print("<no value>" if v is None else v)
     sys.exit(0)
 if a[:2] == ["node", "update"]:
-    k, v = a[3].split("=", 1)
-    st.setdefault("labels", {}).setdefault(a[4], {})[k] = v
+    node = a[-1]
+    lab = st.setdefault("labels", {}).setdefault(node, {})
+    args = a[2:-1]
+    new = dict(lab)
+    for flag, val in zip(args[::2], args[1::2]):
+        if flag == "--label-add":
+            k, v = val.split("=", 1); new[k] = v
+        elif flag == "--label-rm":
+            if val not in new:  # like docker: refuse, change nothing
+                print(f"key {val} doesn't exist in node's labels", file=sys.stderr); sys.exit(1)
+            new.pop(val)
+    lab.clear(); lab.update(new)
     save(); sys.exit(0)
 if a[:2] == ["service", "ls"]:
     for s in nodes()["services"]: print(s)
@@ -328,3 +338,47 @@ def test_provision_gate_only_on_managers_and_removable():
     assert "skpatch_hosts_swarm_gate" in text
     removal = [t for t in _tasks() if "gate" in t["name"].lower() and "remove" in t["name"].lower()]
     assert removal, "no removal path for the gate"
+
+
+def test_busy_label_set_while_upgrading_and_cleared_after(tmp_path):
+    g = Gate(tmp_path)
+    assert g.run("pre", ENGINE).returncode == 0
+    assert g.st["labels"]["m2"]["sk.skpatch.docker-upgrading"] == str(T0)
+    assert g.run("post").returncode == 0
+    assert "sk.skpatch.docker-upgrading" not in g.st["labels"]["m2"]
+
+
+def test_other_manager_mid_upgrade_is_waited_for_then_refused(tmp_path):
+    g = Gate(tmp_path, labels={"m1": {"sk.skpatch.docker-upgrading": str(T0 - 30)}})
+    r = g.run("pre", ENGINE)
+    assert r.returncode == 1 and "still upgrading" in r.stderr
+    assert 900 <= g.slept() <= 915
+    assert "sk.skpatch.docker-upgrading" not in g.st["labels"].get("m2", {})
+
+
+def test_stale_busy_label_is_ignored(tmp_path):
+    g = Gate(tmp_path, labels={"m1": {"sk.skpatch.docker-upgrading": str(T0 - 4000)}})
+    assert g.run("pre", ENGINE).returncode == 0
+    assert g.slept() == 0
+
+
+def test_post_timeout_clears_busy_and_sets_hold(tmp_path):
+    g = Gate(tmp_path)
+    assert g.run("pre", ENGINE).returncode == 0
+    st = g.st
+    st["services"] = ["a_web replicated 0/1"]
+    g.state.write_text(json.dumps(st))
+    assert g.run("post").returncode == 1
+    lab = g.st["labels"]["m2"]
+    assert "sk.skpatch.hold" in lab and "sk.skpatch.docker-upgrading" not in lab
+
+
+def test_done_label_set_even_when_busy_label_is_already_gone(tmp_path):
+    """docker refuses --label-rm of a missing key; that must not lose the done label."""
+    g = Gate(tmp_path)
+    assert g.run("pre", ENGINE).returncode == 0
+    st = g.st
+    st["labels"]["m2"].pop("sk.skpatch.docker-upgrading")
+    g.state.write_text(json.dumps(st))
+    assert g.run("post").returncode == 0
+    assert "sk.skpatch.docker-upgraded-at" in g.st["labels"]["m2"]
