@@ -16,7 +16,8 @@ def test_no_duplicati_left_in_v1_ansible_or_render_vars():
     hits = []
     for base in (ROOT / "v1/ansible", ROOT / "v1/tests/render"):
         for p in base.rglob("*"):
-            if p.is_file() and p not in allowed and re.search("duplicati", p.read_text(errors="ignore"), re.I):
+            # word start: "deduplication" in vendored dashboard text is not Duplicati
+            if p.is_file() and p not in allowed and re.search(r"\bduplicati", p.read_text(errors="ignore"), re.I):
                 hits.append(str(p.relative_to(ROOT)))
     assert hits == []
 
