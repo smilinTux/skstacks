@@ -1,0 +1,20 @@
+{
+  "_comment": "Sudo denials the framework has a fix for. tools/skpatch_watch.py quotes the entry (instead of 'reprovision this host') while the host's sudo coverage stamp is older than the denial; once the host is provisioned with the fix the denial resolves by itself. Keyed by dashboard action.",
+  "sudo-denied": {
+    "upgrade_package": {
+      "gap": "the dashboard's built-in 'upgrade selected' runs apt-get/snap with variable package names, which sudoers can never grant safely",
+      "fix": "skstacks PR #403 (v2.26.22): validated wrappers skpatch-apt-only-upgrade / skpatch-snap-refresh plus the default 'upgrade selected' scripts",
+      "until": "use Upgrade all on this host; it resolves by itself once the host is provisioned with v2.26.22"
+    },
+    "upgrade_packages": {
+      "gap": "the dashboard's built-in 'upgrade selected' runs apt-get/snap with variable package names, which sudoers can never grant safely",
+      "fix": "skstacks PR #403 (v2.26.22): validated wrappers skpatch-apt-only-upgrade / skpatch-snap-refresh plus the default 'upgrade selected' scripts",
+      "until": "use Upgrade all on this host; it resolves by itself once the host is provisioned with v2.26.22"
+    },
+    "repair": {
+      "gap": "the Repair button runs dpkg --configure -a",
+      "fix": "skstacks PR #406 (v2.26.22): the exact dpkg --configure -a sudoers line",
+      "until": "it resolves by itself once the host is provisioned with v2.26.22"
+    }
+  }
+}
