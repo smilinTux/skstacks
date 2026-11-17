@@ -1036,7 +1036,12 @@
       # or empty models directory. Force a refresh by hand with that command.
       shell: |
         CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
-        MODELS=/var/www/html/custom_apps/recognize/models
+        # The app is in custom_apps/ when installed from the app store and in
+        # apps/ when the image ships it, so ask Nextcloud instead of guessing:
+        # a wrong guess finds no models and re-downloads them on every deploy.
+        APP=$(docker exec "$CONTAINER_ID" php occ app:getpath recognize 2>/dev/null | tail -n 1 | tr -d '\r')
+        case "$APP" in /*) ;; *) APP=/var/www/html/custom_apps/recognize ;; esac
+        MODELS="$APP/models"
         PRESENT=$(docker exec "$CONTAINER_ID" find "$MODELS" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null || true)
         if [ -n "$PRESENT" ]; then
           echo "Recognize models already present in $MODELS: not re-downloading"
