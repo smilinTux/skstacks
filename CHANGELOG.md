@@ -3,6 +3,22 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## skstacks-v2.26.25 - 2026-11-17
+
+Patch line on v2.26.24 (same base and release-line commits, plus #431 only).
+
+### sksec on single-node installs: skfence and skmesh can use the bouncer
+
+- **skfence: `CROWDSEC_ENABLED` (default false).** Puts `crowdsec-bouncer@file` first in the
+  `default@file` chain, the same switch skfenceha has, so a single-node estate running sksec can
+  protect every router on `default@file`. **Instance action**: none by default. To use it, deploy
+  sksec first, then set `skfence.CROWDSEC_ENABLED: true` and redeploy skfence.
+- **skmesh: `TRAEFIK_MIDDLEWARES` (default empty).** Middlewares for every skmesh HTTP router
+  (management API and gRPC, oauth2, signal, relay, dashboard); the routers had no middlewares label
+  at all. Empty renders as before. **Instance action**: none by default. To put skmesh behind
+  CrowdSec, set `skmesh.TRAEFIK_MIDDLEWARES: [crowdsec-bouncer@file]` after sksec is deployed and
+  redeploy skmesh. Tests: `v1/tests/test_sksec_single_node_knobs.py`.
+
 ## skstacks-v2.26.24 - 2026-11-17
 
 Patch line on v2.26.23 (same base and release-line commits, no other changes from main).

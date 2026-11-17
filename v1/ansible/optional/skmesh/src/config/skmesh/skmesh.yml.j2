@@ -3,6 +3,11 @@
 {%- else -%}
   {%- set _base_domain = skmesh.CLUSTERNAME ~ '.' ~ skmesh.DOMAIN -%}
 {%- endif -%}
+{#- skmesh.TRAEFIK_MIDDLEWARES (list or comma string, default empty): middlewares
+    for every skmesh HTTP router, e.g. [crowdsec-bouncer@file]. Empty renders no
+    middlewares label at all, exactly as before. -#}
+{%- set _mw_raw = skmesh.TRAEFIK_MIDDLEWARES | default([], true) -%}
+{%- set _skmesh_mw = (_mw_raw.split(',') if _mw_raw is string else _mw_raw) | map('trim') | reject('equalto', '') | join(',') -%}
 {%- set _mode = skmesh.AUTH_MODE | default('standalone') | string | lower -%}
 {%- set _sso = skmesh.SSO_HOST | default('sso' ~ ('' if env == 'prod' else '-' ~ env) ~ '.' ~ _base_domain) -%}
 version: "3.9"
@@ -141,12 +146,18 @@ services:
         - "traefik.enable=true"
         - "traefik.http.routers.skmesh-mgmt-api.rule=Host(`skmesh{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && PathPrefix(`/api`)"
         - "traefik.http.routers.skmesh-mgmt-api.entrypoints=websecure"
+{% if _skmesh_mw %}
+        - "traefik.http.routers.skmesh-mgmt-api.middlewares={{ _skmesh_mw }}"
+{% endif %}
         - "traefik.http.routers.skmesh-mgmt-api.tls.certresolver=main"
         - "traefik.http.routers.skmesh-mgmt-api.service=skmesh-mgmt-api-svc"
         - "traefik.http.services.skmesh-mgmt-api-svc.loadbalancer.server.port=80"
         - "traefik.http.services.skmesh-mgmt-api-svc.loadbalancer.server.scheme=http"
         - "traefik.http.routers.skmesh-mgmt-grpc.rule=Host(`skmesh{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && PathPrefix(`/management`)"
         - "traefik.http.routers.skmesh-mgmt-grpc.entrypoints=websecure"
+{% if _skmesh_mw %}
+        - "traefik.http.routers.skmesh-mgmt-grpc.middlewares={{ _skmesh_mw }}"
+{% endif %}
         - "traefik.http.routers.skmesh-mgmt-grpc.tls.certresolver=main"
         - "traefik.http.routers.skmesh-mgmt-grpc.service=skmesh-mgmt-grpc-svc"
         - "traefik.http.services.skmesh-mgmt-grpc-svc.loadbalancer.server.port=33073"
@@ -155,6 +166,9 @@ services:
         # embedded IdP (Dex) is served by management's HTTP port at /oauth2
         - "traefik.http.routers.skmesh-mgmt-oauth2.rule=Host(`skmesh{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && PathPrefix(`/oauth2`)"
         - "traefik.http.routers.skmesh-mgmt-oauth2.entrypoints=websecure"
+{% if _skmesh_mw %}
+        - "traefik.http.routers.skmesh-mgmt-oauth2.middlewares={{ _skmesh_mw }}"
+{% endif %}
         - "traefik.http.routers.skmesh-mgmt-oauth2.tls.certresolver=main"
         - "traefik.http.routers.skmesh-mgmt-oauth2.service=skmesh-mgmt-api-svc"
 {% endif %}
@@ -182,6 +196,9 @@ services:
         - "traefik.enable=true"
         - "traefik.http.routers.skmesh-signal.rule=Host(`skmesh{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && PathPrefix(`/signalexchange.SignalExchange`)"
         - "traefik.http.routers.skmesh-signal.entrypoints=websecure"
+{% if _skmesh_mw %}
+        - "traefik.http.routers.skmesh-signal.middlewares={{ _skmesh_mw }}"
+{% endif %}
         - "traefik.http.routers.skmesh-signal.tls.certresolver=main"
         - "traefik.http.routers.skmesh-signal.service=skmesh-signal-svc"
         - "traefik.http.services.skmesh-signal-svc.loadbalancer.server.port=10000"
@@ -212,6 +229,9 @@ services:
         - "traefik.enable=true"
         - "traefik.http.routers.skmesh-relay.rule=Host(`skmesh{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && PathPrefix(`/relay`)"
         - "traefik.http.routers.skmesh-relay.entrypoints=websecure"
+{% if _skmesh_mw %}
+        - "traefik.http.routers.skmesh-relay.middlewares={{ _skmesh_mw }}"
+{% endif %}
         - "traefik.http.routers.skmesh-relay.tls.certresolver=main"
         - "traefik.http.routers.skmesh-relay.service=skmesh-relay-svc"
         - "traefik.http.services.skmesh-relay-svc.loadbalancer.server.port=33080"
@@ -242,6 +262,9 @@ services:
         - "traefik.enable=true"
         - "traefik.http.routers.skmesh-dash.rule=Host(`skmesh{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && !PathPrefix(`/api`) && !PathPrefix(`/management`) && !PathPrefix(`/signalexchange.SignalExchange`) && !PathPrefix(`/relay`){% if _mode != 'authentik' %} && !PathPrefix(`/oauth2`){% endif %}"
         - "traefik.http.routers.skmesh-dash.entrypoints=websecure"
+{% if _skmesh_mw %}
+        - "traefik.http.routers.skmesh-dash.middlewares={{ _skmesh_mw }}"
+{% endif %}
         - "traefik.http.routers.skmesh-dash.tls.certresolver=main"
         - "traefik.http.services.skmesh-dash.loadbalancer.server.port=80"
         - "traefik.swarm.network=cloud-public-{{ env }}"

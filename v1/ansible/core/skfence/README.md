@@ -18,6 +18,12 @@ skfence:
   # TRAEFIK_IMAGE: ""             # default traefik:v3.7.19@sha256:... (pin a digest here to override)
 ```
 
+**CrowdSec (opt-in)**: `CROWDSEC_ENABLED: true` puts `crowdsec-bouncer@file` first
+in the `default@file` chain, the same switch skfenceha has. Deploy sksec first: the
+middleware is defined by sksec's `dynamic/sksec.yml`, and the bouncer fails closed, so
+every router on `default@file` then depends on it. `dashboard-chain` never gets it.
+Default `false` renders the chain exactly as before.
+
 **Deploy**:
 
 ```bash
