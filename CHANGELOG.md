@@ -5,6 +5,29 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+### skpatch-hosts: every dashboard action works on an armed host; one onboarding path (#403, #406)
+
+- **Selected-package upgrades (#403):** sudoers grants two root-owned wrappers by absolute path,
+  `skpatch-apt-only-upgrade` and `skpatch-snap-refresh`, instead of an apt-get or snap wildcard
+  (which would allow `-o APT::Update::Pre-Invoke::=<cmd>`). Each wrapper validates every name,
+  clears the environment and ends option parsing with `--`.
+- **Actions that failed on an armed host (#406):** `dpkg --configure -a` for the Repair banner;
+  `env_keep += "DEBIAN_FRONTEND"` so debconf stays noninteractive; dpkg `force-confdef`/`force-confold`
+  (`DPKG_KEEP_CONFFILES: false` opts out); the read-only Proxmox `pvesh get /cluster/tasks` check
+  where pvesh exists; pacman and flatpak hosts (exact commands plus validated wrappers); Ubuntu
+  phased updates; `EXTRA_HOSTS` for SMTP without hairpin NAT. No wildcard anywhere; the Proxmox and
+  Arch variants pass `visudo -cf`.
+- **One onboarding path:** one `provision_skpatch_hosts_nodes.yml` run also converges the dashboard's
+  wrapper scripts and settings; hosts with an uncovered package manager are refused; maintenance
+  pause (`skpatch_hosts_paused` or `/etc/skpatch-hosts.paused`); `--check --diff` no longer fails in
+  registration.
+- **Drift and compliance:** CI fails when the pinned image's own sudo command list changes without
+  a sudoers decision (`v1/tests/fixtures/skpatch_hosts_sudo_commands.json`); a fleet compliance check
+  (drift, coverage, dashboard, sudo denials) with a systemd timer template; alerts that resolve
+  themselves; optional Talk routing; a DNS-server host must not run NetBird DNS.
+- **Instance action:** rerun `provision_skpatch_hosts_nodes.yml` (`--check --diff` first). An estate
+  that was already provisioned from the #406 branch sees no sudoers change.
+
 ### skpatch-hosts: swarm managers upgrade the Docker engine one at a time, for real
 
 - **skpatch-hosts: new APT hook `sk-swarm-upgrade-gate` on swarm managers**, installed by
