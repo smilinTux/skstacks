@@ -53,13 +53,6 @@ Patch line on v2.26.25 (same base and release-line commits, no other changes fro
   `v1/tests/test_skhub_recognize_models_path.py` (runs the task's shell against a stub docker).
   **Instance action**: none.
 
-### skmesh: the postgres runtime directory is created 0700
-
-- **skmesh: `/var/data/runtime/skmesh-<env>/postgres` is created 0700, not 0755** (prod and dev
-  playbooks), the same fix skgit got in #426. With postgres older than 18 that directory is PGDATA,
-  and each deploy left it 0755 until the image entrypoint's chmod on the next start. Tests:
-  `v1/tests/test_skmesh_pgdata_mode.py`. **Instance action**: none; the next skmesh deploy applies it.
-
 ### skpdf: Stirling-PDF updates stop-first
 
 - **skpdf: `update_config.order` is `stop-first`, not `start-first`.** Stirling-PDF is one replica
