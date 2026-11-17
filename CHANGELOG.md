@@ -3,6 +3,19 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+## skstacks-v2.26.25 - 2026-11-17
+
+Patch line on v2.26.24 (same base and release-line commits, no other changes from main).
+
+### skgit: the postgres runtime directory is created 0700
+
+- **skgit: `/var/data/runtime/<app>-<env>/postgres` is created 0700, not 0755.** With a pinned postgres
+  older than 18 that directory is PGDATA itself, and PostgreSQL refuses to start on a group- or
+  world-readable data directory. Each deploy reset it to 0755 and only the image entrypoint's own
+  chmod on the next container start put it back, so a start without that step would fail. With
+  postgres 18+ (the default) it is the mount's parent, where 0700 is also fine. Tests:
+  `v1/tests/test_skgit_pgdata_mode.py`. **Instance action**: none; the next skgit deploy applies it.
+
 ## skstacks-v2.26.24 - 2026-11-17
 
 Patch line on v2.26.23 (same base and release-line commits, no other changes from main).

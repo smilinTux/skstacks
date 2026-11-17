@@ -124,7 +124,7 @@
         - { path: "/var/data/{{ app }}-{{ env }}/data", owner: "1000", group: "1000", mode: "0750" }
         - { path: "/var/data/{{ app }}-{{ env }}/config", owner: "1000", group: "1000", mode: "0755" }
         - { path: "/var/data/logs/{{ app }}-{{ env }}", owner: "1000", group: "1000", mode: "0755" }
-        - { path: "/var/data/runtime/{{ app }}-{{ env }}/postgres", owner: "999", group: "999", mode: "0755" }
+        - { path: "/var/data/runtime/{{ app }}-{{ env }}/postgres", owner: "999", group: "999", mode: "0700" }
         - { path: "/var/data/{{ app }}-{{ env }}/database-dump", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/runtime/{{ app }}-{{ env }}/runner", owner: "1000", group: "1000", mode: "0755" }
         - { path: "/var/data/runtime/{{ app }}-{{ env }}/docker_certs", owner: "root", group: "root", mode: "0755" }
