@@ -117,7 +117,7 @@ def test_pack_name_must_be_plain():
     check = next(t for t in _tasks() if t.get("name", "").startswith("Fail on a branding pack name"))
     cond = check["assert"]["that"]
     rx = re.search(r"match\('([^']+)'\)", cond).group(1)
-    for good in ("skworld", "nam", "gentistrust", "acme-2.x"):
+    for good in ("skworld", "nam", "acme", "acme-2.x"):
         assert re.match(rx, good) and ".." not in good
     for bad in ("../x", "a/b", "", ".hidden"):
         assert not (re.match(rx, bad) and ".." not in bad), bad
