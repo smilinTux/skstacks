@@ -90,6 +90,8 @@ kept. `[-env]` is empty on prod and `-dev`/`-staging` otherwise.
 | `skboard.TRAEFIK_MIDDLEWARES` | `skboard[-env]` | `default-no-crowdsec@file` |
 | `skflow.TRAEFIK_MIDDLEWARES` | `skflow[-env]` (and `-api`, `-outpost` with SSO) | `default-no-crowdsec@file` |
 | `skgit.TRAEFIK_MIDDLEWARES` | `skgit[-env]` | `default-no-crowdsec@file` |
+| `skgit.API_MIDDLEWARES` | `skgit[-env]-api` (`/api/`, git smart HTTP, LFS) | the main chain with `default@file` and `default-no-crowdsec@file` swapped for `default-no-error-pages@file` |
+| `skgit.RUNNER_RPC_MIDDLEWARES` | `skgit[-env]-runner-rpc` (only with the bouncer on the main router) | `default-no-error-pages@file` |
 | `skorch.TRAEFIK_MIDDLEWARES` | `skorch[-env]` | `default-no-crowdsec@file` |
 | `skpdf.TRAEFIK_MIDDLEWARES` | `skpdf[-env]` | `default-no-crowdsec@file,skpdf[-env]-upload` |
 | `skpeek.TRAEFIK_MIDDLEWARES` | `skpeek[-env]` | `default-no-crowdsec@file` |
