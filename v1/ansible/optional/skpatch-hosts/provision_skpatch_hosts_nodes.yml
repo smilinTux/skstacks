@@ -370,18 +370,20 @@
       register: skp_sudoers_write
       when: skpatch_state == 'present'
 
-    # --- swarm upgrade gate (managers only) ------------------------------
+    # --- swarm upgrade gate (every swarm node) ---------------------------
     # The dashboard upgrades a schedule's systems one after another but only
     # waits for apt to exit. A docker-ce/containerd.io upgrade restarts
     # dockerd, so a schedule of three managers restarted it on all three
-    # within about 90 s (2026-11-17). This APT hook holds each manager until
-    # the previous one's swarm has converged plus a minimum gap, and stops
-    # every later manager when one does not converge. It acts only on a batch
-    # that contains the Docker engine; see the script header and README
-    # "Schedules and notifications as code".
-    - name: Detect whether this host is a swarm manager (swarm upgrade gate)
-      command: docker info --format '{{ '{{' }}.Swarm.ControlAvailable{{ '}}' }}'
-      register: skp_swarm_manager
+    # within about 90 s (2026-11-17), and on a worker a restart left a stale
+    # overlay vxlan device that rejected every task placed there for 11 hours.
+    # This APT hook holds each manager until the previous one's swarm has
+    # converged plus a minimum gap, checks and repairs stale vxlan devices on
+    # every node after the upgrade, and holds every later node when one does
+    # not converge. It acts only on a batch that contains the Docker engine;
+    # see the script header and README "Swarm upgrade gate".
+    - name: Detect whether this host is a swarm member (swarm upgrade gate)
+      command: docker info --format '{{ '{{' }}.Swarm.LocalNodeState{{ '}}' }}'
+      register: skp_swarm_member
       changed_when: false
       failed_when: false
       check_mode: false
@@ -392,9 +394,9 @@
           {{ skpatch_state == 'present'
              and ((skpatch_hosts_swarm_gate if skpatch_hosts_swarm_gate is defined
                    else ((skpatch_hosts | default({})).SWARM_GATE | default(true))) | bool)
-             and (skp_swarm_manager.stdout | default('') | trim) == 'true' }}
+             and (skp_swarm_member.stdout | default('') | trim) == 'active' }}
 
-    - name: Install the swarm upgrade gate script (managers)
+    - name: Install the swarm upgrade gate script (swarm nodes)
       copy:
         src: "{{ playbook_dir }}/src/skpatch-hosts/sk-swarm-upgrade-gate.sh"
         dest: /usr/local/sbin/sk-swarm-upgrade-gate
@@ -403,7 +405,7 @@
         mode: '0755'
       when: skp_swarm_gate | bool
 
-    - name: Write the swarm upgrade gate settings (managers)
+    - name: Write the swarm upgrade gate settings (swarm nodes)
       copy:
         dest: /etc/default/sk-swarm-upgrade-gate
         owner: root
@@ -416,9 +418,11 @@
           POST_TIMEOUT_S={{ (skpatch_hosts | default({})).SWARM_GATE_POST_TIMEOUT_S | default(900) | int }}
           MIN_SETTLE_S={{ (skpatch_hosts | default({})).SWARM_GATE_MIN_SETTLE_S | default(60) | int }}
           POLL_S=15
+          # The hold every swarm node reads: on storage all of them mount.
+          SHARED_DIR={{ (skpatch_hosts | default({})).SWARM_GATE_SHARED_DIR | default('/var/data/skpatch-swarm-gate') }}
       when: skp_swarm_gate | bool
 
-    - name: Install the swarm upgrade gate APT hook (managers)
+    - name: Install the swarm upgrade gate APT hook (swarm nodes)
       copy:
         dest: /etc/apt/apt.conf.d/50sk-swarm-upgrade-gate
         owner: root
@@ -426,12 +430,12 @@
         mode: '0644'
         content: |
           // Managed by skstacks skpatch-hosts: Docker engine upgrades on swarm
-          // managers wait for the swarm (sk-swarm-upgrade-gate header).
+          // nodes wait for the swarm (sk-swarm-upgrade-gate header).
           DPkg::Pre-Install-Pkgs { "/usr/local/sbin/sk-swarm-upgrade-gate pre"; };
           DPkg::Post-Invoke { "/usr/local/sbin/sk-swarm-upgrade-gate post"; };
       when: skp_swarm_gate | bool
 
-    - name: Remove the swarm upgrade gate where it does not apply (absent, opted out, not a manager)
+    - name: Remove the swarm upgrade gate where it does not apply (absent, opted out, not in a swarm)
       # The hook goes first: an APT hook pointing at a missing script breaks apt.
       file:
         path: "{{ item }}"
