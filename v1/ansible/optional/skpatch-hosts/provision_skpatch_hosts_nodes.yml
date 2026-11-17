@@ -420,6 +420,9 @@
           POLL_S=15
           # The hold every swarm node reads: on storage all of them mount.
           SHARED_DIR={{ (skpatch_hosts | default({})).SWARM_GATE_SHARED_DIR | default('/var/data/skpatch-swarm-gate') }}
+          # hold (default): on a one-manager swarm an engine upgrade needs an
+          # open sk.skpatch.engine-window label; allow: let it through.
+          SINGLE_MANAGER_ENGINE={{ 'allow' if ((skpatch_hosts | default({})).SWARM_GATE_SINGLE_MANAGER_ENGINE | default('hold')) == 'allow' else 'hold' }}
       when: skp_swarm_gate | bool
 
     - name: Install the swarm upgrade gate APT hook (swarm nodes)
