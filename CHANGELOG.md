@@ -24,6 +24,16 @@ Each entry says what an instance must do, if anything.
   CrowdSec, set `skmesh.TRAEFIK_MIDDLEWARES: [crowdsec-bouncer@file]` after sksec is deployed and
   redeploy skmesh. Tests: `v1/tests/test_sksec_single_node_knobs.py`.
 
+### skhub: the Recognize model check asks Nextcloud where the app is
+
+- **skhub: the "models already present" check uses `occ app:getpath recognize`** instead of a
+  hardcoded `custom_apps/recognize/models` (dev, staging, prod). Where the image ships Recognize
+  under `apps/`, the old check never saw the models, so every deploy ran
+  `occ recognize:download-models` (over 1 GB, deleting the models first; an hour and more on a lab
+  cluster). If `app:getpath` fails the old path is the fallback. Tests:
+  `v1/tests/test_skhub_recognize_models_path.py` (runs the task's shell against a stub docker).
+  **Instance action**: none.
+
 ### skpdf: Stirling-PDF updates stop-first
 
 - **skpdf: `update_config.order` is `stop-first`, not `start-first`.** Stirling-PDF is one replica
