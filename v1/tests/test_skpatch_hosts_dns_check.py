@@ -20,8 +20,8 @@ RESOLVED = ['udp UNCONN 0 0 127.0.0.53%lo:53 0.0.0.0:* users:(("systemd-resolve"
             'tcp LISTEN 0 4096 127.0.0.54:53 0.0.0.0:* users:(("systemd-resolve",pid=9,fd=17))']
 PIHOLE = ['udp UNCONN 0 0 0.0.0.0:53 0.0.0.0:* users:(("pihole-FTL",pid=7,fd=4))',
           'tcp LISTEN 0 32 0.0.0.0:53 0.0.0.0:* users:(("pihole-FTL",pid=7,fd=5))']
-NETBIRD = ['udp UNCONN 0 0 10.250.0.9:53 0.0.0.0:* users:(("netbird",pid=3,fd=44))',
-           'tcp LISTEN 0 4096 10.250.0.9:53 0.0.0.0:* users:(("netbird",pid=3,fd=45))']
+NETBIRD = ['udp UNCONN 0 0 100.64.0.9:53 0.0.0.0:* users:(("netbird",pid=3,fd=44))',
+           'tcp LISTEN 0 4096 100.64.0.9:53 0.0.0.0:* users:(("netbird",pid=3,fd=45))']
 
 
 def run(tmp, shell, ss_lines, force=False, files=None, pihole_bin=False):
@@ -66,7 +66,7 @@ def test_a_plain_host_with_only_the_resolved_stub_is_not_a_dns_host(tmp_path, sh
 def test_pihole_and_netbird_on_port_53_is_one_conflict_per_listener(tmp_path, shell):
     head, conflicts = run(tmp_path, shell, RESOLVED + PIHOLE + NETBIRD)
     assert head == "dns-host: yes"
-    assert conflicts == ["netbird is bound to 10.250.0.9:53 on a DNS server (run: netbird up --disable-dns)"]
+    assert conflicts == ["netbird is bound to 100.64.0.9:53 on a DNS server (run: netbird up --disable-dns)"]
 
 
 def test_netbird_won_the_port_at_boot_and_pihole_is_down(tmp_path, shell):
@@ -74,7 +74,7 @@ def test_netbird_won_the_port_at_boot_and_pihole_is_down(tmp_path, shell):
     head, conflicts = run(tmp_path, shell, RESOLVED + NETBIRD, pihole_bin=True,
                           files={"var/lib/netbird/default.json": NB_ON})
     assert head == "dns-host: yes"
-    assert any(c.startswith("netbird is bound to 10.250.0.9:53") for c in conflicts)
+    assert any(c.startswith("netbird is bound to 100.64.0.9:53") for c in conflicts)
     assert "no DNS server is listening on a non-loopback port 53" in conflicts
     assert any(c.startswith("NetBird DNS is enabled in /var/lib/netbird/default.json") for c in conflicts)
 
