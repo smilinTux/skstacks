@@ -101,7 +101,8 @@ sksso:
 
 ## Branding
 
-Two packs ship: `nam` (below) and `skworld`. A pack is optional parts only: the
+Two packs ship: `nam` (below) and `skworld`. An instance can bring its own (see
+"Instance packs" below). A pack is optional parts only: the
 media dir is required, `templates/` and `nextcloud-theming.sh` are copied only when
 the pack has them.
 
@@ -152,6 +153,27 @@ The email sender display name comes from `sksso.email_from`; changing it needs
 a rolling update of `_server` and `_worker` (env change). The look is the
 NAMhub palette (teal `#00B4A0` on deep navy `#0D1A24`, leaf mark) restored from
 `namstacks/ansible/deployment/namhub-exapps/src/namhub-theme-notes.md`.
+
+### Instance packs (`branding_dir`)
+
+A pack that belongs to one instance (its own logo, colours, wording) lives in
+that instance's repo, not here. Point the role at it with `sksso.branding_dir`
+and keep `sksso.branding` as the pack's name:
+
+```yaml
+sksso:
+  branding: acme                 # names media/public/acme/
+  branding_dir: ../../branding/sksso/acme   # relative to inventory_dir, or absolute
+```
+
+The directory has the same layout as a shipped pack: `media/` (required),
+`apply-branding.sh` (required), and optional `templates/` and
+`nextcloud-theming.sh`. A relative `branding_dir` is resolved against the
+instance's inventory dir (`inventory_dir`, e.g. `envs/prod/`), never against the
+framework checkout, the same rule as skfence `EXTRA_DYNAMIC_FILES`.
+`sksso.branding` must be a plain name (letters, digits, `.`, `_`, `-`). Empty
+`branding_dir` (the default) keeps today's behaviour: `branding/<pack>/` in this
+role.
 
 ## Automation API token
 

@@ -5,6 +5,13 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+### sksso: instance-owned branding packs (`sksso.branding_dir`)
+
+- New optional `sksso.branding_dir`: load the branding pack from the instance repo (absolute, or
+  relative to `inventory_dir`, the same rule as skfence `EXTRA_DYNAMIC_FILES`) instead of the role's
+  `branding/<pack>/`. `sksso.branding` still names the pack and its `media/public/<pack>/` dir and
+  must now be a plain name. Default empty: unchanged behaviour for `skworld` and `nam`.
+
 ### skpatch-hosts: every dashboard action works on an armed host; one onboarding path (#403, #406)
 
 - **Selected-package upgrades (#403):** sudoers grants two root-owned wrappers by absolute path,

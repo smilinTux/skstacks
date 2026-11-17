@@ -6,10 +6,31 @@
 # the idempotent helper rendered next to the deploy script
 # (/var/data/<app>-<env>/apply-branding), run once after the stack is up.
 # See README "Branding".
+#
+# sksso.branding_dir (optional, default empty): load the pack from the
+# instance repo instead of the role's branding/ dir. An absolute path, or a
+# path relative to the inventory dir (inventory_dir, e.g. envs/prod/), like
+# skfence EXTRA_DYNAMIC_FILES. sksso.branding still names the pack, and its
+# media lands in media/public/<sksso.branding>/. Empty = branding/<pack> in the
+# role, unchanged.
+
+- name: Fail on a branding pack name that is not a plain name
+  assert:
+    that: sksso.branding is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$') and '..' not in sksso.branding
+    fail_msg: "sksso.branding={{ sksso.branding }} must be a plain name (letters, digits, '.', '_', '-'), it names media/public/<pack>/"
+    quiet: true
+
+- name: Resolve the branding pack source dir
+  set_fact:
+    sksso_branding_src: >-
+      {%- set d = sksso.branding_dir | default('', true) | string -%}
+      {%- if d | length == 0 -%}{{ playbook_dir }}/branding/{{ sksso.branding }}
+      {%- elif d.startswith('/') -%}{{ d | regex_replace('/+$', '') }}
+      {%- else -%}{{ inventory_dir }}/{{ d | regex_replace('/+$', '') }}{%- endif -%}
 
 - name: Check the branding pack exists
   stat:
-    path: "{{ playbook_dir }}/branding/{{ sksso.branding }}"
+    path: "{{ sksso_branding_src }}"
   register: sksso_branding_pack
   delegate_to: localhost
   become: false
@@ -17,7 +38,7 @@
 - name: Fail on an unknown branding pack
   assert:
     that: sksso_branding_pack.stat.exists
-    fail_msg: "sksso.branding={{ sksso.branding }} but branding/{{ sksso.branding }} does not exist in the role"
+    fail_msg: "sksso.branding={{ sksso.branding }} but the pack dir {{ sksso_branding_src }} does not exist (set sksso.branding_dir for an instance pack)"
     quiet: true
 
 - name: Create the branding media dir
@@ -30,7 +51,7 @@
 
 - name: Copy branding media (logo, favicon, css, background, apply script)
   copy:
-    src: "{{ playbook_dir }}/branding/{{ sksso.branding }}/media/"
+    src: "{{ sksso_branding_src }}/media/"
     dest: "/var/data/{{ app }}-{{ env }}/media/public/{{ sksso.branding }}/"
     owner: "{{ sksso.authentik_uid | default(1000) }}"
     group: "{{ sksso.authentik_uid | default(1000) }}"
@@ -38,7 +59,7 @@
 
 - name: Check whether the pack ships email templates and a Nextcloud theming helper
   stat:
-    path: "{{ playbook_dir }}/branding/{{ sksso.branding }}/{{ item }}"
+    path: "{{ sksso_branding_src }}/{{ item }}"
   loop:
     - templates
     - nextcloud-theming.sh
@@ -48,7 +69,7 @@
 
 - name: Copy branded email templates (only when the pack has templates/)
   copy:
-    src: "{{ playbook_dir }}/branding/{{ sksso.branding }}/templates/"
+    src: "{{ sksso_branding_src }}/templates/"
     dest: "/var/data/{{ app }}-{{ env }}/custom-templates/"
     owner: root
     group: root
@@ -57,7 +78,7 @@
 
 - name: Install the branding helpers next to the deploy script
   copy:
-    src: "{{ playbook_dir }}/branding/{{ sksso.branding }}/{{ item.src }}"
+    src: "{{ sksso_branding_src }}/{{ item.src }}"
     dest: "/var/data/{{ app }}-{{ env }}/{{ item.dest }}"
     owner: root
     group: root
