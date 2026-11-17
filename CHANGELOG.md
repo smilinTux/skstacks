@@ -12,88 +12,12 @@ Each entry says what an instance must do, if anything.
   `branding/<pack>/`. `sksso.branding` still names the pack and its `media/public/<pack>/` dir and
   must now be a plain name. Default empty: unchanged behaviour for `skworld` and `nam`.
 
-### skpatch-hosts: every dashboard action works on an armed host; one onboarding path (#403, #406)
-
-- **Selected-package upgrades (#403):** sudoers grants two root-owned wrappers by absolute path,
-  `skpatch-apt-only-upgrade` and `skpatch-snap-refresh`, instead of an apt-get or snap wildcard
-  (which would allow `-o APT::Update::Pre-Invoke::=<cmd>`). Each wrapper validates every name,
-  clears the environment and ends option parsing with `--`.
-- **Actions that failed on an armed host (#406):** `dpkg --configure -a` for the Repair banner;
-  `env_keep += "DEBIAN_FRONTEND"` so debconf stays noninteractive; dpkg `force-confdef`/`force-confold`
-  (`DPKG_KEEP_CONFFILES: false` opts out); the read-only Proxmox `pvesh get /cluster/tasks` check
-  where pvesh exists; pacman and flatpak hosts (exact commands plus validated wrappers); Ubuntu
-  phased updates; `EXTRA_HOSTS` for SMTP without hairpin NAT. No wildcard anywhere; the Proxmox and
-  Arch variants pass `visudo -cf`.
-- **One onboarding path:** one `provision_skpatch_hosts_nodes.yml` run also converges the dashboard's
-  wrapper scripts and settings; hosts with an uncovered package manager are refused; maintenance
-  pause (`skpatch_hosts_paused` or `/etc/skpatch-hosts.paused`); `--check --diff` no longer fails in
-  registration.
-- **Drift and compliance:** CI fails when the pinned image's own sudo command list changes without
-  a sudoers decision (`v1/tests/fixtures/skpatch_hosts_sudo_commands.json`); a fleet compliance check
-  (drift, coverage, dashboard, sudo denials) with a systemd timer template; alerts that resolve
-  themselves; optional Talk routing; a DNS-server host must not run NetBird DNS.
-- **Instance action:** rerun `provision_skpatch_hosts_nodes.yml` (`--check --diff` first). An estate
-  that was already provisioned from the #406 branch sees no sudoers change.
-
-### skpatch-hosts: swarm managers upgrade the Docker engine one at a time, for real
-
-- **skpatch-hosts: new APT hook `sk-swarm-upgrade-gate` on swarm managers**, installed by
-  `provision_skpatch_hosts_nodes.yml`. The dashboard's chains only wait for apt to exit, so three
-  managers in one schedule restarted dockerd within about 90 seconds. On a batch containing
-  `docker-ce` or `containerd.io` the hook now refuses while the swarm is held, waits a 600 s gap
-  after the previous manager, requires all managers Reachable, and after the upgrade waits (900 s
-  max) for this node Ready/Active, all managers Reachable and every service at desired replicas.
-  A timeout sets the node label `sk.skpatch.hold`, which stops every later manager. Knobs
-  `SWARM_GATE*`, opt-out `skpatch_hosts_swarm_gate: false`. README "Swarm upgrade gate". Tests:
-  `v1/tests/test_skpatch_swarm_upgrade_gate.py` (runs the real script on a stub swarm and a
-  virtual clock). **Instance action**: rerun `provision_skpatch_hosts_nodes.yml` for the managers.
-
 ### skmesh: the postgres runtime directory is created 0700
 
 - **skmesh: `/var/data/runtime/skmesh-<env>/postgres` is created 0700, not 0755** (prod and dev
   playbooks), the same fix skgit got in #426. With postgres older than 18 that directory is PGDATA,
   and each deploy left it 0755 until the image entrypoint's chmod on the next start. Tests:
   `v1/tests/test_skmesh_pgdata_mode.py`. **Instance action**: none; the next skmesh deploy applies it.
-
-### sksec on single-node installs: skfence and skmesh can use the bouncer
-
-- **skfence: `CROWDSEC_ENABLED` (default false).** Puts `crowdsec-bouncer@file` first in the
-  `default@file` chain, the same switch skfenceha has, so a single-node estate running sksec can
-  protect every router on `default@file`. **Instance action**: none by default. To use it, deploy
-  sksec first, then set `skfence.CROWDSEC_ENABLED: true` and redeploy skfence.
-- **skmesh: `TRAEFIK_MIDDLEWARES` (default empty).** Middlewares for every skmesh HTTP router
-  (management API and gRPC, oauth2, signal, relay, dashboard); the routers had no middlewares label
-  at all. Empty renders as before. **Instance action**: none by default. To put skmesh behind
-  CrowdSec, set `skmesh.TRAEFIK_MIDDLEWARES: [crowdsec-bouncer@file]` after sksec is deployed and
-  redeploy skmesh. Tests: `v1/tests/test_sksec_single_node_knobs.py`.
-
-### skhub: the Recognize model check asks Nextcloud where the app is
-
-- **skhub: the "models already present" check uses `occ app:getpath recognize`** instead of a
-  hardcoded `custom_apps/recognize/models` (dev, staging, prod). Where the image ships Recognize
-  under `apps/`, the old check never saw the models, so every deploy ran
-  `occ recognize:download-models` (over 1 GB, deleting the models first; an hour and more on a lab
-  cluster). If `app:getpath` fails the old path is the fallback. Tests:
-  `v1/tests/test_skhub_recognize_models_path.py` (runs the task's shell against a stub docker).
-  **Instance action**: none.
-
-### skpdf: Stirling-PDF updates stop-first
-
-- **skpdf: `update_config.order` is `stop-first`, not `start-first`.** Stirling-PDF is one replica
-  whose state is files on shared storage (`/configs`, pipeline, logs). start-first ran the new
-  container next to the old one on the same files and needed two memory reservations at once, so
-  an update could stall at 0/1. The router baselines for skpdf carry the same one-line change.
-  Tests: `v1/tests/test_skpdf_update_order.py`. **Instance action**: none; the next skpdf deploy
-  applies it (a few seconds of downtime per update instead of an overlap).
-
-### skgit: the postgres runtime directory is created 0700
-
-- **skgit: `/var/data/runtime/<app>-<env>/postgres` is created 0700, not 0755.** With a pinned postgres
-  older than 18 that directory is PGDATA itself, and PostgreSQL refuses to start on a group- or
-  world-readable data directory. Each deploy reset it to 0755 and only the image entrypoint's own
-  chmod on the next container start put it back, so a start without that step would fail. With
-  postgres 18+ (the default) it is the mount's parent, where 0700 is also fine. Tests:
-  `v1/tests/test_skgit_pgdata_mode.py`. **Instance action**: none; the next skgit deploy applies it.
 
 ### skhub: MariaDB buffer pool and memory limit are knobs
 
@@ -164,6 +88,90 @@ Each entry says what an instance must do, if anything.
   application and its `skadmin` binding). Agents: `provision_skaegis_agents.yml` (Debian and Ubuntu,
   pinned and held, `state=absent` to remove) and a Windows script delivered through skrac. It does not
   replace skpatch-hosts: skaegis detects, skpatch remediates.
+
+## skstacks-v2.26.26 - 2026-11-17
+
+Patch line on v2.26.25 (same base and release-line commits, no other changes from main).
+
+### skpatch-hosts: every dashboard action works on an armed host; one onboarding path (#403, #406)
+
+- **Selected-package upgrades (#403):** sudoers grants two root-owned wrappers by absolute path,
+  `skpatch-apt-only-upgrade` and `skpatch-snap-refresh`, instead of an apt-get or snap wildcard
+  (which would allow `-o APT::Update::Pre-Invoke::=<cmd>`). Each wrapper validates every name,
+  clears the environment and ends option parsing with `--`.
+- **Actions that failed on an armed host (#406):** `dpkg --configure -a` for the Repair banner;
+  `env_keep += "DEBIAN_FRONTEND"` so debconf stays noninteractive; dpkg `force-confdef`/`force-confold`
+  (`DPKG_KEEP_CONFFILES: false` opts out); the read-only Proxmox `pvesh get /cluster/tasks` check
+  where pvesh exists; pacman and flatpak hosts (exact commands plus validated wrappers); Ubuntu
+  phased updates; `EXTRA_HOSTS` for SMTP without hairpin NAT. No wildcard anywhere; the Proxmox and
+  Arch variants pass `visudo -cf`.
+- **One onboarding path:** one `provision_skpatch_hosts_nodes.yml` run also converges the dashboard's
+  wrapper scripts and settings; hosts with an uncovered package manager are refused; maintenance
+  pause (`skpatch_hosts_paused` or `/etc/skpatch-hosts.paused`); `--check --diff` no longer fails in
+  registration.
+- **Drift and compliance:** CI fails when the pinned image's own sudo command list changes without
+  a sudoers decision (`v1/tests/fixtures/skpatch_hosts_sudo_commands.json`); a fleet compliance check
+  (drift, coverage, dashboard, sudo denials) with a systemd timer template; alerts that resolve
+  themselves; optional Talk routing; a DNS-server host must not run NetBird DNS.
+- **Instance action:** rerun `provision_skpatch_hosts_nodes.yml` (`--check --diff` first). An estate
+  that was already provisioned from the #406 branch sees no sudoers change.
+
+### skpatch-hosts: swarm managers upgrade the Docker engine one at a time, for real
+
+- **skpatch-hosts: new APT hook `sk-swarm-upgrade-gate` on swarm managers**, installed by
+  `provision_skpatch_hosts_nodes.yml`. The dashboard's chains only wait for apt to exit, so three
+  managers in one schedule restarted dockerd within about 90 seconds. On a batch containing
+  `docker-ce` or `containerd.io` the hook now refuses while the swarm is held, waits a 600 s gap
+  after the previous manager, requires all managers Reachable, and after the upgrade waits (900 s
+  max) for this node Ready/Active, all managers Reachable and every service at desired replicas.
+  A timeout sets the node label `sk.skpatch.hold`, which stops every later manager. Knobs
+  `SWARM_GATE*`, opt-out `skpatch_hosts_swarm_gate: false`. README "Swarm upgrade gate". Tests:
+  `v1/tests/test_skpatch_swarm_upgrade_gate.py` (runs the real script on a stub swarm and a
+  virtual clock). **Instance action**: rerun `provision_skpatch_hosts_nodes.yml` for the managers.
+
+### skhub: the Recognize model check asks Nextcloud where the app is
+
+- **skhub: the "models already present" check uses `occ app:getpath recognize`** instead of a
+  hardcoded `custom_apps/recognize/models` (dev, staging, prod). Where the image ships Recognize
+  under `apps/`, the old check never saw the models, so every deploy ran
+  `occ recognize:download-models` (over 1 GB, deleting the models first; an hour and more on a lab
+  cluster). If `app:getpath` fails the old path is the fallback. Tests:
+  `v1/tests/test_skhub_recognize_models_path.py` (runs the task's shell against a stub docker).
+  **Instance action**: none.
+
+### skpdf: Stirling-PDF updates stop-first
+
+- **skpdf: `update_config.order` is `stop-first`, not `start-first`.** Stirling-PDF is one replica
+  whose state is files on shared storage (`/configs`, pipeline, logs). start-first ran the new
+  container next to the old one on the same files and needed two memory reservations at once, so
+  an update could stall at 0/1. The router baselines for skpdf carry the same one-line change.
+  Tests: `v1/tests/test_skpdf_update_order.py`. **Instance action**: none; the next skpdf deploy
+  applies it (a few seconds of downtime per update instead of an overlap).
+
+### skgit: the postgres runtime directory is created 0700
+
+- **skgit: `/var/data/runtime/<app>-<env>/postgres` is created 0700, not 0755.** With a pinned postgres
+  older than 18 that directory is PGDATA itself, and PostgreSQL refuses to start on a group- or
+  world-readable data directory. Each deploy reset it to 0755 and only the image entrypoint's own
+  chmod on the next container start put it back, so a start without that step would fail. With
+  postgres 18+ (the default) it is the mount's parent, where 0700 is also fine. Tests:
+  `v1/tests/test_skgit_pgdata_mode.py`. **Instance action**: none; the next skgit deploy applies it.
+
+## skstacks-v2.26.25 - 2026-11-17
+
+Patch line on v2.26.24 (same base and release-line commits, plus #431 only).
+
+### sksec on single-node installs: skfence and skmesh can use the bouncer
+
+- **skfence: `CROWDSEC_ENABLED` (default false).** Puts `crowdsec-bouncer@file` first in the
+  `default@file` chain, the same switch skfenceha has, so a single-node estate running sksec can
+  protect every router on `default@file`. **Instance action**: none by default. To use it, deploy
+  sksec first, then set `skfence.CROWDSEC_ENABLED: true` and redeploy skfence.
+- **skmesh: `TRAEFIK_MIDDLEWARES` (default empty).** Middlewares for every skmesh HTTP router
+  (management API and gRPC, oauth2, signal, relay, dashboard); the routers had no middlewares label
+  at all. Empty renders as before. **Instance action**: none by default. To put skmesh behind
+  CrowdSec, set `skmesh.TRAEFIK_MIDDLEWARES: [crowdsec-bouncer@file]` after sksec is deployed and
+  redeploy skmesh. Tests: `v1/tests/test_sksec_single_node_knobs.py`.
 
 ## skstacks-v2.26.24 - 2026-11-17
 
