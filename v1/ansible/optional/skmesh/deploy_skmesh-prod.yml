@@ -33,6 +33,13 @@
     env: prod
     service_name: skmesh
     service_type: optional
+    # Postgres major of the skmesh image, parsed exactly like skmesh.yml.j2 (same default).
+    # Below 18 the runtime directory IS PGDATA (mounted at /var/lib/postgresql/data) and must
+    # be 0700. From 18 on it is the PARENT of PGDATA (mounted at /var/lib/postgresql); the
+    # alpine entrypoint runs as uid 70 and must traverse it, so a 999-owned 0700 parent stops
+    # initdb ("mkdir: can't create directory '/var/lib/postgresql/18/'"). The entrypoint sets
+    # PGDATA itself to 0700 there.
+    skmesh_pg_major: "{{ (skmesh.POSTGRES_IMAGE | default('postgres:18-alpine')).split('@')[0].split('/')[-1].split(':')[-1].lstrip('pg').split('.')[0].split('-')[0] | int(0) }}"
   pre_tasks:
     - name: Select vault file dynamically
       import_tasks: ../../shared/tasks/select_vault_file.yml
@@ -94,7 +101,7 @@
         mode: "{{ item.mode }}"
       loop:
         - { path: "/var/data/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/runtime/{{ app }}-{{ env }}/postgres", owner: "999", group: "999", mode: "0700" }
+        - { path: "/var/data/runtime/{{ app }}-{{ env }}/postgres", owner: "999", group: "999", mode: "{{ '0700' if (skmesh_pg_major | int) < 18 else '0755' }}" }
         - { path: "/var/data/{{ app }}-{{ env }}/database-dump", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/{{ app }}-{{ env }}/management", owner: "root", group: "root", mode: "0700" }
         - { path: "/var/data/{{ app }}-{{ env }}/signal", owner: "root", group: "root", mode: "0755" }
