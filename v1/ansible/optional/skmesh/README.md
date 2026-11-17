@@ -109,6 +109,24 @@ are not rejected.
 SSO flow, and Authentik then asks for the password twice (seen on the iOS app: a login,
 a second login, then the authorize). Set `false` to force a fresh login every time.
 
+## Traefik middlewares (`TRAEFIK_MIDDLEWARES`)
+
+`skmesh.TRAEFIK_MIDDLEWARES` (list or comma string, default empty) sets the
+middlewares of every skmesh HTTP router: management API, management gRPC, oauth2
+(standalone mode only), signal, relay and dashboard. Empty renders no middlewares
+label, exactly as before. Typical use, with sksec deployed first:
+
+```yaml
+skmesh:
+  TRAEFIK_MIDDLEWARES:
+    - crowdsec-bouncer@file
+```
+
+The bouncer fails closed: if it is down, peers cannot reach management, signal or
+the relay through Traefik, and logins fail. Put the operators' and the peers' usual
+ranges in `sksec.ALLOWLIST_CIDRS`. Peers already connected keep their WireGuard
+tunnels.
+
 ## TURN / STUN
 
 Set `skmesh.DEPLOY_COTURN: true` to run coturn as part of this stack;

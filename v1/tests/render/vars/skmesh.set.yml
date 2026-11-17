@@ -2,6 +2,8 @@
 # hooks down their "set" path. Fake values only. AUTH_MODE: authentik
 # (reads sksso's vault: skmesh.with.sksso.yml).
 skmesh:
+  TRAEFIK_MIDDLEWARES:
+  - crowdsec-bouncer@file
   AUTH_MODE: authentik
   NETBIRD_AUTH_CLIENT_ID: skmesh
   IDP_MANAGER_PASSWORD: example-idp-manager-app-password-not-a-secret
