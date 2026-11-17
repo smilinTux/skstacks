@@ -416,6 +416,9 @@
           POST_TIMEOUT_S={{ (skpatch_hosts | default({})).SWARM_GATE_POST_TIMEOUT_S | default(900) | int }}
           MIN_SETTLE_S={{ (skpatch_hosts | default({})).SWARM_GATE_MIN_SETTLE_S | default(60) | int }}
           POLL_S=15
+          # hold (default): on a one-manager swarm an engine upgrade needs an
+          # open sk.skpatch.engine-window label; allow: let it through.
+          SINGLE_MANAGER_ENGINE={{ 'allow' if ((skpatch_hosts | default({})).SWARM_GATE_SINGLE_MANAGER_ENGINE | default('hold')) == 'allow' else 'hold' }}
       when: skp_swarm_gate | bool
 
     - name: Install the swarm upgrade gate APT hook (managers)

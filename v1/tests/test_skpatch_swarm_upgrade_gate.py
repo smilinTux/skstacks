@@ -382,3 +382,70 @@ def test_done_label_set_even_when_busy_label_is_already_gone(tmp_path):
     g.state.write_text(json.dumps(st))
     assert g.run("post").returncode == 0
     assert "sk.skpatch.docker-upgraded-at" in g.st["labels"]["m2"]
+
+
+# --- single-manager swarm (gen estate outage 2026-11-17) -------------------
+ONE_MGR = [{"id": "m1", "host": "solo", "status": "Ready", "avail": "Active", "mstatus": "Leader"}]
+SOLO_SERVICES = ["a_web replicated 1/1"]
+
+
+def solo(tmp_path, labels=None):
+    """A one-manager swarm whose only node (m1) runs the gate."""
+    g = Gate(tmp_path, nodes=ONE_MGR, services=SOLO_SERVICES, labels=labels or {})
+    st = g.st
+    st["self"] = "m1"
+    g.state.write_text(json.dumps(st))
+    return g
+
+
+def test_single_manager_engine_upgrade_is_held_by_default(tmp_path):
+    g = solo(tmp_path)
+    r = g.run("pre", ENGINE)
+    assert r.returncode == 1
+    assert "single-manager swarm" in r.stderr
+    assert "sk.skpatch.docker-upgrading" not in g.st["labels"].get("m1", {})
+    assert not (tmp_path / "run" / "pending").exists()
+
+
+def test_single_manager_dry_run_reports_the_hold(tmp_path):
+    g = solo(tmp_path)
+    assert g.run("pre", ENGINE, "--dry-run").returncode == 1
+
+
+def test_single_manager_non_engine_upgrade_still_passes(tmp_path):
+    g = solo(tmp_path)
+    assert g.run("pre", OTHER).returncode == 0
+
+
+def test_single_manager_open_window_lets_engine_through(tmp_path):
+    g = solo(tmp_path, labels={"m1": {"sk.skpatch.engine-window": str(T0 + 3600)}})
+    r = g.run("pre", ENGINE)
+    assert r.returncode == 0, r.stderr
+    assert g.run("post").returncode == 0
+    assert "sk.skpatch.docker-upgraded-at" in g.st["labels"]["m1"]
+
+
+def test_single_manager_expired_window_holds(tmp_path):
+    g = solo(tmp_path, labels={"m1": {"sk.skpatch.engine-window": str(T0 - 1)}})
+    assert g.run("pre", ENGINE).returncode == 1
+
+
+def test_single_manager_allow_knob_lets_engine_through(tmp_path):
+    g = solo(tmp_path)
+    assert g.run("pre", ENGINE, SINGLE_MANAGER_ENGINE="allow").returncode == 0
+
+
+def test_single_manager_skip_env_still_bypasses(tmp_path):
+    g = solo(tmp_path)
+    assert g.run("pre", ENGINE, SK_SWARM_GATE_SKIP="1").returncode == 0
+
+
+def test_multi_manager_ignores_the_window_rule(tmp_path):
+    g = Gate(tmp_path)  # three managers, no window label
+    assert g.run("pre", ENGINE).returncode == 0
+
+
+def test_provision_writes_single_manager_knob():
+    text = PROVISION.read_text()
+    assert "SINGLE_MANAGER_ENGINE=" in text
+    assert "SWARM_GATE_SINGLE_MANAGER_ENGINE" in text

@@ -375,6 +375,18 @@ contains `docker-ce` or `containerd.io`; every other upgrade passes through.
   `echo docker-ce_x_amd64.deb | sudo sk-swarm-upgrade-gate pre --dry-run`
   and `sudo sk-swarm-upgrade-gate post --dry-run`. Bypass one manual run:
   `sudo SK_SWARM_GATE_SKIP=1 apt-get ...` (logged).
+- **Single-manager swarm:** with ONE manager there is nobody to keep the
+  swarm up, so restarting dockerd stops every service. The gate therefore
+  refuses a `docker-ce`/`containerd.io` upgrade there unless an engine window
+  is open on that node: `docker node update --label-add
+  sk.skpatch.engine-window=$(( $(date +%s) + 7200 )) <node>` (epoch seconds
+  until which it is allowed; it expires by itself, remove it after with
+  `--label-rm`). Every other package still upgrades. Opt a host out with
+  `skpatch_hosts.SWARM_GATE_SINGLE_MANAGER_ENGINE: allow`; bypass one manual
+  run with `SK_SWARM_GATE_SKIP=1`. A single-node estate should also carry no
+  unattended update schedule. (Production outage 2026-11-17: an update
+  schedule ran right after registration and upgraded the engine on a
+  one-node swarm; every service was down 7 to 12 minutes.)
 - Opt out per host with `skpatch_hosts_swarm_gate: false`, or estate-wide
   with `skpatch_hosts.SWARM_GATE: false`; the next provision run removes it.
   Workers are not gated (`docker node ls` needs a manager); keep them in

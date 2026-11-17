@@ -16,6 +16,15 @@
 # straight through.
 #
 #   pre  (before dpkg installs the batch):
+#     0. on a swarm with ONE manager, refuse unless an engine window is open
+#        (node label sk.skpatch.engine-window=<epoch until>, set by hand for
+#        the window, e.g. docker node update --label-add
+#        sk.skpatch.engine-window=$(( $(date +%s) + 7200 )) <node>), or
+#        SINGLE_MANAGER_ENGINE=allow is set in the knobs file. There is no
+#        other manager to keep the swarm up, so an engine upgrade there is a
+#        full outage of every service and must never happen unattended
+#        (gen estate, 2026-11-17: an unattended upgrade took SSO, Nextcloud
+#        and remote access down for 7 to 12 minutes)
 #     1. refuse if any node carries the label sk.skpatch.hold (set by a failed
 #        post below; clear it by hand once the swarm is healthy:
 #        docker node update --label-rm sk.skpatch.hold <node>)
@@ -42,6 +51,7 @@
 #
 # Knobs (/etc/default/sk-swarm-upgrade-gate, written by the role):
 #   GAP_S=600 PRE_TIMEOUT_S=900 POST_TIMEOUT_S=900 MIN_SETTLE_S=60 POLL_S=15
+#   SINGLE_MANAGER_ENGINE=hold (default) | allow
 # Bypass for one manual run (logged): SK_SWARM_GATE_SKIP=1 apt-get ...
 # Check without side effects: echo <deb path> | sk-swarm-upgrade-gate pre --dry-run
 #                             sk-swarm-upgrade-gate post --dry-run
@@ -59,12 +69,14 @@ PRE_TIMEOUT_S=${PRE_TIMEOUT_S:-900}
 POST_TIMEOUT_S=${POST_TIMEOUT_S:-900}
 MIN_SETTLE_S=${MIN_SETTLE_S:-60}
 POLL_S=${POLL_S:-15}
+SINGLE_MANAGER_ENGINE=${SINGLE_MANAGER_ENGINE:-hold}
 STATE_DIR=${STATE_DIR:-/run/sk-swarm-upgrade-gate}
 DOCKER=${DOCKER:-docker}
 
 LABEL_HOLD=sk.skpatch.hold
 LABEL_DONE=sk.skpatch.docker-upgraded-at
 LABEL_BUSY=sk.skpatch.docker-upgrading
+LABEL_WINDOW=sk.skpatch.engine-window
 BUSY_STALE_S=${BUSY_STALE_S:-3600}
 ENGINE_RE='(^|/)(docker-ce|containerd\.io)_[^/]*\.deb$'
 
@@ -105,6 +117,12 @@ nodes_problem() {
     done
 }
 
+# Number of managers in the swarm (0 when docker node ls fails).
+manager_count() {
+    $DOCKER node ls --format '{{.Self}} {{.Hostname}} {{.Status}} {{.Availability}} {{.ManagerStatus}}' 2>/dev/null \
+        | awk 'NF >= 5 {n++} END {print n + 0}'
+}
+
 # Names of replicated/global services below their desired replicas.
 unconverged() {
     $DOCKER service ls --format '{{.Name}} {{.Mode}} {{.Replicas}}' 2>/dev/null \
@@ -129,6 +147,15 @@ pre() {
     echo "$debs" | grep -Eq "$ENGINE_RE" || exit 0
     is_manager || exit 0
     engine=$(echo "$debs" | grep -E "$ENGINE_RE" | sed 's#.*/##' | tr '\n' ' ')
+
+    if [ "$(manager_count)" -le 1 ] && [ "$SINGLE_MANAGER_ENGINE" != allow ]; then
+        until_s=$(label_values "$LABEL_WINDOW" | awk -v me="$(self_id)" '$1 == me && $2 ~ /^[0-9]+$/ {print $2}')
+        if [ -z "$until_s" ] || [ "$(now)" -ge "$until_s" ]; then
+            log "REFUSED docker engine upgrade ($engine): single-manager swarm, restarting dockerd stops every service. Open a window first: docker node update --label-add $LABEL_WINDOW=<epoch until> <node> (or SK_SWARM_GATE_SKIP=1 for one manual run)"
+            exit 1
+        fi
+        log "single-manager swarm: engine window open until $until_s"
+    fi
 
     held=$(label_values "$LABEL_HOLD" | awk '$2 != ""')
     if [ -n "$held" ]; then

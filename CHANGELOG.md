@@ -3,7 +3,17 @@
 All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATCH`.
 Each entry says what an instance must do, if anything.
 
+
 ## Unreleased
+
+### skpatch-hosts: single-manager swarm holds docker engine upgrades
+
+- The swarm upgrade gate refuses a `docker-ce`/`containerd.io` upgrade on a swarm with one manager
+  unless an engine window is open on that node (label `sk.skpatch.engine-window=<epoch until>`) or
+  `skpatch_hosts.SWARM_GATE_SINGLE_MANAGER_ENGINE: allow` is set. On one manager the upgrade restarts
+  every service at once; an unattended one took a single-node estate down for 7 to 12 minutes
+  (2026-11-17). Instance action: rerun `provision_skpatch_hosts_nodes.yml` on managers to install the
+  new gate; a single-node estate that WANTS unattended engine upgrades sets the knob to `allow`.
 
 ### skhub: MariaDB auto-upgrade of an older datadir no longer crash-loops (#438)
 
