@@ -147,6 +147,78 @@
         validate: '/usr/sbin/visudo -cf %s'
       when: skpatch_state == 'present'
 
+    # --- swarm upgrade gate (managers only) ------------------------------
+    # The dashboard upgrades a schedule's systems one after another but only
+    # waits for apt to exit. A docker-ce/containerd.io upgrade restarts
+    # dockerd, so a schedule of three managers restarted it on all three
+    # within about 90 s (2026-11-17). This APT hook holds each manager until
+    # the previous one's swarm has converged plus a minimum gap, and stops
+    # every later manager when one does not converge. It acts only on a batch
+    # that contains the Docker engine; see the script header and README
+    # "Schedules and notifications as code".
+    - name: Detect whether this host is a swarm manager (swarm upgrade gate)
+      command: docker info --format '{{ '{{' }}.Swarm.ControlAvailable{{ '}}' }}'
+      register: skp_swarm_manager
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Decide whether the swarm upgrade gate applies to this host
+      set_fact:
+        skp_swarm_gate: >-
+          {{ skpatch_state == 'present'
+             and ((skpatch_hosts_swarm_gate if skpatch_hosts_swarm_gate is defined
+                   else ((skpatch_hosts | default({})).SWARM_GATE | default(true))) | bool)
+             and (skp_swarm_manager.stdout | default('') | trim) == 'true' }}
+
+    - name: Install the swarm upgrade gate script (managers)
+      copy:
+        src: "{{ playbook_dir }}/src/skpatch-hosts/sk-swarm-upgrade-gate.sh"
+        dest: /usr/local/sbin/sk-swarm-upgrade-gate
+        owner: root
+        group: root
+        mode: '0755'
+      when: skp_swarm_gate | bool
+
+    - name: Write the swarm upgrade gate settings (managers)
+      copy:
+        dest: /etc/default/sk-swarm-upgrade-gate
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          # Managed by skstacks skpatch-hosts (provision_skpatch_hosts_nodes.yml)
+          GAP_S={{ (skpatch_hosts | default({})).SWARM_GATE_GAP_S | default(600) | int }}
+          PRE_TIMEOUT_S={{ (skpatch_hosts | default({})).SWARM_GATE_PRE_TIMEOUT_S | default(900) | int }}
+          POST_TIMEOUT_S={{ (skpatch_hosts | default({})).SWARM_GATE_POST_TIMEOUT_S | default(900) | int }}
+          MIN_SETTLE_S={{ (skpatch_hosts | default({})).SWARM_GATE_MIN_SETTLE_S | default(60) | int }}
+          POLL_S=15
+      when: skp_swarm_gate | bool
+
+    - name: Install the swarm upgrade gate APT hook (managers)
+      copy:
+        dest: /etc/apt/apt.conf.d/50sk-swarm-upgrade-gate
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          // Managed by skstacks skpatch-hosts: Docker engine upgrades on swarm
+          // managers wait for the swarm (sk-swarm-upgrade-gate header).
+          DPkg::Pre-Install-Pkgs { "/usr/local/sbin/sk-swarm-upgrade-gate pre"; };
+          DPkg::Post-Invoke { "/usr/local/sbin/sk-swarm-upgrade-gate post"; };
+      when: skp_swarm_gate | bool
+
+    - name: Remove the swarm upgrade gate where it does not apply (absent, opted out, not a manager)
+      # The hook goes first: an APT hook pointing at a missing script breaks apt.
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/apt/apt.conf.d/50sk-swarm-upgrade-gate
+        - /usr/local/sbin/sk-swarm-upgrade-gate
+        - /etc/default/sk-swarm-upgrade-gate
+      when: not (skp_swarm_gate | bool)
+
     - name: Remove the sudoers rule (absent)
       file:
         path: /etc/sudoers.d/skpatch
