@@ -42,18 +42,25 @@ Each entry says what an instance must do, if anything.
   `branding/<pack>/`. `sksso.branding` still names the pack and its `media/public/<pack>/` dir and
   must now be a plain name. Default empty: unchanged behaviour for `skworld` and `nam`.
 
-### skmesh: the postgres runtime directory mode follows the Postgres major
+### skmesh: the postgres runtime directory owner and mode follow the image
 
-- **skmesh: `/var/data/runtime/skmesh-<env>/postgres` is 0700 only when it is PGDATA** (prod and dev
-  playbooks), the same hardening skgit got in #426. With a pinned postgres older than 18 that
-  directory is PGDATA (mounted at `/var/lib/postgresql/data`) and is now created 0700 instead of
-  0755. With postgres 18 and up (the role default) it is the parent of PGDATA (mounted at
-  `/var/lib/postgresql`) and stays 0755: the alpine entrypoint runs as uid 70 and must traverse it,
-  and a 999-owned 0700 parent stopped initdb (`mkdir: can't create directory
-  '/var/lib/postgresql/18/': Permission denied`; the skstacks-v2.26.26 gate, which shipped without
-  the first version of this change, #429, see #436). The playbooks parse the major with the same
-  expression as `skmesh.yml.j2`'s bind-mount target. Tests: `v1/tests/test_skmesh_pgdata_mode.py`.
-  **Instance action**: none; the next skmesh deploy applies it.
+- **skmesh: `/var/data/runtime/skmesh-<env>/postgres` gets the image's postgres uid as owner and
+  group, and 0700 only when it is PGDATA** (prod and dev playbooks), the same hardening skgit got in
+  #426.
+  - **Owner**: 70 for the alpine images, 999 for the Debian ones. The deploys wrote 999 for every
+    image while the alpine entrypoint chowns PGDATA to 70 on each start, so live hosts drifted
+    from the framework (70:0700 live vs 999:0755 rendered on an estate running 16 alpine).
+  - **Mode**: with a pinned postgres older than 18 the directory is PGDATA (mounted at
+    `/var/lib/postgresql/data`) and is created 0700 instead of 0755. With postgres 18 and up (the
+    role default) it is the parent of PGDATA (mounted at `/var/lib/postgresql`) and stays 0755: the
+    alpine entrypoint runs as uid 70 and must traverse it, and a 999-owned 0700 parent stopped
+    initdb (`mkdir: can't create directory '/var/lib/postgresql/18/': Permission denied`; the
+    skstacks-v2.26.26 gate, which shipped without the first version of this change, #429, see
+    #436).
+  - The playbooks derive both from `skmesh.POSTGRES_IMAGE` with the same default and the same
+    major parse as `skmesh.yml.j2`'s bind-mount target. Tests: `v1/tests/test_skmesh_pgdata_mode.py`.
+    **Instance action**: none; the next skmesh deploy applies it. On an alpine estate its
+    check-diff shows the owner and group going to 70, which is what the entrypoint already does.
 
 ### skhub: MariaDB buffer pool and memory limit are knobs
 
