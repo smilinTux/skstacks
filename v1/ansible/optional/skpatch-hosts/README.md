@@ -343,42 +343,65 @@ has to respect** (read from `server/services/scheduler.ts`):
   nodes are upgraded in serial chains, managers in their own chain after the
   workers.
 
-### Swarm upgrade gate (managers)
+### Swarm upgrade gate (every swarm node)
 
 Ordering alone was not enough: a chain moves to the next system as soon as
 apt exits, and three managers in one chain restarted `dockerd` within about
-90 seconds of each other (2026-11-17). So `provision_skpatch_hosts_nodes.yml`
-installs an APT hook on every host that is a swarm manager
+90 seconds of each other (2026-11-17). The same day a worker's engine upgrade
+left a stale overlay vxlan device behind, and every task the swarm placed on
+it was rejected (`error creating vxlan interface: file exists`) for 11 hours.
+So `provision_skpatch_hosts_nodes.yml` installs an APT hook on every host
+that is a swarm member, manager or worker
 (`/usr/local/sbin/sk-swarm-upgrade-gate`, wired in
 `/etc/apt/apt.conf.d/50sk-swarm-upgrade-gate`). It acts only when the batch
 contains `docker-ce` or `containerd.io`; every other upgrade passes through.
 
-- **Before** the engine is installed: refuse if any node has the label
-  `sk.skpatch.hold`; wait out `SWARM_GATE_GAP_S` (600) since the previous
-  manager's engine upgrade converged; wait at most `SWARM_GATE_PRE_TIMEOUT_S`
-  (900) for no other manager to carry a fresh `sk.skpatch.docker-upgrading`
-  label (overlapping schedules, a manual run) and for every manager to be
-  Ready and Leader/Reachable, else refuse. A
+- **The hold.** While it is set, no swarm node upgrades its engine. It is the
+  file `SWARM_GATE_SHARED_DIR/hold` (default
+  `/var/data/skpatch-swarm-gate/hold`, on the storage every node mounts, so a
+  worker can read it) and, on a manager, the node label `sk.skpatch.hold`.
+  Clear both once the swarm is healthy: `sudo sk-swarm-upgrade-gate
+  clear-hold` on a manager. Without shared storage a worker cannot write the
+  file (the gate logs it) and a failed manager still holds by its label.
+- **Before** the engine is installed, every node: refuse while the hold is
+  set. A manager also waits out `SWARM_GATE_GAP_S` (600) since the previous
+  manager's engine upgrade converged, and waits at most
+  `SWARM_GATE_PRE_TIMEOUT_S` (900) for no other manager to carry a fresh
+  `sk.skpatch.docker-upgrading` label (overlapping schedules, a manual run)
+  and for every manager to be Ready and Leader/Reachable, else refuses. A
   refusal aborts that apt run (nothing installed); the dashboard shows it
   failed and the host is retried next window.
 - **After**: wait `SWARM_GATE_MIN_SETTLE_S` (60), then at most
-  `SWARM_GATE_POST_TIMEOUT_S` (900) until this node is Ready/Active, every
-  manager Ready and Leader/Reachable, and every replicated/global service is
-  at its desired replicas (services already short before the upgrade are
-  reported, not blamed). Success labels the node
-  `sk.skpatch.docker-upgraded-at`. Timeout labels it `sk.skpatch.hold` and
-  fails, so **no later manager upgrades the engine** until someone clears it:
-  `docker node update --label-rm sk.skpatch.hold <node>`.
-- Worst case per manager is about 40 minutes, inside the app's 3600 s
-  command limit. Space manager schedules accordingly.
-- Check without side effects on a manager:
+  `SWARM_GATE_POST_TIMEOUT_S` (900) until, on two polls in a row:
+  - dockerd answers and this node is an active swarm member;
+  - dockerd's journal shows no task rejected here with
+    `vxlan interface: file exists` since the upgrade;
+  - on a manager also: every manager Ready and Leader/Reachable, and every
+    replicated/global service at its desired replicas (services already short
+    before the upgrade are reported, not blamed).
+
+  On a vxlan rejection the gate deletes each `vx-<vni>-<net>` device (host
+  netns and docker's `/run/docker/netns/*`) whose overlay has no running
+  container on this node and that is not the ingress overlay; docker
+  recreates it with the next task. Then the checks start over. A device of an
+  overlay in use is never touched.
+- Success on a manager labels it `sk.skpatch.docker-upgraded-at`. A timeout
+  sets the hold and fails the apt run, so the dashboard records a failed
+  upgrade (the `upgrade-failed` alert of `skpatch_watch`, quoting the gate's
+  FAILED line) and **no later node upgrades the engine** until the hold is
+  cleared.
+- A worker cannot see the swarm's services or other nodes (`docker node ls`
+  needs a manager): it checks only itself. Workers are serialised by their
+  schedule chain, since post holds apt until the node is back.
+- Worst case per node is about 40 minutes, inside the app's 3600 s command
+  limit. Space schedules accordingly.
+- Check without side effects on any swarm node:
   `echo docker-ce_x_amd64.deb | sudo sk-swarm-upgrade-gate pre --dry-run`
-  and `sudo sk-swarm-upgrade-gate post --dry-run`. Bypass one manual run:
-  `sudo SK_SWARM_GATE_SKIP=1 apt-get ...` (logged).
+  and `sudo sk-swarm-upgrade-gate post --dry-run` (looks at the last hour of
+  the journal and names the vx devices it would delete). Bypass one manual
+  run: `sudo SK_SWARM_GATE_SKIP=1 apt-get ...` (logged).
 - Opt out per host with `skpatch_hosts_swarm_gate: false`, or estate-wide
   with `skpatch_hosts.SWARM_GATE: false`; the next provision run removes it.
-  Workers are not gated (`docker node ls` needs a manager); keep them in
-  their own staggered schedules.
 
 Example (estate specifics, host names and times, belong in the estate's own
 prod repo):
