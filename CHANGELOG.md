@@ -5,6 +5,18 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+### sksec on single-node installs: skfence and skmesh can use the bouncer
+
+- **skfence: `CROWDSEC_ENABLED` (default false).** Puts `crowdsec-bouncer@file` first in the
+  `default@file` chain, the same switch skfenceha has, so a single-node estate running sksec can
+  protect every router on `default@file`. **Instance action**: none by default. To use it, deploy
+  sksec first, then set `skfence.CROWDSEC_ENABLED: true` and redeploy skfence.
+- **skmesh: `TRAEFIK_MIDDLEWARES` (default empty).** Middlewares for every skmesh HTTP router
+  (management API and gRPC, oauth2, signal, relay, dashboard); the routers had no middlewares label
+  at all. Empty renders as before. **Instance action**: none by default. To put skmesh behind
+  CrowdSec, set `skmesh.TRAEFIK_MIDDLEWARES: [crowdsec-bouncer@file]` after sksec is deployed and
+  redeploy skmesh. Tests: `v1/tests/test_sksec_single_node_knobs.py`.
+
 ### skpdf: Stirling-PDF updates stop-first
 
 - **skpdf: `update_config.order` is `stop-first`, not `start-first`.** Stirling-PDF is one replica
