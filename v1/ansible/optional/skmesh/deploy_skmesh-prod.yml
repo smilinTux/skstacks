@@ -94,7 +94,7 @@
         mode: "{{ item.mode }}"
       loop:
         - { path: "/var/data/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
-        - { path: "/var/data/runtime/{{ app }}-{{ env }}/postgres", owner: "999", group: "999", mode: "0755" }
+        - { path: "/var/data/runtime/{{ app }}-{{ env }}/postgres", owner: "999", group: "999", mode: "0700" }
         - { path: "/var/data/{{ app }}-{{ env }}/database-dump", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/{{ app }}-{{ env }}/management", owner: "root", group: "root", mode: "0700" }
         - { path: "/var/data/{{ app }}-{{ env }}/signal", owner: "root", group: "root", mode: "0755" }
