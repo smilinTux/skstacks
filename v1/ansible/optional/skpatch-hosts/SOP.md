@@ -307,6 +307,19 @@ the vault side.
 read (and, if armed, action) lines added by hand; see upstream's
 sudoers-generator documentation for the dnf/pacman/apk equivalents.
 
+**Selected-package upgrades.** An armed host also gets two root-owned
+wrappers, `/usr/local/sbin/skpatch-apt-only-upgrade` and
+`/usr/local/sbin/skpatch-snap-refresh`, granted in sudoers by absolute path
+(no wildcard, ever: an `apt-get`/`snap` wildcard is root). Each validates
+every argument against a strict regex and execs one fixed command. **Known
+limitation:** the pinned dashboard's "upgrade selected packages" still calls
+`apt-get`/`snap` directly (`server/services/script-service.ts`,
+`builtinUpgradeSelectedCommand`, lines 1134 and 1147 of 2026.10.9) and has no
+env or config knob for it; point it at the wrappers once per system with a
+custom script override. Recipe, regexes and caveats: README "Selected-package
+upgrades". Applied with `provision_skpatch_hosts_nodes.yml`; do not apply it
+to a host whose skpatch sudoers is paused for maintenance.
+
 ## 7. API / Reference
 
 This role exposes no API of its own. It configures the upstream app's
@@ -342,6 +355,7 @@ self-signed five-minute session for `REGISTER_AS`), and ships two playbooks:
 | A schedule or channel you changed in the dashboard reverted | It is declared in `SCHEDULES`/`NOTIFICATIONS` (or `skpatch_hosts_schedules`); every registrar run converges it back. Change it there. |
 | `upgrade mode pending (package manager not detected yet ...)` | Expected right after a system is registered; the next run sets it. |
 | Upgrade-all ends "warning" on the snap step | The host was provisioned before the `snap refresh` sudoers line existed; rerun the provisioning playbook against it. |
+| "Upgrade selected" fails with `sudo: a password is required` | The dashboard runs `apt-get ... install --only-upgrade -y <pkgs>` (or `snap refresh <names>`) directly and sudoers deliberately has no wildcard for it. Rerun the provisioning playbook so the wrappers exist, then set the per-system custom script override that calls them (README "Selected-package upgrades"). A wrapper exiting 2 with `refusing invalid ... name` means an argument failed its regex, by design. |
 | A scheduled reboot of a Proxmox host says "Reboot blocked" | By design: the role does not grant the app's `pvesh` backup guard, so hypervisors are rebooted from Proxmox. Take them out of the reboot schedule. |
 | A retired node still shows in the dashboard | Expected: registration never deletes. Remove it by hand once its history is no longer needed. |
 

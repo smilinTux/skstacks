@@ -170,6 +170,86 @@ def test_custom_provision_user_name_is_used_in_the_rule(tmp_path):
     assert "skpatch-ro" not in text
 
 
+# --- selected-package upgrades: wrappers, never an apt-get/snap wildcard ----
+
+WRAPPERS = ("skpatch-apt-only-upgrade", "skpatch-snap-refresh")
+
+
+def _rules(text):
+    return [l for l in text.splitlines() if l.strip() and not l.lstrip().startswith("#")]
+
+
+def test_actions_enabled_sudoers_grants_the_two_wrappers_by_absolute_path(tmp_path):
+    text = sudoers(tmp_path, {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True})
+    for name in WRAPPERS:
+        assert f"skpatch-ro ALL=(root) NOPASSWD: /usr/local/sbin/{name}\n" in text + "\n"
+
+
+def test_read_only_sudoers_has_no_wrapper_lines(tmp_path):
+    text = sudoers(tmp_path, {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": False})
+    assert "/usr/local/sbin" not in "\n".join(_rules(text))
+
+
+def test_host_ceiling_decides_the_wrapper_lines_like_the_apt_lines(tmp_path):
+    (tmp_path / "off").mkdir()
+    (tmp_path / "on").mkdir()
+    off = sudoers(tmp_path / "off", {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True},
+                  extra_vars={"skpatch_hosts_allow_actions": False})
+    on = sudoers(tmp_path / "on", {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": False},
+                 extra_vars={"skpatch_hosts_allow_actions": True})
+    assert "/usr/local/sbin/skpatch-apt-only-upgrade" not in off
+    assert "/usr/local/sbin/skpatch-apt-only-upgrade" in on
+
+
+@pytest.mark.parametrize("allow", [False, True])
+def test_sudoers_has_no_wildcard_on_apt_get_or_snap(tmp_path, allow):
+    text = sudoers(tmp_path, {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": allow})
+    for rule in _rules(text):
+        if "/apt-get" in rule or "/snap" in rule or "/apt " in rule:
+            assert "*" not in rule, f"wildcard on an apt/snap rule: {rule!r}"
+    # No rule anywhere may carry a wildcard, and the selected-package form of
+    # apt-get is never granted directly: only through the wrapper.
+    assert not [r for r in _rules(text) if "*" in r]
+    assert not [r for r in _rules(text) if "install" in r and "apt-get" in r]
+    assert not [r for r in _rules(text) if "--only-upgrade" in r]
+    assert not [r for r in _rules(text) if r.rstrip().endswith("NOPASSWD: ALL")]
+
+
+def test_rendered_sudoers_with_wrappers_passes_visudo(tmp_path):
+    text = sudoers(tmp_path, {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True})
+    assert "/usr/local/sbin/skpatch-snap-refresh" in text
+    assert_visudo_accepts(text)
+
+
+def test_wrappers_are_rendered_to_usr_local_sbin_only_where_actions_are_allowed(tmp_path):
+    (tmp_path / "on").mkdir()
+    (tmp_path / "off").mkdir()
+    sudoers(tmp_path / "on", {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": True})
+    sudoers(tmp_path / "off", {"SSH_PUBLIC_KEY": PUBKEY, "ALLOW_ACTIONS": False})
+    for name in WRAPPERS:
+        shipped = (ROLE / "src" / "skpatch-hosts" / f"{name}.sh").read_bytes()
+        assert (tmp_path / "on/run/out/_copy/usr/local/sbin" / name).read_bytes() == shipped
+        assert not (tmp_path / "off/run/out/_copy/usr/local/sbin" / name).exists()
+
+
+def test_provision_installs_the_wrappers_root_owned_0755_and_removes_them_when_not_allowed():
+    """Static guard (the render harness never applies owner/mode): root:root
+    0755, an absolute destination under /usr/local/sbin, gated exactly like
+    the apt upgrade lines, removed on de-provision and when a host drops back
+    to report-only."""
+    pb = PB.read_text()
+    inst = _task(pb, "Install the selected-package upgrade wrappers (present, actions allowed)")
+    assert "owner: root" in inst and "group: root" in inst and "mode: '0755'" in inst
+    assert 'dest: "/usr/local/sbin/{{ item }}"' in inst
+    assert "skpatch-apt-only-upgrade" in inst and "skpatch-snap-refresh" in inst
+    assert "when: skpatch_state == 'present' and skp_node_allow_actions | bool" in inst
+    gone = _task(pb, "Remove the selected-package upgrade wrappers (absent, or actions no longer allowed)")
+    assert "state: absent" in gone
+    assert "when: skpatch_state == 'absent' or not (skp_node_allow_actions | bool)" in gone
+    # installed before the sudoers rule that names them
+    assert pb.index("Install the selected-package upgrade wrappers") < pb.index("Write the sudoers rule (present)")
+
+
 # --- the real visudo, both variants (coordinator-requested safety check) ---
 
 def test_rendered_sudoers_passes_visudo_read_only(tmp_path):
