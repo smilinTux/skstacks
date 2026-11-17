@@ -6,6 +6,17 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+### skrac, skmesh: portal tiles open in a new tab
+
+- **Both Authentik provisioners now set `open_in_new_tab`** on their application (knob
+  `<role>.AUTHENTIK_TILE_OPEN_IN_NEW_TAB`, default `true`), matching the shared portal-tile
+  helper's default. Before, they never set it, so a fresh create got Authentik's default (False)
+  and these were the only two tiles opening in the same tab (found on an instance 2026-11-17).
+  The deploy now also puts it back if it drifts. Tests: `v1/tests/test_authentik_tile_open_in_new_tab.py`.
+- **Instance action:** none. An instance that wants the old behaviour sets the knob to `false`.
+  On the next skrac or skmesh deploy the provisioner prints `application: updated (open_in_new_tab)`
+  where the tile was still False.
+
 ### skmesh: the bundled coturn is reachable; skhub: Talk without the HPB
 
 - **skmesh coturn (`DEPLOY_COTURN`) now works.** It used `network_mode: host`, which `docker stack

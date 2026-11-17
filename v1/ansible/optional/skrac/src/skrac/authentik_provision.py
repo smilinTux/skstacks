@@ -142,6 +142,13 @@ def signing_key(api, name):
     return kp["pk"]
 
 
+def truthy(value):
+    """A config flag that may arrive as a bool or as a templated string."""
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
+
 def provision(api, cfg):
     version = api.get("/admin/version/")["version_current"]
     modern = version_tuple(version) >= (2024, 8)
@@ -187,6 +194,9 @@ def provision(api, cfg):
         "slug": cfg["app_slug"],
         "provider": prov["pk"],
         "meta_launch_url": cfg["launch_url"],
+        # Every other portal tile opens in a new tab (the shared portal-tile
+        # helper defaults it to true); Authentik's own default is False.
+        "open_in_new_tab": truthy(cfg.get("open_in_new_tab", True)),
     }
     if cfg.get("icon"):
         app_fields["meta_icon"] = cfg["icon"]

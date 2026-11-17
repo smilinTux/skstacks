@@ -142,6 +142,10 @@ below is a separate, optional, extra layer, off by default).
    self-service local signup, independent of OIDC; left off so the only
    way in is OIDC or an admin-created local account.
 
+The tile opens in a new tab like every other portal tile
+(`skrac.AUTHENTIK_TILE_OPEN_IN_NEW_TAB`, default `true`; Authentik's own default
+is false). The deploy sets it on create and puts it back if it drifts.
+
 `AUTH_MODE: local` (the default) renders no `authStrategies` block at all:
 local accounts only, exactly like a hand-run MeshCentral. This is the
 standalone path: no SSO in front, no Authentik objects, CrowdSec optional
