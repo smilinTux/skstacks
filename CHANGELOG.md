@@ -5,6 +5,16 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+### skhub: MariaDB auto-upgrade of an older datadir no longer crash-loops (#438)
+
+- The `db` service reads the shared `skhub.env`, whose `MYSQL_HOST=db` is meant for the Nextcloud
+  containers. On a datadir from an older MariaDB major, the image entrypoint's `mariadb-upgrade`
+  (with `MARIADB_AUTO_UPGRADE=1`) honoured it and tried TCP to `db` while the temporary server
+  listened on the socket only: "Can't connect to server on 'db'", "Upgrade failed", crash loop.
+  The db wrapper now unsets `MYSQL_HOST` before `docker-entrypoint.sh`. skbook's identical wrapper
+  gets the same line (its env has no `MYSQL_HOST`; the two stay in step). Found migrating a
+  MariaDB 10.11 instance onto the 12.3 default. Test: `v1/tests/test_skhub_db_no_mysql_host.py`.
+
 ### sksso: instance-owned branding packs (`sksso.branding_dir`)
 
 - New optional `sksso.branding_dir`: load the branding pack from the instance repo (absolute, or
