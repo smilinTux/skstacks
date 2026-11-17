@@ -2,6 +2,7 @@
 # hooks down their "set" path. Fake values only.
 skfence:
   ACME_ENABLED: true
+  CROWDSEC_ENABLED: true
   DASHBOARD_HOST: traefik.render.example.test
   EXTRA_DYNAMIC_FILES:
   - src: extra-dynamic/example.yml.j2
