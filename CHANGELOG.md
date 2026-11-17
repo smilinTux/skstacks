@@ -5,6 +5,26 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+### skpatch-hosts: the swarm upgrade gate covers workers and repairs stale vxlan devices
+
+- **Every swarm node gets the gate, workers too** (`provision_skpatch_hosts_nodes.yml` now detects a
+  swarm member, `LocalNodeState` active, instead of a manager). On 2026-11-17 a worker's docker-ce
+  upgrade left a stale overlay vxlan device and every task placed there was rejected with
+  `error creating vxlan interface: file exists` for 11 hours.
+- **After an engine upgrade, every node** waits until it is an active swarm member and dockerd's
+  journal shows no such rejection since the upgrade. On a rejection it deletes only the `vx-*`
+  devices (host netns and docker's overlay netns) of overlays with no running container on that node,
+  never the ingress's, and checks again. A timeout sets the hold and fails the apt run (the dashboard's
+  failed upgrade, alerted by `skpatch_watch`).
+- **One hold for the whole swarm**: a file on shared storage (`SWARM_GATE_SHARED_DIR`, default
+  `/var/data/skpatch-swarm-gate`) that workers and managers read, plus the manager label as before.
+  A failed worker stops the next worker and every manager. `sk-swarm-upgrade-gate clear-hold` clears
+  both.
+- Tests: `v1/tests/test_skpatch_swarm_upgrade_gate.py`, which runs the script against a fake swarm
+  (docker, ip, nsenter and journalctl stubs). **Instance action**: rerun the provisioning playbook
+  with the workers in `-l` (and the dashboard node); the check-diff shows the three gate files new
+  on each worker and the settings file gaining `SHARED_DIR` on each manager.
+
 ### skhub: MariaDB auto-upgrade of an older datadir no longer crash-loops (#438)
 
 - The `db` service reads the shared `skhub.env`, whose `MYSQL_HOST=db` is meant for the Nextcloud
