@@ -63,6 +63,22 @@
     # Instances written before AUTH_MODE existed were Authentik-wired and
     # carry NETBIRD_AUTH_CLIENT_ID; refuse to flip them to standalone (a
     # different user store) just because AUTH_MODE is unset.
+    # Bundled coturn (DEPLOY_COTURN): a relay range it can use, and the
+    # shared secret NetBird management and other TURN clients mint from.
+    - name: Check the bundled coturn settings
+      assert:
+        that:
+          - (skmesh.TURN_MIN_PORT | default(49152) | int) >= 1024
+          - (skmesh.TURN_MAX_PORT | default(65535) | int) <= 65535
+          - (skmesh.TURN_MIN_PORT | default(49152) | int) < (skmesh.TURN_MAX_PORT | default(65535) | int)
+          - (skmesh.TURN_SECRET | default('') | string | length) >= 32
+        fail_msg: >-
+          skmesh.DEPLOY_COTURN needs TURN_MIN_PORT < TURN_MAX_PORT within 1024-65535 and a
+          TURN_SECRET of at least 32 characters. See README "TURN / STUN".
+      when: skmesh.DEPLOY_COTURN | default(false) | bool
+      tags:
+        - config
+
     - name: Check skmesh.AUTH_MODE and the vault keys it needs
       assert:
         that:
@@ -125,6 +141,7 @@
         - { src: "postgres-backup.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/postgres-backup.env" }
         - { src: "{{ app }}.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env" }
         - { src: "turnserver.conf.j2", dest: "/var/data/config/{{ app }}-{{ env }}/turnserver.conf" }
+        - { src: "coturn-run.sh.j2", dest: "/var/data/config/{{ app }}-{{ env }}/coturn-run.sh" }
       tags:
         - templates
 

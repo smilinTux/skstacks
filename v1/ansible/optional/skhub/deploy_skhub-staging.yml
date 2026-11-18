@@ -146,15 +146,25 @@
         _stun_talk: "{{ ((skhub | default({})).enable_talk_hpb | default(false) | string | lower) in ['true', 'yes', 'on', '1'] }}"
         _tls443: "{{ ((skhub | default({})).TALK_TURN_TLS_443 | default(false) | string | lower) in ['true', 'yes', 'on', '1'] }}"
         _turn_domain: "{{ (skhub | default({})).TURN_DOMAIN | default('', true) | string }}"
+        _sig: "{{ (skhub | default({})).TALK_SIGNALING | default('', true) | string | lower }}"
+        _internal: "{{ ((skhub | default({})).TALK_SIGNALING | default('', true) | string | lower) == 'internal' }}"
+        _turns_port: "{{ (skhub | default({})).TALK_TURNS_PORT | default('', true) | string }}"
+        _turn_secret_len: "{{ (skhub | default({})).turn_secret | default('', true) | string | length }}"
       assert:
         that:
+          - _sig in ['', 'internal']
+          - not (_internal and _stun_talk)
+          - >-
+            not _internal or ((_turn_secret_len | int) >= 32 and _turn_domain | length > 0
+            and _turn_domain is match('^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?([.][A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$'))
+          - _turns_port | length == 0 or (_internal and _turns_port is match('^[1-9][0-9]{0,4}$') and (_turns_port | int) <= 65535)
           - >-
             _ii_ip | length == 0 or (
             _ii_ip == (_ii_ip | trim) and _ii_ip is match('^(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])([.](25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])){3}$')
             and not (_ii_ip is match('^(0|127)[.]')) and _ii_ip != '255.255.255.255')
           - _stun is sequence and _stun is not string and _stun is not mapping
           - (_stun | length) <= 10
-          - (_stun | length) == 0 or _stun_talk
+          - (_stun | length) == 0 or _stun_talk or _internal
           - >-
             not _tls443 or (_stun_talk and _turn_domain | length > 0
             and _turn_domain is match('^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?([.][A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$'))
@@ -168,6 +178,9 @@
           (got '{{ _ii_ip }}'). skhub.TALK_STUN_SERVERS must be a list of at most 10 host:port strings (port 1-65535,
           no scheme, no spaces) and needs skhub.enable_talk_hpb (got {{ _stun | to_json }}).
           skhub.TALK_TURN_TLS_443 needs skhub.enable_talk_hpb and skhub.TURN_DOMAIN set to a DNS name (got '{{ _turn_domain }}').
+          skhub.TALK_SIGNALING must be unset or 'internal' (got '{{ _sig }}'); 'internal' means no HPB
+          (enable_talk_hpb false), and needs skhub.TURN_DOMAIN (a DNS name) and a turn_secret of at least 32 characters.
+          skhub.TALK_TURNS_PORT (1-65535) needs TALK_SIGNALING internal (got '{{ _turns_port }}').
         quiet: true
 
     - name: Fail closed on local db/redis data paths without a pinned data node
@@ -978,6 +991,37 @@
       # "Config value were not updated" for a refused write and for an unchanged
       # one alike, so that text cannot be the failure signal). no_log stays: the
       # values carry the signaling and TURN secrets.
+      no_log: true
+      tags:
+        - post-deploy
+        - talk
+
+    # TALK_SIGNALING: internal (no HPB): Talk uses its built-in signaling, so
+    # any signaling_servers left from an earlier HPB would make every call and
+    # room event fail ("Failed to send message to signaling server"); remove
+    # it. TURN and STUN point at an external server, typically the cluster's
+    # skmesh coturn (README "Talk without the HPB").
+    - name: Configure Talk for internal signaling and an external TURN server
+      shell: |
+        set -e
+        CONTAINER_ID="{{ nextcloud_container.stdout | trim }}"
+        TYPED=""
+        if docker exec "$CONTAINER_ID" php occ config:app:set --help | grep -q -- '--sensitive'; then TYPED="--no-interaction --type=array --sensitive"; fi
+        docker exec "$CONTAINER_ID" php occ config:app:delete spreed signaling_servers >/dev/null 2>&1 || true
+        docker exec "$CONTAINER_ID" php occ config:app:set spreed turn_servers $TYPED --value='[{"schemes":"turn","server":"{{ skhub.TURN_DOMAIN }}:3478","secret":"{{ skhub.turn_secret }}","protocols":"udp,tcp"}{% if (skhub.TALK_TURNS_PORT | default('', true) | string | length) > 0 %},{"schemes":"turns","server":"{{ skhub.TURN_DOMAIN }}:{{ skhub.TALK_TURNS_PORT }}","secret":"{{ skhub.turn_secret }}","protocols":"tcp"}{% endif %}]' >/dev/null 2>&1
+        docker exec "$CONTAINER_ID" php occ config:app:get spreed turn_servers >/dev/null
+        {% if (skhub.TALK_STUN_SERVERS | default([], true) | length) > 0 %}
+        docker exec "$CONTAINER_ID" php occ config:app:set spreed stun_servers $TYPED --value='{{ skhub.TALK_STUN_SERVERS | map('string') | list | to_json }}' >/dev/null 2>&1
+        docker exec "$CONTAINER_ID" php occ config:app:get spreed stun_servers >/dev/null
+        {% endif %}
+      delegate_to: "{{ nextcloud_node.stdout | trim }}"
+      when: >-
+        ((skhub.TALK_SIGNALING | default('', true) | string | lower) == 'internal')
+        and not (skhub.enable_talk_hpb | default(false))
+        and nextcloud_container is defined and nextcloud_container.stdout is defined
+        and (nextcloud_container.stdout | trim | length > 0)
+      # NOT best-effort, same as the HPB variant above: without TURN, calls
+      # fail behind NAT. no_log: the values carry the TURN secret.
       no_log: true
       tags:
         - post-deploy
