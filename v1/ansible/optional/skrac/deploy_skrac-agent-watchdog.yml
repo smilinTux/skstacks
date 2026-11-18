@@ -80,7 +80,7 @@
         - skrac-agent-watchdog.timer
       when: _wd_present
 
-    # A hung agent ignored SIGTERM for the default 90 s (gen, 2026-11-18):
+    # A hung agent ignored SIGTERM for the default 90 s (2026-11-18):
     # stop it faster, and always bring it back.
     - name: Agent units restart always and stop within the timeout
       copy:

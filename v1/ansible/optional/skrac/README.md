@@ -428,7 +428,7 @@ through Traefik on 443.
 ## Agent watchdog
 
 `deploy_skrac-agent-watchdog.yml` puts a watchdog on hosts that run MeshCentral
-agents (`meshagent*.service`, installed from the skrac server). Seen on gen
+agents (`meshagent*.service`, installed from the skrac server). Seen on one estate
 2026-11-18: an agent kept its TCP connection ESTABLISHED while the server had
 listed it offline for 40 minutes, then ignored SIGTERM for 90 s.
 
