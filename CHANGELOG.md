@@ -6,6 +6,10 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+### skrac: agent watchdog for stale MeshCentral agent sessions
+
+- skrac: agent watchdog (`deploy_skrac-agent-watchdog.yml`): a timer restarts a MeshCentral agent whose server session went stale (nothing received for 10 min, no connection, or a spinning main process), and agent units get `Restart=always` and a 20 s stop timeout. Local signals only, no credentials on the host. From an agent that sat offline while its TCP connection stayed ESTABLISHED.
+
 ### skgit: Forgejo pulls from code.forgejo.org (codeberg.org is NXDOMAIN)
 
 - codeberg.org stopped resolving on 2026-11-18 (`.org` answers NXDOMAIN), so

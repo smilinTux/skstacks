@@ -1,0 +1,8 @@
+[Unit]
+Description=skrac agent watchdog (restart a MeshCentral agent with a stale server session)
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/skrac-agent-watchdog
+ExecStart=/usr/local/sbin/skrac-agent-watchdog
