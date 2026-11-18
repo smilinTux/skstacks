@@ -143,7 +143,7 @@ def test_conf_keeps_an_explicit_external_mapping():
 def test_conf_never_relays_into_private_ranges(rng):
     conf = _conf(COTURN)
     assert f"denied-peer-ip={rng}" in conf
-    assert "no-loopback-peers" in conf
+    assert "allow-loopback-peers" not in conf  # coturn 4.18 denies loopback peers by default
 
 
 def test_conf_drops_privileges():
@@ -155,7 +155,14 @@ def test_conf_tls_on_5349_only_with_tls():
     tls, plain = _conf(TLS), _conf(COTURN)
     assert "tls-listening-port=5349" in tls and "cert=/certs-dump/turn.demo.example.test/certificate.crt" in tls
     assert "pkey=/certs-dump/turn.demo.example.test/privatekey.key" in tls and "no-tls" not in tls
-    assert "no-tls" in plain and "no-dtls" in plain and "tls-listening-port=5349" not in plain
+    assert "dtls" in tls  # coturn 4.18 starts DTLS only when asked
+    assert "no-tls" in plain and "dtls" not in plain and "tls-listening-port=5349" not in plain
+
+
+def test_conf_has_no_options_coturn_4_18_rejects():
+    for conf in (_conf(COTURN), _conf(TLS)):
+        for gone in ("no-cli", "no-tlsv1", "no-tlsv1_1", "no-dtls", "no-loopback-peers", "lt-cred-mech"):
+            assert gone not in conf, gone
 
 
 @pytest.mark.parametrize("skmesh", [COTURN, TLS], ids=["plain", "tls"])
