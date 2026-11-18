@@ -240,3 +240,12 @@ def test_skhub_internal_signaling_task(env):
     checks = " ".join(json.dumps(t.get("assert", {})) for t in pre)
     assert "_sig in ['', 'internal']" in checks
     assert "not (_internal and _stun_talk)" in checks
+
+
+def test_playbooks_restart_coturn_when_its_config_changes():
+    for env in ("prod", "dev"):
+        pb = (SKMESH / f"deploy_skmesh-{env}.yml").read_text()
+        assert "register: skmesh_env_templates" in pb
+        assert "Restart coturn when its config changed" in pb
+        assert "docker service update --force --detach {{ app }}-{{ env }}_coturn" in pb
+        assert "'turnserver.conf.j2', 'coturn-run.sh.j2'" in pb
