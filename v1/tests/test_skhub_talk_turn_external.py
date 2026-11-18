@@ -69,6 +69,43 @@ def test_talk_env_points_janus_at_the_external_turn():
     assert "TURN_DOMAIN=turn.example.com" in lines and "TALK_PORT=3478" in lines
 
 
+# --- healthcheck (#458) -------------------------------------------------------
+# aio-talk's /healthcheck.sh also probes eturnal (TALK_PORT, eturnalctl status),
+# so without eturnal the image's own check never passes and Swarm kills a healthy
+# HPB every minute. External mode probes only signaling and Janus.
+
+def _hc(**over):
+    return _talk(**over).get("healthcheck")
+
+
+def test_external_healthcheck_probes_signaling_and_janus_only():
+    hc = _hc(**EXT)
+    assert hc is not None and hc["test"][0] == "CMD-SHELL"
+    probe = hc["test"][1]
+    assert "8081" in probe and "/api/v1/stats" in probe and "8188" in probe
+    assert "eturnal" not in probe and "3478" not in probe and "TALK_PORT" not in probe
+    assert hc["start_period"] == "60s" and hc["retries"] == 3
+
+
+def test_default_mode_keeps_the_image_healthcheck():
+    assert _hc() is None
+
+
+def test_external_with_eturnal_in_an_explicit_cmd_keeps_the_image_healthcheck():
+    cmd = ["dinit", "--system", "--container", "nats-server", "eturnal", "janus", "signaling"]
+    assert _hc(**EXT, TALK_HPB_CMD=cmd) is None
+
+
+def test_external_with_a_pinned_supervisord_image_keeps_the_image_healthcheck():
+    assert _hc(**EXT, TALK_HPB_IMAGE="ghcr.io/nextcloud-releases/aio-talk:20260122_105751") is None
+
+
+@pytest.mark.parametrize("ext", [{}, EXT])
+def test_healthcheck_test_override(ext):
+    test = ["CMD", "/healthcheck.sh"]
+    assert _hc(**ext, TALK_HPB_HEALTHCHECK_TEST=test)["test"] == test
+
+
 # --- the guard -----------------------------------------------------------------
 
 GOOD = [
