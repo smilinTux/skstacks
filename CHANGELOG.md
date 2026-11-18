@@ -6,6 +6,15 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+
+## skstacks-v2.26.27 - 2026-11-18
+
+Cut from main. Gated on skstack06 (fresh, PROFILE=full). Read the upgrade notes before rolling:
+skmon v2 replaces the skmon stack, skgit rolls once onto the code.forgejo.org registry, and the
+first skpatch run on workers now goes through the swarm upgrade gate. An instance that runs the
+Talk HPB next to the bundled skmesh coturn sets `skhub.TALK_TURN_EXTERNAL: true` with
+`TURN_DOMAIN` and `turn_secret` pointing at that coturn.
+
 ### skhub: the Talk HPB can use an external TURN (`TALK_TURN_EXTERNAL`)
 
 - **`skhub.TALK_TURN_EXTERNAL: true` (with `enable_talk_hpb`)** keeps the HPB and hands TURN to the
