@@ -94,6 +94,10 @@ Otherwise Authentik answers the IdP manager's client_credentials login with
 `invalid_grant` and management logs `unable to get authentik token,
 statusCode 400`.
 
+The tile opens in a new tab like every other portal tile
+(`skmesh.AUTHENTIK_TILE_OPEN_IN_NEW_TAB`, default `true`; Authentik's own default
+is false). The deploy sets it on create and puts it back if it drifts.
+
 Every secret goes in on stdin; the task is `no_log` and the provisioner
 prints status lines only. Management reaches `sso<-env>.<base>` through an
 `extra_hosts` entry to `SSO_HOST_IP` (the edge), and the dashboard's
