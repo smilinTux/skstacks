@@ -23,8 +23,13 @@
     (HMAC-SHA1, time-limited) credentials from TURN_SECRET, the scheme of
     coturn use-auth-secret and eturnal secret; TURN_USER/TURN_PASSWORD are
     then unused. Unset, this renders exactly as before. -#}
-{%- set _tbc = (skmesh.TURN_TIME_BASED_CREDENTIALS | default(false) | string | lower) in ['true', 'yes', '1'] -%}
-{%- set _stuns = skmesh.STUN_URIS | default(['stun:turn.' ~ _base_domain ~ ':3478']) -%}
+{#- With the bundled coturn (DEPLOY_COTURN) the default is true: coturn runs
+    use-auth-secret, which refuses static TURN_USER/TURN_PASSWORD, so static
+    credentials could never work against it. -#}
+{%- set _tbc_raw = skmesh.TURN_TIME_BASED_CREDENTIALS if (skmesh.TURN_TIME_BASED_CREDENTIALS is defined and skmesh.TURN_TIME_BASED_CREDENTIALS is not none and (skmesh.TURN_TIME_BASED_CREDENTIALS | string) != '') else (skmesh.DEPLOY_COTURN | default(false)) -%}
+{%- set _tbc = (_tbc_raw | string | lower) in ['true', 'yes', '1'] -%}
+{%- set _turn_domain = skmesh.TURN_DOMAIN | default('turn.' ~ _base_domain, true) -%}
+{%- set _stuns = skmesh.STUN_URIS | default(['stun:' ~ _turn_domain ~ ':3478']) -%}
 {
   "Stuns": [
 {% for _stun in _stuns %}
@@ -40,7 +45,7 @@
     "Turns": [
       {
         "Proto": "udp",
-        "URI": "{{ skmesh.TURN_URI | default('turn:turn.' ~ _base_domain ~ ':3478') }}",
+        "URI": "{{ skmesh.TURN_URI | default('turn:' ~ _turn_domain ~ ':3478') }}",
         "Username": "{{ skmesh.TURN_USER | default('') if _tbc else skmesh.TURN_USER }}",
         "Password": "{{ skmesh.TURN_PASSWORD | default('') if _tbc else skmesh.TURN_PASSWORD }}"
       }
