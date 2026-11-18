@@ -134,6 +134,49 @@ leave it `false` (default) if the cluster already runs a shared TURN
 server (e.g. eturnal, or another app's coturn) that Netbird's `TURNConfig`
 should point at instead.
 
+### Bundled coturn
+
+coturn joins Swarm's predefined `host` network (a swarm service ignores
+`network_mode`), so it binds 3478 (tcp+udp), 5349 (TLS+DTLS, with
+`TURN_TLS`) and its relay range directly on the node, sees real client
+addresses and needs no per-port mapping. It reads
+`/var/data/config/skmesh-<env>/turnserver.conf` (rendered, 0640, holds the
+secret; nothing secret is on the command line or in its env), starts as
+root to read that and the TLS key, and runs as `nobody`. It never relays to
+private, loopback, link-local, CGNAT or documentation ranges
+(`denied-peer-ip`), so a TURN client cannot use it to reach this host or the
+LAN; `TURN_ALLOWED_PEER_IPS` re-opens specific ranges. Management hands out
+TURN REST credentials minted from `TURN_SECRET` (`TURN_TIME_BASED_CREDENTIALS`
+defaults to true with `DEPLOY_COTURN`; coturn's `use-auth-secret` refuses the
+static `TURN_USER`/`TURN_PASSWORD`). Other clients, such as Nextcloud Talk
+(skhub `TALK_SIGNALING: internal`), use the same secret.
+
+```yaml
+skmesh:
+  DEPLOY_COTURN: true
+  TURN_DOMAIN: turn.<base>             # default turn.<base>; must resolve to the public address
+  COTURN_EXTERNAL_IP: 203.0.113.10     # public address the router forwards to this node
+  COTURN_RELAY_IP: 192.168.1.9         # optional: this node's LAN address (relay-ip, and external-ip=<public>/<this>)
+  TURN_MIN_PORT: 49152                 # relay range, udp
+  TURN_MAX_PORT: 49999
+  TURN_TLS: true                       # 5349 TLS/DTLS with the Traefik certificate for TURN_DOMAIN
+  # TURN_TLS_CERT_DIR: /var/data/runtime/skfence-<env>/certs/<TURN_DOMAIN>   (default, skfence's dumper)
+  # COTURN_PLACEMENT_CONSTRAINTS: ["node.role == manager"]                   (default; global on matching nodes)
+```
+
+With `TURN_TLS` the dashboard service carries a router for `TURN_DOMAIN`
+whose only job is to make Traefik obtain and renew that certificate
+(`service=noop@internal`, it serves nothing); skfence's
+`traefik-certs-dumper` writes it to the default `TURN_TLS_CERT_DIR`. coturn
+waits for the files at start and restarts itself when they change
+(`COTURN_CERT_CHECK_S`, default 600).
+
+Router forwards to the node: 3478 tcp+udp, 5349 tcp+udp, the relay range
+udp. Host firewall: the same. The relay range may sit inside the kernel's
+ephemeral range (coturn only binds a relay port while an allocation holds
+it); keep it inside whatever the router forwards. `TURN_DOMAIN` must not be
+proxied by a CDN (TURN is not HTTP).
+
 To use a shared TURN server that authenticates with a shared secret
 (coturn `use-auth-secret` + `static-auth-secret`, eturnal `secret`, the
 "TURN REST API" scheme that Nextcloud Talk also uses):
@@ -229,11 +272,14 @@ skmesh:
   AUTHENTIK_SIGNING_KEY: "authentik Self-signed Certificate"
   PROVISIONER_IMAGE: ""          # default python:3.13.15-alpine pinned by digest
   CLOUDFLARED: false             # true: BASE_DOMAIN = DOMAIN (no cluster prefix)
-  DEPLOY_COTURN: false           # true to bundle coturn in this stack
+  DEPLOY_COTURN: false           # true to bundle coturn in this stack (see "Bundled coturn")
+  TURN_DOMAIN: ""                # default turn.<base>
+  TURN_TLS: false                # 5349 TLS/DTLS with the Traefik certificate
+  COTURN_RELAY_IP: ""            # node LAN address for relay-ip and the external-ip mapping
   DASHBOARD_IMAGE: ""            # pin your own dashboard image; default: upstream netbirdio/dashboard (see "Dashboard image" above)
   TURN_URI: ""                   # default turn:turn.<base>:3478 (see "TURN / STUN")
   STUN_URIS: []                  # default [stun:turn.<base>:3478]
-  TURN_TIME_BASED_CREDENTIALS: false
+  TURN_TIME_BASED_CREDENTIALS: false   # default true with DEPLOY_COTURN
   MANAGEMENT_IMAGE: ""           # SIGNAL_IMAGE, RELAY_IMAGE, POSTGRES_IMAGE, POSTGRES_BACKUP_IMAGE likewise
   TURN_MAX_PORT: "65535"
   TURN_MIN_PORT: "49152"

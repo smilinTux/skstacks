@@ -6,6 +6,26 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+### skmesh: the bundled coturn is reachable; skhub: Talk without the HPB
+
+- **skmesh coturn (`DEPLOY_COTURN`) now works.** It used `network_mode: host`, which `docker stack
+  deploy` ignores, and published no ports, so nothing listened on 3478/5349 and NetBird clients showed
+  STUN and TURN Unavailable (#449). coturn now joins Swarm's predefined `host` network, reads a mounted
+  `turnserver.conf` (the shared secret is no longer on the command line, and coturn no longer gets all of
+  `skmesh.env`), denies private and special peer ranges, and runs as `nobody` after start. New knobs:
+  `TURN_DOMAIN`, `COTURN_RELAY_IP`, `TURN_TLS` (5349 TLS/DTLS with the Traefik certificate skfence's
+  dumper writes; a no-op router on the dashboard makes Traefik obtain it, and coturn restarts on
+  renewal), `TURN_TLS_CERT_DIR`, `TURN_ALLOWED_PEER_IPS`, `COTURN_PLACEMENT_CONSTRAINTS`, `COTURN_IMAGE`
+  (default now pinned by digest). With `DEPLOY_COTURN`, `TURN_TIME_BASED_CREDENTIALS` defaults to true
+  (coturn's `use-auth-secret` refuses static credentials). See skmesh README "Bundled coturn".
+- **skhub `TALK_SIGNALING: internal`**: Talk on its built-in signaling with TURN/STUN from an external
+  server (`TURN_DOMAIN`, `turn_secret`, optional `TALK_TURNS_PORT`, `TALK_STUN_SERVERS`); removes a stale
+  `signaling_servers`. See skhub README "Talk without the HPB".
+- **Instance action:** none unless `DEPLOY_COTURN` is true. Such an instance's coturn changes on the next
+  skmesh deploy (it starts listening; add router forwards and firewall allows for 3478 tcp+udp, 5349 if
+  `TURN_TLS`, and the relay range udp), and its peers switch to TURN REST credentials unless
+  `TURN_TIME_BASED_CREDENTIALS: false` is set.
+
 ### skpatch-hosts: the swarm upgrade gate covers workers and repairs stale vxlan devices
 
 - **Every swarm node gets the gate, workers too** (`provision_skpatch_hosts_nodes.yml` now detects a
