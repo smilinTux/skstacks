@@ -161,7 +161,7 @@ skmesh:
   DEPLOY_COTURN: true
   TURN_DOMAIN: turn.<base>             # default turn.<base>; must resolve to the public address
   COTURN_EXTERNAL_IP: 203.0.113.10     # public address the router forwards to this node
-  COTURN_RELAY_IP: 192.168.1.9         # optional: this node's LAN address (relay-ip; external-ip stays the bare public IP, see below)
+  COTURN_RELAY_IP: 192.0.2.9           # optional: this node's LAN address (relay-ip; external-ip stays the bare public IP, see below)
   TURN_MIN_PORT: 49152                 # relay range, udp
   TURN_MAX_PORT: 49999
   TURN_TLS: true                       # 5349 TLS/DTLS with the Traefik certificate for TURN_DOMAIN
