@@ -1,4 +1,5 @@
 ---
+# skstacks: every-node - host-level agent watchdog: node-local files only (/etc, /usr/local/sbin, /run), never /var/data or the swarm
 # skrac agent watchdog: on hosts that run MeshCentral agents (meshagent*.service,
 # installed by hand from the skrac server), restart an agent whose server
 # session went stale. Local signals only, no MeshCentral credentials on the
