@@ -4,6 +4,29 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
+## skstacks-v2.26.28 - 2026-11-18
+
+Patch on v2.26.27. Fixes the Talk HPB on `TALK_TURN_EXTERNAL` estates and gives skfence the
+timeout knobs skfenceha already has. Instance action: redeploy skhub; an skfence estate with Talk
+internal signaling or large uploads sets `skfence.FORWARDING_TIMEOUTS`.
+
+### skhub: the talk-hpb healthcheck in `TALK_TURN_EXTERNAL` mode (#458, #459)
+
+- With `TALK_TURN_EXTERNAL: true` the default talk-hpb command runs no eturnal, but the service
+  inherited aio-talk's image healthcheck, which also requires eturnal and the TURN port. It never
+  passed, so Swarm stopped an otherwise healthy HPB about every 60 s and it stayed 0/1. The
+  external mode now gets its own healthcheck (signaling on 8081 with `/api/v1/stats`, and Janus on
+  8188). `TALK_HPB_HEALTHCHECK_TEST` replaces the test in any mode. Default renders are unchanged.
+
+### skfence: `FORWARDING_TIMEOUTS` and `RESPONDING_TIMEOUTS` (#460)
+
+- skfence hardcoded `responseHeaderTimeout: 30s`. Nextcloud Talk internal signaling long-polls
+  for 30 s, so every idle poll got a 504 and Talk showed "Lost connection to signaling server";
+  the same limit cut multi-GB skhub uploads. `skfence.FORWARDING_TIMEOUTS` (a map) replaces the
+  forwarding timeouts and `skfence.RESPONDING_TIMEOUTS` (a map) sets the websecure entrypoint's
+  responding timeouts, mirroring skfenceha's `WORKER_*` knobs. Unset, the render is byte-identical
+  and the default (30s/10s/90s) is skfenceha's. See the skfence README for the values to set.
+
 ## skstacks-v2.26.27 - 2026-11-18
 
 Cut from main. Gated on skstack06 (fresh, PROFILE=full). Read the upgrade notes before rolling:
