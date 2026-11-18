@@ -145,7 +145,12 @@ secret; nothing secret is on the command line or in its env), starts as
 root to read that and the TLS key, and runs as `nobody`. It never relays to
 private, loopback, link-local, CGNAT or documentation ranges
 (`denied-peer-ip`), so a TURN client cannot use it to reach this host or the
-LAN; `TURN_ALLOWED_PEER_IPS` re-opens specific ranges. Management hands out
+LAN; `TURN_ALLOWED_PEER_IPS` re-opens specific ranges. `external-ip` is
+rendered as the bare public address on purpose: the `<public>/<private>`
+form makes coturn whitelist the private address as a peer, which would open
+this node's own LAN address (sshd and anything else listening) to every TURN
+client. An explicit `COTURN_EXTERNAL_IP: <public>/<private>` is kept as
+given, with that consequence. Management hands out
 TURN REST credentials minted from `TURN_SECRET` (`TURN_TIME_BASED_CREDENTIALS`
 defaults to true with `DEPLOY_COTURN`; coturn's `use-auth-secret` refuses the
 static `TURN_USER`/`TURN_PASSWORD`). Other clients, such as Nextcloud Talk
@@ -156,7 +161,7 @@ skmesh:
   DEPLOY_COTURN: true
   TURN_DOMAIN: turn.<base>             # default turn.<base>; must resolve to the public address
   COTURN_EXTERNAL_IP: 203.0.113.10     # public address the router forwards to this node
-  COTURN_RELAY_IP: 192.168.1.9         # optional: this node's LAN address (relay-ip, and external-ip=<public>/<this>)
+  COTURN_RELAY_IP: 192.168.1.9         # optional: this node's LAN address (relay-ip; external-ip stays the bare public IP, see below)
   TURN_MIN_PORT: 49152                 # relay range, udp
   TURN_MAX_PORT: 49999
   TURN_TLS: true                       # 5349 TLS/DTLS with the Traefik certificate for TURN_DOMAIN
@@ -275,7 +280,7 @@ skmesh:
   DEPLOY_COTURN: false           # true to bundle coturn in this stack (see "Bundled coturn")
   TURN_DOMAIN: ""                # default turn.<base>
   TURN_TLS: false                # 5349 TLS/DTLS with the Traefik certificate
-  COTURN_RELAY_IP: ""            # node LAN address for relay-ip and the external-ip mapping
+  COTURN_RELAY_IP: ""            # node LAN address for relay-ip (external-ip stays the bare public IP)
   DASHBOARD_IMAGE: ""            # pin your own dashboard image; default: upstream netbirdio/dashboard (see "Dashboard image" above)
   TURN_URI: ""                   # default turn:turn.<base>:3478 (see "TURN / STUN")
   STUN_URIS: []                  # default [stun:turn.<base>:3478]

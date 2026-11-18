@@ -27,8 +27,11 @@ server-name={{ skmesh.TURN_SERVER_NAME | default(_turn_domain, true) }}
 relay-ip={{ _relay_ip }}
 {% endif %}
 {% if _ext %}
-external-ip={{ _ext }}{% if _relay_ip and '/' not in _ext %}/{{ _relay_ip }}{% endif %}
-
+# The bare public form on purpose: "<public>/<private>" makes coturn
+# whitelist the private part as a peer, which would let any TURN client
+# reach this host's own LAN address (its sshd, its services) through the
+# relay. With relay-ip set, the bare form reports the same relay address.
+external-ip={{ _ext }}
 {% endif %}
 min-port={{ skmesh.TURN_MIN_PORT | default(49152) }}
 max-port={{ skmesh.TURN_MAX_PORT | default(65535) }}

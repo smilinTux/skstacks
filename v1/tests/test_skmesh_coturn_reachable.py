@@ -126,7 +126,8 @@ def test_conf_uses_the_shared_secret_scheme_only():
 
 def test_conf_maps_external_to_relay_address_and_range():
     conf = _conf(COTURN)
-    assert "external-ip=203.0.113.7/192.0.2.9" in conf
+    # Never "<public>/<relay>": coturn would whitelist the relay address as a peer.
+    assert "external-ip=203.0.113.7\n" in conf and "external-ip=203.0.113.7/" not in conf
     assert "relay-ip=192.0.2.9" in conf
     assert "min-port=49152" in conf and "max-port=49999" in conf
     assert "realm=turn.demo.example.test" in conf
