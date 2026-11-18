@@ -1,0 +1,137 @@
+---
+# skrac agent watchdog: on hosts that run MeshCentral agents (meshagent*.service,
+# installed by hand from the skrac server), restart an agent whose server
+# session went stale. Local signals only, no MeshCentral credentials on the
+# host (see src/agent-watchdog/skrac-agent-watchdog.sh and README "Agent
+# watchdog").
+#
+#   ansible-playbook -i <inventory> deploy_skrac-agent-watchdog.yml \
+#     -e skrac_watchdog_hosts=<group or host>
+#
+# Vars (all optional):
+#   skrac_watchdog_hosts         inventory pattern (default: skrac_agents)
+#   skrac_watchdog_state         present | absent (default: present)
+#   skrac_watchdog_stale_s       seconds with nothing from the server (600)
+#   skrac_watchdog_noconn_checks runs without a server connection (2)
+#   skrac_watchdog_spin_pct      main-process CPU percent that counts as a spin (80)
+#   skrac_watchdog_spin_checks   consecutive spinning runs (2)
+#   skrac_watchdog_min_uptime_s  leave a younger agent alone (300)
+#   skrac_watchdog_server_port   server port the agents dial (443)
+#   skrac_watchdog_stop_timeout  TimeoutStopSec for the agent units (20)
+
+- hosts: "{{ skrac_watchdog_hosts | default('skrac_agents') }}"
+  become: true
+  gather_facts: false
+  vars:
+    _wd_present: "{{ (skrac_watchdog_state | default('present')) == 'present' }}"
+    _wd_src: "{{ playbook_dir }}/src/agent-watchdog"
+  tasks:
+    - name: Check the watchdog settings
+      assert:
+        that:
+          - (skrac_watchdog_state | default('present')) in ['present', 'absent']
+          - (skrac_watchdog_stale_s | default(600) | int) >= 300
+          - (skrac_watchdog_noconn_checks | default(2) | int) >= 1
+          - (skrac_watchdog_spin_pct | default(80) | int) in range(10, 101)
+          - (skrac_watchdog_spin_checks | default(2) | int) >= 1
+          - (skrac_watchdog_min_uptime_s | default(300) | int) >= 60
+          - (skrac_watchdog_stop_timeout | default(20) | int) in range(5, 301)
+        fail_msg: "skrac agent watchdog: a setting is out of range (see the header of this playbook)"
+
+    - name: Find the MeshCentral agent units
+      shell: systemctl list-unit-files --type=service --no-legend --plain 'meshagent*' | awk '{print $1}'
+      register: _wd_units
+      changed_when: false
+
+    - name: Install the watchdog script
+      copy:
+        src: "{{ _wd_src }}/skrac-agent-watchdog.sh"
+        dest: /usr/local/sbin/skrac-agent-watchdog
+        owner: root
+        group: root
+        mode: '0755'
+      when: _wd_present
+
+    - name: Write the watchdog settings
+      copy:
+        dest: /etc/default/skrac-agent-watchdog
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          # Managed by skstacks deploy_skrac-agent-watchdog.yml
+          STALE_S={{ skrac_watchdog_stale_s | default(600) | int }}
+          NOCONN_CHECKS={{ skrac_watchdog_noconn_checks | default(2) | int }}
+          SPIN_PCT={{ skrac_watchdog_spin_pct | default(80) | int }}
+          SPIN_CHECKS={{ skrac_watchdog_spin_checks | default(2) | int }}
+          MIN_UPTIME_S={{ skrac_watchdog_min_uptime_s | default(300) | int }}
+          SERVER_PORT={{ skrac_watchdog_server_port | default(443) | int }}
+      when: _wd_present
+
+    - name: Install the watchdog service and timer
+      copy:
+        src: "{{ _wd_src }}/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - skrac-agent-watchdog.service
+        - skrac-agent-watchdog.timer
+      when: _wd_present
+
+    # A hung agent ignored SIGTERM for the default 90 s (gen, 2026-11-18):
+    # stop it faster, and always bring it back.
+    - name: Agent units restart always and stop within the timeout
+      copy:
+        dest: "/etc/systemd/system/{{ item }}.d/10-skrac-watchdog.conf"
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          # Managed by skstacks deploy_skrac-agent-watchdog.yml
+          [Service]
+          Restart=always
+          RestartSec=10
+          TimeoutStopSec={{ skrac_watchdog_stop_timeout | default(20) | int }}
+      loop: "{{ _wd_units.stdout_lines }}"
+      when: _wd_present
+
+    - name: Stop the watchdog timer (skrac_watchdog_state=absent)
+      systemd:
+        name: skrac-agent-watchdog.timer
+        enabled: false
+        state: stopped
+      failed_when: false
+      when: not _wd_present
+
+    - name: Remove the watchdog (skrac_watchdog_state=absent)
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ ['/usr/local/sbin/skrac-agent-watchdog', '/etc/default/skrac-agent-watchdog',
+                 '/etc/systemd/system/skrac-agent-watchdog.service', '/etc/systemd/system/skrac-agent-watchdog.timer']
+                + (_wd_units.stdout_lines | map('regex_replace', '^(.*)$', '/etc/systemd/system/\\1.d/10-skrac-watchdog.conf') | list) }}"
+      when: not _wd_present
+
+    - name: Reload systemd
+      systemd:
+        daemon_reload: true
+
+    - name: Enable and start the watchdog timer
+      systemd:
+        name: skrac-agent-watchdog.timer
+        enabled: true
+        state: started
+      when: _wd_present
+
+    - name: Run the watchdog once (decisions go to the journal)
+      command: /usr/local/sbin/skrac-agent-watchdog
+      register: _wd_run
+      changed_when: _wd_run.stdout is search('restarting')
+      when: _wd_present
+
+    - name: Show the first run
+      debug:
+        msg: "units: {{ _wd_units.stdout_lines }}; first run: {{ _wd_run.stdout_lines | default([]) }}"
+      when: _wd_present
