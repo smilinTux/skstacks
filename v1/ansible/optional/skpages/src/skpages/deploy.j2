@@ -1,6 +1,24 @@
 #!/bin/bash
 set -euo pipefail
 
+# record_preexisting runs before the stack deploy; only services that already
+# existed then are force-updated afterwards (a redeploy restarts Caddy so it
+# reads a changed Caddyfile; a first install has nothing to restart).
+PREEXISTING_SERVICES=" "
+record_preexisting() {
+    local svc
+    for svc in "$@"; do
+        if docker service inspect "$svc" >/dev/null 2>&1; then
+            PREEXISTING_SERVICES+="$svc "
+        fi
+    done
+}
+preexisted() {
+    case "$PREEXISTING_SERVICES" in *" $1 "*) return 0 ;; esac
+    echo "First install of $1: skipping forced restart"
+    return 1
+}
+
 # SKPages ({{ env }}) deployment script
 APPNAME=skpages
 STACK_NAME=skpages-{{ env }}
@@ -16,11 +34,12 @@ fi
 
 echo "Deploying ${STACK_NAME} (docroot ${SKPAGES_DOCROOT})"
 cd "${CONFIG_DIR}"
+record_preexisting "${STACK_NAME}_caddy"
 docker stack deploy --detach=true -c "${COMPOSE_FILE}" "${STACK_NAME}"
 
 # Caddy reads its Caddyfile only at start; force a restart so a changed
 # Caddyfile (same compose spec) actually takes effect.
-docker service update --force --detach=true "${STACK_NAME}_caddy" >/dev/null
+preexisted "${STACK_NAME}_caddy" && timeout 120 docker service update --force --detach=true "${STACK_NAME}_caddy" >/dev/null || true
 
 for _ in $(seq 1 30); do
     REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_caddy" --format '{{ '{{' }}.Replicas{{ '}}' }}')
