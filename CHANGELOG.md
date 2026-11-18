@@ -12,6 +12,18 @@ first skpatch run on workers now goes through the swarm upgrade gate. An instanc
 Talk HPB next to the bundled skmesh coturn sets `skhub.TALK_TURN_EXTERNAL: true` with
 `TURN_DOMAIN` and `turn_secret` pointing at that coturn.
 
+### skmon v2: the stack starts (healthchecks, Grafana provisioning)
+
+Found by the skstack06 tier-2 gate, the first live deploy of skmon v2 (#373):
+
+- **VictoriaMetrics and vmalert never became healthy.** They listen on IPv4 only, and busybox
+  `wget http://localhost:<port>` tries `::1` first and is refused, so Swarm stopped both tasks over
+  and over. Every wget healthcheck now targets `127.0.0.1`.
+- **Grafana refused to start.** The dashboards copy put `SOURCES.yml` (the boards' vendoring
+  provenance) at the top of `provisioning/dashboards`, where Grafana parses every YAML file as a
+  provider config. The deploy now removes it after the copy, including from a data node that
+  already has it.
+
 ### skhub: the Talk HPB can use an external TURN (`TALK_TURN_EXTERNAL`)
 
 - **`skhub.TALK_TURN_EXTERNAL: true` (with `enable_talk_hpb`)** keeps the HPB and hands TURN to the
