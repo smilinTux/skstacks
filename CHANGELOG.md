@@ -4,9 +4,6 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
-## Unreleased
-
-
 ## skstacks-v2.26.27 - 2026-11-18
 
 Cut from main. Gated on skstack06 (fresh, PROFILE=full). Read the upgrade notes before rolling:
