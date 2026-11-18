@@ -11,7 +11,11 @@
 {%- set _mode = skmesh.AUTH_MODE | default('standalone') | string | lower -%}
 {%- set _turn_domain = skmesh.TURN_DOMAIN | default('turn.' ~ _base_domain, true) -%}
 {%- set _turn_tls = (skmesh.DEPLOY_COTURN | default(false)) and ((skmesh.TURN_TLS | default(false) | string | lower) in ['true', 'yes', '1']) -%}
-{%- set _turn_cert_dir = skmesh.TURN_TLS_CERT_DIR | default('/var/data/runtime/skfence-' ~ env ~ '/certs/' ~ _turn_domain, true) -%}
+{#- The dumper's output root, not the domain's own directory: the dumper runs
+    with --clean and recreates every domain directory on each dump (a bind
+    mount of one would keep the deleted directory), and Swarm rejects a bind
+    mount whose source does not exist yet (before Traefik has the cert). -#}
+{%- set _turn_cert_dir = skmesh.TURN_TLS_DUMP_DIR | default('/var/data/runtime/skfence-' ~ env ~ '/certs', true) -%}
 {%- set _sso = skmesh.SSO_HOST | default('sso' ~ ('' if env == 'prod' else '-' ~ env) ~ '.' ~ _base_domain) -%}
 version: "3.9"
 
@@ -306,7 +310,7 @@ services:
       - /var/data/config/skmesh-{{ env }}/turnserver.conf:/etc/coturn/turnserver.conf:ro
       - /var/data/config/skmesh-{{ env }}/coturn-run.sh:/coturn-run.sh:ro
 {% if _turn_tls %}
-      - {{ _turn_cert_dir }}:/certs:ro
+      - {{ _turn_cert_dir }}:/certs-dump:ro
 {% endif %}
     deploy:
       mode: global

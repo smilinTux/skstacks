@@ -14,8 +14,8 @@
 listening-port=3478
 {% if _tls %}
 tls-listening-port=5349
-cert=/certs/certificate.crt
-pkey=/certs/privatekey.key
+cert=/certs-dump/{{ _turn_domain }}/certificate.crt
+pkey=/certs-dump/{{ _turn_domain }}/privatekey.key
 {% else %}
 no-tls
 no-dtls

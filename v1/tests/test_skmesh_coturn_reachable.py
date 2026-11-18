@@ -95,7 +95,7 @@ def test_coturn_image_is_pinned():
 
 def test_tls_mounts_the_dumped_certificate_and_requests_it_from_traefik():
     c = _compose(TLS)
-    assert "/var/data/runtime/skfence-prod/certs/turn.demo.example.test:/certs:ro" in c["services"]["coturn"]["volumes"]
+    assert "/var/data/runtime/skfence-prod/certs:/certs-dump:ro" in c["services"]["coturn"]["volumes"]
     labels = c["services"]["dashboard"]["deploy"]["labels"]
     assert "traefik.http.routers.skmesh-turn-cert.rule=Host(`turn.demo.example.test`)" in labels
     assert "traefik.http.routers.skmesh-turn-cert.service=noop@internal" in labels
@@ -105,12 +105,13 @@ def test_tls_mounts_the_dumped_certificate_and_requests_it_from_traefik():
 def test_no_cert_router_or_mount_without_tls():
     c = _compose(COTURN)
     assert not any("skmesh-turn-cert" in l for l in c["services"]["dashboard"]["deploy"]["labels"])
-    assert not any(v.endswith(":/certs:ro") for v in c["services"]["coturn"]["volumes"])
+    assert not any(v.endswith(":/certs-dump:ro") for v in c["services"]["coturn"]["volumes"])
 
 
 def test_turn_domain_and_cert_dir_knobs():
-    c = _compose(dict(TLS, TURN_DOMAIN="turn.example.org", TURN_TLS_CERT_DIR="/srv/certs/turn"))
-    assert "/srv/certs/turn:/certs:ro" in c["services"]["coturn"]["volumes"]
+    c = _compose(dict(TLS, TURN_DOMAIN="turn.example.org", TURN_TLS_DUMP_DIR="/srv/certs"))
+    assert "/srv/certs:/certs-dump:ro" in c["services"]["coturn"]["volumes"]
+    assert "cert=/certs-dump/turn.example.org/certificate.crt" in _conf(dict(TLS, TURN_DOMAIN="turn.example.org"))
     assert any("Host(`turn.example.org`)" in l for l in c["services"]["dashboard"]["deploy"]["labels"])
 
 
@@ -152,8 +153,8 @@ def test_conf_drops_privileges():
 
 def test_conf_tls_on_5349_only_with_tls():
     tls, plain = _conf(TLS), _conf(COTURN)
-    assert "tls-listening-port=5349" in tls and "cert=/certs/certificate.crt" in tls
-    assert "pkey=/certs/privatekey.key" in tls and "no-tls" not in tls
+    assert "tls-listening-port=5349" in tls and "cert=/certs-dump/turn.demo.example.test/certificate.crt" in tls
+    assert "pkey=/certs-dump/turn.demo.example.test/privatekey.key" in tls and "no-tls" not in tls
     assert "no-tls" in plain and "no-dtls" in plain and "tls-listening-port=5349" not in plain
 
 
@@ -169,8 +170,8 @@ def test_run_script_is_valid_sh(skmesh, tmp_path):
 
 def test_run_script_restarts_on_a_changed_certificate(tmp_path):
     """Drive the TLS script with fake turnserver/sleep: a changed cert ends it with 0."""
-    certs = tmp_path / "certs"
-    certs.mkdir()
+    certs = tmp_path / "certs-dump" / "turn.demo.example.test"
+    certs.mkdir(parents=True)
     (certs / "certificate.crt").write_text("old")
     (certs / "privatekey.key").write_text("key")
     bin_ = tmp_path / "bin"
@@ -182,7 +183,7 @@ def test_run_script_restarts_on_a_changed_certificate(tmp_path):
         f"#!/bin/sh\nif [ \"$1\" = 1 ] && [ ! -e {flag} ]; then touch {flag}; "
         f"echo new > {certs}/certificate.crt; fi\nexec /bin/sleep 0.2\n")
     (bin_ / "sleep").chmod(0o755)
-    script = _render("coturn-run.sh.j2", dict(TLS, COTURN_CERT_CHECK_S=1)).replace("/certs/", f"{certs}/")
+    script = _render("coturn-run.sh.j2", dict(TLS, COTURN_CERT_CHECK_S=1)).replace("/certs-dump/", f"{tmp_path}/certs-dump/")
     script = script.replace("turnserver -c", f"{bin_}/turnserver -c").replace("    sleep ", f"    {bin_}/sleep ")
     r = subprocess.run(["sh", "-c", script], capture_output=True, text=True, timeout=20)
     assert r.returncode == 0

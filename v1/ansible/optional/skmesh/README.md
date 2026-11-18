@@ -160,14 +160,14 @@ skmesh:
   TURN_MIN_PORT: 49152                 # relay range, udp
   TURN_MAX_PORT: 49999
   TURN_TLS: true                       # 5349 TLS/DTLS with the Traefik certificate for TURN_DOMAIN
-  # TURN_TLS_CERT_DIR: /var/data/runtime/skfence-<env>/certs/<TURN_DOMAIN>   (default, skfence's dumper)
+  # TURN_TLS_DUMP_DIR: /var/data/runtime/skfence-<env>/certs   (default: skfence's dumper output, <domain>/ inside)
   # COTURN_PLACEMENT_CONSTRAINTS: ["node.role == manager"]                   (default; global on matching nodes)
 ```
 
 With `TURN_TLS` the dashboard service carries a router for `TURN_DOMAIN`
 whose only job is to make Traefik obtain and renew that certificate
 (`service=noop@internal`, it serves nothing); skfence's
-`traefik-certs-dumper` writes it to the default `TURN_TLS_CERT_DIR`. coturn
+`traefik-certs-dumper` writes it under `TURN_TLS_DUMP_DIR/<TURN_DOMAIN>/`. coturn mounts the dumper's root (the dumper recreates the domain directories on every dump, and a missing bind source is rejected), and
 waits for the files at start and restarts itself when they change
 (`COTURN_CERT_CHECK_S`, default 600).
 
