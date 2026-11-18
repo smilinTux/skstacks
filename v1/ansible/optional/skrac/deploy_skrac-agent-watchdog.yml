@@ -82,6 +82,16 @@
 
     # A hung agent ignored SIGTERM for the default 90 s (2026-11-18):
     # stop it faster, and always bring it back.
+    - name: Create the agent units' drop-in directories
+      file:
+        path: "/etc/systemd/system/{{ item }}.d"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop: "{{ _wd_units.stdout_lines }}"
+      when: _wd_present
+
     - name: Agent units restart always and stop within the timeout
       copy:
         dest: "/etc/systemd/system/{{ item }}.d/10-skrac-watchdog.conf"

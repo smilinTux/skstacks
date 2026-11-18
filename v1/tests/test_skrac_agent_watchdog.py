@@ -108,6 +108,9 @@ def test_playbook_shape():
     plays = yaml.safe_load(PLAYBOOK.read_text())
     tasks = {t["name"]: t for t in plays[0]["tasks"]}
     assert plays[0]["hosts"] == "{{ skrac_watchdog_hosts | default('skrac_agents') }}"
+    names = list(tasks)
+    assert names.index("Create the agent units' drop-in directories") < names.index(
+        "Agent units restart always and stop within the timeout")
     dropin = tasks["Agent units restart always and stop within the timeout"]["copy"]["content"]
     assert "Restart=always" in dropin and "TimeoutStopSec=" in dropin
     assert tasks["Enable and start the watchdog timer"]["systemd"]["name"] == "skrac-agent-watchdog.timer"
