@@ -23,6 +23,12 @@ Found by the skstack06 tier-2 gate, the first live deploy of skmon v2 (#373):
   provenance) at the top of `provisioning/dashboards`, where Grafana parses every YAML file as a
   provider config. The deploy now removes it after the copy, including from a data node that
   already has it.
+- **No agent was scraped on a host with UFW.** The Alloy agent runs on the host network, so its
+  port (`AGENT_PORT`, 12345) is reached through INPUT, where a default-deny UFW (as the framework's
+  swarm-firewall role sets it) dropped every scrape after `SKMON-<ENV>` had let it through. When
+  UFW is active, the deploy now allows the agent port in UFW; `SKMON-<ENV>` still runs first and
+  drops every source that is not an allowlisted agent address. Loki, Pyroscope and `/healthz` are
+  Swarm-published ports and were never affected.
 
 ### skhub: the Talk HPB can use an external TURN (`TALK_TURN_EXTERNAL`)
 

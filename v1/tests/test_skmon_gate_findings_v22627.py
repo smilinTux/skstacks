@@ -60,3 +60,55 @@ def test_sources_yml_is_the_only_yaml_beside_the_boards():
     top = [p.name for p in (SKMON / "src/config/skmon/dashboards").iterdir()
            if p.is_file() and re.search(r"\.ya?ml$", p.name)]
     assert top == ["SOURCES.yml"]
+
+
+# 3. The agent is on the host network, so its port is reached through INPUT, where the
+#    framework's swarm-firewall UFW (default deny incoming) dropped every scrape after
+#    SKMON-<ENV> returned. With UFW active the agent port is opened in UFW; SKMON-<ENV>
+#    still runs first and keeps the allowlist.
+ALLOWLIST = yaml.safe_load((SKMON / "tasks/port_allowlist.yml").read_text())
+
+
+def _named(prefix):
+    return next(t for t in ALLOWLIST if t.get("name", "").startswith(prefix))
+
+
+def test_ufw_state_is_probed_without_failing_or_changing():
+    t = _named("Check whether UFW is active")
+    assert t["command"] == "ufw status"
+    assert t["failed_when"] is False and t["changed_when"] is False
+    assert t["delegate_to"] == "{{ skmon_fw_node }}" and t["become"] is True
+
+
+def test_active_needs_rc_0_and_the_status_line():
+    expr = _named("Derive whether UFW is active")["set_fact"]["skmon_fw_ufw_active"]
+    assert "'Status: active'" in expr and "rc" in expr
+
+
+def _argv(state):
+    import jinja2
+    expr = _named("Open the agent port in UFW")["command"]["argv"]
+    return jinja2.Environment().from_string(expr).render(
+        skmon_fw_state=state, skmon_fw_ports={"agent": 12345}, env="dev")
+
+
+def test_agent_port_opened_in_ufw_only_when_active():
+    t = _named("Open the agent port in UFW")
+    assert t["when"] == "skmon_fw_ufw_active | bool"
+    assert t["delegate_to"] == "{{ skmon_fw_node }}" and t["become"] is True
+    assert _argv("present") == str(["ufw", "allow", "12345/tcp", "comment", "skmon-dev agent (allowlist in SKMON-DEV)"])
+
+
+def test_agent_port_rule_deleted_when_absent():
+    assert _argv("absent") == str(["ufw", "delete", "allow", "12345/tcp"])
+
+
+def test_existing_rule_is_no_change():
+    assert "'Skipping' not in" in _named("Open the agent port in UFW")["changed_when"]
+
+
+def test_only_the_agent_port_goes_through_ufw():
+    # Loki, Pyroscope and /healthz are Swarm-published and bypass INPUT; opening them in UFW
+    # would widen nothing useful and is not done.
+    ufw = [t for t in ALLOWLIST if "ufw" in str(t.get("command", "")) and "allow" in str(t.get("command", ""))]
+    assert len(ufw) == 1
