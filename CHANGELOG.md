@@ -6,6 +6,19 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+### skhub: the Talk HPB can use an external TURN (`TALK_TURN_EXTERNAL`)
+
+- **`skhub.TALK_TURN_EXTERNAL: true` (with `enable_talk_hpb`)** keeps the HPB and hands TURN to the
+  server at `TURN_DOMAIN`, typically the bundled skmesh coturn (#450), which binds 3478 on the
+  managers' host network. talk-hpb then publishes no 3478 (the routing mesh would otherwise open it on
+  every node) and, with the default image, runs without eturnal (`dinit ... nats-server janus
+  signaling`). Janus and Talk use `TURN_DOMAIN:3478` with `turn_secret` (set it to the coturn's
+  `TURN_SECRET`); `TALK_TURNS_PORT` (e.g. 5349) adds the TLS entry. The deploy refuses it together
+  with the eturnal-only knobs (`TALK_TURN_TLS_443`, host publish mode, relay range or address).
+  Unset, everything renders as before. Tests: `v1/tests/test_skhub_talk_turn_external.py`.
+  **Instance action**: none unless you set it; an instance turning the HPB on next to the bundled
+  coturn sets `TALK_TURN_EXTERNAL: true`, `TURN_DOMAIN` and `turn_secret`.
+
 ### skrac: agent watchdog for stale MeshCentral agent sessions
 
 - skrac: agent watchdog (`deploy_skrac-agent-watchdog.yml`): a timer restarts a MeshCentral agent whose server session went stale (nothing received for 10 min, no connection, or a spinning main process), and agent units get `Restart=always` and a 20 s stop timeout. Local signals only, no credentials on the host. From an agent that sat offline while its TCP connection stayed ESTABLISHED.

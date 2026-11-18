@@ -642,6 +642,14 @@ services:
 {% set _talk_hpb_default = _talk_hpb_default_line | trim | replace('image: ', '') %}
 {% set _talk_hpb_dinit = (not (skhub.TALK_HPB_IMAGE | default('', true))) or (('@' ~ (_talk_hpb_default.split('@') | last)) in (skhub.TALK_HPB_IMAGE | string)) %}
 {% set _talk_hpb_cmd = skhub.TALK_HPB_CMD | default((['dinit', '--system', '--container', 'nats-server', 'eturnal', 'janus', 'signaling'] if _talk_hpb_dinit else ['supervisord', '-c', '/supervisord.conf']), true) %}
+{#- TALK_TURN_EXTERNAL: TURN is served elsewhere (README "Talk HPB with an
+    external TURN"), typically the bundled skmesh coturn on the host network of
+    the same nodes, which binds 3478 itself. So talk-hpb publishes no 3478 and,
+    with the default dinit image, does not start eturnal (signaling depends on
+    nats-server and janus only). A pinned supervisord image keeps its CMD; its
+    eturnal then listens only inside the container, never on the host. -#}
+{% set _talk_turn_external = (skhub.TALK_TURN_EXTERNAL | default(false) | string | lower) in ['true', 'yes', 'on', '1'] %}
+{% set _talk_hpb_ext_cmd = (skhub.TALK_HPB_CMD | default((['dinit', '--system', '--container', 'nats-server', 'janus', 'signaling'] if _talk_hpb_dinit else []), true)) if _talk_turn_external else [] %}
   talk-hpb:
     image: {{ skhub.TALK_HPB_IMAGE | default(_talk_hpb_default, true) }}
     env_file: /var/data/config/skhub-{{ env }}/talk-hpb.env
@@ -669,10 +677,13 @@ services:
 {% for _arg in _talk_hpb_cmd %}
       - {{ _arg | string | tojson }}
 {% endfor %}
+{% elif _talk_hpb_ext_cmd | length > 0 %}
+    command: {{ _talk_hpb_ext_cmd | map('string') | list | tojson }}
 {% endif %}
     networks:
       - skhub-{{ env }}
       - cloud-public-{{ env }}
+{% if not _talk_turn_external %}
     ports:
 {% if _talk_turn_mode == 'host' %}
       - { target: 3478, published: 3478, protocol: tcp, mode: host }
@@ -685,6 +696,7 @@ services:
 {% else %}
       - "3478:3478/tcp"
       - "3478:3478/udp"
+{% endif %}
 {% endif %}
     cap_add:
       - NET_ADMIN
