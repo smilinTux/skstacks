@@ -456,6 +456,12 @@ on the host network and binds 3478 itself, so talk-hpb then:
   `dinit --system --container nats-server janus signaling` (signaling needs
   only nats-server and Janus). A pinned supervisord image keeps its own
   command; its eturnal then listens only inside the container.
+- gets its own healthcheck: aio-talk's `/healthcheck.sh` also probes eturnal
+  (`TALK_PORT`, `eturnalctl status`), which would fail forever and make Swarm
+  restart a healthy HPB about once a minute. The replacement probes the
+  signaling server (port 8081 and `/api/v1/stats`) and Janus (8188) only.
+  A pinned supervisord image, or a `TALK_HPB_CMD` that still starts eturnal,
+  keeps the image's own check.
 
 Janus and Talk use `TURN_DOMAIN:3478` with TURN REST credentials made from
 `turn_secret`, so `turn_secret` must be the external server's shared secret
@@ -468,6 +474,7 @@ Janus and Talk use `TURN_DOMAIN:3478` with TURN REST credentials made from
 | `turn_secret` | required here (32+ characters) | That server's shared secret. |
 | `TALK_TURNS_PORT` | unset | Adds `turns:<TURN_DOMAIN>:<port>` (tcp), e.g. `5349` for the bundled coturn's TLS. |
 | `TALK_STUN_SERVERS` | unset | `host:port` list for `stun_servers`, e.g. `[turn.<base>:3478]`. |
+| `TALK_HPB_HEALTHCHECK_TEST` | unset | Replaces talk-hpb's healthcheck `test` (Docker list form) in any mode. |
 
 Refused with it (they only shape talk-hpb's own eturnal): `TALK_TURN_TLS_443`,
 `TALK_TURN_PUBLISH_MODE: host`, `TALK_TURN_RELAY_MIN_PORT`/`MAX_PORT` and
