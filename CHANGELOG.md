@@ -6,6 +6,19 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+### skgit: Forgejo pulls from code.forgejo.org (codeberg.org is NXDOMAIN)
+
+- codeberg.org stopped resolving on 2026-11-18 (`.org` answers NXDOMAIN), so
+  `codeberg.org/forgejo/forgejo:17.0.1` could not be pulled and the weekly
+  check-images canary failed on every run. The skgit image now defaults to
+  `code.forgejo.org/forgejo/forgejo`, Forgejo's own registry, which carries the
+  same release tags (the runner already came from there).
+- New `skgit.FORGEJO_IMAGE` sets the image repository (default
+  `code.forgejo.org/forgejo/forgejo`); `skgit.FORGEJO_VERSION` still sets the tag.
+  An instance that wants codeberg back sets `FORGEJO_IMAGE: codeberg.org/forgejo/forgejo`.
+- Deploying this changes the image reference of running skgit stacks, so the
+  next deploy rolls the forgejo service once (same version, new registry).
+
 ### skrac, skmesh: portal tiles open in a new tab
 
 - **Both Authentik provisioners now set `open_in_new_tab`** on their application (knob
