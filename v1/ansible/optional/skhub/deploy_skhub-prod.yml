@@ -150,14 +150,29 @@
         _internal: "{{ ((skhub | default({})).TALK_SIGNALING | default('', true) | string | lower) == 'internal' }}"
         _turns_port: "{{ (skhub | default({})).TALK_TURNS_PORT | default('', true) | string }}"
         _turn_secret_len: "{{ (skhub | default({})).turn_secret | default('', true) | string | length }}"
+        # TALK_TURN_EXTERNAL: the HPB stays on, TURN is served elsewhere (the
+        # bundled skmesh coturn on the host network, for one). talk-hpb then
+        # publishes no 3478 and runs no eturnal, so the knobs that only shape
+        # eturnal are refused with it (README "Talk HPB with an external TURN").
+        _ext: "{{ ((skhub | default({})).TALK_TURN_EXTERNAL | default(false) | string | lower) in ['true', 'yes', 'on', '1'] }}"
+        _eturnal_knobs: >-
+          {{ ((skhub | default({})).TALK_TURN_PUBLISH_MODE | default('ingress', true) | string) != 'ingress'
+             or ((skhub | default({})).TALK_TURN_RELAY_MIN_PORT | default('', true) | string | length) > 0
+             or ((skhub | default({})).TALK_TURN_RELAY_MAX_PORT | default('', true) | string | length) > 0
+             or ((skhub | default({})).TALK_TURN_RELAY_IPV4 | default('', true) | string | length) > 0 }}
       assert:
         that:
           - _sig in ['', 'internal']
+          - >-
+            not _ext or (_stun_talk and (_turn_secret_len | int) >= 32 and _turn_domain | length > 0
+            and _turn_domain is match('^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?([.][A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$'))
+          - not (_ext and _tls443)
+          - not (_ext and (_eturnal_knobs | bool))
           - not (_internal and _stun_talk)
           - >-
             not _internal or ((_turn_secret_len | int) >= 32 and _turn_domain | length > 0
             and _turn_domain is match('^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?([.][A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$'))
-          - _turns_port | length == 0 or (_internal and _turns_port is match('^[1-9][0-9]{0,4}$') and (_turns_port | int) <= 65535)
+          - _turns_port | length == 0 or ((_internal or _ext) and _turns_port is match('^[1-9][0-9]{0,4}$') and (_turns_port | int) <= 65535)
           - >-
             _ii_ip | length == 0 or (
             _ii_ip == (_ii_ip | trim) and _ii_ip is match('^(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])([.](25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])){3}$')
@@ -180,7 +195,10 @@
           skhub.TALK_TURN_TLS_443 needs skhub.enable_talk_hpb and skhub.TURN_DOMAIN set to a DNS name (got '{{ _turn_domain }}').
           skhub.TALK_SIGNALING must be unset or 'internal' (got '{{ _sig }}'); 'internal' means no HPB
           (enable_talk_hpb false), and needs skhub.TURN_DOMAIN (a DNS name) and a turn_secret of at least 32 characters.
-          skhub.TALK_TURNS_PORT (1-65535) needs TALK_SIGNALING internal (got '{{ _turns_port }}').
+          skhub.TALK_TURNS_PORT (1-65535) needs TALK_SIGNALING internal or TALK_TURN_EXTERNAL (got '{{ _turns_port }}').
+          skhub.TALK_TURN_EXTERNAL needs enable_talk_hpb, skhub.TURN_DOMAIN (a DNS name: the external TURN server) and
+          a turn_secret of at least 32 characters (that server's shared secret), and excludes TALK_TURN_TLS_443,
+          TALK_TURN_PUBLISH_MODE host and the TALK_TURN_RELAY_* knobs (they only shape talk-hpb's own eturnal).
         quiet: true
 
     - name: Fail closed on local db/redis data paths without a pinned data node
@@ -973,7 +991,7 @@
         TYPED=""
         if docker exec "$CONTAINER_ID" php occ config:app:set --help | grep -q -- '--sensitive'; then TYPED="--no-interaction --type=array --sensitive"; fi
         docker exec "$CONTAINER_ID" php occ config:app:set spreed signaling_servers --value='{"servers":[{"server":"https://{{ skhub_public_host }}/standalone-signaling/","verify":true}],"secret":"{{ skhub.signaling_secret }}"}' 2>&1
-        docker exec "$CONTAINER_ID" php occ config:app:set spreed turn_servers $TYPED --value='[{"schemes":"turn","server":"{{ skhub.TURN_DOMAIN | default(skhub.CLUSTERNAME ~ "." ~ skhub.DOMAIN, true) }}:3478","secret":"{{ skhub.turn_secret }}","protocols":"udp,tcp"}{% if (skhub.TALK_TURN_TLS_443 | default(false) | string | lower) in ['true', 'yes', 'on', '1'] %},{"schemes":"turns","server":"{{ skhub.TURN_DOMAIN }}:443","secret":"{{ skhub.turn_secret }}","protocols":"tcp"}{% endif %}]' 2>&1
+        docker exec "$CONTAINER_ID" php occ config:app:set spreed turn_servers $TYPED --value='[{"schemes":"turn","server":"{{ skhub.TURN_DOMAIN | default(skhub.CLUSTERNAME ~ "." ~ skhub.DOMAIN, true) }}:3478","secret":"{{ skhub.turn_secret }}","protocols":"udp,tcp"}{% if (skhub.TALK_TURN_TLS_443 | default(false) | string | lower) in ['true', 'yes', 'on', '1'] %},{"schemes":"turns","server":"{{ skhub.TURN_DOMAIN }}:443","secret":"{{ skhub.turn_secret }}","protocols":"tcp"}{% endif %}{% if (skhub.TALK_TURNS_PORT | default('', true) | string | length) > 0 %},{"schemes":"turns","server":"{{ skhub.TURN_DOMAIN }}:{{ skhub.TALK_TURNS_PORT }}","secret":"{{ skhub.turn_secret }}","protocols":"tcp"}{% endif %}]' 2>&1
         docker exec "$CONTAINER_ID" php occ config:app:get spreed signaling_servers >/dev/null
         docker exec "$CONTAINER_ID" php occ config:app:get spreed turn_servers >/dev/null
         {% if (skhub.TALK_STUN_SERVERS | default([], true) | length) > 0 %}
