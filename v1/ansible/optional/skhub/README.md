@@ -443,6 +443,36 @@ signaling server") and writes `turn_servers` and, when set, `stun_servers`.
 Internal signaling suits small calls (every participant sends to every
 other); for larger ones, use the HPB.
 
+## Talk HPB with an external TURN
+
+`TALK_TURN_EXTERNAL: true` (with `enable_talk_hpb` true) keeps the HPB
+(signaling, Janus) and leaves TURN to the server at `TURN_DOMAIN`, typically
+the cluster's skmesh coturn (skmesh README "Bundled coturn"). That coturn runs
+on the host network and binds 3478 itself, so talk-hpb then:
+
+- publishes no 3478 (in ingress mode the routing mesh would open it on every
+  node, in host mode on talk-hpb's node: either way the bind would clash);
+- runs without eturnal: the default image's command becomes
+  `dinit --system --container nats-server janus signaling` (signaling needs
+  only nats-server and Janus). A pinned supervisord image keeps its own
+  command; its eturnal then listens only inside the container.
+
+Janus and Talk use `TURN_DOMAIN:3478` with TURN REST credentials made from
+`turn_secret`, so `turn_secret` must be the external server's shared secret
+(skmesh `TURN_SECRET` for the bundled coturn).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `TALK_TURN_EXTERNAL` | `false` | `true`: the mode above. Needs `enable_talk_hpb`. |
+| `TURN_DOMAIN` | required here | The external TURN server's DNS name, e.g. `turn.<base>`. |
+| `turn_secret` | required here (32+ characters) | That server's shared secret. |
+| `TALK_TURNS_PORT` | unset | Adds `turns:<TURN_DOMAIN>:<port>` (tcp), e.g. `5349` for the bundled coturn's TLS. |
+| `TALK_STUN_SERVERS` | unset | `host:port` list for `stun_servers`, e.g. `[turn.<base>:3478]`. |
+
+Refused with it (they only shape talk-hpb's own eturnal): `TALK_TURN_TLS_443`,
+`TALK_TURN_PUBLISH_MODE: host`, `TALK_TURN_RELAY_MIN_PORT`/`MAX_PORT` and
+`TALK_TURN_RELAY_IPV4`.
+
 ## Webhook worker
 
 The `webhook-worker` service runs `occ background-job:worker` for
