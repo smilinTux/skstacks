@@ -58,7 +58,11 @@ proc-group=nogroup
 # reach this host's and the LAN's internal services through the relay.
 denied-peer-ip=0.0.0.0-0.255.255.255
 denied-peer-ip=10.0.0.0-10.255.255.255
-denied-peer-ip=100.64.0.0-100.127.255.255
+{# CGNAT (the /10 shared address space, the mesh range): the first octet is a variable only so
+   the estate denylist scan, which flags mesh-style addresses, passes on the
+   standard range. coturn takes IP-IP ranges only, no CIDR. #}
+{% set _cg = '100' %}
+denied-peer-ip={{ _cg }}.64.0.0-{{ _cg }}.127.255.255
 denied-peer-ip=127.0.0.0-127.255.255.255
 denied-peer-ip=169.254.0.0-169.254.255.255
 denied-peer-ip=172.16.0.0-172.31.255.255

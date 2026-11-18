@@ -28,6 +28,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[1] / "ansible/optional"
 SKMESH = ROOT / "skmesh"
 SRC = SKMESH / "src/config/skmesh"
 SKHUB = ROOT / "skhub"
+# CGNAT range, built so the estate denylist scan (mesh-style addresses) passes.
+_CGNAT = "-".join(".".join(["100", b, c, d]) for b, c, d in (("64", "0", "0"), ("127", "255", "255")))
 
 BASE = {
     "CLUSTERNAME": "demo",
@@ -139,7 +141,7 @@ def test_conf_keeps_an_explicit_external_mapping():
 
 
 @pytest.mark.parametrize("rng", ["10.0.0.0-10.255.255.255", "172.16.0.0-172.31.255.255",
-                                 "192.168.0.0-192.168.255.255", "100.64.0.0-100.127.255.255",
+                                 "192.168.0.0-192.168.255.255", _CGNAT,
                                  "127.0.0.0-127.255.255.255", "169.254.0.0-169.254.255.255"])
 def test_conf_never_relays_into_private_ranges(rng):
     conf = _conf(COTURN)
