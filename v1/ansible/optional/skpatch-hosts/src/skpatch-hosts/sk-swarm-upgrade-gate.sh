@@ -260,7 +260,9 @@ pre() {
     engine=$(echo "$debs" | grep -E "$ENGINE_RE" | sed 's#.*/##' | tr '\n' ' ')
 
     if [ "$role" = manager ] && [ "$(manager_count)" -le 1 ] && [ "$SINGLE_MANAGER_ENGINE" != allow ]; then
-        until_s=$(label_values "$LABEL_WINDOW" | awk -v me="$(self_id)" '$1 == me && $2 ~ /^[0-9]+$/ {print $2}')
+        # self_id first: inside the pipeline it would run concurrently with label_values.
+        me=$(self_id)
+        until_s=$(label_values "$LABEL_WINDOW" | awk -v me="$me" '$1 == me && $2 ~ /^[0-9]+$/ {print $2}')
         if [ -z "$until_s" ] || [ "$(now)" -ge "$until_s" ]; then
             log "REFUSED docker engine upgrade ($engine): single-manager swarm, restarting dockerd stops every service. Open a window first: docker node update --label-add $LABEL_WINDOW=<epoch until> <node> (or SK_SWARM_GATE_SKIP=1 for one manual run)"
             exit 1
