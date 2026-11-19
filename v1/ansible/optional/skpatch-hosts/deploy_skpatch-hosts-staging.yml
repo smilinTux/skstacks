@@ -98,7 +98,7 @@
         # node it reaches.
         skp_auth_mode: "{{ skpatch_hosts.AUTH_MODE | default('sso', true) | string | lower }}"
         skp_sso_middleware: "{{ (skpatch_hosts.SSO_MIDDLEWARE | default('', true) | string) if (skpatch_hosts.AUTH_MODE | default('sso', true) | string | lower) != 'sso' else (skpatch_hosts.SSO_MIDDLEWARE | default('authentik@file', true) | string) }}"
-        skp_tls_options: "{{ skpatch_hosts.TLS_OPTIONS | default('intermediate@file', true) }}"
+        skp_tls_options: "{{ skpatch_hosts.TLS_OPTIONS | default('none', true) }}"
         skp_router: "skpatch-hosts{{ '' if env == 'prod' else '-' + env }}"
         # ALLOW_ACTIONS is metadata for the operator and for
         # provision_skpatch_hosts_nodes.yml: it never arms a sudoers rule by

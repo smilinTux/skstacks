@@ -174,7 +174,7 @@ skbom:
   POSTGRES_PATH: ""                         # default /var/data/runtime/skbom-<env>/postgres
   DUMP_PATH: ""                             # default /var/data/skbom-<env>/database-dump
   TRAEFIK_MIDDLEWARES: ""                   # default default-no-error-pages@file (both routers)
-  TLS_OPTIONS: ""                           # default intermediate@file; "none" = no tls.options label
+  TLS_OPTIONS: ""                           # default "none" = no tls.options label (Traefik default options, skstacks #463)
   APISERVER_CPUS: "2.00"
   APISERVER_MEMORY_LIMIT: 4096M
   APISERVER_MEMORY_RESERVATION: 1024M

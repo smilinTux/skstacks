@@ -128,7 +128,7 @@ include skfenceha's `error-pages` middleware, which replaces every 400 and
 (login, receipt parsing, the assistant) return JSON errors that the app's
 own UI needs to read. On an instance running sksec, set
 `TRAEFIK_MIDDLEWARES: "crowdsec-bouncer@file,default-no-error-pages@file"`.
-`TLS_OPTIONS` defaults to `intermediate@file`; `none` omits the label.
+`TLS_OPTIONS` defaults to `none`, which omits the label (Traefik default options, identical to intermediate; skstacks #463).
 
 ### Health checks
 
@@ -269,7 +269,7 @@ skhome:
   TRAEFIK_MIDDLEWARES: ""                   # default default-no-error-pages@file (keeps HomeCenter's JSON errors)
   AUTH_MODE: sso                            # sso (Authentik forward auth) | local
   SSO_MIDDLEWARE: ""                        # sso mode: default authentik@file; must be empty in local mode
-  TLS_OPTIONS: ""                           # default intermediate@file; "none" = no tls.options label
+  TLS_OPTIONS: ""                           # default "none" = no tls.options label (Traefik default options, skstacks #463)
   ADMIN_NAME: Admin                         # first boot only, ignored after
   ADMIN_EMAIL: admin@localhost              # first boot only, ignored after
   # ADMIN_PASSWORD: ""                      # first boot only; unset = HomeCenter's own "changeme" + forced reset

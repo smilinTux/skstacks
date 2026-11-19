@@ -114,7 +114,7 @@ Every other key is optional. Defaults are the playbook's own.
 | `EXTRA_CA_CERT` | empty | PEM of a private CA that signs the issuer's certificate; mounted into the indexer and dashboard as a trusted CA. |
 | `TRAEFIK_MIDDLEWARES` | `default@file` | Router middleware chain (includes the CrowdSec bouncer). |
 | `SSO_MIDDLEWARE` | empty | Optional forward-auth layer on top of the dashboard's own login. |
-| `TLS_OPTIONS` | `intermediate@file` | Traefik TLS options, or `none`. |
+| `TLS_OPTIONS` | `none` | Traefik TLS options; `none` (default) omits the label. Naming an option risks 421s (skstacks #463). |
 | `BACKUP_ENABLED` | `true` | Deploy the backup sidecar. |
 | `BACKUP_FREQUENCY`, `BACKUP_KEEP_DAYS`, `BACKUP_START_DELAY` | `86400`, `7`, `300` | Seconds between runs, retention in days, delay before the first run. |
 | `BACKUP_SNAPSHOTS` | `true` | Also take an indexer snapshot each run (the manager tarball is always taken). |

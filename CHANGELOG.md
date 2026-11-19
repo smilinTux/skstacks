@@ -4,6 +4,55 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
+## skstacks-v2.26.29 - 2026-11-19
+
+Patch on v2.26.28. Every Traefik router now uses the default TLS options, which become identical to
+`intermediate`, so a restarted service no longer strands HTTP/2 clients on 421. Instance action:
+redeploy skfence or skfenceha (TLS options), then any service whose routers carried
+`tls.options`; remove `TLS_OPTIONS`, `tls_options` or `TRAEFIK_TLS_OPTIONS` from vaults that set
+`intermediate@file`.
+
+### Traefik: no router names a TLS option (#463)
+
+- A router with `tls.options=intermediate@file` made Traefik answer 421 Misdirected Request on
+  every request of an HTTP/2 connection opened while that router was missing (a service restart),
+  because its domain-fronting check compares option names. Browsers retry on 421; Forgejo runners
+  do not, so they stayed stuck until restarted (one nor runner slot for about 16 hours on
+  2026-11-18, 68,624 421s in the access log).
+- skfence and skfenceha: the `default` TLS options gain `sniStrict: true`, so they equal
+  `intermediate`. A TLS handshake with no SNI is refused, as it already was on every
+  `intermediate` router.
+- Hardcoded `tls.options=intermediate@file` labels are removed from skgit (4 routers), skboard,
+  skorch, skpdf, skpeek, skport, skpulse, skseek, sksso, skstor, sksync and skvector. The
+  `TLS_OPTIONS` knobs of skaegis, skbom, skflow, skgym, skhome, skpatch-hosts, skpayment, skrac and
+  sksec-web default to `none`, and skgallery's `TRAEFIK_TLS_OPTIONS` renders only when set. An
+  explicit value still works.
+- Tests: baselines ignore the removed labels, render tests expect none by default, and a repo-wide
+  guard fails on any template that hardcodes or defaults a router to a named option.
+
+## skstacks-v2.26.28 - 2026-11-18
+
+Patch on v2.26.27. Fixes the Talk HPB on `TALK_TURN_EXTERNAL` estates and gives skfence the
+timeout knobs skfenceha already has. Instance action: redeploy skhub; an skfence estate with Talk
+internal signaling or large uploads sets `skfence.FORWARDING_TIMEOUTS`.
+
+### skhub: the talk-hpb healthcheck in `TALK_TURN_EXTERNAL` mode (#458, #459)
+
+- With `TALK_TURN_EXTERNAL: true` the default talk-hpb command runs no eturnal, but the service
+  inherited aio-talk's image healthcheck, which also requires eturnal and the TURN port. It never
+  passed, so Swarm stopped an otherwise healthy HPB about every 60 s and it stayed 0/1. The
+  external mode now gets its own healthcheck (signaling on 8081 with `/api/v1/stats`, and Janus on
+  8188). `TALK_HPB_HEALTHCHECK_TEST` replaces the test in any mode. Default renders are unchanged.
+
+### skfence: `FORWARDING_TIMEOUTS` and `RESPONDING_TIMEOUTS` (#460)
+
+- skfence hardcoded `responseHeaderTimeout: 30s`. Nextcloud Talk internal signaling long-polls
+  for 30 s, so every idle poll got a 504 and Talk showed "Lost connection to signaling server";
+  the same limit cut multi-GB skhub uploads. `skfence.FORWARDING_TIMEOUTS` (a map) replaces the
+  forwarding timeouts and `skfence.RESPONDING_TIMEOUTS` (a map) sets the websecure entrypoint's
+  responding timeouts, mirroring skfenceha's `WORKER_*` knobs. Unset, the render is byte-identical
+  and the default (30s/10s/90s) is skfenceha's. See the skfence README for the values to set.
+
 ## skstacks-v2.26.27 - 2026-11-18
 
 Cut from main. Gated on skstack06 (fresh, PROFILE=full). Read the upgrade notes before rolling:

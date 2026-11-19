@@ -75,7 +75,6 @@ services:
         - "traefik.http.routers.skboard{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
         - "traefik.http.routers.skboard{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
         - "traefik.http.routers.skboard{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
-        - "traefik.http.routers.skboard{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
         - "traefik.http.routers.skboard{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares={{ skboard.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file', true) }}"
         - "traefik.http.routers.skboard{% if env != 'prod' %}-{{ env }}{% endif %}.service=skboard{% if env != 'prod' %}-{{ env }}{% endif %}"
         # === TRAEFIK: SERVICES ===

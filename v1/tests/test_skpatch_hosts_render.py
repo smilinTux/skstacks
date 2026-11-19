@@ -112,7 +112,7 @@ def test_default_auth_mode_is_sso_authentik_on_the_whole_router(base_out):
     assert lab["traefik.http.routers.skpatch-hosts.rule"] == "Host(`skpatch-hosts.render.example.test`)"
     assert lab["traefik.http.routers.skpatch-hosts.middlewares"] == "default-no-error-pages@file,authentik@file"
     assert lab["traefik.http.routers.skpatch-hosts.service"] == "skpatch-hosts"
-    assert lab["traefik.http.routers.skpatch-hosts.tls.options"] == "intermediate@file"
+    assert "traefik.http.routers.skpatch-hosts.tls.options" not in lab  # default TLS options (skstacks #463)
     assert not any(k.endswith("-ui.rule") for k in lab)
 
 
@@ -140,7 +140,6 @@ def test_auth_mode_local_is_one_router_without_sso(tmp_path):
         "traefik.http.routers.skpatch-hosts.entrypoints": "websecure",
         "traefik.http.routers.skpatch-hosts.tls": "true",
         "traefik.http.routers.skpatch-hosts.tls.certresolver": "main",
-        "traefik.http.routers.skpatch-hosts.tls.options": "intermediate@file",
         "traefik.http.routers.skpatch-hosts.middlewares": "default-no-error-pages@file",
         "traefik.http.routers.skpatch-hosts.service": "skpatch-hosts",
         "traefik.http.services.skpatch-hosts.loadbalancer.server.port": "3001",
