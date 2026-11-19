@@ -18,6 +18,10 @@ tls:
         - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
         - TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305
         - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305
+      # Same as intermediate (sniStrict included) so routers can use default
+      # and never name an option: a name mismatch on a reused HTTP/2
+      # connection makes Traefik answer 421 (skstacks #463).
+      sniStrict: true
 
     # traefik.http.routers.myrouter.tls.options=modern@file
     modern:

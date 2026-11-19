@@ -124,7 +124,7 @@
         # "Private by design": local login only).
         skh_auth_mode: "{{ skhome.AUTH_MODE | default('sso', true) | string | lower }}"
         skh_sso_middleware: "{{ (skhome.SSO_MIDDLEWARE | default('', true) | string) if (skhome.AUTH_MODE | default('sso', true) | string | lower) != 'sso' else (skhome.SSO_MIDDLEWARE | default('authentik@file', true) | string) }}"
-        skh_tls_options: "{{ skhome.TLS_OPTIONS | default('intermediate@file', true) }}"
+        skh_tls_options: "{{ skhome.TLS_OPTIONS | default('none', true) }}"
         skh_router: "skhome{{ '' if env == 'prod' else '-' + env }}"
       tags: [config]
 

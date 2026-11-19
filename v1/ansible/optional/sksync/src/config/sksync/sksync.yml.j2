@@ -64,7 +64,6 @@ services:
         - "traefik.http.routers.sksync{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
         - "traefik.http.routers.sksync{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
         - "traefik.http.routers.sksync{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
-        - "traefik.http.routers.sksync{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
         - "traefik.http.routers.sksync{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares=default-security-headers@file,gzip@file"
         - "traefik.http.routers.sksync{% if env != 'prod' %}-{{ env }}{% endif %}.service=sksync{% if env != 'prod' %}-{{ env }}{% endif %}"
         # === TRAEFIK: SERVICES ===
