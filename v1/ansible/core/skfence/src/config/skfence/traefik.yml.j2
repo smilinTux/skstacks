@@ -118,6 +118,17 @@ entryPoints:
         allowEncodedPercent: true
         allowEncodedQuestionMark: true
         allowEncodedHash: true
+{% if skfence.RESPONDING_TIMEOUTS | default({}) %}
+    # skfence.RESPONDING_TIMEOUTS instance var (map, rendered verbatim, same
+    # rule as skfenceha's WORKER_RESPONDING_TIMEOUTS). Long read/write timeouts
+    # keep multi-GB uploads/downloads from being cut off. Unset: no transport
+    # block (Traefik's own defaults).
+    transport:
+      respondingTimeouts:
+{% for _timeout_name, _timeout_value in skfence.RESPONDING_TIMEOUTS.items() %}
+        {{ _timeout_name }}: {{ _timeout_value }}
+{% endfor %}
+{% endif %}
   metrics:
     address: ":8082"
 
@@ -137,9 +148,20 @@ providers:
 
 serversTransport:
   forwardingTimeouts:
+{% if skfence.FORWARDING_TIMEOUTS | default({}) %}
+{# skfence.FORWARDING_TIMEOUTS instance var (map) replaces the framework
+   defaults below entirely; no per-key merge (same rule as skfenceha's
+   WORKER_FORWARDING_TIMEOUTS). responseHeaderTimeout above 30s is needed by
+   Nextcloud Talk internal signaling (30 s long poll) and by multi-GB skhub
+   uploads during chunk assembly. #}
+{% for _timeout_name, _timeout_value in skfence.FORWARDING_TIMEOUTS.items() %}
+    {{ _timeout_name }}: {{ _timeout_value }}
+{% endfor %}
+{% else %}
     responseHeaderTimeout: 30s
     dialTimeout: 10s
     idleConnTimeout: 90s
+{% endif %}
 
 metrics:
   prometheus:

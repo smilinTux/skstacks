@@ -52,7 +52,6 @@ services:
         - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
         - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
         - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
-        - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
         # 2026-08-16: the skpdf-*-upload buffering middleware below was DEFINED but
         # never attached to this router, so MAX_UPLOAD_SIZE / MAX_RESPONSE_SIZE had
         # no effect and large PDFs hit Traefik's defaults. Appended to the chain.

@@ -107,7 +107,7 @@ def mount_source(svc, target):
 @pytest.mark.parametrize("env", ENVS)
 @pytest.mark.parametrize("stack", STACKS)
 def test_unset_knobs_render_byte_identical_to_v2_26_1(stack, env):
-    assert normalize_images(render(stack, env)) == normalize_images((BASELINE / f"{stack}-{env}.yml").read_text())
+    assert normalize_images(render(stack, env)) == normalize_images(_without_tls_options((BASELINE / f"{stack}-{env}.yml").read_text()))
 
 
 @pytest.mark.parametrize("env", ENVS)
@@ -398,3 +398,9 @@ def test_readme_documents_the_knobs_and_the_migration(stack):
                 "rsync -aHAX --numeric-ids", "STALE-moved-to-", "Never delete"]:
         assert key in text, key
     assert "\u2014" not in text and "\u2013" not in text
+
+
+def _without_tls_options(text):
+    """The baseline's tls.options=intermediate@file labels: removed since (skstacks #463),
+    every router now uses Traefik's default TLS options."""
+    return "".join(l for l in text.splitlines(keepends=True) if ".tls.options=intermediate@file" not in l)

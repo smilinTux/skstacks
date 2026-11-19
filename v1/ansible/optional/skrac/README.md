@@ -142,6 +142,10 @@ below is a separate, optional, extra layer, off by default).
    self-service local signup, independent of OIDC; left off so the only
    way in is OIDC or an admin-created local account.
 
+The tile opens in a new tab like every other portal tile
+(`skrac.AUTHENTIK_TILE_OPEN_IN_NEW_TAB`, default `true`; Authentik's own default
+is false). The deploy sets it on create and puts it back if it drifts.
+
 `AUTH_MODE: local` (the default) renders no `authStrategies` block at all:
 local accounts only, exactly like a hand-run MeshCentral. This is the
 standalone path: no SSO in front, no Authentik objects, CrowdSec optional
@@ -316,7 +320,7 @@ skrac:
   TRAEFIK_MIDDLEWARES: ""                   # default default-no-crowdsec@file; UI/API router
   AGENT_TRAEFIK_MIDDLEWARES: ""             # default = TRAEFIK_MIDDLEWARES; agent router, NEVER gets SSO_MIDDLEWARE
   SSO_MIDDLEWARE: ""                        # e.g. authentik@file: EXTRA forward-auth on the UI router only
-  TLS_OPTIONS: ""                           # default intermediate@file; "none" = no tls.options label
+  TLS_OPTIONS: ""                           # default "none" = no tls.options label (Traefik default options, skstacks #463)
   INTERNAL_PORT: 4430                       # plain-HTTP port server listens on behind Traefik
   TRUSTED_PROXY_CIDR: ""                    # default per-env cloud-public-<env> subnet
   AUTH_MODE: local                          # local | oidc
@@ -420,3 +424,34 @@ a failed run that keeps the previous one, retention). A skstack06 stage
 the lab cluster and check convergence, the route through skfenceha, the
 OIDC redirect against the lab Authentik, and a real agent connecting
 through Traefik on 443.
+
+## Agent watchdog
+
+`deploy_skrac-agent-watchdog.yml` puts a watchdog on hosts that run MeshCentral
+agents (`meshagent*.service`, installed from the skrac server). Seen on one estate
+2026-11-18: an agent kept its TCP connection ESTABLISHED while the server had
+listed it offline for 40 minutes, then ignored SIGTERM for 90 s.
+
+A timer runs `/usr/local/sbin/skrac-agent-watchdog` every 3 minutes. It uses
+local signals only, so no MeshCentral credentials live on the host, and
+restarts an agent unit when:
+
+- its newest connection to the server port has received nothing for
+  `skrac_watchdog_stale_s` (600 s; server and agent exchange keepalives about
+  every 2 minutes, so this catches a half-open session);
+- it has no established server connection for `skrac_watchdog_noconn_checks`
+  runs (2);
+- its main process (children such as a desktop session excluded) uses more
+  than `skrac_watchdog_spin_pct` (80) percent CPU for
+  `skrac_watchdog_spin_checks` runs (2).
+
+An agent younger than `skrac_watchdog_min_uptime_s` (300 s) is left alone.
+Each agent unit also gets a drop-in with `Restart=always`, `RestartSec=10` and
+`TimeoutStopSec` (`skrac_watchdog_stop_timeout`, 20 s). Decisions go to the
+journal (`journalctl -t skrac-agent-watchdog`). `-e skrac_watchdog_state=absent`
+removes it all.
+
+```bash
+ansible-playbook -i <inventory> v1/ansible/optional/skrac/deploy_skrac-agent-watchdog.yml \
+  -e skrac_watchdog_hosts=<group or host>
+```

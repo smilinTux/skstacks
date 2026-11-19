@@ -1,0 +1,75 @@
+{# SKPages compose template. One Caddy container serving a read-only docroot. #}
+{% set sfx = '-' ~ env %}
+{% set rsfx = '' if env == 'prod' else '-' ~ env %}
+version: '3.8'
+
+networks:
+  skpages{{ sfx }}:
+    external: true
+  cloud-public{{ sfx }}:
+    external: true
+
+services:
+  caddy:
+    image: {{ skpages.IMAGE | default('caddy:2.11.8-alpine', true) }}
+    # www-data, the owner of the Nextcloud data tree. The docroot is read-only
+    # either way; matching the uid means Caddy can read files Nextcloud wrote
+    # with 0640 permissions.
+    user: "{{ skpages_uid }}:{{ skpages_gid }}"
+    environment:
+      XDG_DATA_HOME: /tmp/caddy-data
+      XDG_CONFIG_HOME: /tmp/caddy-config
+    volumes:
+      - type: bind
+        source: {{ skpages_docroot }}
+        target: /srv
+        read_only: true
+      - type: bind
+        source: /var/data/config/skpages{{ sfx }}/Caddyfile
+        target: /etc/caddy/Caddyfile
+        read_only: true
+    networks:
+      - skpages{{ sfx }}
+      - cloud-public{{ sfx }}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      mode: replicated
+      replicas: 1
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+        reservations:
+          memory: 32M
+          cpus: '0.05'
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public{{ sfx }}"
+        - "traefik.http.services.skpages{{ rsfx }}.loadbalancer.server.port=8080"
+        # Private area: everything on the host, behind Authentik.
+        - "traefik.http.routers.skpages{{ rsfx }}.rule=Host(`{{ skpages_fqdn }}`)"
+        - "traefik.http.routers.skpages{{ rsfx }}.entrypoints=websecure"
+        - "traefik.http.routers.skpages{{ rsfx }}.tls=true"
+{% if skpages_certresolver %}
+        - "traefik.http.routers.skpages{{ rsfx }}.tls.certresolver={{ skpages_certresolver }}"
+{% endif %}
+        - "traefik.http.routers.skpages{{ rsfx }}.service=skpages{{ rsfx }}"
+        - "traefik.http.routers.skpages{{ rsfx }}.middlewares={{ skpages_middlewares }}"
+        # Public area: /p/<token>/..., no login. Higher priority so it wins
+        # over the private router for these paths only.
+        - "traefik.http.routers.skpages{{ rsfx }}-public.rule=Host(`{{ skpages_fqdn }}`) && PathPrefix(`/p/`)"
+        - "traefik.http.routers.skpages{{ rsfx }}-public.priority=1000"
+        - "traefik.http.routers.skpages{{ rsfx }}-public.entrypoints=websecure"
+        - "traefik.http.routers.skpages{{ rsfx }}-public.tls=true"
+{% if skpages_certresolver %}
+        - "traefik.http.routers.skpages{{ rsfx }}-public.tls.certresolver={{ skpages_certresolver }}"
+{% endif %}
+        - "traefik.http.routers.skpages{{ rsfx }}-public.service=skpages{{ rsfx }}"
+        - "traefik.http.routers.skpages{{ rsfx }}-public.middlewares={{ skpages_middlewares_public }}"

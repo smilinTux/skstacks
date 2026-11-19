@@ -52,7 +52,7 @@ def healthcheck(text):
 
 @pytest.mark.parametrize("env", ENVS)
 def test_unset_knobs_render_byte_identical_to_v2263(env):
-    assert normalize_images(render(env)) == normalize_images((BASELINE / f"sksso-{env}.yml").read_text())
+    assert normalize_images(render(env)) == normalize_images(_without_tls_options((BASELINE / f"sksso-{env}.yml").read_text()))
 
 
 @pytest.mark.parametrize("env", ENVS)
@@ -131,3 +131,9 @@ def test_empty_knobs_pass_the_guard_and_keep_the_nfs_paths(env):
     ctx = {"app": "sksso", "env": env, "sksso": sksso}
     assert _env().from_string(pv["sksso_postgres_data_path"]).render(**ctx) == f"/var/data/runtime/sksso-{env}/postgres"
     assert _env().from_string(pv["sksso_redis_data_path"]).render(**ctx) == f"/var/data/runtime/sksso-{env}/redis"
+
+
+def _without_tls_options(text):
+    """The baseline's tls.options=intermediate@file labels: removed since (skstacks #463),
+    every router now uses Traefik's default TLS options."""
+    return "".join(l for l in text.splitlines(keepends=True) if ".tls.options=intermediate@file" not in l)
