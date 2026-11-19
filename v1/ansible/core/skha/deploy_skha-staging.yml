@@ -64,6 +64,15 @@
       tags:
         - config
 
+    - name: Verify skha.vip_gate_checks is a list of check names
+      fail:
+        msg: >-
+          skha.vip_gate_checks must be a list of health check names, for
+          example [traefik]; a bare string would match substrings.
+      when: >-
+        skha.vip_gate_checks is defined and
+        (skha.vip_gate_checks is string or skha.vip_gate_checks is not sequence)
+
   tasks:
     - name: Deploying {{ app }}
       debug:
@@ -290,7 +299,14 @@
         msg: "{{ skha_status.stdout_lines | default(['Status check completed']) }}"
 
   handlers:
+    # One manager at a time, with a pause long enough for its gate checks to
+    # pass `rise` times (init_fail starts them failed). Restarting every
+    # manager at once leaves no node holding the VIP for several seconds.
+    # (ansible.builtin.pause runs once per play, not per host, so the settle
+    # time is part of the throttled restart itself.)
     - name: restart keepalived
-      ansible.builtin.service:
-        name: keepalived
-        state: restarted
+      ansible.builtin.shell: >-
+        systemctl restart keepalived &&
+        sleep {{ skha.restart_settle_seconds | default(20) | int }} &&
+        systemctl is-active keepalived
+      throttle: 1

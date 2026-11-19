@@ -37,10 +37,23 @@ VIP back (`nopreempt`), so the VIP does not flap.
   (default 80) minus 10 per index.
 - **VIP gate checks decide where the VIP may live.** The checks named in
   `skha.vip_gate_checks` (default `[traefik]`) default to `require: true`
-  and `weight: 0`. With weight 0 a failure puts the node in FAULT, so the VIP
-  leaves it at once. With `require: true`, a node with no running
+  and `weight: 0` and start failed (`init_fail`). With weight 0, `fall`
+  failures put the node in FAULT and the VIP moves to a peer: about 10 s at
+  the defaults (interval 5, fall 2) plus the peers' master-down timer (about
+  3 s). A check that hits its timeout counts as a failure, so a hung dockerd
+  also moves the VIP. `init_fail` stops a node with no worker from winning
+  the first election when every node boots together. With `require: true`, a node with no running
   `traefik-worker` FAILS the check, so the VIP can never sit on a node that
   answers nothing on 80/443. Either default can be overridden per entry.
+- **The gate is chosen by check NAME.** If your `skha.health_checks` calls
+  the Traefik check something other than `traefik`, set `vip_gate_checks`
+  to that name, or the VIP will never move on Traefik health.
+- **Redeploys restart keepalived one manager at a time** and wait
+  `skha.restart_settle_seconds` (default 20) on each, so the VIP is never
+  dropped by a config change.
+- **A network partition** can still give two masters, as with any VRRP. When
+  it heals, the higher-priority node keeps the VIP (VRRP master-to-master
+  resolution, unaffected by `nopreempt`).
 - **A negative weight never moves the VIP on its own.** Under `nopreempt` a
   master whose priority drops KEEPS the VIP. Weighted checks (default -10)
   only rank the nodes for the next election.
@@ -105,7 +118,8 @@ skha:
   advert_interval: 1             # optional, default 1 (seconds)
   worker_base_priority: 80       # optional, default 80
   acme_master_priority: 150      # optional, default 150 (a preference, not a lock)
-  vip_gate_checks: [traefik]     # optional, default shown: require + weight 0
+  vip_gate_checks: [traefik]     # optional, default shown: require + weight 0 + init_fail
+  restart_settle_seconds: 20     # optional, default 20: per-node wait after a keepalived restart
   lock_vip_to_acme_master: false # optional, default false: true = old lock, no failover
   acme_master_label: traefik.acme.master   # optional, default shown
   health_checks: [...]           # optional, see above; default is a single

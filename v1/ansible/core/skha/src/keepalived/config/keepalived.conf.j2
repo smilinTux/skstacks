@@ -31,6 +31,11 @@ vrrp_script chk_{{ check.name }} {
     fall {{ check.fall | default(2) }}
     rise {{ check.rise | default(2) }}
     timeout {{ check.timeout | default(5) }}
+{% if check.init_fail | default(check.name in skha_gate) %}
+    # Start failed until the check passes `rise` times, so a node with no
+    # worker cannot win the first election when every node boots together.
+    init_fail
+{% endif %}
 }
 
 {% endfor %}
@@ -41,8 +46,8 @@ vrrp_script chk_{{ check.name }} {
 # passing. The ACME master (traefik.acme.master label) gets the highest
 # priority, so it is PREFERRED, but it is not exempt: ACME uses the Cloudflare
 # DNS-01 challenge (skfenceha), which needs no inbound traffic, so nothing depends on the
-# VIP living there. A check with weight 0 is decisive: its failure puts the instance in FAULT
-# and the VIP leaves at once. That is the default for the checks named in
+# VIP living there. A check with weight 0 is decisive: after `fall` failures (about 10 s at the
+# defaults) the instance goes to FAULT and the VIP moves to a peer. That is the default for the checks named in
 # skha.vip_gate_checks (default [traefik]). A negative weight only lowers
 # priority, and with nopreempt a lowered master KEEPS the VIP, so a
 # weighted check alone never moves it.

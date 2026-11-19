@@ -89,3 +89,20 @@ def test_lock_opt_in_restores_the_old_locked_master():
 def test_lock_opt_in_does_not_affect_workers():
     vi = instance(render(acme_master=False, priority=80, lock_vip_to_acme_master=True))
     assert "state BACKUP" in vi and "track_script" in vi
+
+
+def _script_block(text, name):
+    m = re.search(r"vrrp_script chk_%s \{(.*?)\n\}" % name, text, re.S)
+    assert m, name
+    return m.group(1)
+
+
+def test_gate_check_starts_failed_so_a_workerless_node_cannot_win_at_boot():
+    text = render()
+    assert "init_fail" in _script_block(text, "traefik")
+    assert "init_fail" not in _script_block(text, "mail")
+
+
+def test_init_fail_can_be_switched_off_per_check():
+    checks = [dict(CHECKS[0], init_fail=False), CHECKS[1]]
+    assert "init_fail" not in _script_block(render(checks=checks), "traefik")
