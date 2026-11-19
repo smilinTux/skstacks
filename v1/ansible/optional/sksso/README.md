@@ -29,6 +29,10 @@ gate.
   that service's router middlewares. Point the middleware's address at
   `http://sksso-<env>_server:9000/outpost.goauthentik.io/auth/traefik` and
   configure an Authentik Proxy Outpost of type "Traefik" to match.
+  A service that needs its own login policy (not the domain-wide
+  catch-all) gets its own forward_single Proxy Provider; see
+  `optional/skpages/README.md` (Deploy step 3) for a worked example,
+  including the `ak shell` redirect-URI fix.
 - **Native OIDC**: for apps that speak OIDC themselves, do **not** add the
   forward-auth middleware to that route - it would intercept the OIDC
   callback (`?code=...&state=...`) the app is waiting for. Create an OAuth2
