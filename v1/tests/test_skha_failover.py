@@ -2,8 +2,8 @@
 
 Before 2026-11-19 the ACME master was rendered state MASTER, priority 150,
 with no track_script, so the VIP was locked to it even when it ran no
-Traefik worker (NAM: nammgr1002 held the VIP with its worker down after an
-NFS mount failure, public 443 refused). Now every node is BACKUP with the
+Traefik worker (2026-11-19: one estate's ACME-master manager held the VIP
+with its worker down after an NFS mount failure, public 443 refused). Now every node is BACKUP with the
 health checks tracked; the ACME master is only preferred (highest priority);
 VIP gate checks (default [traefik]) render weight 0, so a failure is FAULT
 and the VIP leaves. skha.lock_vip_to_acme_master: true keeps the old lock as
@@ -22,7 +22,7 @@ CHECKS = [
 
 
 def render(acme_master=False, priority=80, checks=CHECKS, **skha_extra):
-    skha = {"vip": "10.0.0.70/32", "auth_pass": "x", **skha_extra}
+    skha = {"vip": "192.0.2.10/32", "auth_pass": "x", **skha_extra}
     env = jinja2.Environment(undefined=jinja2.StrictUndefined, trim_blocks=True)
     # Ansible's bool filter, which plain jinja2 does not ship.
     env.filters["bool"] = lambda v: v if isinstance(v, bool) else str(v).strip().lower() in ("1", "true", "yes", "on")
@@ -33,8 +33,8 @@ def render(acme_master=False, priority=80, checks=CHECKS, **skha_extra):
         skha_priority=priority,
         skha=skha,
         primary_interface="ens18",
-        ansible_facts={"default_ipv4": {"address": "10.0.0.71"}},
-        skha_peers=["10.0.0.72", "10.0.0.73"],
+        ansible_facts={"default_ipv4": {"address": "192.0.2.11"}},
+        skha_peers=["192.0.2.12", "192.0.2.13"],
     )
 
 

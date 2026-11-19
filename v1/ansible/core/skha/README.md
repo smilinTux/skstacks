@@ -62,7 +62,7 @@ Why the ACME master is not locked any more: skfenceha's ACME uses the
 Cloudflare DNS-01 challenge, which needs no inbound traffic, so renewal does
 not care where the VIP is. The old lock (`state MASTER`, priority 150, no
 health checks) let the VIP sit on a node with no Traefik worker. On
-2026-11-19 nammgr1002 held NAM's VIP while its worker could not start (its
+2026-11-19 one estate's ACME-master manager held the VIP while its worker could not start (its
 NFS `/var/data` did not mount after a host crash), so public 443 was refused
 and the two healthy workers never got the VIP. An estate whose ACME
 challenge does need inbound traffic can set `skha.lock_vip_to_acme_master:
