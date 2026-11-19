@@ -189,19 +189,19 @@
         worker_node_index: 0
       when: worker_node_index is not defined and not (acme_master_node | default(false) | bool)
 
-    - name: Set SKHA priority (150 for ACME master, otherwise decreasing for workers based on worker index)
+    - name: Set SKHA priority (highest for the ACME master, so it is preferred; decreasing for the others by index)
       set_fact:
         skha_priority: >-
           {{
-            150 if (acme_master_node | default(false) | bool)
+            (skha.acme_master_priority | default(150) | int) if (acme_master_node | default(false) | bool)
             else ((skha.worker_base_priority | default(80) | int) - (worker_node_index | default(0) | int * 10))
           }}
 
-    - name: Set SKHA state (MASTER for ACME master node, BACKUP for workers)
+    - name: Set SKHA state (BACKUP everywhere; MASTER only for an ACME master with skha.lock_vip_to_acme_master)
       set_fact:
         skha_state: >-
           {{
-            'MASTER' if (acme_master_node | default(false) | bool)
+            'MASTER' if ((acme_master_node | default(false) | bool) and (skha.lock_vip_to_acme_master | default(false) | bool))
             else 'BACKUP'
           }}
 

@@ -21,31 +21,42 @@ global_defs {
     enable_snmp_checker
 }
 
+{% set skha_gate = skha.vip_gate_checks | default(['traefik']) %}
 {% for check in app_health_checks %}
-# Health check script for {{ check.name }}
+# Health check script for {{ check.name }}{{ ' (VIP gate: failure = FAULT, the VIP leaves this node)' if check.name in skha_gate else '' }}
 vrrp_script chk_{{ check.name }} {
     script "/usr/local/bin/skha_check_{{ check.name }}.sh"
     interval {{ check.interval | default(5) }}
-    weight {{ check.weight | default(-10) }}
+    weight {{ check.weight | default(0 if check.name in skha_gate else -10) }}
     fall {{ check.fall | default(2) }}
     rise {{ check.rise | default(2) }}
     timeout {{ check.timeout | default(5) }}
 }
 
 {% endfor %}
+{% set skha_vip_locked = (acme_master_node | default(false) | bool) and (skha.lock_vip_to_acme_master | default(false) | bool) %}
 # VRRP instance for the HA VIP.
-# CRITICAL: the ACME master node must ALWAYS own the VIP so certificate
-# renewal keeps working. ACME master: state MASTER, priority 150, no health
-# checks (VIP never moves off it). Worker nodes: state BACKUP, lower
-# priority, WITH health checks.
+# Every manager is state BACKUP with nopreempt and tracks the health checks,
+# so the VIP only ever sits on a node that passes them and moves when it stops
+# passing. The ACME master (traefik.acme.master label) gets the highest
+# priority, so it is PREFERRED, but it is not exempt: ACME uses the Cloudflare
+# DNS-01 challenge (skfenceha), which needs no inbound traffic, so nothing depends on the
+# VIP living there. A check with weight 0 is decisive: its failure puts the instance in FAULT
+# and the VIP leaves at once. That is the default for the checks named in
+# skha.vip_gate_checks (default [traefik]). A negative weight only lowers
+# priority, and with nopreempt a lowered master KEEPS the VIP, so a
+# weighted check alone never moves it.
+# skha.lock_vip_to_acme_master: true restores the old lock (state MASTER,
+# priority 150, no health checks), only for an estate whose ACME challenge
+# needs inbound traffic to the master. It is NOT HA: the VIP cannot fail over.
 vrrp_instance VI_1 {
-{% if acme_master_node | default(false) | bool %}
-    # ACME master node - always owns the VIP
+{% if skha_vip_locked %}
+    # ACME master, VIP LOCKED here (skha.lock_vip_to_acme_master): no failover
     state MASTER
     priority 150
 {% else %}
-    # Worker node - backup with health checks
-    state {{ skha_state | default('BACKUP') }}
+    # {{ 'ACME master (preferred)' if (acme_master_node | default(false) | bool) else 'Worker' }} - backup with health checks
+    state BACKUP
     priority {{ skha_priority | default(100) }}
 {% endif %}
     interface {{ skha.interface | default(primary_interface) }}
@@ -63,9 +74,9 @@ vrrp_instance VI_1 {
         {{ peer }}
 {% endfor %}
     }
-{% if not (acme_master_node | default(false) | bool) %}
-    # Track health check scripts (workers only - the ACME master's VIP is
-    # locked and never evaluates health).
+{% if not skha_vip_locked %}
+    # Track health check scripts on every node (only a locked ACME master
+    # skips them, see above).
     track_script {
 {% for check in app_health_checks %}
         chk_{{ check.name }}

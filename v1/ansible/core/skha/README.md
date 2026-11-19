@@ -23,19 +23,37 @@ The playbooks carry a `# skstacks: per-host` marker documenting why, and
 narrow: it is only honored under `core/` (host-level core services), and the
 marker must state its reason.
 
-## ACME-master VIP locking
+## Failover: every manager is a backup, the VIP follows a healthy worker
 
-If a node carries the label `traefik.acme.master=true` (the label key is
-configurable via `skha.acme_master_label`), SKHA treats it as the ACME
-master: `state MASTER`, `priority 150`, **no health checks** - the VIP is
-locked there so certificate renewal never gets interrupted by a VIP
-migration. Every other manager is `state BACKUP` with a lower priority
-(`skha.worker_base_priority`, default 80, minus 10 per worker index) and
-runs the configured health checks; a failed check subtracts from its
-priority (weight, default -10) until the VIP moves to the next-highest node.
+Every manager is `state BACKUP` with `nopreempt` and tracks the health
+checks. The VIP sits on one node and moves only when that node fails a VIP
+gate check or stops answering VRRP. A node that recovers does not take the
+VIP back (`nopreempt`), so the VIP does not flap.
 
-If no node carries the label, all managers behave as plain BACKUP workers
-and the highest-priority reachable node holds the VIP.
+- **Priority is only a preference.** A node carrying the label
+  `traefik.acme.master=true` (key configurable via `skha.acme_master_label`)
+  gets `skha.acme_master_priority` (default 150), so it wins the election
+  when every node starts together. The others get `skha.worker_base_priority`
+  (default 80) minus 10 per index.
+- **VIP gate checks decide where the VIP may live.** The checks named in
+  `skha.vip_gate_checks` (default `[traefik]`) default to `require: true`
+  and `weight: 0`. With weight 0 a failure puts the node in FAULT, so the VIP
+  leaves it at once. With `require: true`, a node with no running
+  `traefik-worker` FAILS the check, so the VIP can never sit on a node that
+  answers nothing on 80/443. Either default can be overridden per entry.
+- **A negative weight never moves the VIP on its own.** Under `nopreempt` a
+  master whose priority drops KEEPS the VIP. Weighted checks (default -10)
+  only rank the nodes for the next election.
+
+Why the ACME master is not locked any more: skfenceha's ACME uses the
+Cloudflare DNS-01 challenge, which needs no inbound traffic, so renewal does
+not care where the VIP is. The old lock (`state MASTER`, priority 150, no
+health checks) let the VIP sit on a node with no Traefik worker. On
+2026-11-19 nammgr1002 held NAM's VIP while its worker could not start (its
+NFS `/var/data` did not mount after a host crash), so public 443 was refused
+and the two healthy workers never got the VIP. An estate whose ACME
+challenge does need inbound traffic can set `skha.lock_vip_to_acme_master:
+true` to restore the lock, knowing the VIP then has no failover.
 
 ## Health checks are an instance variable
 
@@ -50,9 +68,8 @@ skha:
   health_checks:
     - name: traefik
       ports: [80, 443]
-      container_pattern: traefik-worker   # optional: skip the check where this
-                                           # container isn't running (e.g. the
-                                           # ACME master)
+      container_pattern: traefik-worker   # a VIP gate check by default:
+                                           # require: true, weight: 0
     - name: mail
       ports: [25, 587, 465, 143, 993]
       container_pattern: mail-worker
@@ -71,7 +88,7 @@ renders its own `/usr/local/bin/skha_check_<name>.sh` from
 `src/keepalived/scripts/skha_check.sh.j2`, and its own `vrrp_script` /
 `track_script` block in `keepalived.conf.j2`. `interval`, `weight`, `fall`,
 `rise` and `timeout` are all overridable per entry (defaults: 5s, -10, 2, 2,
-5s).
+5s; a VIP gate check's weight defaults to 0 instead of -10).
 
 ## Required instance vars (vault)
 
@@ -87,6 +104,9 @@ skha:
   interface: eth0                # optional, default: auto-detected primary interface
   advert_interval: 1             # optional, default 1 (seconds)
   worker_base_priority: 80       # optional, default 80
+  acme_master_priority: 150      # optional, default 150 (a preference, not a lock)
+  vip_gate_checks: [traefik]     # optional, default shown: require + weight 0
+  lock_vip_to_acme_master: false # optional, default false: true = old lock, no failover
   acme_master_label: traefik.acme.master   # optional, default shown
   health_checks: [...]           # optional, see above; default is a single
                                   # generic check of ports 80/443 (traefik)

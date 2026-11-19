@@ -6,6 +6,26 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+### skha: the VIP fails over again (no ACME-master lock by default)
+
+- **Every manager is `state BACKUP` with `nopreempt` and tracks the health checks.** The ACME
+  master (label `traefik.acme.master`) used to be rendered `state MASTER`, priority 150, with no
+  health checks, so the VIP could never leave it. On 2026-11-19 NAM's ACME-master-configured
+  nammgr1002 held the VIP while its Traefik worker could not start (NFS `/var/data` failed to
+  mount after the host crashed), public 443 was refused, and the two healthy workers never got
+  the VIP. skfenceha's ACME uses the Cloudflare DNS-01 challenge, so renewal never needed the VIP
+  there. The ACME master is now only preferred: `skha.acme_master_priority`, default 150.
+- **VIP gate checks** (`skha.vip_gate_checks`, default `[traefik]`) default to `require: true`
+  and `weight: 0`. A node with no running `traefik-worker` fails the check and goes to FAULT, so
+  the VIP leaves it at once. A negative weight alone never moves the VIP under `nopreempt`.
+- `skha.lock_vip_to_acme_master: true` restores the old lock, for an estate whose ACME challenge
+  needs inbound traffic. It has no failover.
+- Tests: `v1/tests/test_skha_failover.py`, plus gate cases in
+  `v1/tests/test_skha_health_check_require.py`. **Instance action**: redeploy skha on every
+  manager (`deploy_skha-<env>.yml`, whole manager group). Before running it, check that every
+  manager runs a `traefik-worker`. A manager without one goes to FAULT after the redeploy, which
+  is the point, but if NO manager has one, no node holds the VIP.
+
 ### skpatch-hosts: the swarm upgrade gate covers workers and repairs stale vxlan devices
 
 - **Every swarm node gets the gate, workers too** (`provision_skpatch_hosts_nodes.yml` now detects a
