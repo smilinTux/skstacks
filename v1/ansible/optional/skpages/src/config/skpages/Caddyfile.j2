@@ -1,0 +1,73 @@
+# SKPages Caddyfile (rendered by Ansible, do not edit on the host)
+#
+# Caddy only serves files. TLS, SSO and CrowdSec are Traefik's job, so Caddy
+# listens on plain HTTP :8080 inside the overlay and never touches certificates.
+# The docroot is mounted read-only: nothing that reaches this server can change
+# a page.
+{
+	admin off
+	auto_https off
+	persist_config off
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+:8080 {
+	root * /srv
+
+	# Pages are agent-written HTML on their own origin. The policy below lets a
+	# page run its own inline script and pull from the usual CDNs, but it cannot
+	# send data anywhere (connect-src/form-action), cannot be framed by another
+	# site, and cannot rewrite its base URL.
+	header {
+		Content-Security-Policy "{{ skpages_csp }}"
+		Referrer-Policy "no-referrer"
+		X-Content-Type-Options "nosniff"
+		Cross-Origin-Opener-Policy "same-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+		-Server
+	}
+
+	# Caddy runs `handle` before `respond`, so every rule here is a handle
+	# block. Blocks are mutually exclusive and tried in the order written:
+	# the deny rules must stay above the file servers.
+	@health path /healthz
+	handle @health {
+		respond "ok" 200
+	}
+
+	# Never serve dotfiles or half-finished WebDAV uploads.
+	@hidden path */.* *.part
+	handle @hidden {
+		respond 404
+	}
+
+	# /p/<token>/... is the public area. It must not be listable, or the
+	# random tokens that make a page "public by link only" leak.
+	@pubroot path /p /p/
+	handle @pubroot {
+		respond 404
+	}
+
+	@public path /p/*
+	handle @public {
+		file_server {
+			hide .* *.part
+		}
+	}
+
+	# Everything else sits behind Authentik at the Traefik layer, so a
+	# directory listing is a convenience for the people allowed in.
+	handle {
+		file_server {
+			browse
+			hide .* *.part
+		}
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
