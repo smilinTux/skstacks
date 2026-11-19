@@ -143,7 +143,7 @@ def test_default_auth_mode_is_sso_authentik_on_the_app_shell_only(base_out):
     assert lab["traefik.http.routers.skgym-ui.rule"] == "Host(`skgym.render.example.test`)"
     assert lab["traefik.http.routers.skgym-ui.middlewares"] == "default-no-error-pages@file,authentik@file"
     assert lab["traefik.http.routers.skgym-ui.service"] == "skgym"
-    assert lab["traefik.http.routers.skgym-ui.tls.options"] == "intermediate@file"
+    assert "traefik.http.routers.skgym-ui.tls.options" not in lab  # default TLS options (skstacks #463)
 
 
 @pytest.mark.parametrize("mode", ["SSO", "sso", ""])
@@ -170,7 +170,6 @@ def test_auth_mode_none_is_one_host_rule_without_crowdsec_error_pages_or_sso(tmp
         "traefik.http.routers.skgym.entrypoints": "websecure",
         "traefik.http.routers.skgym.tls": "true",
         "traefik.http.routers.skgym.tls.certresolver": "main",
-        "traefik.http.routers.skgym.tls.options": "intermediate@file",
         "traefik.http.routers.skgym.middlewares": "default-no-error-pages@file",
         "traefik.http.routers.skgym.service": "skgym",
         "traefik.http.services.skgym.loadbalancer.server.port": "8080",

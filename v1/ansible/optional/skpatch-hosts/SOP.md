@@ -264,7 +264,7 @@ skpatch-hosts:
   OIDC_READ_ONLY_GROUPS: ""                 # CSV, default none
   OIDC_UNMATCHED_ROLE: deny                 # deny | admin | read-only
   OIDC_END_SESSION: true
-  TLS_OPTIONS: ""                           # default intermediate@file; "none" = no tls.options label
+  TLS_OPTIONS: ""                           # default "none" = no tls.options label (Traefik default options, skstacks #463)
   TZ: UTC
   LUDASH_LOG_LEVEL: info
   extra_env: {}                             # any other upstream app variable, verbatim into skpatch-hosts.env

@@ -96,7 +96,7 @@
         # ALLOW_LOCAL_PUBLIC_RISK is also set.
         sksw_auth_mode: "{{ sksec_web.AUTH_MODE | default('sso', true) | string | lower }}"
         sksw_sso_middleware: "{{ (sksec_web.SSO_MIDDLEWARE | default('', true) | string) if (sksec_web.AUTH_MODE | default('sso', true) | string | lower) != 'sso' else (sksec_web.SSO_MIDDLEWARE | default('authentik@file', true) | string) }}"
-        sksw_tls_options: "{{ sksec_web.TLS_OPTIONS | default('intermediate@file', true) }}"
+        sksw_tls_options: "{{ sksec_web.TLS_OPTIONS | default('none', true) }}"
         sksw_router: "sksec-web{{ '' if env == 'prod' else '-' + env }}"
       tags: [config]
 

@@ -189,7 +189,6 @@ services:
         - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.entrypoints=websecure"
         - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.tls=true"
         - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.tls.certresolver=main"
-        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.tls.options=intermediate@file"
 {% if sksso.router_middlewares | default([]) %}
         - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-server.middlewares={{ sksso.router_middlewares | join(',') }}"
 {% endif %}
@@ -312,7 +311,6 @@ services:
         - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-capauth.entrypoints=websecure"
         - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-capauth.tls=true"
         - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-capauth.tls.certresolver=main"
-        - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-capauth.tls.options=intermediate@file"
         - "traefik.http.routers.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-capauth.service={{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-capauth"
         - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-capauth.loadbalancer.server.scheme=http"
         - "traefik.http.services.{{ app }}{% if env != 'prod' %}-{{ env }}{% endif %}-capauth.loadbalancer.server.port=8420"

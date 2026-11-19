@@ -156,7 +156,7 @@ skfence (single node) has no such chain: set its middlewares explicitly
 (e.g. `rate-limit@file,default-security-headers@file,gzip@file`). openGym adds its own
 `Access-Control-Allow-Origin` for the phone app: do not add a CORS
 middleware (two such headers break the app). `TLS_OPTIONS` defaults to
-`intermediate@file`; `none` omits the label (Traefik's default options).
+`none`, which omits the label (Traefik's default options, identical to intermediate; skstacks #463).
 
 Client addresses: Traefik forwards the caller in `X-Forwarded-For`, but the
 `web` nginx overwrites it with its own peer (Traefik's overlay address)
@@ -257,7 +257,7 @@ skgym:
   TRAEFIK_MIDDLEWARES: ""                   # default default-no-error-pages@file (keeps openGym's JSON errors)
   AUTH_MODE: sso                            # sso (Authentik forward auth in front) | none
   SSO_MIDDLEWARE: ""                        # sso mode: default authentik@file, on everything but /api/; must be empty in none
-  TLS_OPTIONS: ""                           # default intermediate@file; "none" = no tls.options label
+  TLS_OPTIONS: ""                           # default "none" = no tls.options label (Traefik default options, skstacks #463)
   SIGNUP: auto                              # auto (open until the first profile exists, then invite-only) | open | invite
   # INVITE_ONLY: true                       # older spelling: true = SIGNUP invite, false = open; refused together with SIGNUP
   FIRST_USER_ADMIN: true

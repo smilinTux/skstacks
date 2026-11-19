@@ -83,7 +83,7 @@
         sf_sso_middleware: "{{ skflow.SSO_MIDDLEWARE | default('', true) | string }}"
         sf_sso_exempt: "{{ skflow.SSO_EXEMPT_PREFIXES | default(['/api/']) }}"
         sf_outpost_service: "{{ skflow.SSO_OUTPOST_SERVICE | default('sksso' + ('' if env == 'prod' else '-' + env) + '-server@swarm', true) }}"
-        sf_tls_options: "{{ skflow.TLS_OPTIONS | default('intermediate@file', true) }}"
+        sf_tls_options: "{{ skflow.TLS_OPTIONS | default('none', true) }}"
         sf_router: "skflow{{ '' if env == 'prod' else '-' + env }}"
       tags: [config]
 

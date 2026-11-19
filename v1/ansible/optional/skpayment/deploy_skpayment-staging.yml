@@ -96,7 +96,7 @@
         skp_webhook_ip_allowlist: "{{ skpayment.WEBHOOK_IP_ALLOWLIST | default(false) | bool }}"
         skp_webhook_source_ranges: "{{ skpayment.WEBHOOK_SOURCE_RANGES | default(skp_default_stripe_webhook_ips, true) }}"
         skp_webhook_ip_depth: "{{ skpayment.WEBHOOK_IP_STRATEGY_DEPTH | default('', true) | string }}"
-        skp_tls_options: "{{ skpayment.TLS_OPTIONS | default('intermediate@file', true) }}"
+        skp_tls_options: "{{ skpayment.TLS_OPTIONS | default('none', true) }}"
         skp_router: "skpayment{{ '' if env == 'prod' else '-' + env }}"
       tags: [config]
 
