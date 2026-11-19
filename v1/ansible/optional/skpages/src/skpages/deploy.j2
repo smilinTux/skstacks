@@ -39,7 +39,7 @@ docker stack deploy --detach=true -c "${COMPOSE_FILE}" "${STACK_NAME}"
 
 # Caddy reads its Caddyfile only at start; force a restart so a changed
 # Caddyfile (same compose spec) actually takes effect.
-preexisted "${STACK_NAME}_caddy" && timeout 120 docker service update --force --detach=true "${STACK_NAME}_caddy" >/dev/null || true
+preexisted "${STACK_NAME}_caddy" && timeout 120 docker service update --force --detach=true "${STACK_NAME}_caddy" || true
 
 for _ in $(seq 1 30); do
     REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_caddy" --format '{{ '{{' }}.Replicas{{ '}}' }}')

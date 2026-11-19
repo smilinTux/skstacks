@@ -94,6 +94,8 @@
         ]) }}"
       tags: [networks]
 
+  # portal-tile: opt-out (pages are single documents agents hand out by
+  # direct link; the site root is not an app a person opens from the portal)
   tasks:
     - name: Require a docroot
       fail:
@@ -147,7 +149,7 @@
 
     - name: Render Caddyfile
       template:
-        src: src/config/{{ app }}/Caddyfile.j2
+        src: "{{ playbook_dir }}/src/config/{{ app }}/Caddyfile.j2"
         dest: /var/data/config/{{ app }}-{{ env }}/Caddyfile
         owner: root
         group: root
@@ -156,7 +158,7 @@
 
     - name: Render {{ app }}.sh.env
       template:
-        src: src/config/{{ app }}/{{ app }}.sh.env.j2
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.sh.env.j2"
         dest: /var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env
         owner: root
         group: root
@@ -165,7 +167,7 @@
 
     - name: Render {{ app }}.yml
       template:
-        src: src/config/{{ app }}/{{ app }}.yml.j2
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
         dest: /var/data/config/{{ app }}-{{ env }}/{{ app }}.yml
         owner: root
         group: root
@@ -181,7 +183,7 @@
 
     - name: Render deploy script
       template:
-        src: src/{{ app }}/deploy.j2
+        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
         dest: /var/data/{{ app }}-{{ env }}/deploy
         owner: root
         group: root
