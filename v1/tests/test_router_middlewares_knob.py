@@ -101,9 +101,11 @@ def test_unset_knobs_render_byte_identical_to_v2_26_4(svc, env):
     # skgit's API router is new since v2.26.4 (test_skgit_api_router_*): the
     # rest of the stack must still match the baseline byte for byte.
     text = render(svc, env)
+    base = (BASELINE / f"{svc}-{env}.yml").read_text()
     if svc == "skgit":
         text = _drop_skgit_api(text)
-    assert normalize_images(text) == normalize_images((BASELINE / f"{svc}-{env}.yml").read_text())
+        base = _drop_skgit_tls_options(base)
+    assert normalize_images(text) == normalize_images(base)
 
 
 _SKGIT_INIT_COMMENT = (
@@ -112,6 +114,11 @@ _SKGIT_INIT_COMMENT = (
     "    # toward the container pids limit",
     "    # stall). Docker's init",
 )
+
+
+def _drop_skgit_tls_options(text):
+    """Drop the v2.26.4 skgit routers' tls.options labels (removed since, see below)."""
+    return "".join(l for l in text.splitlines(keepends=True) if ".tls.options=" not in l)
 
 
 def _drop_skgit_api(text):
@@ -185,7 +192,6 @@ RUNNER_RPC_LIVE = [
     "traefik.http.routers.skgit-runner-rpc.entrypoints=websecure",
     "traefik.http.routers.skgit-runner-rpc.tls=true",
     "traefik.http.routers.skgit-runner-rpc.tls.certresolver=main",
-    "traefik.http.routers.skgit-runner-rpc.tls.options=intermediate@file",
     "traefik.http.routers.skgit-runner-rpc.priority=200",
     "traefik.http.routers.skgit-runner-rpc.middlewares=default-no-error-pages@file",
     "traefik.http.routers.skgit-runner-rpc.service=skgit",
@@ -267,3 +273,18 @@ def test_skgit_forgejo_runs_under_an_init():
     """forgejo as PID 1 never reaps git zombies; tini does."""
     svc = yaml.safe_load(render("skgit", "prod"))["services"]["forgejo"]
     assert svc["init"] is True
+
+
+
+@pytest.mark.parametrize("env", ENVS)
+@pytest.mark.parametrize("bouncer", (False, True))
+def test_skgit_routers_set_no_tls_options(env, bouncer):
+    # A tls.options name on skgit's routers made Traefik answer 421 Misdirected
+    # Request on runner HTTP/2 connections opened while skgit was down, until the
+    # runner restarted (2026-11-18). Every skgit router stays on Traefik's default.
+    over = {"TRAEFIK_MIDDLEWARES": "crowdsec-bouncer@file,default-no-crowdsec@file"} if bouncer else {}
+    text = render("skgit", env, **over)
+    assert "routers.skgit" in text
+    if bouncer:
+        assert "-runner-rpc.rule=" in text
+    assert ".tls.options=" not in text

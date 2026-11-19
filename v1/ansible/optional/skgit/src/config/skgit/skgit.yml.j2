@@ -66,12 +66,19 @@ services:
         # === TRAEFIK: HTTP ===
         - "traefik.enable=true"
         - "traefik.swarm.network=cloud-public-{{ env }}"
+{# No tls.options on any skgit router: they all use Traefik's default TLS options
+    (skfenceha tls.yml: same ciphers and TLS 1.2 minimum as intermediate@file).
+    While skgit is down its routers vanish, so a client that reconnects then gets
+    its TLS session under "default". With tls.options=intermediate@file, the
+    routers coming back made Traefik answer every request on that still-open
+    HTTP/2 connection with 421 Misdirected Request (it compares option names).
+    Forgejo runners poll constantly, so they stayed stuck until restarted, one for
+    about 16 hours on 2026-11-18. Keep every skgit router on the same option name. #}
         # Main web router
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.rule=Host(`{{ skgit.SUBDOMAIN_PREFIX | default('skgit') }}{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`)"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
-        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares={{ skgit.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file', true) }}"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}.service=skgit{% if env != 'prod' %}-{{ env }}{% endif %}"
         # === CONTAINER REGISTRY ROUTER (no middleware interference) ===
@@ -80,7 +87,6 @@ services:
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-registry.entrypoints=websecure"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-registry.tls=true"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-registry.tls.certresolver=main"
-        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-registry.tls.options=intermediate@file"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-registry.priority=100"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-registry.service=skgit{% if env != 'prod' %}-{{ env }}{% endif %}"
 {# === API AND GIT ROUTER (raw upstream status codes) ===
@@ -104,7 +110,6 @@ services:
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-api.entrypoints=websecure"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-api.tls=true"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-api.tls.certresolver=main"
-        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-api.tls.options=intermediate@file"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-api.priority=150"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-api.middlewares={{ skgit.API_MIDDLEWARES | default(_api_mw | join(','), true) }}"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-api.service=skgit{% if env != 'prod' %}-{{ env }}{% endif %}"
@@ -123,7 +128,6 @@ services:
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-runner-rpc.entrypoints=websecure"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-runner-rpc.tls=true"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-runner-rpc.tls.certresolver=main"
-        - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-runner-rpc.tls.options=intermediate@file"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-runner-rpc.priority=200"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-runner-rpc.middlewares={{ skgit.RUNNER_RPC_MIDDLEWARES | default('default-no-error-pages@file', true) }}"
         - "traefik.http.routers.skgit{% if env != 'prod' %}-{{ env }}{% endif %}-runner-rpc.service=skgit{% if env != 'prod' %}-{{ env }}{% endif %}"
