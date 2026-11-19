@@ -1,0 +1,12 @@
+{% load i18n %}{% autoescape off %}{% trans 'Reset your SKWorld password' %}
+
+{% blocktrans with name=user.name|default:user.username %}Hi {{ name }},{% endblocktrans %}
+
+{% blocktrans with username=user.username %}We received a request to reset the password for your SKWorld account ({{ username }}). Open the link below to choose a new one.{% endblocktrans %}
+
+{{ url }}
+
+{% blocktrans with expires=expires|timeuntil %}This link is valid for {{ expires }}. If you did not ask for this, ignore this email and your password stays the same.{% endblocktrans %}
+
+SKWorld
+{% endautoescape %}

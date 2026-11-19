@@ -1,18 +1,22 @@
 # Run inside Authentik: ak shell < apply_branding.py
 # Applies the SKWorld brand to the default brand, makes sure the stock
 # password-recovery flow exists, and wires "Forgot password?" into the login
-# page. Idempotent. Files are deployed to /media/public/skworld/ by the role
-# (see README "Branding"). No secrets here: recovery email uses sksso's global
-# email settings.
+# page, then brands the outgoing recovery email and the "Welcome to authentik!"
+# flow titles. Idempotent. Files are deployed to /media/public/skworld/ and
+# /templates/ by the role (see README "Branding"). No secrets here: recovery
+# email is sent through sksso's global email settings.
 import os
+import re
 
 from authentik.blueprints.v1.importer import Importer
 from authentik.brands.models import Brand
 from authentik.flows.models import Flow
+from authentik.stages.email.models import EmailStage
 from authentik.stages.identification.models import IdentificationStage
 
 TITLE = os.environ.get("SKWORLD_BRAND_TITLE", "SKWorld")
 FLOW_TITLE = os.environ.get("SKWORLD_FLOW_TITLE", "Welcome to the Kingdom")
+RECOVERY_SUBJECT = os.environ.get("SKWORLD_RECOVERY_SUBJECT", TITLE + ": reset your password")
 PACK = "/media/public/skworld"
 RECOVERY_SLUG = "default-recovery-flow"
 BLUEPRINT = "/blueprints/example/flows-recovery-email-verification.yaml"
@@ -73,3 +77,29 @@ elif not recovery:
     print("missing stage (no recovery flow to link)")
 else:
     print("missing stage (brand has no authentication flow)")
+
+# 4. Outgoing email: the recovery email stage defaults to subject "authentik" and
+# Authentik's stock template (which names authentik). Point it at the pack's
+# SKWorld template, deployed to /templates/ by the role. Only the template and
+# subject change; the stage's email settings (global by default) are untouched.
+STAGES = {
+    "default-recovery-email": ("skworld_recovery.html", RECOVERY_SUBJECT),
+}
+for name, (tpl, subject) in STAGES.items():
+    s = EmailStage.objects.filter(name=name).first()
+    if not s:
+        print("missing stage", name)
+        continue
+    if s.template != tpl or s.subject != subject:
+        s.template = tpl
+        s.subject = subject
+        s.save()
+    print("stage ok", name, tpl)
+
+# 5. Flow titles that still say "authentik" ("Welcome to authentik!" on the
+# source and setup flows). Cosmetic only, no flow logic touched.
+for f in Flow.objects.filter(title__icontains="authentik"):
+    new = re.sub("authentik", TITLE, f.title, flags=re.I)
+    f.title = new
+    f.save()
+    print("flow title", f.slug, "->", new)

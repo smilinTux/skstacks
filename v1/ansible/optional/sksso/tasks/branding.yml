@@ -2,7 +2,7 @@
 # on shared storage so Authentik serves it. Authentik reads logo, favicon and
 # flow background from media/public/<pack>/ and email templates from
 # custom-templates/. A pack may omit templates/ and nextcloud-theming.sh (the
-# skworld pack has neither); both are skipped when absent. This only copies files; applying them to the database is
+# skworld pack has no nextcloud-theming.sh); both are skipped when absent. This only copies files; applying them to the database is
 # the idempotent helper rendered next to the deploy script
 # (/var/data/<app>-<env>/apply-branding), run once after the stack is up.
 # See README "Branding".

@@ -24,8 +24,54 @@ def test_pack_ships_media_and_apply_script():
 
 
 def test_pack_is_self_contained():
-    assert not (PACK / "templates").exists()
     assert not (PACK / "nextcloud-theming.sh").exists()
+
+
+def test_pack_ships_recovery_email_templates_without_authentik():
+    for name in ("skworld_recovery.html", "skworld_recovery.txt"):
+        tpl = PACK / "templates" / name
+        assert tpl.is_file(), name
+        text = tpl.read_text()
+        assert "{{ url }}" in text, name
+        assert "SKWorld" in text, name
+        assert "authentik" not in text.lower(), name
+        assert "{% load i18n %}" in text, name
+    html = (PACK / "templates" / "skworld_recovery.html").read_text()
+    # mail clients strip SVG and block remote images: the mark is text only
+    assert "<img" not in html and "<svg" not in html
+
+
+def _django_templates():
+    import django
+    from django.conf import settings
+    if not settings.configured:
+        settings.configure(
+            USE_I18N=True,
+            USE_TZ=True,
+            TEMPLATES=[{"BACKEND": "django.template.backends.django.DjangoTemplates",
+                        "DIRS": [str(PACK / "templates")]}],
+        )
+        django.setup()
+    from django.template.loader import get_template
+    return get_template
+
+
+def test_recovery_templates_render_with_authentik_context():
+    import pytest
+    pytest.importorskip("django")
+    from datetime import timedelta
+    from types import SimpleNamespace
+    get_template = _django_templates()
+    from django.utils import timezone
+    ctx = {"url": "https://sso.example.test/if/flow/recovery/?flow_token=abc",
+           "user": SimpleNamespace(name="Ada", username="ada"),
+           "expires": timezone.now() + timedelta(minutes=30)}
+    for name in ("skworld_recovery.html", "skworld_recovery.txt"):
+        out = get_template(name).render(ctx)
+        assert ctx["url"] in out, name
+        assert "Hi Ada," in out, name
+        assert "(ada)" in out, name
+        assert "authentik" not in out.lower(), name
 
 
 def test_apply_branding_compiles_and_sets_brand_and_recovery(tmp_path):
@@ -40,6 +86,17 @@ def test_apply_branding_compiles_and_sets_brand_and_recovery(tmp_path):
     assert "flows-recovery-email-verification.yaml" in code
     for prefix in ("brand", "flow", "stage", "missing"):
         assert re.search(r'print\("%s ' % prefix, code), prefix
+
+
+def test_apply_branding_brands_the_recovery_email_and_flow_titles():
+    code = (PACK / "media" / "apply_branding.py").read_text()
+    assert '"default-recovery-email": ("skworld_recovery.html", RECOVERY_SUBJECT)' in code
+    assert "SKWORLD_RECOVERY_SUBJECT" in code
+    assert 'title__icontains="authentik"' in code
+    sh = (PACK / "apply-branding.sh").read_text()
+    assert "SKWORLD_RECOVERY_SUBJECT" in sh
+    # the optional subject must reach docker exec as one argument, not word-split
+    assert '"${ENVS[@]}"' in sh
 
 
 def _tasks():

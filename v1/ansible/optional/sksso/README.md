@@ -113,9 +113,10 @@ the pack has them.
 ### `branding: skworld`
 
 `sksso.branding: skworld` copies `branding/skworld/media/` (logo, favicon, orange
-`skworld.css`, `apply_branding.py`) to `/var/data/sksso-<env>/media/public/skworld/`
-and installs `apply-branding` next to `deploy`. Run `apply-branding [stack]` once
-after the stack is up (idempotent). It:
+`skworld.css`, `apply_branding.py`) to `/var/data/sksso-<env>/media/public/skworld/`,
+the recovery email templates (`skworld_recovery.html` and its `.txt` twin) to
+`custom-templates/`, and installs `apply-branding` next to `deploy`. Run
+`apply-branding [stack]` once after the stack is up (idempotent). It:
 
 - sets the default brand: title (env `SKWORLD_BRAND_TITLE`, default "SKWorld"),
   logo, favicon and custom CSS (orange accent, and the "Powered by authentik"
@@ -127,12 +128,19 @@ after the stack is up (idempotent). It:
   `example/flows-recovery-email-verification.yaml` in-process (an existing flow is
   never overwritten), and sets it as the brand's recovery flow;
 - points the identification stage(s) of the brand's login flow at that flow, so the
-  login page shows "Forgot password?".
+  login page shows "Forgot password?";
+- points the `default-recovery-email` stage at `skworld_recovery.html` with subject
+  "SKWorld: reset your password" (env `SKWORLD_RECOVERY_SUBJECT`; the default follows
+  `SKWORLD_BRAND_TITLE`). Out of the box that stage's subject is "authentik" and its
+  template is Authentik's stock one, which names authentik;
+- renames flow titles that still say "authentik" ("Welcome to authentik!" on the
+  source and initial-setup flows) to the brand title.
 
 Recovery email is sent through sksso's global email settings
-(`AUTHENTIK_EMAIL__*` in `sksso.env`, `sksso.email_from`); the skworld pack ships no
-email templates. Rollback: clear the brand's logo, favicon, custom CSS and recovery
-flow in the admin UI, and clear `recovery_flow` on the identification stage.
+(`AUTHENTIK_EMAIL__*` in `sksso.env`, `sksso.email_from`). Rollback: clear the
+brand's logo, favicon, custom CSS and recovery flow in the admin UI, clear
+`recovery_flow` on the identification stage, and set the recovery email stage back to
+template `email/password_reset.html`.
 
 ### `branding: nam`
 
