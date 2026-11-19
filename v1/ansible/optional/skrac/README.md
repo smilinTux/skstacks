@@ -320,7 +320,7 @@ skrac:
   TRAEFIK_MIDDLEWARES: ""                   # default default-no-crowdsec@file; UI/API router
   AGENT_TRAEFIK_MIDDLEWARES: ""             # default = TRAEFIK_MIDDLEWARES; agent router, NEVER gets SSO_MIDDLEWARE
   SSO_MIDDLEWARE: ""                        # e.g. authentik@file: EXTRA forward-auth on the UI router only
-  TLS_OPTIONS: ""                           # default intermediate@file; "none" = no tls.options label
+  TLS_OPTIONS: ""                           # default "none" = no tls.options label (Traefik default options, skstacks #463)
   INTERNAL_PORT: 4430                       # plain-HTTP port server listens on behind Traefik
   TRUSTED_PROXY_CIDR: ""                    # default per-env cloud-public-<env> subnet
   AUTH_MODE: local                          # local | oidc

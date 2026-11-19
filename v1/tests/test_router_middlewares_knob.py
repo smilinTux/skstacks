@@ -102,9 +102,9 @@ def test_unset_knobs_render_byte_identical_to_v2_26_4(svc, env):
     # rest of the stack must still match the baseline byte for byte.
     text = render(svc, env)
     base = (BASELINE / f"{svc}-{env}.yml").read_text()
+    base = _drop_tls_options(base)
     if svc == "skgit":
         text = _drop_skgit_api(text)
-        base = _drop_skgit_tls_options(base)
     assert normalize_images(text) == normalize_images(base)
 
 
@@ -116,8 +116,9 @@ _SKGIT_INIT_COMMENT = (
 )
 
 
-def _drop_skgit_tls_options(text):
-    """Drop the v2.26.4 skgit routers' tls.options labels (removed since, see below)."""
+def _drop_tls_options(text):
+    """Drop the v2.26.4 routers' tls.options labels: every router now uses Traefik's
+    default TLS options (skstacks #463, see test_skgit_routers_set_no_tls_options)."""
     return "".join(l for l in text.splitlines(keepends=True) if ".tls.options=" not in l)
 
 
@@ -288,3 +289,17 @@ def test_skgit_routers_set_no_tls_options(env, bouncer):
     if bouncer:
         assert "-runner-rpc.rule=" in text
     assert ".tls.options=" not in text
+
+
+def test_no_template_defaults_a_router_to_a_named_tls_option():
+    # Fleet-wide form of the skgit rule (skstacks #463): routers use Traefik's
+    # default TLS options, which skfence/skfenceha define identical to
+    # intermediate. A hardcoded or defaulted option name brings back the 421 trap.
+    bad = []
+    for p in (V1 / "ansible").rglob("*"):
+        if p.suffix not in (".j2", ".yml") or not p.is_file():
+            continue
+        t = p.read_text(errors="ignore")
+        if re.search(r'tls\.options=(intermediate|modern|old)@file"', t) or "default('intermediate@file'" in t:
+            bad.append(str(p.relative_to(V1)))
+    assert bad == []
