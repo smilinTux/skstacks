@@ -6,11 +6,24 @@ Each entry says what an instance must do, if anything.
 
 ## skstacks-v2.26.29 - 2026-11-19
 
-Patch on v2.26.28. Every Traefik router now uses the default TLS options, which become identical to
-`intermediate`, so a restarted service no longer strands HTTP/2 clients on 421. Instance action:
+Patch on v2.26.28. Every Traefik router now uses the default TLS options, so a restarted service no
+longer strands HTTP/2 clients on 421. Adds the SKPages role and a generated subnet registry. Instance action:
 redeploy skfence or skfenceha (TLS options), then any service whose routers carried
 `tls.options`; remove `TLS_OPTIONS`, `tls_options` or `TRAEFIK_TLS_OPTIONS` from vaults that set
 `intermediate@file`.
+
+### SKPages: agent-published HTML pages (new role, #461)
+
+- **`optional/skpages`**: one Caddy container serving a read-only docroot (usually a Nextcloud
+  group folder) at `pages.<cluster>.<domain>`, private behind `authentik@file`, with `/p/<token>/`
+  public by link. Knobs for the middleware chains (`TRAEFIK_MIDDLEWARES`,
+  `TRAEFIK_MIDDLEWARES_PUBLIC`), `CERTRESOLVER` and `AUTH`. The publishing CLI and skill are in
+  smilinTux/skpages. **Instance action**: none unless you deploy it (README, Deploy); an instance
+  that carried its own `optional/skpages` drops it and keeps its vault.
+- **`v1/ansible/shared/networks`** is now generated from every playbook's default subnets by
+  `v1/scripts/networks_registry.py`, with the free /24s listed at the bottom. CI fails when it is
+  stale, and `test_unique_subnets.py` now sees every subnet format (it missed bare `- subnet:`
+  lists and per-env maps before). **Instance action**: none.
 
 ### Traefik: no router names a TLS option (#463)
 
@@ -19,9 +32,12 @@ redeploy skfence or skfenceha (TLS options), then any service whose routers carr
   because its domain-fronting check compares option names. Browsers retry on 421; Forgejo runners
   do not, so they stayed stuck until restarted (one nor runner slot for about 16 hours on
   2026-11-18, 68,624 421s in the access log).
-- skfence and skfenceha: the `default` TLS options gain `sniStrict: true`, so they equal
-  `intermediate`. A TLS handshake with no SNI is refused, as it already was on every
-  `intermediate` router.
+- skfence and skfenceha: `sniStrict` on the `default` TLS options is opt-in,
+  `DEFAULT_SNI_STRICT` (default `false`). The first v2.26.29 candidate turned it on for every
+  router, which refused the handshake for any host with no matching certificate (ACME still
+  pending, or only Traefik's self-signed default cert); the skstack06 gate caught it. Routers
+  that used `intermediate@file` lose its sniStrict unless the instance sets the knob.
+  **Instance action**: set `DEFAULT_SNI_STRICT: true` only where a certificate covers every router.
 - Hardcoded `tls.options=intermediate@file` labels are removed from skgit (4 routers), skboard,
   skorch, skpdf, skpeek, skport, skpulse, skseek, sksso, skstor, sksync and skvector. The
   `TLS_OPTIONS` knobs of skaegis, skbom, skflow, skgym, skhome, skpatch-hosts, skpayment, skrac and
