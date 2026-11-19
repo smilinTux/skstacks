@@ -4,6 +4,32 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
+## skstacks-v2.26.29 - 2026-11-19
+
+Patch on v2.26.28. Every Traefik router now uses the default TLS options, which become identical to
+`intermediate`, so a restarted service no longer strands HTTP/2 clients on 421. Instance action:
+redeploy skfence or skfenceha (TLS options), then any service whose routers carried
+`tls.options`; remove `TLS_OPTIONS`, `tls_options` or `TRAEFIK_TLS_OPTIONS` from vaults that set
+`intermediate@file`.
+
+### Traefik: no router names a TLS option (#463)
+
+- A router with `tls.options=intermediate@file` made Traefik answer 421 Misdirected Request on
+  every request of an HTTP/2 connection opened while that router was missing (a service restart),
+  because its domain-fronting check compares option names. Browsers retry on 421; Forgejo runners
+  do not, so they stayed stuck until restarted (one nor runner slot for about 16 hours on
+  2026-11-18, 68,624 421s in the access log).
+- skfence and skfenceha: the `default` TLS options gain `sniStrict: true`, so they equal
+  `intermediate`. A TLS handshake with no SNI is refused, as it already was on every
+  `intermediate` router.
+- Hardcoded `tls.options=intermediate@file` labels are removed from skgit (4 routers), skboard,
+  skorch, skpdf, skpeek, skport, skpulse, skseek, sksso, skstor, sksync and skvector. The
+  `TLS_OPTIONS` knobs of skaegis, skbom, skflow, skgym, skhome, skpatch-hosts, skpayment, skrac and
+  sksec-web default to `none`, and skgallery's `TRAEFIK_TLS_OPTIONS` renders only when set. An
+  explicit value still works.
+- Tests: baselines ignore the removed labels, render tests expect none by default, and a repo-wide
+  guard fails on any template that hardcodes or defaults a router to a named option.
+
 ## skstacks-v2.26.28 - 2026-11-18
 
 Patch on v2.26.27. Fixes the Talk HPB on `TALK_TURN_EXTERNAL` estates and gives skfence the
