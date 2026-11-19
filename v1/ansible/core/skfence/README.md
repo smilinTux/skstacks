@@ -24,6 +24,12 @@ middleware is defined by sksec's `dynamic/sksec.yml`, and the bouncer fails clos
 every router on `default@file` then depends on it. `dashboard-chain` never gets it.
 Default `false` renders the chain exactly as before.
 
+**TLS options**: every router uses Traefik's `default` TLS options and names none, so a
+restarted service never strands HTTP/2 clients on a 421. `DEFAULT_SNI_STRICT: true` makes
+`default` refuse a handshake whose SNI matches no certificate; unset (`false`), such a host
+gets Traefik's self-signed default cert, as before v2.26.29. Turn it on only where a
+wildcard or per-host certificate covers every router (skfenceha has the same knob).
+
 **Timeouts**: `FORWARDING_TIMEOUTS` (a map) replaces Traefik's
 `serversTransport.forwardingTimeouts` entirely (no per-key merge); unset, it stays
 `responseHeaderTimeout: 30s`, `dialTimeout: 10s`, `idleConnTimeout: 90s`, the same default
