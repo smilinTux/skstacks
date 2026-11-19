@@ -70,7 +70,7 @@ lets a page run its own scripts and load common CDNs, but blocks `connect-src` a
    ansible-playbook -i shared/hosts optional/skpages/deploy_skpages-prod.yml \
      -l <cluster-managers> --vault-password-file <vault-pass-file>
    curl -sI https://pages.<cluster>.<domain>/ | head -3     # 302 to Authentik
-   curl -s  https://pages.<cluster>.<domain>/healthz       # ok (no auth)
+   curl -sI https://pages.<cluster>.<domain>/p/ | head -1  # 404, no login (public router)
    ```
 
 ## Vault keys
