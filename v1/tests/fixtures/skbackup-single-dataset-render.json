@@ -4,7 +4,7 @@
   "etc/skbackup/hooks.conf": "c6c8078536883b7418f524ba2385ca9bbb65e0b4704b29a142f91d0fb8faa6d0",
   "etc/skbackup/offsite.env": "c4b791026431755fc4b1acb84fa2d20071f3143e567075b6fc8c722041b9619a",
   "etc/skbackup/restic-sets.conf": "f78dd84dd11b912d01ad8e64e95a092c62544555258d3e20b16acd6c2a81ce73",
-  "etc/skbackup/skbackup.conf": "9e992c803794d1253c39126db776a4557b1928a21235bd66bda54d87cdd1fd6d",
+  "etc/skbackup/skbackup.conf": "2ed940fb14deecc608cf0b09670af551affaa4057f596486723cdda11967513a",
   "etc/systemd/system/skbackup-check.service": "fc29ce14bff3e8203df2ece9f1f7efb365fb8c4afbd788737de42f137850e83e",
   "etc/systemd/system/skbackup-check.timer": "55f84ab7276f779e1d7235b7f711c4f18f120f6ec00d730ec45d74498dc1dd26",
   "etc/systemd/system/skbackup-offsite.service": "29c09f94e67124c5aadd76a4745e95688260c80139eac90126b6a3dc6d089fa1",
