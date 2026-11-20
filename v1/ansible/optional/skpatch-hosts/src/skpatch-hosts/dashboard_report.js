@@ -9,6 +9,7 @@
 //               security, lifecycle: {status, label, eol, days_to_eol,
 //               support_end, days_to_support_end},
 //               package_issue_list: [{pkgManager, key, title, message, detected_at}],
+//               security_updates: [{package, pkgManager, current, new, repository}],
 //               last_ok: {action: at}, last_clean_check,
 //               sudo_denied: [{action, pkgManager, at, history_id, error, command}],
 //               failed: [{action, at, history_id, error, tail, tail_is_raw}]}],
@@ -25,6 +26,11 @@
 // list ("pacman,flatpak,snap") that changes between runs. A later run of the
 // same action that did not hit sudo clears it, so the issue resolves itself
 // once the host is fixed.
+// security_updates is the pending update list the dashboard flags as
+// security (the same visible, not-hidden list securityCount counts), from
+// GET /systems/:id, sorted by package. The pinned app (2026.10.9) stores no
+// CVE ids: apt marks an update as security by its repository (a "-security"
+// pocket), the other managers never do (server/ssh/parsers/*.ts).
 "use strict";
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -189,12 +195,17 @@ async function main() {
       });
     }
     let issues = [];
-    if (Number(s.packageIssueCount || 0) > 0) {
+    let secUpdates = [];
+    if (Number(s.packageIssueCount || 0) > 0 || Number(s.securityCount || 0) > 0) {
       const detail = await get(base, session, `/systems/${s.id}`);
       issues = (detail.packageIssues || []).filter((i) => i.active !== 0 && i.active !== false).map((i) => ({
         pkgManager: i.pkgManager || null, key: i.issueKey || null, title: i.title || null,
         message: i.message || null, detected_at: i.detectedAt ? new Date(parseAt(i.detectedAt)).toISOString() : null,
       }));
+      secUpdates = (detail.updates || []).filter((u) => u.isSecurity === true || Number(u.isSecurity) === 1).map((u) => ({
+        package: u.packageName, pkgManager: u.pkgManager || null, current: u.currentVersion || null,
+        new: u.newVersion || null, repository: u.repository || null,
+      })).sort((a, b) => String(a.package).localeCompare(String(b.package)));
     }
     const iso = (t) => (t ? new Date(t).toISOString() : null);
     out.push({
@@ -210,6 +221,7 @@ async function main() {
       boot_id: s.bootId || null,
       package_issues: Number(s.packageIssueCount || 0),
       package_issue_list: issues,
+      security_updates: secUpdates,
       last_ok: Object.fromEntries(Object.entries(lastOk).map(([k, v]) => [k, iso(v)])),
       last_clean_check: iso(lastCleanCheck),
       updates: Number(s.updateCount || 0),
