@@ -8,7 +8,7 @@ version: '3.8'
 {% set hc_interval = skpatch_hosts.HEALTH_CHECK_INTERVAL | default('30s', true) %}
 {% set hc_timeout = skpatch_hosts.HEALTH_CHECK_TIMEOUT | default('10s', true) %}
 {% set hc_retries = skpatch_hosts.HEALTH_CHECK_RETRIES | default(3, true) | int %}
-{% set hc_start = skpatch_hosts.HEALTH_CHECK_START_PERIOD | default('30s', true) %}
+{% set hc_start = skpatch_hosts.HEALTH_CHECK_START_PERIOD | default('90s' if skp_auth_mode == 'oidc' else '30s', true) %}
 {% set data_constraints = (skpatch_hosts.PLACEMENT_CONSTRAINTS | default(['node.role == worker'], true)) + (['node.hostname == ' + skp_data_node] if skp_data_node else []) %}
 
 networks:
@@ -31,7 +31,17 @@ services:
       # fails, task marked unhealthy and killed/replaced in a loop, app
       # itself never crashes). node is guaranteed present (it runs the
       # app); probe with it directly instead of assuming a shell utility.
+{% if skp_auth_mode == 'oidc' %}
+      # AUTH_MODE oidc: the app runs OIDC discovery ONCE at startup and never
+      # retries. If sksso is unreachable then, the task stays up with SSO
+      # login silently off (/api/auth/status says "oidcEnabled":false) until
+      # someone forces a restart. Fail the check in that state so swarm
+      # replaces the task and discovery runs again. start_period covers a
+      # normal start including discovery.
+      test: ["CMD", "/usr/local/bin/node", "-e", "require('http').get('http://127.0.0.1:3001/api/auth/status',r=>{let b='';r.on('data',c=>b+=c);r.on('end',()=>{try{process.exit(r.statusCode<400&&JSON.parse(b).oidcEnabled===true?0:1)}catch(e){process.exit(1)}})}).on('error',()=>process.exit(1))"]
+{% else %}
       test: ["CMD", "/usr/local/bin/node", "-e", "require('http').get('http://127.0.0.1:3001/',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))"]
+{% endif %}
       interval: {{ hc_interval }}
       timeout: {{ hc_timeout }}
       retries: {{ hc_retries }}

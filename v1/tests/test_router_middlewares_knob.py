@@ -56,6 +56,27 @@ SERVICES = {
 # same way skgym/skrac never joined this generic dict.
 CASES = [(svc, sfx) for svc, routers in SERVICES.items() for sfx in routers]
 OVERRIDE = "crowdsec-bouncer@file,default@file"
+# skpdf, skpeek and skseek have no login of their own: since the SSO-by-default
+# change their router appends SSO_MIDDLEWARE (default authentik@file) to whatever
+# TRAEFIK_MIDDLEWARES resolves to (test_sso_default_skpeek_skseek_skpdf.py).
+# The knob semantics tested here are unchanged, so these tests expect that one
+# suffix on those routers and strip it before comparing with the v2.26.4 bytes.
+SSO_DEFAULT = {"skpdf", "skpeek", "skseek"}
+SSO_SUFFIX = ",authentik@file"
+
+
+def _sso(svc, chain):
+    return chain + SSO_SUFFIX if svc in SSO_DEFAULT else chain
+
+
+def _drop_sso(text, svc):
+    """Strip the appended SSO middleware from the router labels of SSO_DEFAULT services."""
+    if svc not in SSO_DEFAULT:
+        return text
+    return "".join(
+        l.replace(SSO_SUFFIX + '"', '"') if ".middlewares=" in l else l
+        for l in text.splitlines(keepends=True)
+    )
 
 
 def compose_path(svc):
@@ -105,6 +126,7 @@ def test_unset_knobs_render_byte_identical_to_v2_26_4(svc, env):
     base = _drop_tls_options(base)
     if svc == "skgit":
         text = _drop_skgit_api(text)
+    text = _drop_sso(text, svc)
     assert normalize_images(text) == normalize_images(base)
 
 
@@ -134,7 +156,7 @@ def _drop_skgit_api(text):
 @pytest.mark.parametrize("svc,sfx", CASES)
 def test_default_chain_is_the_old_hardcoded_one(svc, sfx, env):
     _, default = SERVICES[svc][sfx]
-    assert router_middlewares(render(svc, env), svc, env, sfx) == [default(env)]
+    assert router_middlewares(render(svc, env), svc, env, sfx) == [_sso(svc, default(env))]
 
 
 @pytest.mark.parametrize("svc", SERVICES)
@@ -149,10 +171,10 @@ def test_empty_knobs_render_byte_identical_to_unset(svc):
 def test_override_replaces_only_that_routers_chain(svc, sfx, env):
     knob, _ = SERVICES[svc][sfx]
     text = render(svc, env, **{knob: OVERRIDE})
-    assert router_middlewares(text, svc, env, sfx) == [OVERRIDE]
+    assert router_middlewares(text, svc, env, sfx) == [_sso(svc, OVERRIDE)]
     for other, (_, default) in SERVICES[svc].items():
         if other != sfx:
-            assert router_middlewares(text, svc, env, other) == [default(env)]
+            assert router_middlewares(text, svc, env, other) == [_sso(svc, default(env))]
     # nothing else in the stack moves: only that one label line differs.
     # Exception: putting crowdsec-bouncer on skgit's main router also renders the
     # skgit runner RPC router (test_skgit_runner_rpc_router_follows_the_crowdsec_knob).
@@ -162,7 +184,7 @@ def test_override_replaces_only_that_routers_chain(svc, sfx, env):
     new = [l for l in text.splitlines() if not (svc == "skgit" and ("-runner-rpc." in l or "-api." in l))]
     assert len(old) == len(new)
     diff = [(a, b) for a, b in zip(old, new) if a != b]
-    assert len(diff) == 1 and diff[0][1].rstrip().endswith(f'.middlewares={OVERRIDE}"'), diff
+    assert len(diff) == 1 and diff[0][1].rstrip().endswith(f'.middlewares={_sso(svc, OVERRIDE)}"'), diff
 
 
 @pytest.mark.parametrize("svc", SERVICES)
