@@ -298,3 +298,20 @@ def test_env_playbooks_differ_only_in_env_and_subnets():
     prod = norm((ROLE / "deploy_skbom-prod.yml").read_text())
     for env in ("dev", "staging"):
         assert norm((ROLE / f"deploy_skbom-{env}.yml").read_text()) == prod, env
+
+
+# --- Postgres 18 data-mount layout (default stays 17) -----------------------
+
+def test_default_postgres_mounts_the_pre_18_data_dir(base_out):
+    vols = compose(base_out)["services"]["postgres"]["volumes"]
+    assert "/var/data/runtime/skbom-prod/postgres:/var/lib/postgresql/data" in vols
+
+
+def test_postgres_18_pin_mounts_the_parent_dir(tmp_path):
+    pin18 = "postgres:18.6-alpine@sha256:" + "d" * 64
+    out = ok(tmp_path, BASE | {"POSTGRES_IMAGE": pin18,
+                               "POSTGRES_BACKUP_IMAGE": "postgres:18.6@sha256:" + "e" * 64})
+    pg = compose(out)["services"]["postgres"]
+    assert pg["image"] == pin18
+    assert "/var/data/runtime/skbom-prod/postgres:/var/lib/postgresql" in pg["volumes"]
+    assert not any(v.endswith(":/var/lib/postgresql/data") for v in pg["volumes"])
