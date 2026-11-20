@@ -2,10 +2,23 @@
 import skmon_support as s
 
 
+# The one removal under DATA_PATH that is allowed: the vendoring provenance file the dashboards
+# copy drops into Grafana's rendered provisioning tree (Grafana refuses to start on it). It is
+# rendered config, never data, and only that exact path is exempt.
+_PROVENANCE = "{{ skmon_data_path }}/grafana-provisioning/dashboards/SOURCES.yml"
+
+
 def test_parking_keeps_data_path():
     for p in s.PLAYS:
         assert not any(t.get("file", {}).get("state") == "absent" and "skmon_data_path" in str(t)
+                       and t["file"].get("path") != _PROVENANCE
                        for t in s.play_tasks(p))
+
+
+def test_the_provenance_exemption_is_one_exact_file():
+    for p in s.PLAYS:
+        hits = [t for t in s.play_tasks(p) if t.get("file", {}).get("path") == _PROVENANCE]
+        assert len(hits) == 1 and hits[0]["file"]["state"] == "absent" and "loop" not in hits[0]
 
 
 def test_parking_keeps_data_path_in_the_agent_play():

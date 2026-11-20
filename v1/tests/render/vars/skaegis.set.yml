@@ -54,7 +54,7 @@ skaegis:
   AUTHENTIK_TILE_SLUG: "example-oidc-client-id"
   AUTHENTIK_TILE_NAME: "skaegis"
   AUTHENTIK_TILE_GROUP: "skadmin"
-  AUTHENTIK_TILE_ICON: "fa://fa-shield-halved"
+  AUTHENTIK_TILE_ICON: "fa://fa-shield-alt"
   AUTHENTIK_TILE_OPEN_IN_NEW_TAB: true
   AUTHENTIK_TILE_DESCRIPTION: "Continuous CVE detection"
   AUTHENTIK_TILE_CATEGORY: "Security"

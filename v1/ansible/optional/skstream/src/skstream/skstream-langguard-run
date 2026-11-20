@@ -1,0 +1,16 @@
+#!/bin/sh
+# Run skstream-langguard inside the DUMB container with the Plex owner token.
+# usage: skstream-langguard-run <container> <uid:gid> <Plex Preferences.xml> [skstream-langguard args]
+# The token goes on stdin (never argv, never the environment): only root reads
+# the Plex config, and `docker exec -i` hands it straight to the guard.
+set -eu
+container=$1 user=$2 prefs=$3
+shift 3
+tok=$(sed -n 's/.*PlexOnlineToken="\([^"]*\)".*/\1/p' "$prefs")
+mid=$(sed -n 's/.*ProcessedMachineIdentifier="\([^"]*\)".*/\1/p' "$prefs")
+if [ -z "$tok" ] || [ -z "$mid" ]; then
+    echo "skstream-langguard-run: no PlexOnlineToken/ProcessedMachineIdentifier in $prefs" >&2
+    exit 1
+fi
+printf '{"plex_token": "%s", "machine_id": "%s"}' "$tok" "$mid" |
+    exec docker exec -i -u "$user" "$container" python3 /data/skstream-langguard "$@"

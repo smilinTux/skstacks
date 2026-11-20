@@ -1,0 +1,275 @@
+{
+  "image": "ghcr.io/theduffman85/linux-update-dashboard:2026.10.9@sha256:1fb855a4d4b5eacc0ef3a9816064184492e9d068fb4da353c62871faeeeb1543",
+  "generator": "v1/ansible/optional/skpatch-hosts/tools/extract_sudo_commands.py",
+  "managers": {
+    "apk": {
+      "rows": [
+        {
+          "category": "check",
+          "command": "apk update",
+          "safety": "exact"
+        },
+        {
+          "category": "upgrade_all",
+          "command": "apk upgrade",
+          "safety": "exact"
+        },
+        {
+          "category": "upgrade_selected",
+          "command": "apk upgrade <package>",
+          "safety": "package_placeholder"
+        },
+        {
+          "category": "upgrade_selected",
+          "command": "apk upgrade <package1> <package2>",
+          "safety": "package_placeholder"
+        }
+      ],
+      "envKeep": []
+    },
+    "apt": {
+      "rows": [
+        {
+          "category": "autoremove",
+          "command": "apt-get -o DPkg::Lock::Timeout=60 autoremove -y",
+          "safety": "exact"
+        },
+        {
+          "category": "check",
+          "command": "apt-get -o DPkg::Lock::Timeout=60 update -qq",
+          "safety": "exact"
+        },
+        {
+          "category": "check",
+          "command": "dpkg --audit",
+          "safety": "exact"
+        },
+        {
+          "category": "full_upgrade_all",
+          "command": "apt-get -o DPkg::Lock::Timeout=60 full-upgrade -y",
+          "safety": "exact"
+        },
+        {
+          "category": "repair_issue",
+          "command": "dpkg --configure -a",
+          "safety": "exact"
+        },
+        {
+          "category": "upgrade_all",
+          "command": "apt-get -o DPkg::Lock::Timeout=60 upgrade -y",
+          "safety": "exact"
+        },
+        {
+          "category": "upgrade_selected",
+          "command": "apt-get -o DPkg::Lock::Timeout=60 install --only-upgrade -y <package>",
+          "safety": "package_placeholder"
+        },
+        {
+          "category": "upgrade_selected",
+          "command": "apt-get -o DPkg::Lock::Timeout=60 install --only-upgrade -y <package1> <package2>",
+          "safety": "package_placeholder"
+        }
+      ],
+      "envKeep": []
+    },
+    "deb-get": {
+      "rows": [
+        {
+          "category": "check",
+          "command": "deb-get show *",
+          "safety": "read_only_wildcard"
+        },
+        {
+          "category": "upgrade_all",
+          "command": "deb-get upgrade --dg-only",
+          "safety": "exact"
+        },
+        {
+          "category": "upgrade_selected",
+          "command": "deb-get install <package>",
+          "safety": "package_placeholder"
+        },
+        {
+          "category": "upgrade_selected",
+          "command": "deb-get install <package1> <package2>",
+          "safety": "package_placeholder"
+        }
+      ],
+      "envKeep": [
+        {
+          "envVar": "DEBGET_TOKEN",
+          "pkgManager": "deb-get",
+          "key": "githubToken"
+        }
+      ]
+    },
+    "dnf": {
+      "rows": [
+        {
+          "category": "autoremove",
+          "command": "dnf autoremove -y",
+          "safety": "exact"
+        },
+        {
+          "category": "check",
+          "command": "dnf -y check-update --quiet",
+          "safety": "exact"
+        },
+        {
+          "category": "full_upgrade_all",
+          "command": "dnf distro-sync -y",
+          "safety": "exact"
+        },
+        {
+          "category": "repair_issue",
+          "command": "dnf -y check-update --quiet",
+          "safety": "exact"
+        },
+        {
+          "category": "upgrade_all",
+          "command": "dnf upgrade -y",
+          "safety": "exact"
+        },
+        {
+          "category": "upgrade_selected",
+          "command": "dnf upgrade -y <package>",
+          "safety": "package_placeholder"
+        },
+        {
+          "category": "upgrade_selected",
+          "command": "dnf upgrade -y <package1> <package2>",
+          "safety": "package_placeholder"
+        }
+      ],
+      "envKeep": []
+    },
+    "flatpak": {
+      "rows": [
+        {
+          "category": "autoremove",
+          "command": "flatpak uninstall --unused -y",
+          "safety": "exact"
+        },
+        {
+          "category": "check",
+          "command": "flatpak update --appstream",
+          "safety": "exact"
+        },
+        {
+          "category": "upgrade_all",
+          "command": "flatpak update -y",
+          "safety": "exact"
+        },
+        {
+          "category": "upgrade_selected",
+          "command": "flatpak update -y <package>",
+          "safety": "package_placeholder"
+        },
+        {
+          "category": "upgrade_selected",
+          "command": "flatpak update -y <package1> <package2>",
+          "safety": "package_placeholder"
+        }
+      ],
+      "envKeep": []
+    },
+    "pacman": {
+      "rows": [
+        {
+          "category": "autoremove",
+          "command": "pacman -Rns --noconfirm -",
+          "safety": "exact"
+        },
+        {
+          "category": "check",
+          "command": "pacman -Sy --noconfirm",
+          "safety": "exact"
+        },
+        {
+          "category": "upgrade_all",
+          "command": "pacman -Syu --noconfirm",
+          "safety": "exact"
+        },
+        {
+          "category": "upgrade_selected",
+          "command": "pacman -S --noconfirm <package>",
+          "safety": "package_placeholder"
+        },
+        {
+          "category": "upgrade_selected",
+          "command": "pacman -S --noconfirm <package1> <package2>",
+          "safety": "package_placeholder"
+        }
+      ],
+      "envKeep": []
+    },
+    "snap": {
+      "rows": [
+        {
+          "category": "upgrade_all",
+          "command": "snap refresh",
+          "safety": "exact"
+        },
+        {
+          "category": "upgrade_selected",
+          "command": "snap refresh <package>",
+          "safety": "package_placeholder"
+        },
+        {
+          "category": "upgrade_selected",
+          "command": "snap refresh <package1> <package2>",
+          "safety": "package_placeholder"
+        }
+      ],
+      "envKeep": []
+    },
+    "yum": {
+      "rows": [
+        {
+          "category": "autoremove",
+          "command": "yum autoremove -y",
+          "safety": "exact"
+        },
+        {
+          "category": "check",
+          "command": "yum -y check-update --quiet",
+          "safety": "exact"
+        },
+        {
+          "category": "repair_issue",
+          "command": "yum -y check-update --quiet",
+          "safety": "exact"
+        },
+        {
+          "category": "upgrade_all",
+          "command": "yum update -y",
+          "safety": "exact"
+        },
+        {
+          "category": "upgrade_selected",
+          "command": "yum update -y <package>",
+          "safety": "package_placeholder"
+        },
+        {
+          "category": "upgrade_selected",
+          "command": "yum update -y <package1> <package2>",
+          "safety": "package_placeholder"
+        }
+      ],
+      "envKeep": []
+    }
+  },
+  "common": [
+    {
+      "category": "reboot",
+      "command": "pvesh get /cluster/tasks --output-format json",
+      "safety": "exact"
+    },
+    {
+      "category": "reboot",
+      "command": "reboot",
+      "safety": "exact"
+    }
+  ],
+  "warnings": []
+}

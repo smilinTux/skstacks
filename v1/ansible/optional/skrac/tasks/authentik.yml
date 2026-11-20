@@ -73,6 +73,7 @@
       app_name: "{{ skrac.AUTHENTIK_APP_NAME | default('SKRac') }}"
       app_slug: "{{ skrac.AUTHENTIK_APP_SLUG | default('skrac') }}"
       launch_url: "https://{{ skr_host }}/"
+      open_in_new_tab: "{{ skrac.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
       icon: >-
         {{ 'application-icons/sk/' ~ (skrac.AUTHENTIK_TILE_ICON_NAME | default('meshcentral', true)) ~ '.png'
            if (skrac_icon_copy is succeeded) else (skrac.AUTHENTIK_TILE_ICON | default('', true)) }}

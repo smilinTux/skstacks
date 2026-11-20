@@ -177,6 +177,13 @@ def signing_key(api, name):
 SUB_MODES = ("hashed_user_id", "user_id", "user_uuid", "user_username", "user_email", "user_upn")
 
 
+def truthy(value):
+    """A config flag that may arrive as a bool or as a templated string."""
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
+
 def provision(api, cfg):
     if (cfg.get("sub_mode") or "user_id") not in SUB_MODES:
         raise ApiError(f"sub_mode {cfg.get('sub_mode')!r} is not one of {', '.join(SUB_MODES)}")
@@ -230,6 +237,9 @@ def provision(api, cfg):
         "slug": cfg["app_slug"],
         "provider": prov["pk"],
         "meta_launch_url": cfg["launch_url"],
+        # Every other portal tile opens in a new tab (the shared portal-tile
+        # helper defaults it to true); Authentik's own default is False.
+        "open_in_new_tab": truthy(cfg.get("open_in_new_tab", True)),
     }
     if cfg.get("icon"):
         app_fields["meta_icon"] = cfg["icon"]

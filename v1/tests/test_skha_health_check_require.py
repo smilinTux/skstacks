@@ -14,14 +14,17 @@ import jinja2
 SCRIPT = pathlib.Path(__file__).resolve().parents[1] / "ansible/core/skha/src/keepalived/scripts/skha_check.sh.j2"
 
 
-def render(pattern="traefik-worker", require=None, ports=(80, 443)):
-    item = {"name": "traefik", "ports": list(ports)}
+def render(pattern="mail-worker", require=None, ports=(25, 587), name="mail", skha=None):
+    item = {"name": name, "ports": list(ports)}
     if pattern is not None:
         item["container_pattern"] = pattern
     if require is not None:
         item["require"] = require
     env = jinja2.Environment(undefined=jinja2.ChainableUndefined, trim_blocks=True)
-    return env.from_string(SCRIPT.read_text()).render(item=item)
+    ctx = {"item": item}
+    if skha is not None:
+        ctx["skha"] = skha
+    return env.from_string(SCRIPT.read_text()).render(**ctx)
 
 
 def _absent_branch(text):
@@ -55,4 +58,27 @@ def test_no_container_pattern_has_no_docker_block_regardless_of_require():
 def test_require_true_still_runs_port_checks_after_the_docker_block():
     text = render(require=True)
     assert "ss -tuln" in text
-    assert "port 80 not listening" in text
+    assert "port 25 not listening" in text
+
+
+# VIP gate checks (skha.vip_gate_checks, default [traefik]) default to
+# require: true, so the VIP can never sit on a node with no worker behind it.
+
+def test_traefik_is_a_vip_gate_check_and_required_by_default():
+    branch = _absent_branch(render(pattern="traefik-worker", ports=(80, 443), name="traefik"))
+    assert "exit 1" in branch
+    assert "exit 0" not in branch
+
+
+def test_gate_check_require_can_still_be_switched_off_explicitly():
+    branch = _absent_branch(render(pattern="traefik-worker", ports=(80, 443), name="traefik", require=False))
+    assert "exit 0" in branch
+    assert "exit 1" not in branch
+
+
+def test_vip_gate_checks_list_is_configurable():
+    branch = _absent_branch(render(skha={"vip_gate_checks": ["mail"]}))
+    assert "exit 1" in branch
+    branch = _absent_branch(render(pattern="traefik-worker", ports=(80, 443), name="traefik",
+                                   skha={"vip_gate_checks": ["mail"]}))
+    assert "exit 0" in branch

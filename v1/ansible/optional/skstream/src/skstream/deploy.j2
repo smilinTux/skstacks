@@ -117,19 +117,33 @@ if [ ! -f "${COMPOSE_FILE}" ]; then
     exit 1
 fi
 
+{% set plex_swarm = (skstream.PLEX_MODE | default('swarm') | string | lower) != 'host' %}
+{% set kometa_on = (skstream.KOMETA_ENABLED | default(false) | string | lower) in ['true', 'yes', '1', 'on'] %}
 echo -e "${YELLOW}Deploying stack configuration...${NC}"
 record_preexisting "${STACK_NAME}_plex" "${STACK_NAME}_kometa"
+{% if plex_swarm or kometa_on %}
 docker stack deploy \
     -c "${COMPOSE_FILE}" \
     --prune \
     --with-registry-auth \
     "${STACK_NAME}"
+{% endif %}
+{% if not plex_swarm %}
+# PLEX_MODE host: Plex runs as skstream-plex.service on the media node. --prune
+# already drops the swarm service; this covers a stack with no services left.
+if docker service inspect "${STACK_NAME}_plex" >/dev/null 2>&1; then
+    echo "PLEX_MODE host: removing swarm service ${STACK_NAME}_plex"
+    docker service rm "${STACK_NAME}_plex"
+fi
+{% endif %}
 
 sleep 5
 
 echo -e "${YELLOW}Forcing service updates...${NC}"
+{% if plex_swarm %}
 preexisted ${STACK_NAME}_plex && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_plex || true
-{% if (skstream.KOMETA_ENABLED | default(false) | string | lower) in ['true', 'yes', '1', 'on'] %}
+{% endif %}
+{% if kometa_on %}
 preexisted ${STACK_NAME}_kometa && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=false ${STACK_NAME}_kometa || true
 {% endif %}
 
@@ -139,6 +153,7 @@ sleep 10
 echo -e "${GREEN}Service Status:${NC}"
 docker service ls | grep "${STACK_NAME}"
 
+{% if plex_swarm %}
 echo -e "${YELLOW}Checking service health...${NC}"
 for _ in $(seq 1 36); do
     REPLICAS=$(docker service ls --filter "name=${STACK_NAME}_plex" --format "{% raw %}{{.Replicas}}{% endraw %}")
@@ -152,6 +167,9 @@ else
     echo -e "${YELLOW}Recent logs:${NC}"
     docker service logs --tail 20 ${STACK_NAME}_plex
 fi
+{% else %}
+echo -e "${GREEN}Plex runs host-level (PLEX_MODE host): check skstream-plex{% if env != 'prod' %}-{{ env }}{% endif %}.service on the media node${NC}"
+{% endif %}
 
 echo ""
 echo -e "${GREEN}Deployment complete!${NC}"
