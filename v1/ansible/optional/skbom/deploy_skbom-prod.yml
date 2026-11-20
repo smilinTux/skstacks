@@ -287,7 +287,7 @@
         pg_guard_image: "{{ skb_pg_image }}"
         pg_guard_data_path: "{{ skb_pg_path }}"
         pg_guard_pin_var: skbom.POSTGRES_IMAGE
-        pg_guard_node: "{{ skb_data_node if not skb_pg_path.startswith('/var/data/') else '' }}"
+        pg_guard_node: "{{ skb_data_node if not (skb_pg_path | default('', true)).startswith('/var/data/') else '' }}"
       tags:
         - deploy
         - postgres-major

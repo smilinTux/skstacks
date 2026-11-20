@@ -286,7 +286,7 @@
         pg_guard_image: "{{ sf_pg_image }}"
         pg_guard_data_path: "{{ sf_pg_path }}"
         pg_guard_pin_var: skflow.POSTGRES_IMAGE
-        pg_guard_node: "{{ sf_data_node if not sf_pg_path.startswith('/var/data/') else '' }}"
+        pg_guard_node: "{{ sf_data_node if not (sf_pg_path | default('', true)).startswith('/var/data/') else '' }}"
       when: not (sf_external_db | bool)
       tags:
         - deploy
