@@ -160,6 +160,10 @@ Estate specifics (host names, times) belong in the estate's own instance repo, n
 > **Since PR #406.** `tools/skpatch_compliance.py` is a scheduled fleet check (systemd timer, one per estate, daily). It runs the provisioning playbook under `--check`, reads the dashboard through a read-only report, and reports per host: `not-provisioned`, `drift`, `uncovered-manager`, `check-failed`, `unreachable`, `dashboard-only`, `not-in-dashboard`, `sudo-denied:<action>`, and `paused`. It calls an alert hook once when an issue opens and once when it clears, keyed `host|issue`. `tools/skpatch-compliance-alert.example.sh` is an example hook.
 
 Alert routing (immediate alerts to a Talk room per estate, a 07:00 digest, email as fallback) is implemented: see "Alert routing (Talk room, email as fallback)" below.
+The digest also lists each day's vulnerabilities (pending security updates per
+host, and the HIGH/CRITICAL fixable CVEs of the images the swarm runs, from a
+Trivy scan at 06:15), with the full list as a reply in its Talk thread: see
+"Daily vulnerability list" below.
 
 ## Configuration knobs (vault)
 
