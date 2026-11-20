@@ -91,7 +91,7 @@
       tags:
         - always
 
-    - name: Resolve the sign-in mode (skgit.AUTH_MODE: local, the default, or oidc)
+    - name: Resolve the sign-in mode (skgit.AUTH_MODE, local by default or oidc)
       set_fact:
         skgit_auth_mode: "{{ skgit.AUTH_MODE | default('local', true) | string | lower }}"
         skgit_oidc_source_name: "{{ skgit.OIDC_SOURCE_NAME | default('SKStack SSO', true) | string }}"
@@ -550,7 +550,7 @@
         - post-deploy
         - admin
 
-    - name: Create or update the Forgejo OIDC auth source (skgit.AUTH_MODE: oidc)
+    - name: Create or update the Forgejo OIDC auth source (skgit.AUTH_MODE oidc)
       # `forgejo admin auth list` finds the source by name; found, it is
       # updated in place, absent, it is created. Nothing is ever deleted and
       # a source of another name is never touched. The client secret goes in
