@@ -637,7 +637,7 @@ watch:
 1. `ssh <SKPW_SWARM_SSH> docker service ls --format '{{.Name}}\t{{.Image}}'`
    (read-only, `sudo -n docker` when the user is not in the docker group).
 2. Each unique image is scanned with Trivy run as a container on the
-   controller, pinned by digest (`aquasec/trivy:0.76.2@sha256:8f6bb947...`,
+   controller, pinned by digest (`aquasec/trivy:0.76.2@sha256:8f6bb947...`, run as the calling user so its DB stays the user's own files,
    the index digest the registry serves), no docker socket mounted: Trivy
    pulls the image from its registry itself. Its DB lives in the unit's
    cache directory.

@@ -119,11 +119,14 @@ def parse_trivy(doc: dict) -> list[dict]:
 
 def trivy_command(ref: str, trivy_image: str, db_dir: Path, docker: str = "docker",
                   registry_auth: Path | None = None) -> list[str]:
-    cmd = [*shlex.split(docker), "run", "--rm", "-v", f"{db_dir}:/root/.cache"]
+    # as the calling user, so the DB in the cache directory stays the
+    # user's own files (the image's default is root)
+    cmd = [*shlex.split(docker), "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}",
+           "-e", "HOME=/tmp", "-v", f"{db_dir}:/cache"]
     if registry_auth:
-        cmd += ["-v", f"{registry_auth}:/root/.docker/config.json:ro"]
-    return cmd + [trivy_image, "image", "--quiet", "--format", "json", "--severity", ",".join(reversed(SEVERITIES)),
-                  "--ignore-unfixed", ref]
+        cmd += ["-e", "DOCKER_CONFIG=/docker", "-v", f"{registry_auth}:/docker/config.json:ro"]
+    return cmd + [trivy_image, "image", "--cache-dir", "/cache", "--quiet", "--format", "json",
+                  "--severity", ",".join(reversed(SEVERITIES)), "--ignore-unfixed", ref]
 
 
 def trivy_error(stderr: str) -> str:

@@ -50,15 +50,17 @@ def test_unfixed_low_and_duplicate_findings_are_dropped_and_empty_results_are_fi
     assert iv.parse_trivy({}) == [] and iv.parse_trivy({"Results": None}) == []
 
 
-def test_the_trivy_command_is_pinned_and_mounts_only_its_cache():
+def test_the_trivy_command_is_pinned_runs_as_the_user_and_mounts_only_its_cache():
+    import os
     cmd = iv.trivy_command("alpine:3.18.0", iv.TRIVY_IMAGE, Path("/c/trivy"))
-    assert cmd[:5] == ["docker", "run", "--rm", "-v", "/c/trivy:/root/.cache"]
+    assert cmd[:9] == ["docker", "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}", "-e", "HOME=/tmp",
+                       "-v", "/c/trivy:/cache"]
     assert iv.TRIVY_IMAGE.startswith("aquasec/trivy:0.76.2@sha256:") and len(iv.TRIVY_IMAGE.split("@sha256:")[1]) == 64
-    assert cmd[5:] == [iv.TRIVY_IMAGE, "image", "--quiet", "--format", "json", "--severity", "HIGH,CRITICAL",
-                       "--ignore-unfixed", "alpine:3.18.0"]
+    assert cmd[9:] == [iv.TRIVY_IMAGE, "image", "--cache-dir", "/cache", "--quiet", "--format", "json",
+                       "--severity", "HIGH,CRITICAL", "--ignore-unfixed", "alpine:3.18.0"]
     assert "/var/run/docker.sock" not in " ".join(cmd)
     auth = iv.trivy_command("x", iv.TRIVY_IMAGE, Path("/c"), registry_auth=Path("/h/cfg.json"))
-    assert "/h/cfg.json:/root/.docker/config.json:ro" in auth
+    assert "/h/cfg.json:/docker/config.json:ro" in auth and "DOCKER_CONFIG=/docker" in auth
 
 
 def test_a_failed_scan_keeps_only_the_registry_answer():
