@@ -142,6 +142,50 @@ without regenerating a fresh keystore (which, note, makes any previously
 stored integration credential unreadable, the same risk skpatch-hosts's own
 `LUDASH_ENCRYPTION_KEY` carries).
 
+## Upgrading Postgres to 18
+
+Framework default: `postgres:17.7-alpine` for the server and `postgres:17.7` for the dump sidecar
+(both pinned `tag@sha256:digest`). The default stays on 17; moving to 18 is a deliberate, per-instance
+step. **Postgres 18 cannot open a 17 data directory, and an upgrade is never automatic.**
+
+- **Fail-closed guard.** Before the stack deploy, `shared/tasks/postgres_major_guard.yml` reads
+  `PG_VERSION` under `<skbom.POSTGRES_PATH, default /var/data/runtime/skbom-<env>/postgres>` and stops the play when the data on disk is another major than
+  `skbom.POSTGRES_IMAGE`. The running stack is left untouched. Fresh installs (no `PG_VERSION`) pass.
+- **Data layout.** 18+ images keep the cluster in `/var/lib/postgresql/<major>/docker` and declare
+  `VOLUME /var/lib/postgresql`, so for an 18+ `POSTGRES_IMAGE` the compose file mounts the data
+  directory at `/var/lib/postgresql`; a 17 or older image keeps `/var/lib/postgresql/data` (the default
+  render is unchanged). Never mount `/var/lib/postgresql/data` under an 18 image: the real data would
+  land on an anonymous volume.
+- **Move to 18 by dump and restore only**, then pin both knobs to 18 images (the sidecar stays the
+  Debian variant, it needs bash):
+
+  ```yaml
+  skbom:
+    POSTGRES_IMAGE: "postgres:18.<x>-alpine@sha256:<digest>"
+    POSTGRES_BACKUP_IMAGE: "postgres:18.<x>@sha256:<digest>"   # same major as the server
+  ```
+
+### Runbook: dump and restore (17 to 18)
+
+All commands run on the swarm manager (with `DATA_NODE` set, run the `mv`/`mkdir` on that node);
+`<stack>` is `skbom-<env>`. Writers (`apiserver`, `frontend`) are down from step 1 to step 4.
+
+1. **Dump from the running 17:** `docker service scale <stack>_apiserver=0 <stack>_frontend=0`, then
+   `docker exec "$(docker ps -q -f name=<stack>_postgres)" pg_dumpall -U <DB_USERNAME, default dtrack> > /var/data/skbom-<env>/database-dump/pre-pg18.sql`
+   and check the file ends with `PostgreSQL database cluster dump complete`. It holds password hashes: keep it `0600`.
+2. **Stop the stack and move the old data aside** (the rollback copy): `docker stack rm <stack>`,
+   `mv <skbom.POSTGRES_PATH, default /var/data/runtime/skbom-<env>/postgres> <skbom.POSTGRES_PATH, default /var/data/runtime/skbom-<env>/postgres>.pg17`, `mkdir -p <skbom.POSTGRES_PATH, default /var/data/runtime/skbom-<env>/postgres> && chown 70:70 <skbom.POSTGRES_PATH, default /var/data/runtime/skbom-<env>/postgres>` (uid 70 = `postgres` in the alpine image).
+3. **Pin** `POSTGRES_IMAGE` and `POSTGRES_BACKUP_IMAGE` to 18 as above and deploy. The guard sees an empty
+   directory and passes; the 18 image initialises `<skbom.POSTGRES_PATH, default /var/data/runtime/skbom-<env>/postgres>/18/docker`. Wait for `postgres` to be healthy.
+4. **Restore and verify:** `docker exec -i <postgres container> psql -U <DB_USERNAME, default dtrack> -d postgres < .../pre-pg18.sql`
+   (`already exists` errors for the bootstrap role and the `dtrack` database are expected), check
+   `SHOW server_version`, scale the writers back up and check `/health` on the apiserver and the project list in the UI.
+5. **Clean up** after a few days of good operation: remove `<skbom.POSTGRES_PATH, default /var/data/runtime/skbom-<env>/postgres>.pg17` and the dump file.
+
+**Rollback.** `docker stack rm <stack>`, move the new directory aside, move `.pg17` back, pin both knobs
+to the 17 images, redeploy. A deploy run before step 2 is stopped by the guard with a message naming this
+section: that is intended, not a fault.
+
 ## Configuration (vault)
 
 `skbom:` in `optional/group_vars/<env>/skbom-<env>-<domain dashed>-<cluster>_vault.yml`

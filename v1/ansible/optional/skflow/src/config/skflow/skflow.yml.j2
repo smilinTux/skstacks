@@ -19,6 +19,13 @@ version: '3.8'
 {% set app_constraints = skflow.PLACEMENT_CONSTRAINTS | default(['node.role == worker'], true) %}
 {% set db_constraints = app_constraints + (['node.hostname == ' + sf_data_node] if sf_data_node else []) %}
 {% set own_db = not sf_external_db %}
+{# Postgres 18+ images moved PGDATA to /var/lib/postgresql/<major>/docker and declare VOLUME
+   /var/lib/postgresql, so the data bind mount targets the PARENT for major 18 and up. The
+   default (17) and any pinned older image keep /var/lib/postgresql/data. Mounting
+   /var/lib/postgresql/data under an 18 image would leave the real data dir on an anonymous
+   volume. sf_pg_image is the playbook's effective image (POSTGRES_IMAGE or the role default), the
+   same value the postgres_major_guard include checks (test_postgres18_guard.py). #}
+{% set _pg_data_mount = '/var/lib/postgresql' if ((sf_pg_image | string).split('@')[0].split('/')[-1].split(':')[-1].lstrip('pg').split('.')[0].split('-')[0] | int(0)) >= 18 else '/var/lib/postgresql/data' %}
 
 x-logging: &logging
   driver: json-file
@@ -240,7 +247,7 @@ services:
     environment:
       - PGTEMP=/var/lib/postgresql/data/tmp
     volumes:
-      - {{ sf_pg_path }}:/var/lib/postgresql/data
+      - {{ sf_pg_path }}:{{ _pg_data_mount }}
     networks:
       - skflow-{{ env }}
     logging: *logging

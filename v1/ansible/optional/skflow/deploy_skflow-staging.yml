@@ -271,6 +271,27 @@
       include_tasks: ../../shared/tasks/create_networks.yml
       tags: [networks]
 
+    - name: Refuse a Postgres data directory from another major (fail closed, before the deploy)
+      # Reads PG_VERSION in either layout (pre-18 flat, 18+ <major>/docker)
+      # and refuses an image that cannot open it in place. Skipped when
+      # DATABASE_URL points at an external Postgres (no stack Postgres).
+      include_tasks:
+        file: ../../shared/tasks/postgres_major_guard.yml
+        apply:
+          tags:
+            - deploy
+            - postgres-major
+      vars:
+        pg_guard_app: skflow
+        pg_guard_image: "{{ sf_pg_image }}"
+        pg_guard_data_path: "{{ sf_pg_path }}"
+        pg_guard_pin_var: skflow.POSTGRES_IMAGE
+        pg_guard_node: "{{ sf_data_node if not sf_pg_path.startswith('/var/data/') else '' }}"
+      when: not (sf_external_db | bool)
+      tags:
+        - deploy
+        - postgres-major
+
     - name: Deploy {{ app }} stack
       # env_file contents are read by `docker stack deploy` into the service
       # spec, so a changed password or setting rolls the services by itself;
