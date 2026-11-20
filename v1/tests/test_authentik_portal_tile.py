@@ -96,8 +96,9 @@ CFG = {
 
 def test_ensure_application_creates_when_missing():
     api = FakeApi(application=None)
-    app, created = tile.ensure_application(api, CFG)
-    assert created
+    state = {}
+    app = tile.ensure_application(api, CFG, state)
+    assert state["created"]
     assert app["slug"] == "skpulse"
     assert app["provider"] is None
     assert app["meta_launch_url"] == "https://skpulse.example.com"
@@ -163,7 +164,7 @@ def test_ensure_application_keeps_an_existing_provider():
         "group": "",
     }
     api = FakeApi(application=existing)
-    app, _ = tile.ensure_application(api, CFG)
+    app = tile.ensure_application(api, CFG)
     patch_calls = [c for c in api.calls if c[0] == "PATCH"]
     assert len(patch_calls) == 1
     assert "provider" not in patch_calls[0][2]
@@ -189,6 +190,34 @@ def test_ensure_application_provider_backed_and_otherwise_unchanged_is_a_noop():
     tile.ensure_application(api, CFG)
     assert [c[0] for c in api.calls] == ["GET"]  # provider 9 is not a difference
     assert api.application["provider"] == 9
+
+
+# The deprecated single-group helper keeps its old contract for existing callers.
+def test_ensure_group_binding_fails_loudly_on_missing_group():
+    api = FakeApi(group=None)
+    app = {"pk": "app-pk", "slug": "skpulse"}
+    with pytest.raises(tile.ApiError, match="not found"):
+        tile.ensure_group_binding(api, app, "authentik Admins")
+
+
+def test_ensure_group_binding_creates_when_absent():
+    group = {"pk": "group-pk", "name": "authentik Admins"}
+    api = FakeApi(group=group, bindings=[])
+    app = {"pk": "app-pk", "slug": "skpulse"}
+    tile.ensure_group_binding(api, app, "authentik Admins")
+    assert len(api.bindings) == 1
+    assert api.bindings[0]["target"] == "app-pk"
+    assert api.bindings[0]["group"] == "group-pk"
+    assert api.bindings[0]["order"] == 0
+
+
+def test_ensure_group_binding_is_idempotent():
+    group = {"pk": "group-pk", "name": "authentik Admins"}
+    existing_binding = {"target": "app-pk", "group": "group-pk"}
+    api = FakeApi(group=group, bindings=[existing_binding])
+    app = {"pk": "app-pk", "slug": "skpulse"}
+    tile.ensure_group_binding(api, app, "authentik Admins")
+    assert len(api.bindings) == 1  # no duplicate binding created
 
 
 def test_main_rejects_missing_required_fields(capsys, monkeypatch):

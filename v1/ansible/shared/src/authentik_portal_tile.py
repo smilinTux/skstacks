@@ -291,8 +291,11 @@ def ensure_expression_policy(api, name):
     return obj
 
 
-def ensure_application(api, cfg):
-    """Returns (application, created_now)."""
+def ensure_application(api, cfg, state=None):
+    """Returns the application. When `state` is a dict, state["created"] says
+    whether this call created it."""
+    if state is not None:
+        state["created"] = False
 
     def lookup():
         try:
@@ -325,7 +328,9 @@ def ensure_application(api, cfg):
     if current is None:
         obj = api.call("POST", "/core/applications/", desired)
         print("application: created")
-        return obj, True
+        if state is not None:
+            state["created"] = True
+        return obj
     if current.get("provider") is not None:
         # The slug is already a provider-backed app (an OIDC login, say).
         # Nulling its provider would 404 its discovery URL and break every
@@ -335,10 +340,10 @@ def ensure_application(api, cfg):
     changed = {k: v for k, v in desired.items() if not same(current.get(k), v)}
     if not changed:
         print("application: unchanged")
-        return current, False
+        return current
     api.call("PATCH", f"/core/applications/{current['slug']}/", changed)
     print(f"application: updated ({', '.join(sorted(changed))})")
-    return {**current, **changed}, False
+    return {**current, **changed}
 
 
 def _binding_body(app_pk, order, group=None, policy=None):
@@ -370,6 +375,20 @@ def ensure_binding(api, app, order, group=None, policy=None, label=""):
     )
     print(f"binding: created {label}")
     return obj
+
+
+def ensure_group_binding(api, app, group_name):
+    """DEPRECATED, the pre access-model helper, kept with its old behaviour for
+    existing callers: bind ONE group that must already exist (order 0)."""
+    group = api.first("/core/groups/", name=group_name)
+    if group is None:
+        raise ApiError(f"group '{group_name}' not found in Authentik (this helper never creates groups)")
+    existing = api.get("/policies/bindings/", target=app["pk"], group=group["pk"]).get("results", [])
+    if existing:
+        print("binding: unchanged")
+        return
+    api.call("POST", "/policies/bindings/", _binding_body(app["pk"], 0, group=group["pk"]))
+    print("binding: created")
 
 
 def check_postcondition(api, app, access, admin_group_pk, policy_pk):
@@ -406,7 +425,9 @@ def provision(api, cfg, access):
         policy = ensure_expression_policy(api, POLICY_MODES[access["mode"]])
 
     # 3. application
-    app, created = ensure_application(api, cfg)
+    state = {}
+    app = ensure_application(api, cfg, state)
+    created = state["created"]
     if access["provider"] == "own":
         print(
             "provider: WARNING own provider requested but not managed by this release; "
