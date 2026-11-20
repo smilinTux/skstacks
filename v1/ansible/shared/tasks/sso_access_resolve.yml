@@ -90,7 +90,11 @@
 
 - name: "SSO access ({{ sso_access_slug }}): read the declaration"
   set_fact:
-    _sso_sk: "{{ sso_access_sksso if sso_access_sksso is defined else (_sso_vault.sksso | default({})) }}"
+    # Only the three keys this file reads: never keep sksso's token in a fact.
+    _sso_sk: >-
+      {{ (sso_access_sksso if sso_access_sksso is defined else (_sso_vault.sksso | default({})))
+         | default({}, true) | dict2items
+         | selectattr('key', 'in', ['ADMIN_GROUP', 'USER_GROUP', 'BASELINE_APPS']) | items2dict }}
     _sso_cfg: "{{ sso_access_cfg | default({}, true) }}"
   no_log: true
 
