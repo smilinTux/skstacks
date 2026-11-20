@@ -137,6 +137,14 @@ that must stay public.
   compose has it. **Instance action**: none for an instance that pins `IMMICH_VERSION`; one on the
   default upgrades on its next skgallery redeploy (read Immich's v3 upgrade notes first).
 
+### Docs: Postgres 16 to 18 restore runbooks (skgit, skmesh, skorch, sksso)
+
+- Step 4 of "dump and restore (16 to 18)" now stops the app and its backup sidecar again, drops the
+  fresh application database and only then restores the full `pg_dumpall`. Step 3's deploy starts
+  the app, which migrates the empty 18 cluster, so restoring on top collided with that schema, and
+  the sidecar could dump the empty interim database. Found on a live sksso upgrade. **Instance
+  action**: none; follow the updated runbook for a 16 to 18 move.
+
 ### Renovate and CI (#473, #477, #478, #482)
 
 - Renovate groups minor, patch and digest bumps per service directory (the old
