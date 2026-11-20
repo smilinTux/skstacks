@@ -4,6 +4,154 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
+## skstacks-v2.26.30 - 2026-11-20
+
+Patch on v2.26.29. skpeek, skseek and skpdf sit behind SSO by default. skgit gets bounded git pack
+limits, a 7-day Actions artifact expiry and a Postgres login-rule guard for restored data dirs.
+sksec-web keeps its data dir's owner on redeploy. skbackup can recover from a full pool.
+Machine and API paths bypass the HTML error pages on every app. New read-only SSO conformance
+check and a per-app SSO access resolver. The skpatch digest lists each day's vulnerabilities.
+Immich defaults to v3.4.2. Instance action: read the upgrade notes first (SSO
+defaults), then redeploy skgit, sksec-web, skbackup, skpatch-hosts and the apps listed under
+"Routers" below; set `SSO_MIDDLEWARE: none` before redeploying any of skpeek, skseek or skpdf
+that must stay public.
+
+### Upgrade notes
+
+- **UPGRADE: skpeek, skseek, skpdf are now behind SSO forward auth by default; set
+  `SSO_MIDDLEWARE: none` to keep one public (#474).** None of the three has a login of its own;
+  on one production instance they were open to the internet and skseek's `GET /api/config`
+  returned the model provider API keys. Each router appends `<svc>.SSO_MIDDLEWARE` (default
+  `authentik@file`) to the end of its chain, including an instance override of
+  `TRAEFIK_MIDDLEWARES`, and never adds it twice when the chain already names it (vaults that
+  added `authentik@file` by hand render unchanged). sksso must be deployed (the middleware must
+  exist), or Traefik drops the router and the app is unreachable. Empty or unset keeps the
+  default (fail closed). Tests: `v1/tests/test_sso_default_skpeek_skseek_skpdf.py`. **Instance
+  action**: none to get SSO; set `SSO_MIDDLEWARE: none` in the vault for an instance that must
+  stay public, before redeploying.
+- **UPGRADE: skfence/skfenceha `DEFAULT_SNI_STRICT` defaults to false since v2.26.29 (#465).**
+  An instance coming from v2.26.28 or older that ran `sniStrict: true` on the `default` TLS
+  option by hand should pin the value it wants in its vault before rolling out (false serves
+  hosts without a matching certificate with the default certificate instead of refusing the
+  handshake).
+
+### skgit (#405, #469, #471)
+
+- **Actions artifacts expire after 7 days** (#405). `app.ini` `[actions]` renders
+  `ARTIFACT_RETENTION_DAYS` from `skgit.ARTIFACT_RETENTION_DAYS` (default 7), and the env file
+  carries the same value. Forgejo's default is 90 days; one e2e pipeline grew the data dir by
+  over 20 GB in a week until a backup pool filled. Forgejo's daily `cleanup_actions` cron does
+  the expiry. Tests: `v1/tests/test_skgit_artifact_retention.py`.
+- **Bounded git pack limits in `app.ini` `[git.config]`** (#469): `pack.threads=1`,
+  `pack.windowMemory=256m`, `pack.deltaCacheSize=64m`, `core.deltaBaseCacheLimit=64m`,
+  `gc.auto=0`, so concurrent repacks no longer OOM-kill Forgejo. `skgit.GIT_CONFIG` (a dict)
+  replaces a default or adds keys. A hand edit of the live `app.ini` does not survive a
+  redeploy; this is the durable form. Tests: `v1/tests/test_skgit_git_pack_limits.py`.
+- **Postgres network login rule guaranteed in an existing data dir** (#471). The postgres
+  entrypoint appends `host all all all scram-sha-256` to `pg_hba.conf` only when it creates the
+  cluster, so a restored or hand-initialised data dir refused Forgejo. New
+  `shared/tasks/postgres_hba_guard.yml` runs before the skgit stack deploy: a fresh dir is left
+  alone, an existing `host all all all|0.0.0.0/0` rule is untouched, otherwise the scram rule is
+  appended. Tests: `v1/tests/test_postgres_hba_guard.py`.
+- **Instance action**: redeploy skgit. The first deploy restarts Forgejo once. After it, check
+  that `app.ini` has the `[git.config]` section and `ARTIFACT_RETENTION_DAYS`. If Postgres was
+  running when the guard appended the rule, reload it (`SELECT pg_reload_conf()`).
+
+### sksec-web (#470)
+
+- The data-dir tasks asserted `root:root 0700` on every run, so a redeploy took the dir back
+  from the running app (`unable to open database file`) until a forced restart (#446). They now
+  run only when the dir is missing; an existing dir's owner and mode are left alone.
+- The config force-update after the deploy retries on Swarm's transient `update out of
+  sequence` (5 x 3 s) (#464).
+- Tests: `v1/tests/test_sksec_web_datadir_and_force_update.py`. **Instance action**: redeploy
+  sksec-web.
+
+### skbackup: a full pool can recover (#404)
+
+- The retention prune runs for every app on success and on failure, so a full pool expires old
+  copies again. `--delete-after` leaves the previous copy whole when a run runs out of space.
+- Per-app timeout `copy.timeout_seconds` (default 7200, `0` off); a timed-out app is reported
+  and the run continues. Capacity precheck `copy.precheck_capacity_pct` (default 85) notifies.
+- `check` warns when a copy shrank by more than `alerts.copy_shrink_pct`, and
+  `alerts.thin_volumes` watches thin LVs. The alert-host check keys an alert on the condition,
+  digits stripped, so a persisting condition keeps one thread.
+- Tests: `v1/tests/test_skbackup_full_pool.py`. **Instance action**: redeploy skbackup; keep
+  reproducible bulk (CI artifacts, packages, caches) out of the copy (README).
+
+### skpatch-hosts (#401, #408, #476)
+
+- With `AUTH_MODE: oidc` the healthcheck reads `/api/auth/status` and fails unless
+  `oidcEnabled` is true, so a task that started while the identity provider was unreachable
+  (SSO silently off) is replaced. `start_period` defaults to 90 s in oidc mode. `sso` and
+  `local` modes are unchanged. Tests: `v1/tests/test_skpatch_hosts_render.py`.
+- README and SOP rewritten to the sk-standards doc standards (docs only, #408).
+- **Daily vulnerability list in the Talk digest** (#476). The digest gains a "Vulnerabilities"
+  section naming the security updates per host (from the dashboard API, GET only; the pinned
+  dashboard stores no CVE ids), with the full list as a reply in the digest's thread. Optional
+  image side: new `skpatch-image-vulns@` service and timer (06:15, before the 07:00 digest) list
+  the swarm's images over `SKPW_SWARM_SSH` and scan each with a digest-pinned Trivy container
+  (HIGH and CRITICAL, fix available); the digest reads the result from `SKPW_IMAGE_VULNS`.
+- **Instance action**: redeploy skpatch-hosts where `AUTH_MODE: oidc`. For image CVEs, set
+  `SKPW_SWARM_SSH` and `SKPW_IMAGE_VULNS` in the watch's env file and enable
+  `skpatch-image-vulns@<estate>.timer` (needs local docker for the units' user); without them the
+  digest carries the host lines only. No dashboard redeploy is needed.
+
+### Machine and API traffic bypasses the error-pages middleware on every app (#410)
+
+- **Fix: API errors were hidden behind the SKStacks error page.** The shared Traefik chains end in
+  `error-pages@file`, which replaced any backend 400 and 402-599 with an HTML page and replayed the
+  original method there (a failed POST read as a 405 or 501 from the error page). API clients, webhook
+  senders, S3 and WebDAV clients, git, OIDC clients and probes never saw the app's real status or JSON
+  error. It hid a real skgit merge failure for three days (skgit was fixed first). Now skorch, skport,
+  skpdf, skseek, skpeek, skboard, skgallery, skflow, skaegis, skpayment, skhub, skbook, skstream and
+  sksso have an `-api` router for their machine paths (derived chain without error pages, knob
+  `<app>.API_MIDDLEWARES`); skpulse's public and metrics routers, skrac's agent router and skpayment's
+  webhook router drop error pages from their default chain; skstor (S3), skvector and skwhoami are
+  API-only and drop it from the default. See "API routers" in `docs/v1-service-catalog.md`. Needs the
+  operator: nothing, unless the main chain is `default@file` with an IP allowlist or CrowdSec, in which
+  case set `<app>.API_MIDDLEWARES` to keep them on the API router. skbook, skstream, sksso and skhub take
+  the chain from the instance vault, so their API router follows whatever `router_middlewares` says.
+- Tests: the guarded skseek probe in the skstack06 gate (anonymous `/api/config`, `/api/`, `/` must
+  302 to sign-in or 401) covers the SSO chain on the `-api` routers. **Instance action**: redeploy
+  the apps listed above.
+
+### SSO access: conformance check and per-app resolver (#472, #475)
+
+- `optional/sksso/src/sksso/check-access.py` (#472): a read-only conformance check of
+  Authentik applications, bindings and groups (design #361 checks C1 to C10). GET only; the
+  token comes from `AUTHENTIK_TOKEN` or stdin and is never printed. Exit 0 conforms, 1
+  violation, 2 could not run.
+- `shared/tasks/sso_access_resolve.yml` and the tile script (#475, design #361 phase 1): a
+  role's `SSO_*` keys resolve into one access declaration, validated at render. The tile script
+  creates missing groups and binds the declared mode, additive only, with a postcondition (at
+  least one enabled binding); a new application whose bindings fail is deleted again. Roles
+  that pass only `group:` keep admin-only access.
+- **Instance action**: none required. Run `check-access.py` against the instance's Authentik
+  to see its current state before the next tile run.
+
+### skgallery: Immich v3.4.2 by default (#485)
+
+- The default for server, microservices and machine-learning moves from v2.7.5 to v3.4.2 (security
+  fixes). The Immich Postgres image stays `14-vectorchord0.4.3-pgvectors0.2.0`, as upstream's 3.4.2
+  compose has it. **Instance action**: none for an instance that pins `IMMICH_VERSION`; one on the
+  default upgrades on its next skgallery redeploy (read Immich's v3 upgrade notes first).
+
+### Renovate and CI (#473, #477, #478, #482)
+
+- Renovate groups minor, patch and digest bumps per service directory (the old
+  `{{parentDir}}` group put everything in one branch). CI Python stays below 3.13,
+  `dmacvicar/libvirt` below 0.9, skmon's Python runtime images on 3.13; no updates for the
+  retired skgraph and skvector.
+- Image bumps from the old batch, re-applied on main: data stores (mariadb, redis, postgres
+  digests), netbird and coturn, the skmon stack and others (see #473).
+- Majors capped per the 2026-11-20 migration plan (#482): mariadb below 13, postgres, pgvector and
+  postgres-backup-local below 19, skgallery's postgres below 15 (the dump sidecar matches Immich's
+  14), skflow, skbom and skmem-pg postgres below 18 (no major guard yet), mysql below 9, promtail
+  below 3.
+- CI: `actions/upload-artifact` v7, `actions/download-artifact` v8.
+- **Instance action**: redeploy a service to pick up its bumped image as usual.
+
 ## skstacks-v2.26.29 - 2026-11-19
 
 Patch on v2.26.28. Every Traefik router now uses the default TLS options, so a restarted service no
@@ -13,25 +161,6 @@ redeploy skfence or skfenceha (TLS options), then any service whose routers carr
 `tls.options`; remove `TLS_OPTIONS`, `tls_options` or `TRAEFIK_TLS_OPTIONS` from vaults that set
 `intermediate@file`; set `DEFAULT_SNI_STRICT: true` where the estate ran `sniStrict` before and a
 certificate covers every router; redeploy skha on the whole manager group (see skha below).
-skpeek, skseek and skpdf now sit behind SSO by default (see the upgrade notes first).
-
-### Upgrade notes
-
-- **UPGRADE: skpeek, skseek, skpdf are now behind SSO forward auth by default; set
-  `SSO_MIDDLEWARE: none` to keep one public.** None of the three has a login of its own; on one
-  production instance they were open to the internet and skseek's `GET /api/config` returned the
-  model provider API keys. Each router appends `<svc>.SSO_MIDDLEWARE` (default `authentik@file`)
-  to the end of its chain, including an instance override of `TRAEFIK_MIDDLEWARES`, and never
-  adds it twice when the chain already names it (vaults that added `authentik@file` by hand
-  render unchanged). sksso must be deployed (the middleware must exist), or Traefik drops the
-  router and the app is unreachable. Empty or unset keeps the default (fail closed). Tests:
-  `v1/tests/test_sso_default_skpeek_skseek_skpdf.py`. **Instance action**: none to get SSO; set
-  `SSO_MIDDLEWARE: none` in the vault for an instance that must stay public, before redeploying.
-- **UPGRADE: skfence/skfenceha `DEFAULT_SNI_STRICT` defaults to false since #465** (the first
-  #463 candidate had it on). Instances that ran `sniStrict: true` on the `default` TLS option by
-  hand should pin the value they want explicitly in their vault before rolling out (false serves
-  hosts without a matching certificate with the default certificate instead of refusing the
-  handshake).
 
 ### SKPages: agent-published HTML pages (new role, #461)
 
@@ -269,22 +398,6 @@ Found by the skstack06 tier-2 gate, the first live deploy of skmon v2 (#373):
     major parse as `skmesh.yml.j2`'s bind-mount target. Tests: `v1/tests/test_skmesh_pgdata_mode.py`.
     **Instance action**: none; the next skmesh deploy applies it. On an alpine estate its
     check-diff shows the owner and group going to 70, which is what the entrypoint already does.
-
-### Machine and API traffic bypasses the error-pages middleware on every app
-
-- **Fix: API errors were hidden behind the SKStacks error page.** The shared Traefik chains end in
-  `error-pages@file`, which replaced any backend 400 and 402-599 with an HTML page and replayed the
-  original method there (a failed POST read as a 405 or 501 from the error page). API clients, webhook
-  senders, S3 and WebDAV clients, git, OIDC clients and probes never saw the app's real status or JSON
-  error. It hid a real skgit merge failure for three days (skgit was fixed first). Now skorch, skport,
-  skpdf, skseek, skpeek, skboard, skgallery, skflow, skaegis, skpayment, skhub, skbook, skstream and
-  sksso have an `-api` router for their machine paths (derived chain without error pages, knob
-  `<app>.API_MIDDLEWARES`); skpulse's public and metrics routers, skrac's agent router and skpayment's
-  webhook router drop error pages from their default chain; skstor (S3), skvector and skwhoami are
-  API-only and drop it from the default. See "API routers" in `docs/v1-service-catalog.md`. Needs the
-  operator: nothing, unless the main chain is `default@file` with an IP allowlist or CrowdSec, in which
-  case set `<app>.API_MIDDLEWARES` to keep them on the API router. skbook, skstream, sksso and skhub take
-  the chain from the instance vault, so their API router follows whatever `router_middlewares` says.
 
 ### skhub: MariaDB buffer pool and memory limit are knobs
 
