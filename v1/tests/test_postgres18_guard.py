@@ -206,3 +206,110 @@ def test_guard_behaviour(tmp_path, disk, image, ok):
         out = r.stdout.replace("\n", " ")
         assert "demo.POSTGRES_IMAGE" in out and "dump-and-restore runbook" in out
         assert "nothing was changed" in out
+
+
+# ---- skflow and skbom: default stays on 17, guard and layout ready for an 18 pin ----------
+#
+# Both roles keep postgres:17.7-alpine as the default (a shared literal, so they share a layer).
+# The template computes the mount target from the playbook's effective image (sf_pg_image /
+# skb_pg_image = POSTGRES_IMAGE or the role default), the same value the guard include checks.
+
+import json  # noqa: E402
+
+import jinja2  # noqa: E402
+
+PG17 = "postgres:17.7-alpine@sha256:bb377b7239d2774ac8cc76f481596ce96c5a6b5e9d141f6d0a0ee371a6e7c0f2"
+PIN18 = "postgres:18.6-alpine@sha256:" + "d" * 64
+# role -> (image fact, path fact, playbook default fact, vars needed to render)
+PG17_ROLES = {
+    "skflow": ("sf_pg_image", "sf_pg_path", "sf_default_pg_image",
+               {"sf_external_db": False, "sf_data_node": "", "sf_dump_path": "/var/data/skflow-prod/database-dump",
+                "sf_pg_path": "/var/data/runtime/skflow-prod/postgres"}),
+    "skbom": ("skb_pg_image", "skb_pg_path", "skb_default_pg_image",
+              {"skb_data_node": "", "skb_dump_path": "/var/data/skbom-prod/database-dump",
+               "skb_pg_path": "/var/data/runtime/skbom-prod/postgres",
+               "skb_apiserver_data_path": "/var/data/skbom-prod/apiserver-data"}),
+}
+
+
+def _render_text(role, text, image=None):
+    fact, _, _, extra = PG17_ROLES[role]
+    j = jinja2.Environment(undefined=jinja2.ChainableUndefined, trim_blocks=True)
+    j.filters["to_json"] = json.dumps
+    j.filters["bool"] = lambda v: v if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes", "on")
+    ctx = dict(extra, app=role, env="prod", **{role: {"DB_PASSWORD": "x" * 16}})
+    if image is not None:
+        ctx[role]["POSTGRES_IMAGE"] = image
+    ctx[fact] = image or PG17
+    return j.from_string(text).render(**ctx)
+
+
+def _template(role):
+    return OPTIONAL / role / f"src/config/{role}/{role}.yml.j2"
+
+
+def _pg_volumes(role, image=None):
+    out = yaml.safe_load(_render_text(role, _template(role).read_text(), image))
+    return [v for v in out["services"]["postgres"]["volumes"] if "/postgres:" in v]
+
+
+@pytest.mark.parametrize("role", PG17_ROLES)
+def test_pg17_roles_default_keeps_the_old_mount(role):
+    _, path_fact, _, extra = PG17_ROLES[role]
+    assert _pg_volumes(role) == [f"{extra[path_fact]}:{MOUNT_OLD}"]
+
+
+@pytest.mark.parametrize("role", PG17_ROLES)
+def test_pg17_roles_18_pin_mounts_the_parent(role):
+    _, path_fact, _, extra = PG17_ROLES[role]
+    assert _pg_volumes(role, PIN18) == [f"{extra[path_fact]}:{MOUNT18}"]
+    assert _pg_volumes(role, "registry.example.test/postgres:18.6@sha256:" + "e" * 64) == [f"{extra[path_fact]}:{MOUNT18}"]
+    assert _pg_volumes(role, PIN16) == [f"{extra[path_fact]}:{MOUNT_OLD}"]
+
+
+@pytest.mark.parametrize("role", PG17_ROLES)
+def test_pg17_roles_default_render_is_unchanged_from_before_the_mount_knob(role):
+    """The default render must be byte-identical to the template with the literal old mount."""
+    text = _template(role).read_text()
+    _, path_fact, _, _ = PG17_ROLES[role]
+    before = text.replace("{{ " + path_fact + " }}:{{ _pg_data_mount }}", "{{ " + path_fact + " }}:" + MOUNT_OLD)
+    before = re.sub(r"\{# Postgres 18\+ images moved PGDATA.*?#\}\n\{% set _pg_data_mount = [^\n]*%\}\n", "", before,
+                    flags=re.S)
+    assert before != text and "_pg_data_mount" not in before
+    assert _render_text(role, text) == _render_text(role, before)
+
+
+@pytest.mark.parametrize("role", PG17_ROLES)
+def test_pg17_roles_default_is_17_in_template_and_every_playbook(role):
+    _, _, default_fact, _ = PG17_ROLES[role]
+    assert f"default('{PG17}', true)" in _template(role).read_text()
+    for env in ENVS:
+        text = (OPTIONAL / role / f"deploy_{role}-{env}.yml").read_text()
+        assert f'{default_fact}: "{PG17}"' in text, env
+
+
+@pytest.mark.parametrize("role", PG17_ROLES)
+@pytest.mark.parametrize("env", ENVS)
+def test_pg17_roles_playbooks_run_the_guard_before_the_stack_deploy(role, env):
+    fact, path_fact, _, _ = PG17_ROLES[role]
+    pb = OPTIONAL / role / f"deploy_{role}-{env}.yml"
+    text = pb.read_text()
+    assert text.count("postgres_major_guard.yml") == 1
+    assert text.index("../../shared/tasks/postgres_major_guard.yml") < text.index("- name: Deploy {{ app }} stack")
+    task = next(t for play in yaml.safe_load(text) for t in play.get("tasks", [])
+                if "postgres_major_guard.yml" in str(t.get("include_tasks", "")))
+    v = task["vars"]
+    assert v["pg_guard_app"] == role
+    assert v["pg_guard_pin_var"] == f"{role}.POSTGRES_IMAGE"
+    assert v["pg_guard_image"] == "{{ " + fact + " }}"
+    assert v["pg_guard_data_path"] == "{{ " + path_fact + " }}"
+    assert "DATA_NODE" not in v["pg_guard_node"] and "_data_node" in v["pg_guard_node"]
+    if role == "skflow":
+        assert task["when"] == "not (sf_external_db | bool)"
+
+
+@pytest.mark.parametrize("role", PG17_ROLES)
+def test_pg17_roles_readme_has_the_runbook_the_guard_names(role):
+    text = (OPTIONAL / role / "README.md").read_text()
+    assert "## Upgrading Postgres to 18" in text and "### Runbook: dump and restore (17 to 18)" in text
+    assert "postgres_major_guard.yml" in text
