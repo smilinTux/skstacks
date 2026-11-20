@@ -200,7 +200,7 @@ services:
   # ===========================================================================
   # Handles: face detection, object recognition, smart search, CLIP embeddings
   immich-machine-learning:
-    image: ghcr.io/immich-app/immich-machine-learning:{{ skgallery.IMMICH_VERSION | default('v2.7.5') }}
+    image: ghcr.io/immich-app/immich-machine-learning:{{ skgallery.IMMICH_VERSION | default('v3.4.2') }}
     env_file: /var/data/config/skgallery-{{ env }}/skgallery.env
     volumes:
       # === DIRECT BIND MOUNT ===
