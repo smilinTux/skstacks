@@ -44,10 +44,12 @@ SERVICES = {
     "skpeek": {"": ("TRAEFIK_MIDDLEWARES", lambda e: "default-no-crowdsec@file")},
     "skport": {"": ("TRAEFIK_MIDDLEWARES", lambda e: "default-no-crowdsec@file")},
     "skseek": {"": ("TRAEFIK_MIDDLEWARES", lambda e: "default-no-crowdsec@file")},
-    "skstor": {"": ("TRAEFIK_MIDDLEWARES", lambda e: "default-no-crowdsec@file")},
+    # skstor (S3), skvector (Qdrant REST and gRPC) are API-only: their default chain
+    # carries no error-pages (test_error_pages_api_paths.py).
+    "skstor": {"": ("TRAEFIK_MIDDLEWARES", lambda e: "default-no-error-pages@file")},
     "skvector": {
-        "": ("TRAEFIK_MIDDLEWARES", lambda e: f"skvector{_sfx(e)}-buffering,default-no-crowdsec@file"),
-        "-grpc": ("TRAEFIK_MIDDLEWARES_GRPC", lambda e: "default-no-crowdsec@file"),
+        "": ("TRAEFIK_MIDDLEWARES", lambda e: f"skvector{_sfx(e)}-buffering,default-no-error-pages@file"),
+        "-grpc": ("TRAEFIK_MIDDLEWARES_GRPC", lambda e: "default-no-error-pages@file"),
     },
     "skboard": {"": ("TRAEFIK_MIDDLEWARES", lambda e: "default-no-crowdsec@file")},
 }
@@ -119,14 +121,18 @@ def router_middlewares(text, svc, env, sfx):
 @pytest.mark.parametrize("env", ENVS)
 @pytest.mark.parametrize("svc", SERVICES)
 def test_unset_knobs_render_byte_identical_to_v2_26_4(svc, env):
-    # skgit's API router is new since v2.26.4 (test_skgit_api_router_*): the
-    # rest of the stack must still match the baseline byte for byte.
+    # The API routers are new since v2.26.4 (test_skgit_api_router_*,
+    # test_error_pages_api_paths.py), and skstor/skvector now default to a chain
+    # without error-pages: the rest of the stack must still match the baseline
+    # byte for byte. Every router also dropped tls.options (skstacks #463).
     text = render(svc, env)
-    base = (BASELINE / f"{svc}-{env}.yml").read_text()
-    base = _drop_tls_options(base)
     if svc == "skgit":
-        text = _drop_skgit_api(text)
+        text = _drop_skgit_init(text)
+    text = _drop_api_routers(text)
     text = _drop_sso(text, svc)
+    if svc in API_ONLY_DEFAULT_CHANGED:
+        text = text.replace("default-no-error-pages@file", "default-no-crowdsec@file")
+    base = _drop_tls_options((BASELINE / f"{svc}-{env}.yml").read_text())
     assert normalize_images(text) == normalize_images(base)
 
 
@@ -138,17 +144,25 @@ _SKGIT_INIT_COMMENT = (
 )
 
 
+API_ONLY_DEFAULT_CHANGED = ("skstor", "skvector")
+
+
 def _drop_tls_options(text):
     """Drop the v2.26.4 routers' tls.options labels: every router now uses Traefik's
     default TLS options (skstacks #463, see test_skgit_routers_set_no_tls_options)."""
     return "".join(l for l in text.splitlines(keepends=True) if ".tls.options=" not in l)
 
 
-def _drop_skgit_api(text):
-    """Drop what skgit gained after v2.26.4: the API router and the forgejo init."""
+def _drop_api_routers(text):
+    """Drop the `-api` router labels every mixed UI and API service gained after v2.26.4."""
+    return "".join(l for l in text.splitlines(keepends=True) if "-api." not in l)
+
+
+def _drop_skgit_init(text):
+    """Drop what skgit gained after v2.26.4: the forgejo init."""
     return "".join(
         l for l in text.splitlines(keepends=True)
-        if "-api." not in l and l.rstrip() != "    init: true" and not l.startswith(_SKGIT_INIT_COMMENT)
+        if l.rstrip() != "    init: true" and not l.startswith(_SKGIT_INIT_COMMENT)
     )
 
 
@@ -179,9 +193,9 @@ def test_override_replaces_only_that_routers_chain(svc, sfx, env):
     # Exception: putting crowdsec-bouncer on skgit's main router also renders the
     # skgit runner RPC router (test_skgit_runner_rpc_router_follows_the_crowdsec_knob).
     old = render(svc, env).splitlines()
-    # The skgit API router derives its chain from the main one, so it moves too.
-    old = [l for l in old if not (svc == "skgit" and "-api." in l)]
-    new = [l for l in text.splitlines() if not (svc == "skgit" and ("-runner-rpc." in l or "-api." in l))]
+    # The API routers derive their chain from the main one, so they move too.
+    old = [l for l in old if "-api." not in l]
+    new = [l for l in text.splitlines() if not (svc == "skgit" and "-runner-rpc." in l) and "-api." not in l]
     assert len(old) == len(new)
     diff = [(a, b) for a, b in zip(old, new) if a != b]
     assert len(diff) == 1 and diff[0][1].rstrip().endswith(f'.middlewares={_sso(svc, OVERRIDE)}"'), diff

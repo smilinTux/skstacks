@@ -26,7 +26,7 @@ node), `skstor.GARAGE_S3_REGION` (default `garage`), `skstor.CPU_LIMIT`,
 `skstor.meta_dir` / `skstor.data_dir` (default the bind-mount paths Garage
 sees inside the container, `/var/lib/garage/meta` and `/var/lib/garage/data`),
 `skstor.TRAEFIK_MIDDLEWARES` (the web router's whole middleware chain, default
-`default-no-crowdsec@file`; see "Router middleware overrides" in
+`default-no-error-pages@file`, so S3 clients get Garage's own XML errors; see "Router middleware overrides" in
 `docs/v1-service-catalog.md`).
 
 ## Deployment
