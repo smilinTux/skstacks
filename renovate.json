@@ -197,6 +197,13 @@
         "v1/ansible/optional/skvector/**"
       ],
       "enabled": false
+    },
+    {
+      "description": "skmon pins.yml requires every image to be at least 14 days old (test_skmon_pins.py); match it so skmon bumps do not fail CI",
+      "matchFileNames": [
+        "v1/ansible/optional/skmon/**"
+      ],
+      "minimumReleaseAge": "14 days"
     }
   ],
   "rebaseWhen": "conflicted"
