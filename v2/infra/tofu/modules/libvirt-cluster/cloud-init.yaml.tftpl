@@ -10,6 +10,13 @@ users:
     ssh_authorized_keys:
       - ${ssh_public_key}
 ssh_pwauth: false
+%{ if apt_proxy != "" ~}
+# Only http sources go through the cache. No https proxy is set, so the https
+# Docker repo is fetched direct; preserve_sources_list keeps the image's sources.
+apt:
+  preserve_sources_list: true
+  http_proxy: "${apt_proxy}"
+%{ endif ~}
 %{ if daemon_json != "" || disable_auto_updates ~}
 write_files:
 %{ if daemon_json != "" ~}

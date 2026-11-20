@@ -77,6 +77,7 @@ resource "libvirt_cloudinit_disk" "node" {
     k3d                  = each.value.worker && var.worker_k3d
     daemon_json          = length(var.registry_mirrors) > 0 ? jsonencode({ "registry-mirrors" = var.registry_mirrors }) : ""
     disable_auto_updates = var.disable_auto_updates
+    apt_proxy            = var.apt_proxy
   })
   network_config = yamlencode({
     version = 2
