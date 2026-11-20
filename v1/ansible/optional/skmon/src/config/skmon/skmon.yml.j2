@@ -273,7 +273,7 @@ services:
   # healthz port is published on DATA_NODE for the outside monitor (tasks/port_allowlist.yml
   # filters it by the original destination port, so target equals published).
   bridge:
-    image: {{ skmon.BRIDGE_IMAGE | default('python:3.15.2-bookworm@sha256:6f060cab421d9509c6c6a6a7762c651baf03c3f1d0145befe16b688762b7fe81') }}
+    image: {{ skmon.BRIDGE_IMAGE | default('python:3.13.18-bookworm@sha256:cc55e4ded9c95f6ce2133b3d096db43f214d280c2a8af65d83e246c8fa7d168c') }}
     command: ["python3", "/opt/skmon/skmon_bridge.py"]
     user: "{{ bridge_uid }}:{{ bridge_uid }}"
     environment:
@@ -362,7 +362,7 @@ services:
   # a pinned Python base image. It joins docker-api (to reach the proxy) and the skmon overlay
   # (VictoriaMetrics scrapes it on 9323), and publishes no port.
   skswarm-exporter:
-    image: {{ skmon.SKSWARM_EXPORTER_IMAGE | default('python:3.15.2-slim-bookworm@sha256:96599df822d0e1c6bb700014a05c7f3c8cabc6e0f7ff3c4f9f69cee033b4b5d9') }}
+    image: {{ skmon.SKSWARM_EXPORTER_IMAGE | default('python:3.13.18-slim-bookworm@sha256:a5a7017efc5969e00ae2b91c8eb0631049a569652aa4ffc4501769049ae45c72') }}
     command: ["python3", "/opt/skmon/skswarm_exporter.py"]
     user: "{{ swarm_uid }}:{{ swarm_uid }}"
     environment:

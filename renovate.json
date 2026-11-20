@@ -77,6 +77,19 @@
       "allowedVersions": "<0.9"
     },
     {
+      "description": "Python runtime images (skmon bridge and exporter) change minor only with a human: a Python minor is a runtime change for code we run, not a patch (#421 proposed 3.13 -> 3.15). Patch and digest bumps within a minor still flow.",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "python"
+      ],
+      "matchUpdateTypes": [
+        "minor"
+      ],
+      "dependencyDashboardApproval": true
+    },
+    {
       "description": "docker-mailserver majors need a human: prod was three majors behind what :latest resolved to before this framework started pinning (see test_skmail_dms_version_pinned.py)",
       "matchPackageNames": [
         "ghcr.io/docker-mailserver/docker-mailserver"
