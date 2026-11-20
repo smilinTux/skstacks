@@ -293,7 +293,52 @@ database's job.
 Bump `WINDMILL_IMAGE` (tag and digest together). Windmill migrates its
 schema on server start, so read the upstream release notes and take a fresh
 dump first. Postgres major upgrades need `pg_dumpall` and a restore into a
-new data directory; never point a newer major at the old data directory.
+new data directory; never point a newer major at the old data directory
+(see "Upgrading Postgres to 18").
+
+## Upgrading Postgres to 18
+
+Framework default: `postgres:17.7-alpine` for the server and `postgres:17.7` for the dump sidecar
+(both pinned `tag@sha256:digest`). The default stays on 17; moving to 18 is a deliberate, per-instance
+step. **Postgres 18 cannot open a 17 data directory, and an upgrade is never automatic.**
+
+- **Fail-closed guard.** Before the stack deploy, `shared/tasks/postgres_major_guard.yml` reads
+  `PG_VERSION` under `<skflow.POSTGRES_PATH, default /var/data/runtime/skflow-<env>/postgres>` and stops the play when the data on disk is another major than
+  `skflow.POSTGRES_IMAGE`. The running stack is left untouched. Fresh installs (no `PG_VERSION`) pass.
+- **Data layout.** 18+ images keep the cluster in `/var/lib/postgresql/<major>/docker` and declare
+  `VOLUME /var/lib/postgresql`, so for an 18+ `POSTGRES_IMAGE` the compose file mounts the data
+  directory at `/var/lib/postgresql`; a 17 or older image keeps `/var/lib/postgresql/data` (the default
+  render is unchanged). Never mount `/var/lib/postgresql/data` under an 18 image: the real data would
+  land on an anonymous volume.
+- **Move to 18 by dump and restore only**, then pin both knobs to 18 images (the sidecar stays the
+  Debian variant, it needs bash):
+
+  ```yaml
+  skflow:
+    POSTGRES_IMAGE: "postgres:18.<x>-alpine@sha256:<digest>"
+    POSTGRES_BACKUP_IMAGE: "postgres:18.<x>@sha256:<digest>"   # same major as the server
+  ```
+
+### Runbook: dump and restore (17 to 18)
+
+All commands run on the swarm manager (with `DATA_NODE` set, run the `mv`/`mkdir` on that node);
+`<stack>` is `skflow-<env>`. Writers (`server`, `worker`, `worker-native` and any `worker-<name>`) are down from step 1 to step 4.
+
+1. **Dump from the running 17:** `docker service scale <stack>_server=0 <stack>_worker=0 <stack>_worker-native=0`, then
+   `docker exec "$(docker ps -q -f name=<stack>_postgres)" pg_dumpall -U windmill > /var/data/skflow-<env>/database-dump/pre-pg18.sql`
+   and check the file ends with `PostgreSQL database cluster dump complete`. It holds password hashes: keep it `0600`.
+2. **Stop the stack and move the old data aside** (the rollback copy): `docker stack rm <stack>`,
+   `mv <skflow.POSTGRES_PATH, default /var/data/runtime/skflow-<env>/postgres> <skflow.POSTGRES_PATH, default /var/data/runtime/skflow-<env>/postgres>.pg17`, `mkdir -p <skflow.POSTGRES_PATH, default /var/data/runtime/skflow-<env>/postgres> && chown 70:70 <skflow.POSTGRES_PATH, default /var/data/runtime/skflow-<env>/postgres>` (uid 70 = `postgres` in the alpine image).
+3. **Pin** `POSTGRES_IMAGE` and `POSTGRES_BACKUP_IMAGE` to 18 as above and deploy. The guard sees an empty
+   directory and passes; the 18 image initialises `<skflow.POSTGRES_PATH, default /var/data/runtime/skflow-<env>/postgres>/18/docker`. Wait for `postgres` to be healthy.
+4. **Restore and verify:** `docker exec -i <postgres container> psql -U windmill -d postgres < .../pre-pg18.sql`
+   (`already exists` errors for the bootstrap role and the `windmill` database are expected), check
+   `SHOW server_version`, scale the writers back up and check the Windmill UI and a test run.
+5. **Clean up** after a few days of good operation: remove `<skflow.POSTGRES_PATH, default /var/data/runtime/skflow-<env>/postgres>.pg17` and the dump file.
+
+**Rollback.** `docker stack rm <stack>`, move the new directory aside, move `.pg17` back, pin both knobs
+to the 17 images, redeploy. A deploy run before step 2 is stopped by the guard with a message naming this
+section: that is intended, not a fault.
 
 ## Deployment
 

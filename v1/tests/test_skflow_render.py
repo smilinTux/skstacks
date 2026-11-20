@@ -330,3 +330,20 @@ def test_tagged_worker_is_labelled_with_its_tags(set_out):
     labels = compose(set_out)["services"]["worker-catchup"]["deploy"]["labels"]
     assert "com.skt.worker-tags=fwe-catchup" in labels
     assert "com.skt.app=skflow" in labels
+
+
+# --- Postgres 18 data-mount layout (default stays 17) -----------------------
+
+def test_default_postgres_mounts_the_pre_18_data_dir(base_out):
+    vols = compose(base_out)["services"]["postgres"]["volumes"]
+    assert "/var/data/runtime/skflow-prod/postgres:/var/lib/postgresql/data" in vols
+
+
+def test_postgres_18_pin_mounts_the_parent_dir(tmp_path):
+    pin18 = "postgres:18.6-alpine@sha256:" + "d" * 64
+    out = ok(tmp_path, BASE | {"POSTGRES_IMAGE": pin18,
+                               "POSTGRES_BACKUP_IMAGE": "postgres:18.6@sha256:" + "e" * 64})
+    pg = compose(out)["services"]["postgres"]
+    assert pg["image"] == pin18
+    assert "/var/data/runtime/skflow-prod/postgres:/var/lib/postgresql" in pg["volumes"]
+    assert not any(v.endswith(":/var/lib/postgresql/data") for v in pg["volumes"])

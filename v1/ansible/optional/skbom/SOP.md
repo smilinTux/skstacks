@@ -224,6 +224,7 @@ served by `apiserver` once it is up; this role does not reproduce it.
 |---|---|
 | Deploy fails: "skbom needs DB_PASSWORD" | Vault is missing `DB_PASSWORD` or it is under 16 characters. |
 | Deploy fails: image without `@sha256:` | One of `APISERVER_IMAGE`/`FRONTEND_IMAGE`/`POSTGRES_IMAGE`/`POSTGRES_BACKUP_IMAGE` (if overridden) carries a floating tag; the role refuses it. |
+| Deploy fails: "the Postgres data on disk ... is major N" | The fail-closed Postgres major guard: `POSTGRES_IMAGE` is another major than the data in `POSTGRES_PATH`. Pin it back to the on-disk major, or follow README "Upgrading Postgres to 18" (dump and restore). |
 | Deploy fails: "OIDC_ENABLED is true but OIDC_ISSUER and/or OIDC_CLIENT_ID is empty" | Set both together, or leave `OIDC_ENABLED` false. |
 | Stack never schedules (services stuck pending) | No node carries the `skbom=true` label the default `PLACEMENT_CONSTRAINTS` requires. `docker node update --label-add skbom=true <node>`. |
 | `apiserver` healthcheck fails for several minutes after a fresh deploy | Expected on first boot: schema migrations run before `/health` answers `UP`. `HEALTH_CHECK_START_PERIOD` (default `90s`) and the deploy script's own `HEALTH_WAIT_SECONDS` (default 600) both account for this; a slow start is a warning, not a failed deploy. |
