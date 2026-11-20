@@ -47,7 +47,7 @@ services:
    image default below (test_postgres18_guard.py). #}
 {% set _pg_data_mount = '/var/lib/postgresql' if ((skmesh.POSTGRES_IMAGE | default('postgres:18-alpine')).split('@')[0].split('/')[-1].split(':')[-1].lstrip('pg').split('.')[0].split('-')[0] | int(0)) >= 18 else '/var/lib/postgresql/data' %}
   postgres:
-    image: {{ skmesh.POSTGRES_IMAGE | default('postgres:18.6-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395') }}
+    image: {{ skmesh.POSTGRES_IMAGE | default('postgres:19.0-alpine@sha256:8b0ff4cdf221f0c53d7fcda681d3b461be725c492cd881c5ec9c0ad25023f188') }}
     env_file: /var/data/config/skmesh-{{ env }}/postgres.env
     environment:
       - PGTEMP=/var/lib/postgresql/data/tmp
@@ -76,7 +76,7 @@ services:
       start_period: 30s
 
   postgres-db-backup:
-    image: {{ skmesh.POSTGRES_BACKUP_IMAGE | default('postgres:18.6@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42') }}
+    image: {{ skmesh.POSTGRES_BACKUP_IMAGE | default('postgres:19.0@sha256:bb6e70add742cd868fb62cb3b2f67d1dd2bdd2b65a521e778420748753687c60') }}
     env_file: /var/data/config/skmesh-{{ env }}/postgres-backup.env
     environment:
       - PGTEMP=/dump/tmp
