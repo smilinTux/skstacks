@@ -15,6 +15,17 @@ Each entry says what an instance must do, if anything.
   AGENTS.md now says queue with `gh pr merge <N> --squash`, never `--admin`. **Instance action**:
   none.
 
+### libvirt-cluster: optional `apt_proxy`
+
+- **libvirt-cluster: optional `apt_proxy`.** Setting it (for example
+  `http://apt-cache.example:3142`, an apt-cacher-ng pull-through cache) makes
+  cloud-init fetch apt packages on every VM through that HTTP proxy, so repeated
+  test-gate runs stop re-downloading the HWE kernel and distro packages. Only
+  plain-HTTP sources are cached; the https Docker repo is fetched direct. Unset
+  (the default) renders byte-identical cloud-init. See the module README for the
+  dead-proxy behavior.
+  **Instance action:** none, opt-in.
+
 ## skstacks-v2.26.30 - 2026-11-20
 
 Patch on v2.26.29. skpeek, skseek and skpdf sit behind SSO by default. skgit gets bounded git pack
