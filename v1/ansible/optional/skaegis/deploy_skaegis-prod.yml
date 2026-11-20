@@ -96,7 +96,7 @@
         ska_sso_middleware: "{{ skaegis.SSO_MIDDLEWARE | default('', true) | string }}"
         ska_sso_host_ip: "{{ skaegis.SSO_HOST_IP | default('', true) | string }}"
         ska_extra_ca: "{{ skaegis.EXTRA_CA_CERT | default('', true) | string }}"
-        ska_tls_options: "{{ skaegis.TLS_OPTIONS | default('intermediate@file', true) }}"
+        ska_tls_options: "{{ skaegis.TLS_OPTIONS | default('none', true) }}"
         ska_auth_mode: "{{ skaegis.AUTH_MODE | default('oidc', true) | string | lower }}"
         # APPLICATION_ACCESS_SSO_STANDARD: one declared mode. skaegis sees
         # every host's weaknesses, so it is admin-only; the other modes are
@@ -470,7 +470,7 @@
           name: "{{ skaegis.AUTHENTIK_TILE_NAME | default('skaegis', true) }}"
           launch_url: "https://{{ ska_host }}"
           group: "{{ skaegis.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
-          icon: "{{ skaegis.AUTHENTIK_TILE_ICON | default('fa://fa-shield-halved', true) }}"
+          icon: "{{ skaegis.AUTHENTIK_TILE_ICON | default('fa://fa-shield-alt', true) }}"
           icon_file: "icon.png"
           icon_name: "skaegis"
           open_in_new_tab: "{{ skaegis.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"

@@ -85,7 +85,7 @@ services:
         - "traefik.http.services.vmui{{ sfx }}.loadbalancer.server.port=8428"
         - "traefik.http.routers.vmui{{ sfx }}-secure.middlewares=default-security-headers@file,gzip@file,{{ fwd }}"
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8428/health || exit 1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8428/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -139,7 +139,7 @@ services:
         - "traefik.http.services.grafana{{ sfx }}.loadbalancer.server.port=3000"
         - "traefik.http.routers.grafana{{ sfx }}-secure.middlewares=default-security-headers@file,gzip@file"
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/api/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -218,7 +218,7 @@ services:
           cpus: '{{ skmon.VMALERT_CPU_RESERVATION | default("0.05") }}'
           memory: {{ skmon.VMALERT_MEMORY_RESERVATION | default("32M") }}
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8880/health || exit 1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8880/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -261,7 +261,7 @@ services:
         - "traefik.http.services.alertmanager{{ sfx }}.loadbalancer.server.port=9093"
         - "traefik.http.routers.alertmanager{{ sfx }}-secure.middlewares=default-security-headers@file,gzip@file,{{ fwd }}"
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9093/-/healthy || exit 1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:9093/-/healthy || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

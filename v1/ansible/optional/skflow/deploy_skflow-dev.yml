@@ -83,7 +83,7 @@
         sf_sso_middleware: "{{ skflow.SSO_MIDDLEWARE | default('', true) | string }}"
         sf_sso_exempt: "{{ skflow.SSO_EXEMPT_PREFIXES | default(['/api/']) }}"
         sf_outpost_service: "{{ skflow.SSO_OUTPOST_SERVICE | default('sksso' + ('' if env == 'prod' else '-' + env) + '-server@swarm', true) }}"
-        sf_tls_options: "{{ skflow.TLS_OPTIONS | default('intermediate@file', true) }}"
+        sf_tls_options: "{{ skflow.TLS_OPTIONS | default('none', true) }}"
         sf_router: "skflow{{ '' if env == 'prod' else '-' + env }}"
       tags: [config]
 
@@ -309,7 +309,7 @@
           name: "{{ skflow.AUTHENTIK_TILE_NAME | default('SKFlow (Windmill)', true) }}"
           launch_url: "https://{{ sf_host }}"
           group: "{{ skflow.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
-          icon: "{{ skflow.AUTHENTIK_TILE_ICON | default('fa://fa-gears', true) }}"
+          icon: "{{ skflow.AUTHENTIK_TILE_ICON | default('fa://fa-cogs', true) }}"
           icon_file: "{{ skflow.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
           icon_name: "{{ skflow.AUTHENTIK_TILE_ICON_NAME | default('windmill', true) }}"
           open_in_new_tab: "{{ skflow.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"

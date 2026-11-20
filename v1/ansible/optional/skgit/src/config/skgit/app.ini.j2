@@ -86,6 +86,16 @@ ARTIFACT_RETENTION_DAYS = {{ skgit.ARTIFACT_RETENTION_DAYS | default(7) | int }}
 
 [packages]
 ENABLED = true
+{% if skgit.DISABLE_REGISTRATION is defined or skgit.REQUIRE_SIGNIN_VIEW is defined %}
+
+[service]
+{% if skgit.DISABLE_REGISTRATION is defined %}
+DISABLE_REGISTRATION = {{ skgit.DISABLE_REGISTRATION | bool | string | lower }}
+{% endif %}
+{% if skgit.REQUIRE_SIGNIN_VIEW is defined %}
+REQUIRE_SIGNIN_VIEW = {{ skgit.REQUIRE_SIGNIN_VIEW | bool | string | lower }}
+{% endif %}
+{% endif %}
 {% if skgit.email_enabled | default(false) | bool %}
 
 [mailer]

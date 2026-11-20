@@ -97,7 +97,7 @@ def _lines(pb, **over):
             continue
         for line in _env().from_string(body).render(**ctx).splitlines():
             for marker in V2_26_2:
-                if marker in line and "config:app:get" not in line:
+                if marker in line and "config:app:get" not in line and "config:app:delete" not in line:
                     assert marker not in found, (pb.name, marker)
                     found[marker] = line
     assert set(found) == set(V2_26_2), (pb.name, set(V2_26_2) - set(found))

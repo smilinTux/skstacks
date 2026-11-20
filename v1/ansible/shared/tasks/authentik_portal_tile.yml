@@ -27,7 +27,7 @@
 #     name: "SKPulse (Uptime Kuma)"      # Application display name
 #     launch_url: "https://skpulse.example.com"
 #     group: "skadmin"                   # must already exist in Authentik
-#     icon: "fa://fa-heart-pulse"        # optional fallback, "fa://fa-..." or an
+#     icon: "fa://fa-heartbeat"        # optional fallback, "fa://fa-..." or an
 #                                         # already-uploaded "application-icons/<file>"
 #     icon_file: "icon.png"              # optional: a file the role ships at
 #                                         # src/config/<app>/<icon_file>. When present

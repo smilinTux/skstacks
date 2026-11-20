@@ -234,7 +234,7 @@
           description: ""
       loop:
         - { key: "sonarr", name: "Sonarr (skfetch)", icon: "fa://fa-tv" }
-        - { key: "radarr", name: "Radarr (skfetch)", icon: "fa://fa-clapperboard" }
+        - { key: "radarr", name: "Radarr (skfetch)", icon: "fa://fa-film" }
         - { key: "lidarr", name: "Lidarr (skfetch)", icon: "fa://fa-music" }
         - { key: "prowlarr", name: "Prowlarr (skfetch)", icon: "fa://fa-satellite-dish" }
       loop_control:

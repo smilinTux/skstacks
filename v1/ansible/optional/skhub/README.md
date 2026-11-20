@@ -390,7 +390,7 @@ Optional keys (all unset = the ingress behaviour above, rendered unchanged):
 | `TALK_TURN_RELAY_IPV4` | unset | The address eturnal advertises for relays: the public address the router forwards to the pinned node. Needs `host` mode and a relay range. aio-talk's `start.sh` always writes the container IP, so the service command rewrites that one line of `/conf/eturnal.yml` after `start.sh` and then runs `TALK_HPB_CMD` (the image's own CMD); if the line is missing (a changed aio-talk image) the container exits with a message instead of running a TURN server that advertises the wrong address. |
 | `TURN_DOMAIN` | unset (renders `{{ CLUSTERNAME }}.{{ DOMAIN }}`, same as before this knob existed) | The TURN hostname Nextcloud's `turn_servers` config advertises to clients, and `TURN_DOMAIN` in `talk-hpb.env` (the TURN host Janus hands out). To use this cluster's own eturnal from outside the LAN, set it to a DNS name that resolves to the public address the router forwards to the pinned node (not proxied by a CDN: TURN is not HTTP). For an instance whose own ingress cannot serve TURN (inbound 3478 blocked at the ISP, for example) and that instead relays Talk's TURN/STUN through another cluster's TURN server: set `TURN_DOMAIN` to that cluster's TURN hostname and `turn_secret` to its secret; `talk-hpb`'s own eturnal then runs unused. The port (3478) and `turn_secret` are unaffected by this knob. |
 | `TALK_TURN_TLS_443` | `false` | `true` adds a Traefik TCP router (`HostSNI(TURN_DOMAIN)`, entrypoint `websecure`, certresolver `main`) that terminates TLS on 443 and passes plain TCP to eturnal's 3478, and appends a second `turn_servers` entry `turns:<TURN_DOMAIN>:443` (tcp), for clients whose network only allows 443. Needs `enable_talk_hpb` and `TURN_DOMAIN` set to a DNS name that reaches this cluster's Traefik on 443 (so not one proxied by a CDN). Relayed media still uses the udp relay range. |
-| `TALK_STUN_SERVERS` | unset (Talk's `stun_servers` left as they are) | A list of `host:port` strings (at most 10, no scheme) the post-deploy task writes to Talk's `stun_servers`, for example `[turn.example.com:3478]` to use this cluster's own eturnal (it answers STUN on 3478) instead of a public STUN server or another cluster's. Needs `enable_talk_hpb`. |
+| `TALK_STUN_SERVERS` | unset (Talk's `stun_servers` left as they are) | A list of `host:port` strings (at most 10, no scheme) the post-deploy task writes to Talk's `stun_servers`, for example `[turn.example.com:3478]` to use this cluster's own eturnal (it answers STUN on 3478) instead of a public STUN server or another cluster's. Needs `enable_talk_hpb` or `TALK_SIGNALING: internal`. |
 | `TALK_FEDERATION_ENABLED` | `false` | `true` turns on Talk (spreed) federation to other Nextcloud instances over OCM (`/ocm-provider`, needs `cloud_federation_api`/`federatedfilesharing` enabled, on by default) by setting `occ config:app:set spreed federation_enabled yes`. Chat, reactions and calls (via each side's own HPB, signaling 2.0+) federate; files do not. Needs `enable_talk_hpb`. Unset/false never touches `federation_enabled` (same as before this knob existed). |
 | `TALK_FEDERATION_ALLOWED_GROUPS` | `[]` (federation open to every local user, upstream's own default) | With `TALK_FEDERATION_ENABLED` true, a list of local group ids allowed to use federated Talk features (`occ config:app:set spreed federation_allowed_groups`), for example `[federation]`. Empty list is never written (upstream default applies). |
 
@@ -422,6 +422,63 @@ skhub:
   TALK_TURN_RELAY_MAX_PORT: 62099
   TALK_TURN_RELAY_IPV4: 203.0.113.10
 ```
+
+## Talk without the HPB
+
+`TALK_SIGNALING: internal` (with `enable_talk_hpb` false) runs Talk on its
+built-in signaling and points its TURN/STUN at an external server, typically
+the cluster's skmesh coturn (skmesh README "Bundled coturn"). The post-deploy
+task removes `signaling_servers` (a stale entry from an earlier or a removed
+HPB makes every call and room event fail with "Failed to send message to
+signaling server") and writes `turn_servers` and, when set, `stun_servers`.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `TALK_SIGNALING` | unset (nothing written, as before) | `internal`: the mode above. |
+| `TURN_DOMAIN` | required here | The TURN server's DNS name, e.g. `turn.<base>`. |
+| `turn_secret` | required here (32+ characters) | The TURN server's shared secret (skmesh `TURN_SECRET` for the bundled coturn). |
+| `TALK_TURNS_PORT` | unset | Adds `turns:<TURN_DOMAIN>:<port>` (tcp), e.g. `5349`, for networks that allow only TLS. |
+| `TALK_STUN_SERVERS` | unset | `host:port` list for `stun_servers`, e.g. `[turn.<base>:3478]`. |
+
+Internal signaling suits small calls (every participant sends to every
+other); for larger ones, use the HPB.
+
+## Talk HPB with an external TURN
+
+`TALK_TURN_EXTERNAL: true` (with `enable_talk_hpb` true) keeps the HPB
+(signaling, Janus) and leaves TURN to the server at `TURN_DOMAIN`, typically
+the cluster's skmesh coturn (skmesh README "Bundled coturn"). That coturn runs
+on the host network and binds 3478 itself, so talk-hpb then:
+
+- publishes no 3478 (in ingress mode the routing mesh would open it on every
+  node, in host mode on talk-hpb's node: either way the bind would clash);
+- runs without eturnal: the default image's command becomes
+  `dinit --system --container nats-server janus signaling` (signaling needs
+  only nats-server and Janus). A pinned supervisord image keeps its own
+  command; its eturnal then listens only inside the container.
+- gets its own healthcheck: aio-talk's `/healthcheck.sh` also probes eturnal
+  (`TALK_PORT`, `eturnalctl status`), which would fail forever and make Swarm
+  restart a healthy HPB about once a minute. The replacement probes the
+  signaling server (port 8081 and `/api/v1/stats`) and Janus (8188) only.
+  A pinned supervisord image, or a `TALK_HPB_CMD` that still starts eturnal,
+  keeps the image's own check.
+
+Janus and Talk use `TURN_DOMAIN:3478` with TURN REST credentials made from
+`turn_secret`, so `turn_secret` must be the external server's shared secret
+(skmesh `TURN_SECRET` for the bundled coturn).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `TALK_TURN_EXTERNAL` | `false` | `true`: the mode above. Needs `enable_talk_hpb`. |
+| `TURN_DOMAIN` | required here | The external TURN server's DNS name, e.g. `turn.<base>`. |
+| `turn_secret` | required here (32+ characters) | That server's shared secret. |
+| `TALK_TURNS_PORT` | unset | Adds `turns:<TURN_DOMAIN>:<port>` (tcp), e.g. `5349` for the bundled coturn's TLS. |
+| `TALK_STUN_SERVERS` | unset | `host:port` list for `stun_servers`, e.g. `[turn.<base>:3478]`. |
+| `TALK_HPB_HEALTHCHECK_TEST` | unset | Replaces talk-hpb's healthcheck `test` (Docker list form) in any mode. |
+
+Refused with it (they only shape talk-hpb's own eturnal): `TALK_TURN_TLS_443`,
+`TALK_TURN_PUBLISH_MODE: host`, `TALK_TURN_RELAY_MIN_PORT`/`MAX_PORT` and
+`TALK_TURN_RELAY_IPV4`.
 
 ## Webhook worker
 

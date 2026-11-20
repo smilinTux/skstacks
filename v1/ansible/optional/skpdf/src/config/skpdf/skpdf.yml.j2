@@ -27,7 +27,10 @@ services:
       update_config:
         parallelism: 1
         delay: 10s
-        order: start-first
+        # stop-first: one replica on file state (/configs, pipeline, logs) on shared
+        # storage. start-first ran two containers on the same files during an update
+        # and needs two memory reservations at once, so it can stall the update at 0/1.
+        order: stop-first
       restart_policy:
         condition: on-failure
         delay: 10s
@@ -49,7 +52,6 @@ services:
         - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
         - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
         - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
-        - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
         # 2026-08-16: the skpdf-*-upload buffering middleware below was DEFINED but
         # never attached to this router, so MAX_UPLOAD_SIZE / MAX_RESPONSE_SIZE had
         # no effect and large PDFs hit Traefik's defaults. Appended to the chain.

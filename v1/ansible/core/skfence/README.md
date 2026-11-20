@@ -15,8 +15,36 @@ skfence:
   ACME_ENABLED: false            # true for real Let's Encrypt certs
   # CLOUDFLARE_EMAIL: "changeme@example.com"   # required only if ACME_ENABLED: true
   # CLUSTERNAME / DOMAIN fall back to the inventory's own cluster_name/domain
-  # TRAEFIK_IMAGE: ""             # default traefik:v3.7.16@sha256:... (pin a digest here to override)
+  # TRAEFIK_IMAGE: ""             # default traefik:v3.7.19@sha256:... (pin a digest here to override)
 ```
+
+**CrowdSec (opt-in)**: `CROWDSEC_ENABLED: true` puts `crowdsec-bouncer@file` first
+in the `default@file` chain, the same switch skfenceha has. Deploy sksec first: the
+middleware is defined by sksec's `dynamic/sksec.yml`, and the bouncer fails closed, so
+every router on `default@file` then depends on it. `dashboard-chain` never gets it.
+Default `false` renders the chain exactly as before.
+
+**TLS options**: every router uses Traefik's `default` TLS options and names none, so a
+restarted service never strands HTTP/2 clients on a 421. `DEFAULT_SNI_STRICT: true` makes
+`default` refuse a handshake whose SNI matches no certificate; unset (`false`), such a host
+gets Traefik's self-signed default cert, as before v2.26.29. Turn it on only where a
+wildcard or per-host certificate covers every router (skfenceha has the same knob).
+
+**Timeouts**: `FORWARDING_TIMEOUTS` (a map) replaces Traefik's
+`serversTransport.forwardingTimeouts` entirely (no per-key merge); unset, it stays
+`responseHeaderTimeout: 30s`, `dialTimeout: 10s`, `idleConnTimeout: 90s`, the same default
+as skfenceha's `WORKER_FORWARDING_TIMEOUTS`. `RESPONDING_TIMEOUTS` (a map) is rendered as
+`entryPoints.websecure.transport.respondingTimeouts`; unset, there is no block. Raise
+`responseHeaderTimeout` above 30 s when skhub runs Nextcloud Talk with internal signaling
+(its long poll holds 30 s, so idle polls got a 504) or takes multi-GB uploads:
+
+```yaml
+skfence:
+  FORWARDING_TIMEOUTS: {responseHeaderTimeout: 7200s, dialTimeout: 30s, idleConnTimeout: 1800s}
+  RESPONDING_TIMEOUTS: {readTimeout: 7200s, writeTimeout: 7200s, idleTimeout: 1800s}
+```
+
+The skfence deploy restarts Traefik, so a change applies on the next deploy.
 
 **Deploy**:
 

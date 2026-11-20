@@ -104,7 +104,10 @@ def test_models_missing_or_empty_are_downloaded(playbook, state, tmp_path):
 @pytest.mark.parametrize("playbook", PLAYBOOKS, ids=lambda p: p.name)
 def test_model_check_looks_in_the_container_models_dir(playbook):
     shell = _model_task(playbook)["shell"]
-    assert MODELS in shell
+    # The app path comes from Nextcloud (apps/ or custom_apps/); custom_apps is the fallback.
+    assert "occ app:getpath recognize" in shell
+    assert MODELS.rsplit("/models", 1)[0] in shell
+    assert 'MODELS="$APP/models"' in shell
     assert "maxdepth 1" in shell, "the presence check must not walk the models tree"
 
 
