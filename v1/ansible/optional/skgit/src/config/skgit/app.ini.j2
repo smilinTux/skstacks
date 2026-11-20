@@ -42,6 +42,22 @@ MAX_FILES = 100
 [git]
 MAX_GIT_DIFF_LINES = 1000000
 
+[git.config]
+# Global git config for every git process Forgejo spawns (repack, gc, upload
+# pack); Forgejo writes it into its own git home at startup. Bounded so
+# concurrent repacks of big repositories cannot take the container past its
+# memory limit (nor skgit was OOM-killed this way on 2026-11-11, and the hand
+# patch was lost on the next re-render). gc.auto off because Forgejo's own
+# cron runs housekeeping. skgit.GIT_CONFIG (a dict of git config key: value)
+# replaces a default or adds a key.
+{% set _git_config_over = skgit.GIT_CONFIG | default({}, true) %}
+{% for k, v in {'pack.threads': '1', 'pack.windowMemory': '256m', 'pack.deltaCacheSize': '64m', 'core.deltaBaseCacheLimit': '64m', 'gc.auto': '0'}.items() if k not in _git_config_over %}
+{{ k }} = {{ v }}
+{% endfor %}
+{% for k, v in _git_config_over.items() %}
+{{ k }} = {{ v }}
+{% endfor %}
+
 [git.timeout]
 DEFAULT = 3600
 MIGRATE = 3600

@@ -90,3 +90,15 @@ can register and anonymous visitors can read every public repo. An
 internet-facing instance should set both to `true`. Users are then created by
 an admin (web UI or `POST /api/v1/admin/users`), and API or git access needs a
 token or SSH key.
+
+## Git pack memory limits
+
+`app.ini` always renders a `[git.config]` section, which Forgejo writes into
+its own git home at startup, so every repack, gc and upload-pack it spawns is
+bounded: `pack.threads = 1`, `pack.windowMemory = 256m`,
+`pack.deltaCacheSize = 64m`, `core.deltaBaseCacheLimit = 64m`, `gc.auto = 0`
+(Forgejo's own cron runs housekeeping). Without these, concurrent repacks of
+large repositories took nor's Forgejo past its memory limit (OOM, 2026-11-11).
+`skgit.GIT_CONFIG` is an optional dict of git config `key: value`; a key there
+replaces the default or adds a new one. Check live with
+`docker exec <forgejo> git config --global --list | grep -E 'pack|gc'`.
