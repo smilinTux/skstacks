@@ -79,3 +79,13 @@ docker service ls | grep skport
 docker service logs skport-<env>_portainer --tail 50
 curl -I https://skport.<cluster>.<domain>
 ```
+
+## API router (raw status codes for machine traffic)
+
+The router chain usually ends in `error-pages@file`, which replaces any backend 4xx/5xx with an HTML page and
+replays the original method there, so API clients never see the app's own status or JSON error. `skport[-env]-api` carries the
+machine paths (`/api/`) through the same chain with each error-pages-bearing chain swapped for its
+no-error-pages form; anything else in the chain (CrowdSec, SSO, custom middlewares) is kept. Vault key
+`API_MIDDLEWARES` replaces the derived chain whole. `default-no-error-pages@file` has neither `default@file`'s
+optional IP allowlist nor CrowdSec: set `API_MIDDLEWARES` if the main chain relies on them. See "API routers" in
+`docs/v1-service-catalog.md`.

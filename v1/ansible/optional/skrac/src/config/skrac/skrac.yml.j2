@@ -100,7 +100,19 @@ services:
         - "traefik.http.routers.{{ skr_router }}-agent.tls.options={{ skr_tls_options }}"
 {% endif %}
         - "traefik.http.routers.{{ skr_router }}-agent.priority=100"
-        - "traefik.http.routers.{{ skr_router }}-agent.middlewares={{ skr_agent_middlewares }}"
+{# Agents and the installer download are machine traffic: unless AGENT_TRAEFIK_MIDDLEWARES says
+   otherwise, this router's chain is the main one with each error-pages-bearing chain swapped for
+   its no-error-pages form, so an agent sees MeshCentral's own status and not the error-pages HTML. #}
+{% set _api_swap = {'default@file': 'default-no-error-pages@file', 'default-no-crowdsec@file': 'default-no-error-pages@file', 'upload-chain@file': 'large-upload-buffering@file,default-security-headers@file', 'upload-chain-no-crowdsec@file': 'large-upload-buffering@file,default-security-headers@file', 'skai-chain@file': 'skai-headers@file,gzip@file', 'error-pages@file': '', 'error-pages-all@file': ''} %}
+{% set _api_mw = [] %}
+{% for _m in (skr_agent_middlewares | default('', true)).split(',') %}
+{% set _s = _api_swap.get(_m | trim, _m | trim) %}
+{% if _s %}
+{% set _ = _api_mw.append(_s) %}
+{% endif %}
+{% endfor %}
+{% set _skr_agent_default = _api_mw | unique | join(',') %}
+        - "traefik.http.routers.{{ skr_router }}-agent.middlewares={{ _skr_agent_default if not (skrac.AGENT_TRAEFIK_MIDDLEWARES | default('', true)) else skr_agent_middlewares }}"
         - "traefik.http.routers.{{ skr_router }}-agent.service={{ skr_router }}"
         # Everything else: the web UI, login (local and the OIDC callback),
         # the REST API. TRAEFIK_MIDDLEWARES + the optional SSO_MIDDLEWARE

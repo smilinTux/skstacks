@@ -48,7 +48,7 @@ tag yet.
 | [skdesk](#skdesk) | optional | RustDesk relay (hbbs/hbbr) | rustdesk-server (digest-pinned) | none | host ports 21115-21119 (host networking) | `skdesk-<env>/data` | `PLACEMENT_HOSTNAME` | `ENCRYPTED_ONLY` (true) | v2.19.0 |
 | [skflow](#skflow) | optional | Windmill workflow engine shared by tenant stacks (flows, schedules, webhooks, approvals) | Windmill `1.837.0` + Postgres `17.7` (digest-pinned) | skfence or skfenceha; sksso for `SSO_MIDDLEWARE` | `skflow[-env].<cluster>.<domain>` | `runtime/skflow-<env>/{postgres,logs,worker-cache}`, `skflow-<env>/database-dump` | `DB_PASSWORD` (or `DATABASE_URL`) | `SSO_MIDDLEWARE` (none), `NATIVE_WORKER_REPLICAS` (0), `DATA_NODE` (floating) | pending |
 | [skform](#skform) | optional | OpenTofu CLI container (idle, `docker exec`-driven) | OpenTofu `1.10.7` | skstor (only if remote state) | none (no Traefik) | `skform-<env>/{state,workspaces,plugins}` | `STATE_BACKEND_TYPE`/`PATH`, `CLUSTERNAME`, `DOMAIN` | per-provider `PROVIDER_*_ENABLED` | v2.15.0 |
-| [skgallery](#skgallery) | optional | Immich photo/video management | Immich `v2.7.5` + pgvector/vectorchord Postgres | none | `skgallery[-env].<cluster>.<domain>` | `skgallery-<env>/{upload,thumbs,profile,model-cache}` | `DB_PASSWORD`, `CLUSTERNAME`, `DOMAIN` | `OAUTH_ENABLED`/`SMTP_ENABLED` (false) | pending |
+| [skgallery](#skgallery) | optional | Immich photo/video management | Immich `v3.4.2` + pgvector/vectorchord Postgres | none | `skgallery[-env].<cluster>.<domain>` | `skgallery-<env>/{upload,thumbs,profile,model-cache}` | `DB_PASSWORD`, `CLUSTERNAME`, `DOMAIN` | `OAUTH_ENABLED`/`SMTP_ENABLED` (false) | pending |
 | [skgit](#skgit) | optional | Forgejo git + CI runners | Forgejo `15.0.9`, runner `11.1.2` | none | `skgit[-env].<cluster>.<domain>`, ssh `:222` | `skgit-<env>/{data,config}`, `runtime/skgit-<env>/{dind-data,runner-data}` | `POSTGRES_PASSWORD`, `SHARED_SECRET`, `SECRET_KEY`, `ADMIN_EMAIL`/`PASSWORD` | Actions runner only if `SKGIT_DIND_NODE` set | pending |
 | [skgraph](#skgraph) | optional | FalkorDB graph database (Redis protocol) | FalkorDB `v4.18.8` | none | `:16379` via ingress mesh (Redis protocol, no UI) | `skgraph-<env>/data` | `FALKORDB_PASSWORD`, `CLUSTERNAME`, `DOMAIN` | none notable | **v2.11.0** |
 | [skgym](#skgym) | optional | openGym gym and body-weight tracker (passkeys, PWA) | openGym `1.4.1` api + web (upstream, digest-pinned) | skfence or skfenceha | `skgym[-env].<cluster>.<domain>` | `skgym-<env>/{data,backup}` | `SESSION_SECRET` | `INVITE_ONLY` (false), `SSO_MIDDLEWARE` (none), `DATA_NODE` (floating), `BACKUP_ENABLED` (true) | pending |
@@ -98,9 +98,45 @@ kept. `[-env]` is empty on prod and `-dev`/`-staging` otherwise.
 | `skport.TRAEFIK_MIDDLEWARES` | `skport[-env]` | `default-no-crowdsec@file` |
 | `skpulse.TRAEFIK_MIDDLEWARES` | `skpulse[-env]` | `default-no-crowdsec@file` |
 | `skseek.TRAEFIK_MIDDLEWARES` | `skseek[-env]` | `default-no-crowdsec@file` (then `SSO_MIDDLEWARE`) |
-| `skstor.TRAEFIK_MIDDLEWARES` | `skstor[-env]` (web) | `default-no-crowdsec@file` |
-| `skvector.TRAEFIK_MIDDLEWARES` | `skvector[-env]` (HTTP) | `skvector[-env]-buffering,default-no-crowdsec@file` |
-| `skvector.TRAEFIK_MIDDLEWARES_GRPC` | `skvector[-env]-grpc` | `default-no-crowdsec@file` |
+| `skstor.TRAEFIK_MIDDLEWARES` | `skstor[-env]` (web, the S3 API) | `default-no-error-pages@file` (S3 clients need the XML error bodies) |
+| `skvector.TRAEFIK_MIDDLEWARES` | `skvector[-env]` (HTTP) | `skvector[-env]-buffering,default-no-error-pages@file` |
+| `skvector.TRAEFIK_MIDDLEWARES_GRPC` | `skvector[-env]-grpc` | `default-no-error-pages@file` |
+| `skorch.API_MIDDLEWARES` | `skorch[-env]-api` (`/webhook`, `/api/`, `/rest/`, `/mcp`, `/healthz`, `/metrics`) | derived, see below |
+| `skport.API_MIDDLEWARES` | `skport[-env]-api` (`/api/`) | derived |
+| `skpdf.API_MIDDLEWARES` | `skpdf[-env]-api` (`/api/`, `/v3/api-docs`) | derived from the resolved chain (keeps `skpdf[-env]-upload` and `SSO_MIDDLEWARE`) |
+| `skseek.API_MIDDLEWARES` | `skseek[-env]-api` (`/api/`) | derived from the resolved chain (keeps `SSO_MIDDLEWARE`) |
+| `skpeek.API_MIDDLEWARES` | `skpeek[-env]-api` (`/search`, `/healthz`, `/autocompleter`, `/config`) | derived from the resolved chain (keeps `SSO_MIDDLEWARE`) |
+| `skboard.API_MIDDLEWARES` | `skboard[-env]-api` (`/api/`, `/dav/`, `/.well-known/`, `/health`) | derived |
+| `skgallery.API_MIDDLEWARES` | `skgallery[-env]-api` (`/api/`, `/.well-known/`) | `large-upload-buffering@file,default-security-headers@file` |
+| `skflow.API_MIDDLEWARES` | `skflow[-env]-api` (`/api/`, or `SSO_EXEMPT_PREFIXES` with SSO) | derived |
+| `skaegis.API_MIDDLEWARES` | `skaegis[-env]-api` (`/api/`; the SSO middleware is appended) | derived |
+| `skpayment.API_MIDDLEWARES` | `skpayment[-env]-api` (`/checkout/`, `/portal/`, `/health`, `/status`) | derived |
+| `skpayment.WEBHOOK_MIDDLEWARES` | `skpayment[-env]-webhook` | `default-no-error-pages@file` (was `default-no-crowdsec@file`) |
+| `skbook.API_MIDDLEWARES` | `skbook[-env]-api` (`/api/`, `/status`), only when the instance sets `router_middlewares` | derived from `router_middlewares` |
+| `skstream.API_MIDDLEWARES` | `skstream[-env]-api` (everything except `/web`), only when the instance sets `router_middlewares` | derived from `router_middlewares` |
+| `sksso.API_MIDDLEWARES` | `sksso[-env]-server-api` (`/application/o/`, `/api/v3/`, `/-/`, `/.well-known/`), only when the instance sets `router_middlewares` | derived from `router_middlewares` |
+| `skhub.API_MIDDLEWARES` | `skhub-api` (OCS, `/remote.php/`, `/public.php/`, `/status.php`, `/.well-known/`, login flow v2, apps' `/api/`) | derived from the secure router's chain (`skhub,skhub-dav` kept) |
+| `skpulse.BYPASS_TRAEFIK_MIDDLEWARES`, `skpulse.METRICS_TRAEFIK_MIDDLEWARES` | `skpulse[-env]-public` (push, status pages, badges), `-metrics` | `TRAEFIK_MIDDLEWARES` with error pages removed |
+| `skrac.AGENT_TRAEFIK_MIDDLEWARES` | `skrac[-env]-agent` (MeshAgent paths) | `TRAEFIK_MIDDLEWARES` with error pages removed |
+
+### API routers: machine traffic never meets error-pages
+
+The shared chains `default@file`, `default-no-crowdsec@file`, `upload-chain*@file` and `skai-chain@file` end in
+`error-pages@file`, which replaces any backend 400 and 402-599 with an HTML "Error NNN" page and replays the
+ORIGINAL method there. API clients, webhook senders, WebDAV and S3 clients, git, OIDC clients and health probes
+then never see the app's real status or JSON error. Every app with machine traffic therefore has a second,
+higher-priority router (`-api`) for its machine paths. Its default chain is the main chain with each
+error-pages-bearing chain swapped for its no-error-pages form: `default@file` and `default-no-crowdsec@file`
+become `default-no-error-pages@file` (rate limit, security headers, gzip), the upload chains become
+`large-upload-buffering@file,default-security-headers@file`, and every other middleware in the chain
+(CrowdSec bouncer, SSO, an app's own limits) is kept. The `API_MIDDLEWARES` knob replaces it whole. Two caveats:
+`default-no-error-pages@file` carries neither `default@file`'s optional IP allowlist nor CrowdSec, so an instance
+whose main chain is `default@file` with `WHITELIST_IPS` or `CROWDSEC_ENABLED` and wants the same on the API router
+sets `API_MIDDLEWARES` explicitly; and an app whose chain comes from the instance vault (`router_middlewares`:
+skbook, skstream, sksso, skhub) only gets the API router when that chain is set. skstor, skvector and skwhoami
+are API-only, so their default chain simply has no error pages. `v1/tests/test_error_pages_api_paths.py` asserts
+the real machine paths of each app and fails a new app that routes through error-pages without declaring its
+machine paths.
 
 skpdf, skpeek and skseek append `<svc>.SSO_MIDDLEWARE` (default
 `authentik@file`) after the chain, including an overridden one; see each

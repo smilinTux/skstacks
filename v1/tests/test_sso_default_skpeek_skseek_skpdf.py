@@ -54,8 +54,14 @@ def routers(text):
 
 def chain(svc, env="prod", **over):
     r = routers(render(svc, env, **over))
-    assert list(r) == [f"{svc}{_sfx(env)}"], r  # one user-facing router per service
-    return r[f"{svc}{_sfx(env)}"].split(",")
+    main = f"{svc}{_sfx(env)}"
+    # The user-facing router plus its error-pages-free API router (#410). The
+    # API router derives from the resolved chain, so it ends in the same SSO
+    # middleware: skseek's /api/config must never skip sign-in.
+    assert sorted(r) == sorted([main, f"{main}-api"]), r
+    sso = lambda c: [m.strip() for m in c.split(",") if "authentik" in m]
+    assert sso(r[f"{main}-api"]) == sso(r[main]), r
+    return r[main].split(",")
 
 
 @pytest.mark.parametrize("env", ENVS)
@@ -117,7 +123,8 @@ def test_only_the_middlewares_label_changes(svc):
     off = render(svc, SSO_MIDDLEWARE="none").splitlines()
     assert len(on) == len(off)
     diff = [(a, b) for a, b in zip(on, off) if a != b]
-    assert len(diff) == 1 and diff[0][0].rstrip().endswith(f',{SSO}"'), diff
+    # the user-facing router and its API router (#410), nothing else
+    assert len(diff) == 2 and all(a.rstrip().endswith(f',{SSO}"') for a, _ in diff), diff
 
 
 @pytest.mark.parametrize("svc", SERVICES)

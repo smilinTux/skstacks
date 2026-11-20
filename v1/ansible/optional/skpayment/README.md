@@ -63,7 +63,7 @@ skpayment:
   DATA_NODE: ""                   # pin the service to this node (required with a local DATA_PATH)
   MIDDLEWARES: ""                 # site router; default default@file (see "CrowdSec" below)
   WEBHOOK_PATH: ""                # default /webhook/stripe; "none" = one router for everything
-  WEBHOOK_MIDDLEWARES: ""         # webhook router; default default-no-crowdsec@file
+  WEBHOOK_MIDDLEWARES: ""         # webhook router; default default-no-error-pages@file
   WEBHOOK_PRIORITY: ""            # webhook router priority; default 1000
   WEBHOOK_IP_ALLOWLIST: false     # true: only WEBHOOK_SOURCE_RANGES reach the webhook path
   WEBHOOK_SOURCE_RANGES: []       # default: Stripe's published webhook IPs (below)
@@ -109,7 +109,7 @@ the role renders two routers on the same host and service:
 | Router | Rule | Middlewares (default) | Priority |
 |---|---|---|---|
 | `skpayment[-env]` (site) | `Host(<HOSTNAME>)` | `MIDDLEWARES`: `default@file` | Traefik default (the rule's length) |
-| `skpayment[-env]-webhook` | `Host(<HOSTNAME>) && Path(<WEBHOOK_PATH>)` | `WEBHOOK_MIDDLEWARES`: `default-no-crowdsec@file` | `WEBHOOK_PRIORITY`: 1000 |
+| `skpayment[-env]-webhook` | `Host(<HOSTNAME>) && Path(<WEBHOOK_PATH>)` | `WEBHOOK_MIDDLEWARES`: `default-no-error-pages@file` | `WEBHOOK_PRIORITY`: 1000 |
 
 `default@file` includes the CrowdSec bouncer when the instance's skfenceha
 has `CROWDSEC_ENABLED` (and sksec runs); otherwise it is the same chain
@@ -124,8 +124,9 @@ Why the exemption is safe: the app verifies every webhook's
 400 to a missing, wrong or (from v1.1.0) replayed signature, and 503 to every
 webhook when no webhook secret is set. The deploy already refuses the one
 app release that accepted unsigned webhooks without a secret (see "Stripe not
-configured"). The webhook router keeps the rate limit, security headers and
-error pages of `default-no-crowdsec@file`.
+configured"). The webhook router keeps the rate limit and security headers
+of `default-no-crowdsec@file` but not its error pages (`default-no-error-pages@file`):
+Stripe reads the status code to decide whether to retry, so it must see the app's own.
 
 `WEBHOOK_PATH: none` restores the single-router layout (everything on
 `MIDDLEWARES`); before v2.26.7 the only router used
@@ -198,3 +199,13 @@ Tests: `v1/tests/test_skpayment_render.py` (the deploy through real Ansible,
 and the controller fetch run for real against a local git repo: tag and sha
 refs, a sha256 mismatch and an unknown ref both fail closed). The skstack06
 release harness deploys it and checks `/health` through skfenceha.
+
+## API router (raw status codes for machine traffic)
+
+The router chain usually ends in `error-pages@file`, which replaces any backend 4xx/5xx with an HTML page and
+replays the original method there, so API clients never see the app's own status or JSON error. `skpayment[-env]-api` carries the
+machine paths (`/checkout/`, `/portal/`, `/health`, `/status`) through the same chain with each error-pages-bearing chain swapped for its
+no-error-pages form; anything else in the chain (CrowdSec, SSO, custom middlewares) is kept. Vault key
+`API_MIDDLEWARES` replaces the derived chain whole. `default-no-error-pages@file` has neither `default@file`'s
+optional IP allowlist nor CrowdSec: set `API_MIDDLEWARES` if the main chain relies on them. See "API routers" in
+`docs/v1-service-catalog.md`.

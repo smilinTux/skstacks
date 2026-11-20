@@ -242,6 +242,33 @@ services:
         - "traefik.http.routers.{{ ska_router }}.priority=5"
         - "traefik.http.routers.{{ ska_router }}.middlewares={{ ska_middlewares }}{{ ',' + ska_sso_middleware if ska_sso_middleware else '' }}"
         - "traefik.http.routers.{{ ska_router }}.service={{ ska_router }}"
+{# === API ROUTER (raw upstream status codes) ===
+    The dashboard's own API (`/api/`: status, saved objects, the Wazuh API proxy) answers the
+    browser app and any script with JSON. The main chain carries error-pages@file, which swaps every
+    4xx/5xx for an HTML page and replays the ORIGINAL method there. This router sends `/api/`
+    through the same chain (SSO_MIDDLEWARE included) with each error-pages-bearing chain swapped
+    for its no-error-pages form. skaegis.API_MIDDLEWARES replaces the derived chain whole (put
+    the SSO middleware in it yourself). Note default@file's optional IP allowlist and CrowdSec
+    are not part of default-no-error-pages@file: set API_MIDDLEWARES if the main chain relies on them. #}
+{% set _api_swap = {'default@file': 'default-no-error-pages@file', 'default-no-crowdsec@file': 'default-no-error-pages@file', 'upload-chain@file': 'large-upload-buffering@file,default-security-headers@file', 'upload-chain-no-crowdsec@file': 'large-upload-buffering@file,default-security-headers@file', 'skai-chain@file': 'skai-headers@file,gzip@file', 'error-pages@file': '', 'error-pages-all@file': ''} %}
+{% set _api_mw = [] %}
+{% for _m in (ska_middlewares | default('', true)).split(',') %}
+{% set _s = _api_swap.get(_m | trim, _m | trim) %}
+{% if _s %}
+{% set _ = _api_mw.append(_s) %}
+{% endif %}
+{% endfor %}
+{% set _ska_api_default = _api_mw | unique | join(',') %}
+        - "traefik.http.routers.{{ ska_router }}-api.rule=Host(`{{ ska_host }}`) && PathPrefix(`/api/`)"
+        - "traefik.http.routers.{{ ska_router }}-api.entrypoints=websecure"
+        - "traefik.http.routers.{{ ska_router }}-api.tls=true"
+        - "traefik.http.routers.{{ ska_router }}-api.tls.certresolver=main"
+{% if ska_tls_options != 'none' %}
+        - "traefik.http.routers.{{ ska_router }}-api.tls.options={{ ska_tls_options }}"
+{% endif %}
+        - "traefik.http.routers.{{ ska_router }}-api.priority=50"
+        - "traefik.http.routers.{{ ska_router }}-api.middlewares={{ skaegis.API_MIDDLEWARES | default(_ska_api_default ~ (',' + ska_sso_middleware if ska_sso_middleware else ''), true) }}"
+        - "traefik.http.routers.{{ ska_router }}-api.service={{ ska_router }}"
         - "traefik.http.services.{{ ska_router }}.loadbalancer.server.port=5601"
         - "traefik.http.services.{{ ska_router }}.loadbalancer.server.scheme=http"
 

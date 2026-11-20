@@ -195,3 +195,13 @@ ansible-playbook -i envs/prod/inventory.ini \
 - 📐 **Standards:** [sk-standards](https://github.com/smilinTux/sk-standards), the doc/SOP and application-access (SSO) standards this README and SOP follow.
 
 *License: this role is Apache-2.0 (the framework's own license). The upstream Wazuh software it deploys is GPL-2.0 and is referenced by image reference only: nothing from it is vendored.*
+
+## API router (raw status codes for machine traffic)
+
+The router chain usually ends in `error-pages@file`, which replaces any backend 4xx/5xx with an HTML page and
+replays the original method there, so API clients never see the app's own status or JSON error. `skaegis[-env]-api` carries the
+machine paths (`/api/` (the SSO middleware stays on it)) through the same chain with each error-pages-bearing chain swapped for its
+no-error-pages form; anything else in the chain (CrowdSec, SSO, custom middlewares) is kept. Vault key
+`API_MIDDLEWARES` replaces the derived chain whole. `default-no-error-pages@file` has neither `default@file`'s
+optional IP allowlist nor CrowdSec: set `API_MIDDLEWARES` if the main chain relies on them. See "API routers" in
+`docs/v1-service-catalog.md`.
