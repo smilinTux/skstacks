@@ -23,7 +23,7 @@ def desc():
 def test_swarm_renders_the_container_with_image_and_ports(desc):
     stack = render_swarm(desc)
     svc = stack["services"]["traefik"]
-    assert svc["image"] == "traefik:v3.3"
+    assert svc["image"] == "traefik:v3.6"
     assert "80:80" in svc["ports"] and "443:443" in svc["ports"]
     assert svc["command"] == ["--configFile=/etc/traefik/traefik.yml"]
 
@@ -86,7 +86,7 @@ def test_k8s_deployment_replicas_and_probe(desc):
     dep = next(m for m in render_k8s(desc) if m["kind"] == "Deployment")
     assert dep["spec"]["replicas"] == 3
     c = dep["spec"]["template"]["spec"]["containers"][0]
-    assert c["image"] == "traefik:v3.3"
+    assert c["image"] == "traefik:v3.6"
     assert c["livenessProbe"]["exec"]["command"] == ["traefik", "healthcheck", "--ping"]
 
 
@@ -175,7 +175,7 @@ def test_k8s_vanity_name_overrides_object_names_but_keeps_service_identity(desc)
     assert svc["spec"]["selector"]["app"] == "login"
     assert dep["spec"]["template"]["metadata"]["labels"]["app"] == "login"
     # but the IMAGE is still skfence's, and the secret still resolves from the real scope
-    assert dep["spec"]["template"]["spec"]["containers"][0]["image"] == "traefik:v3.3"
+    assert dep["spec"]["template"]["spec"]["containers"][0]["image"] == "traefik:v3.6"
     assert any(d["remoteRef"]["key"] == "skfence/cloudflare_dns_token" for d in es["spec"]["data"])
     assert es["metadata"]["name"] == "login"          # the synced Secret follows the vanity name
 
@@ -183,7 +183,7 @@ def test_k8s_vanity_name_overrides_object_names_but_keeps_service_identity(desc)
 def test_swarm_vanity_name_is_the_service_key(desc):
     stack = render_swarm(desc, name="edge")
     assert "edge" in stack["services"]                # the swarm service is named 'edge'
-    assert stack["services"]["edge"]["image"] == "traefik:v3.3"
+    assert stack["services"]["edge"]["image"] == "traefik:v3.6"
 
 
 def test_swarm_single_node_replicas_override(desc):

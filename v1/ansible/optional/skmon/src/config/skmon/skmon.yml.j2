@@ -432,7 +432,7 @@ services:
   # -compactor.blocks-retention-period is the v1 storage flag, -retention-period the v2 one (both
   # exist in the pinned release; Pyroscope reads the one that matches its storage).
   pyroscope:
-    image: {{ skmon.PYROSCOPE_IMAGE | default('grafana/pyroscope:2.4.2@sha256:ef9b48976386aa2781e84664dfdba7cc33a1b6793c0cc9d130812173a926ca1f') }}
+    image: {{ skmon.PYROSCOPE_IMAGE | default('grafana/pyroscope:2.4.3@sha256:bf667534cd403320573063894e3faba20a5a5d1bfb92eddaecfabeb2446c502b') }}
     command:
       - '-config.file=/etc/pyroscope/config.yaml'
       - '-server.http-listen-port={{ pyro_port }}'

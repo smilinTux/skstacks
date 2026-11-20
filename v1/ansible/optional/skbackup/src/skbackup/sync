@@ -7,8 +7,19 @@
 # storage host as root, reads the snapshot locally (never over NFS),
 # throttled (RSYNC_BWLIMIT, default 10000 KiB/s: see the README).
 #
-# Order: dump hooks (HOOKS_FILE) -> dump freshness (warn only) -> one atomic
-# snapshot of the data dataset -> rsync per app -> history snapshots.
+# Order: dump hooks (HOOKS_FILE) -> dump freshness (warn only) -> backup
+# pool capacity precheck (alert only) -> one atomic snapshot of the data
+# dataset -> rsync per app (each under COPY_TIMEOUT_S) -> history snapshots
+# -> retention prune.
+#
+# Full-pool safety (learned from a backup pool that filled and stayed full):
+# - rsync deletes AFTER the transfer, so a run that hits ENOSPC leaves the
+#   previous copy intact instead of an emptied one;
+# - the retention prune runs for every app whether or not its copy
+#   succeeded, so a failing copy never stops history from expiring;
+# - one hung app is killed after COPY_TIMEOUT_S and the run moves on;
+# - the backup pool is checked before the copy and an alert goes out once
+#   it is SYNC_CAP_WARN full, long before it is out of space.
 #
 # Usage: sync [--dry-run] [--app NAME]...
 set -euo pipefail
@@ -91,6 +102,28 @@ while IFS= read -r raw; do
 done < "$APPS_FILE"
 [ ${#STALE[@]} -eq 0 ] || skb_log "WARN stale or missing dumps (older than ${DUMP_MAX_AGE_H}h): ${STALE[*]}"
 
+# 1b. capacity precheck of the backup pool (alert only: the copy still runs,
+#     and the prune below is what can make room).
+BAK_POOL=${BAK_ROOT%%/*}
+cap=$(zpool list -H -o capacity "$BAK_POOL" 2>/dev/null | tr -d %)
+if [ -n "$cap" ] && [ "$SYNC_CAP_WARN" -gt 0 ] && [ "$cap" -ge "$SYNC_CAP_WARN" ]; then
+  skb_log "WARN backup pool $BAK_POOL is ${cap}% full (warn at ${SYNC_CAP_WARN}%)"
+  [ "$DRY" = 1 ] || skb_notify warn "$BRAND_SHORT-sync-pool-$BAK_POOL" \
+    "backup pool $BAK_POOL ${cap}% full before the copy" \
+    "$BRAND_PRODUCT on $RESTIC_HOST: the backup pool $BAK_POOL is ${cap}% full (warn at ${SYNC_CAP_WARN}%). Copies fail once it is full; lower retention or exclude regenerable data."
+fi
+
+# Keep only the newest N of each history kind for one app copy.
+prune_history() {  # prune_history DATASET KEEP_DAILY KEEP_WEEKLY KEEP_MONTHLY
+  local dst=$1 k p n
+  for k in "daily:$2" "weekly:$3" "monthly:$4"; do
+    p=${k%%:*}; n=${k##*:}
+    { zfs list -H -t snapshot -o name -s creation -d 1 "$dst" 2>/dev/null || true; } \
+      | { grep -F "@$p-" || true; } | skb_prune_list "$n" \
+      | while IFS= read -r s; do run zfs destroy "$s"; done
+  done
+}
+
 # Freeze each selected owning dataset once; clean up even on partial failure.
 declare -A FROZEN_DATASETS=()
 # shellcheck disable=SC2317,SC2329
@@ -124,7 +157,8 @@ while IFS= read -r raw; do
   fi
   dmnt=$(skb_mountpoint "$dst" 2>/dev/null || echo "/nonexistent/$name")
   if [ ! -d "$FROZEN/$src" ] && [ "$DRY" = 0 ]; then
-    skb_log "FAIL $name: source $src missing in snapshot"; FAIL=1; continue
+    skb_log "FAIL $name: source $src missing in snapshot"; FAIL=1
+    prune_history "$dst" "$kd" "$kw" "$km"; continue
   fi
   ex=()
   # shellcheck disable=SC2086
@@ -133,26 +167,29 @@ while IFS= read -r raw; do
   mapfile -t nx < <(skb_newest_excludes "$FROZEN/$src" $opts)
   skb_log "== $name: $src -> $dst"
   t0=$(date +%s)
-  if run ionice -c3 nice -n19 rsync -aHAX --numeric-ids --delete --delete-excluded \
+  tmo=()
+  [ "$COPY_TIMEOUT_S" -gt 0 ] && tmo=(timeout --kill-after=60 "$COPY_TIMEOUT_S")
+  rrc=0
+  run "${tmo[@]}" ionice -c3 nice -n19 rsync -aHAX --numeric-ids --delete-after --delete-excluded \
         --bwlimit="$RSYNC_BWLIMIT" --stats "${ex[@]}" "${nx[@]}" \
-        "$FROZEN/$src/" "$dmnt/" > "$STATE_DIR/rsync-$name.log" 2>&1; then
+        "$FROZEN/$src/" "$dmnt/" > "$STATE_DIR/rsync-$name.log" 2>&1 || rrc=$?
+  if [ "$rrc" = 0 ]; then
     grep -E '^(Number of regular files transferred|Total file size|Total transferred file size|Number of files:)' \
       "$STATE_DIR/rsync-$name.log" | tr '\n' ' ' | sed "s/^/$name: /" || true
     echo " ($(( $(date +%s) - t0 ))s)"
     run zfs snapshot "$dst@daily-$TS"
     [ "$DOW" = 7 ] && run zfs snapshot "$dst@weekly-$TS"
     [ "$DOM" = 01 ] && run zfs snapshot "$dst@monthly-$TS"
-    for k in "daily:$kd" "weekly:$kw" "monthly:$km"; do
-      p=${k%%:*}; n=${k##*:}
-      zfs list -H -t snapshot -o name -s creation -d 1 "$dst" 2>/dev/null \
-        | { grep -F "@$p-" || true; } | skb_prune_list "$n" \
-        | while IFS= read -r s; do run zfs destroy "$s"; done
-    done
     [ "$DRY" = 1 ] || date +%s > "$STATE_DIR/last-ok-$name"
     DONE=$((DONE + 1))
+  elif [ "$rrc" = 124 ] || [ "$rrc" = 137 ]; then
+    skb_log "FAIL $name: copy timed out after ${COPY_TIMEOUT_S}s, see $STATE_DIR/rsync-$name.log"; FAIL=1
   else
-    skb_log "FAIL $name: rsync exit $?, see $STATE_DIR/rsync-$name.log"; FAIL=1
+    skb_log "FAIL $name: rsync exit $rrc, see $STATE_DIR/rsync-$name.log"; FAIL=1
   fi
+  # Retention runs on success AND failure: a failing copy must not stop
+  # history from expiring (that is how a full pool stays full).
+  prune_history "$dst" "$kd" "$kw" "$km"
 done < "$APPS_FILE"
 
 skb_log "done: $DONE app(s) copied, fail=$FAIL"

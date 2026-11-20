@@ -41,6 +41,11 @@ skb_load_conf() {
   : "${REPORT_DIR:=$STATE_DIR/reports}"
   : "${LOCK_DIR:=/run/lock}"
   : "${RSYNC_BWLIMIT:=10000}"
+  : "${COPY_TIMEOUT_S:=7200}"
+  : "${SYNC_CAP_WARN:=85}"
+  : "${COPY_SHRINK_PCT:=50}"
+  : "${COPY_SHRINK_MIN_MIB:=64}"
+  : "${THIN_LVS:=}"
   : "${DUMP_MAX_AGE_H:=26}"
   : "${SNAP_PREFIX_SYNC:=$BRAND_SHORT}"
   : "${SANOID_PREFIX:=autosnap_}"
@@ -158,6 +163,9 @@ skb_newest_snapshot() {
   zfs list -H -p -t snapshot -o name -s creation -d 1 "$ds" \
     | awk -F@ -v p="$prefix" 'index($2, p) == 1' | tail -n 1
 }
+
+# Bytes referenced by a dataset or snapshot (empty when it does not exist).
+skb_referenced() { zfs get -H -p -o value referenced "$1" 2>/dev/null; }
 
 # Epoch creation time of a snapshot.
 skb_snap_epoch() { zfs get -H -p -o value creation "$1"; }
