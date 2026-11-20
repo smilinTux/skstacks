@@ -35,7 +35,7 @@ that must stay public.
   hosts without a matching certificate with the default certificate instead of refusing the
   handshake).
 
-### skgit (#405, #469, #471)
+### skgit (#405, #469)
 
 - **Actions artifacts expire after 7 days** (#405). `app.ini` `[actions]` renders
   `ARTIFACT_RETENTION_DAYS` from `skgit.ARTIFACT_RETENTION_DAYS` (default 7), and the env file
@@ -47,7 +47,7 @@ that must stay public.
   `gc.auto=0`, so concurrent repacks no longer OOM-kill Forgejo. `skgit.GIT_CONFIG` (a dict)
   replaces a default or adds keys. A hand edit of the live `app.ini` does not survive a
   redeploy; this is the durable form. Tests: `v1/tests/test_skgit_git_pack_limits.py`.
-- **Postgres network login rule guaranteed in an existing data dir** (#471). The postgres
+- **Postgres network login rule guaranteed in an existing data dir** (#469, first opened as #471). The postgres
   entrypoint appends `host all all all scram-sha-256` to `pg_hba.conf` only when it creates the
   cluster, so a restored or hand-initialised data dir refused Forgejo. New
   `shared/tasks/postgres_hba_guard.yml` runs before the skgit stack deploy: a fresh dir is left
