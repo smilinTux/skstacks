@@ -13,6 +13,25 @@ redeploy skfence or skfenceha (TLS options), then any service whose routers carr
 `tls.options`; remove `TLS_OPTIONS`, `tls_options` or `TRAEFIK_TLS_OPTIONS` from vaults that set
 `intermediate@file`; set `DEFAULT_SNI_STRICT: true` where the estate ran `sniStrict` before and a
 certificate covers every router; redeploy skha on the whole manager group (see skha below).
+skpeek, skseek and skpdf now sit behind SSO by default (see the upgrade notes first).
+
+### Upgrade notes
+
+- **UPGRADE: skpeek, skseek, skpdf are now behind SSO forward auth by default; set
+  `SSO_MIDDLEWARE: none` to keep one public.** None of the three has a login of its own; on one
+  production instance they were open to the internet and skseek's `GET /api/config` returned the
+  model provider API keys. Each router appends `<svc>.SSO_MIDDLEWARE` (default `authentik@file`)
+  to the end of its chain, including an instance override of `TRAEFIK_MIDDLEWARES`, and never
+  adds it twice when the chain already names it (vaults that added `authentik@file` by hand
+  render unchanged). sksso must be deployed (the middleware must exist), or Traefik drops the
+  router and the app is unreachable. Empty or unset keeps the default (fail closed). Tests:
+  `v1/tests/test_sso_default_skpeek_skseek_skpdf.py`. **Instance action**: none to get SSO; set
+  `SSO_MIDDLEWARE: none` in the vault for an instance that must stay public, before redeploying.
+- **UPGRADE: skfence/skfenceha `DEFAULT_SNI_STRICT` defaults to false since #465** (the first
+  #463 candidate had it on). Instances that ran `sniStrict: true` on the `default` TLS option by
+  hand should pin the value they want explicitly in their vault before rolling out (false serves
+  hosts without a matching certificate with the default certificate instead of refusing the
+  handshake).
 
 ### SKPages: agent-published HTML pages (new role, #461)
 
