@@ -116,3 +116,63 @@ large repositories took nor's Forgejo past its memory limit (OOM, 2026-11-11).
 `skgit.GIT_CONFIG` is an optional dict of git config `key: value`; a key there
 replaces the default or adds a new one. Check live with
 `docker exec <forgejo> git config --global --list | grep -E 'pack|gc'`.
+
+## Sign-in through Authentik (OIDC)
+
+`skgit.AUTH_MODE` is `local` by default: Forgejo keeps its own accounts and the render is
+unchanged. `AUTH_MODE: oidc` makes the deploy create, or update in place, **one** Forgejo
+OAuth2 auth source (provider `openidConnect`) that signs users in through Authentik
+(sksso). It adds a sign-in option; local password login and local accounts stay.
+
+What the deploy does, after the stack is up and the Forgejo task is Running:
+
+1. Waits for the Forgejo API (the same wait as the admin bootstrap).
+2. Runs `oidc-auth-source.sh` on the node that runs Forgejo. It lists the sources with
+   `forgejo admin auth list` and finds yours **by name**: found (and of type OAuth2), it runs
+   `forgejo admin auth update-oauth --id N`; absent, `add-oauth`. It never deletes anything
+   and never touches a source of another name. A same-named source of another type
+   (LDAP, for example) stops the deploy with a message instead of being overwritten.
+3. The client secret is handed to the container by environment variable name, so it is in
+   no `docker` argument list and in no output (failures print with it redacted, and the
+   task is `no_log`). It is stored in Forgejo's database, never in `app.ini`.
+
+The update runs on every deploy, so rotating the secret in both vaults and redeploying
+(sksso, then skgit) takes effect without any manual step.
+
+```yaml
+skgit:
+  AUTH_MODE: oidc                                # local (default) or oidc
+  OIDC_CLIENT_SECRET: "..."                      # 32+ chars, same value as sksso.SKGIT_OIDC_CLIENT_SECRET
+  OIDC_SOURCE_NAME: "SKStack SSO"                # auth source name, same value as sksso.SKGIT_OIDC_SOURCE_NAME
+  # OIDC_CLIENT_ID: skgit                        # default AUTHENTIK_TILE_SLUG, else skgit (the Authentik application slug)
+  # OIDC_SSO_HOST: sso.example.org               # default sso[-<env>].<cluster>.<domain>
+  # OIDC_DISCOVERY_URL: ""                       # full override of the discovery URL
+  # OIDC_AUTO_REGISTRATION: false                # create a Forgejo account on first SSO login
+  # OIDC_ACCOUNT_LINKING_BY_EMAIL: false         # link to the account with the same email, no password prompt
+  # OIDC_USERNAME_CLAIM: preferred_username      # username for auto-registered accounts (userid, nickname, email, preferred_username)
+```
+
+- **Which vault holds the secret.** `skgit.OIDC_CLIENT_SECRET` in the skgit vault, and the
+  same value as `sksso.SKGIT_OIDC_CLIENT_SECRET` in the sksso vault. Generate it once
+  (`openssl rand -hex 32`) and set it in both.
+- **Discovery URL.** `https://<sso host>/application/o/<client id>/.well-known/openid-configuration`.
+  The Forgejo container must reach that host (through the public name and Traefik).
+- **Blueprint on the sksso side.** Set `sksso.SKGIT_OIDC_ENABLED: true` and the matching
+  secret and source name there first (`../sksso/README.md` "skgit (Forgejo) OIDC login").
+  The Application slug equals this role's portal tile slug, so there is one Application;
+  who may sign in is `AUTHENTIK_TILE_GROUP` (default `skadmin`).
+- **CapAuth.** Set `sksso.SKGIT_OIDC_AUTHENTICATION_FLOW: capauth-authentication` on the
+  sksso side to make this sign-in a PGP, passwordless login. Nothing changes here.
+- **Policy keys (`app.ini`, `[oauth2_client]`).** Rendered only in oidc mode.
+  `OIDC_AUTO_REGISTRATION` (default off): without it a first SSO login lands on Forgejo's
+  "link to an existing account or register" page. `OIDC_ACCOUNT_LINKING_BY_EMAIL` (default
+  off, renders `ACCOUNT_LINKING = login`; on renders `auto`): a first SSO login is linked
+  to the Forgejo account with the same email without asking for its password. Turn it on
+  only when Authentik is the only identity provider and its emails are trusted, because an
+  account is taken over by whoever controls that email at the provider. With auto
+  registration on, `OIDC_USERNAME_CLAIM` (default `preferred_username`) names the account.
+  How these interact with `DISABLE_REGISTRATION` is Forgejo's own behaviour: test a
+  first sign-in of a new user after enabling.
+- **Rollback.** Set `AUTH_MODE: local` and redeploy: the deploy stops managing the source
+  but does not delete it. Remove it in Forgejo (Site Administration, Authentication
+  Sources) or with `forgejo admin auth delete --id N`, only once nobody depends on it.
