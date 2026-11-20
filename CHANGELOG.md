@@ -7,10 +7,12 @@ Each entry says what an instance must do, if anything.
 ## skstacks-v2.26.29 - 2026-11-19
 
 Patch on v2.26.28. Every Traefik router now uses the default TLS options, so a restarted service no
-longer strands HTTP/2 clients on 421. Adds the SKPages role and a generated subnet registry. Instance action:
+longer strands HTTP/2 clients on 421. skha's VIP fails over again (the ACME master is preferred,
+not locked). Adds the SKPages role and a generated subnet registry. Instance action:
 redeploy skfence or skfenceha (TLS options), then any service whose routers carried
 `tls.options`; remove `TLS_OPTIONS`, `tls_options` or `TRAEFIK_TLS_OPTIONS` from vaults that set
-`intermediate@file`.
+`intermediate@file`; set `DEFAULT_SNI_STRICT: true` where the estate ran `sniStrict` before and a
+certificate covers every router; redeploy skha on the whole manager group (see skha below).
 
 ### SKPages: agent-published HTML pages (new role, #461)
 
@@ -45,6 +47,33 @@ redeploy skfence or skfenceha (TLS options), then any service whose routers carr
   explicit value still works.
 - Tests: baselines ignore the removed labels, render tests expect none by default, and a repo-wide
   guard fails on any template that hardcodes or defaults a router to a named option.
+
+### skha: the VIP fails over again, no ACME-master lock by default (#466)
+
+- **Every manager is `state BACKUP` with `nopreempt` and tracks the health checks.** The ACME
+  master (label `traefik.acme.master`) used to be rendered `state MASTER`, priority 150, with no
+  health checks, so the VIP could never leave it. On 2026-11-19 one estate's ACME-master-configured
+  manager held the VIP while its Traefik worker could not start (NFS `/var/data` failed to
+  mount after the host crashed), public 443 was refused, and the two healthy workers never got
+  the VIP. skfenceha's ACME uses the Cloudflare DNS-01 challenge, so renewal never needed the VIP
+  there. The ACME master is now only preferred: `skha.acme_master_priority`, default 150.
+- **VIP gate checks** (`skha.vip_gate_checks`, default `[traefik]`) default to `require: true`
+  and `weight: 0` and start failed (`init_fail`). A node with no running `traefik-worker` fails
+  the check and goes to FAULT, and the VIP moves to a peer in about 10 s plus the master-down
+  timer. A negative weight alone never moves the VIP under `nopreempt`.
+- keepalived restarts on a redeploy go one manager at a time (`throttle: 1`) with a
+  `skha.restart_settle_seconds` (default 20) wait each, so a config change never drops the VIP.
+  `skha.vip_gate_checks` must be a list; the play fails on a string.
+- `skha.lock_vip_to_acme_master: true` restores the old lock, for an estate whose ACME challenge
+  needs inbound traffic. It has no failover.
+- Tests: `v1/tests/test_skha_failover.py`, plus gate cases in
+  `v1/tests/test_skha_health_check_require.py`. **Instance action**: redeploy skha on every
+  manager (`deploy_skha-<env>.yml`, whole manager group). Before running it, check that every
+  manager runs a `traefik-worker`. A manager without one goes to FAULT after the redeploy, which
+  is the point, but if NO manager has one, no node holds the VIP. That includes a fresh estate
+  where skha is deployed before skfenceha, and an estate that ran its ACME master without a
+  worker on purpose. If your own `skha.health_checks` names the Traefik check something other
+  than `traefik`, set `skha.vip_gate_checks` to that name.
 
 ## skstacks-v2.26.28 - 2026-11-18
 
@@ -155,33 +184,6 @@ Found by the skstack06 tier-2 gate, the first live deploy of skmon v2 (#373):
   skmesh deploy (it starts listening; add router forwards and firewall allows for 3478 tcp+udp, 5349 if
   `TURN_TLS`, and the relay range udp), and its peers switch to TURN REST credentials unless
   `TURN_TIME_BASED_CREDENTIALS: false` is set.
-
-### skha: the VIP fails over again (no ACME-master lock by default)
-
-- **Every manager is `state BACKUP` with `nopreempt` and tracks the health checks.** The ACME
-  master (label `traefik.acme.master`) used to be rendered `state MASTER`, priority 150, with no
-  health checks, so the VIP could never leave it. On 2026-11-19 one estate's ACME-master-configured
-  manager held the VIP while its Traefik worker could not start (NFS `/var/data` failed to
-  mount after the host crashed), public 443 was refused, and the two healthy workers never got
-  the VIP. skfenceha's ACME uses the Cloudflare DNS-01 challenge, so renewal never needed the VIP
-  there. The ACME master is now only preferred: `skha.acme_master_priority`, default 150.
-- **VIP gate checks** (`skha.vip_gate_checks`, default `[traefik]`) default to `require: true`
-  and `weight: 0` and start failed (`init_fail`). A node with no running `traefik-worker` fails
-  the check and goes to FAULT, and the VIP moves to a peer in about 10 s plus the master-down
-  timer. A negative weight alone never moves the VIP under `nopreempt`.
-- keepalived restarts on a redeploy go one manager at a time (`throttle: 1`) with a
-  `skha.restart_settle_seconds` (default 20) wait each, so a config change never drops the VIP.
-  `skha.vip_gate_checks` must be a list; the play fails on a string.
-- `skha.lock_vip_to_acme_master: true` restores the old lock, for an estate whose ACME challenge
-  needs inbound traffic. It has no failover.
-- Tests: `v1/tests/test_skha_failover.py`, plus gate cases in
-  `v1/tests/test_skha_health_check_require.py`. **Instance action**: redeploy skha on every
-  manager (`deploy_skha-<env>.yml`, whole manager group). Before running it, check that every
-  manager runs a `traefik-worker`. A manager without one goes to FAULT after the redeploy, which
-  is the point, but if NO manager has one, no node holds the VIP. That includes a fresh estate
-  where skha is deployed before skfenceha, and an estate that ran its ACME master without a
-  worker on purpose. If your own `skha.health_checks` names the Traefik check something other
-  than `traefik`, set `skha.vip_gate_checks` to that name.
 
 ### skpatch-hosts: the swarm upgrade gate covers workers and repairs stale vxlan devices
 
