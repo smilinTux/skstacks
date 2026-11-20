@@ -66,9 +66,9 @@ if [ -n "$BAK_ROOT" ] && [ -r "$APPS_FILE" ]; then
         | awk -F@ 'index($2, "daily-") == 1' | tail -n 2 | head -n 1)
       for pair in "$BAK_ROOT/$name|$s|live copy" "$s|$prev|newest copy"; do
         IFS='|' read -r now_ds ref_ds what <<<"$pair"
-        [ -n "$ref_ds" ] && [ "$ref_ds" != "$now_ds" ] || continue
+        if [ -z "$ref_ds" ] || [ "$ref_ds" = "$now_ds" ]; then continue; fi
         cur=$(skb_referenced "$now_ds"); was=$(skb_referenced "$ref_ds")
-        [ -n "$cur" ] && [ -n "$was" ] || continue
+        if [ -z "$cur" ] || [ -z "$was" ]; then continue; fi
         [ "$was" -ge $(( COPY_SHRINK_MIN_MIB * 1048576 )) ] || continue
         if [ $(( cur * 100 )) -lt $(( was * (100 - COPY_SHRINK_PCT) )) ]; then
           bad WARN "tier2: $name $what shrank to $(( cur / 1048576 ))M from $(( was / 1048576 ))M (${ref_ds#*@})"
