@@ -1,6 +1,6 @@
 # skgit (Forgejo)
 
-Forgejo git hosting with a Postgres database, a dump sidecar and optional Actions runners. Router middleware chain: vault knob `TRAEFIK_MIDDLEWARES` (default `default-no-crowdsec@file`). Postgres data is bind-mounted from `/var/data/runtime/skgit-<env>/postgres`.
+Forgejo git hosting with a Postgres database, a dump sidecar and optional Actions runners. Router middleware chain: vault knob `TRAEFIK_MIDDLEWARES` (default `default-no-crowdsec@file`). API and git traffic (`/api/`, `info/refs`, `git-upload-pack`, `git-receive-pack`, `info/lfs/`) goes through the `skgit[-env]-api` router, whose chain is the main one without error pages (vault knob `API_MIDDLEWARES` replaces it), so clients get Forgejo's own status codes and JSON errors instead of the HTML error page. Postgres data is bind-mounted from `/var/data/runtime/skgit-<env>/postgres`.
 
 ## Upgrading Postgres to 18
 
@@ -81,3 +81,12 @@ move `/var/data/runtime/skgit-<env>/postgres.pg16` back to `/var/data/runtime/sk
 
 Order matters: if the deploy runs before step 2 the guard stops it with the message that names this
 section. That is the intended behaviour, not a fault.
+
+## Registration and anonymous read
+
+`skgit.DISABLE_REGISTRATION` and `skgit.REQUIRE_SIGNIN_VIEW` (both optional)
+render Forgejo's `[service]` section. Unset, Forgejo's defaults apply: anyone
+can register and anonymous visitors can read every public repo. An
+internet-facing instance should set both to `true`. Users are then created by
+an admin (web UI or `POST /api/v1/admin/users`), and API or git access needs a
+token or SSH key.

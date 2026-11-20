@@ -1,12 +1,11 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended"
+    "local>smilinTux/renovate-config"
   ],
   "baseBranchPatterns": [
     "main"
   ],
-  "dependencyDashboard": true,
   "labels": [
     "dependencies"
   ],
@@ -138,6 +137,17 @@
         "mariadb"
       ],
       "allowedVersions": "/^12\\.3\\./"
+    },
+    {
+      "description": "skstacks keeps its per-service grouping above (it overrides the shared weekly groups) and does not auto-merge ordinary updates: an image bump here changes running infrastructure, so every non-security PR gets a human or orchestrator review. Security fixes still merge themselves when every check is green (shared preset).",
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest",
+        "pin",
+        "pinDigest"
+      ],
+      "automerge": false
     }
   ],
   "rebaseWhen": "conflicted"

@@ -39,6 +39,14 @@ services:
     networks:
       - skpatch-hosts-{{ env }}
       - cloud-public-{{ env }}
+{% if skp_extra_hosts | default([]) | length > 0 %}
+    # skpatch_hosts.EXTRA_HOSTS: names this container must reach on an address
+    # its DNS does not give (README "Notification delivery").
+    extra_hosts:
+{% for h in skp_extra_hosts %}
+      - {{ h | to_json }}
+{% endfor %}
+{% endif %}
     logging:
       driver: json-file
       options:

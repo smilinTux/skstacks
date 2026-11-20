@@ -78,8 +78,9 @@ def test_old_templates_are_gone_and_unreferenced():
 
 @pytest.mark.parametrize("play", PLAYS, ids=lambda p: p.name)
 def test_provisioning_written_on_data_node(play):
+    # 3 writes (dirs, templates, dashboards copy) plus the SOURCES.yml removal.
     tasks = [t for t in play_tasks(play) if "grafana-provisioning" in str(t) and any(k in t for k in ("file", "template", "copy"))]
-    assert len(tasks) == 3 and all(t.get("delegate_to") == "{{ skmon_data_node }}" for t in tasks)
+    assert len(tasks) == 4 and all(t.get("delegate_to") == "{{ skmon_data_node }}" for t in tasks)
 
 
 @pytest.mark.parametrize("play", PLAYS, ids=lambda p: p.name)

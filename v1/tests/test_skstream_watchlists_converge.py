@@ -371,3 +371,93 @@ def test_playbooks_pass_the_score_knobs(env):
     text = PLAYBOOKS[env].read_text()
     assert "'foreign_language_penalty': skstream.CLI_DEBRID_FOREIGN_LANGUAGE_PENALTY | default(None)" in text
     assert "'minimum_scrape_score': skstream.CLI_DEBRID_MINIMUM_SCRAPE_SCORE | default(None)" in text
+
+
+# ---- 3D / disc-image junk and multi-audio ranking (nor, 2026-11-15) ---------------
+
+@pytest.mark.parametrize("title,hit", [
+    ("Ant-Man.2015.1080p.3D.BluRay.AVC.DTS-HD.MA.7.1-RARBG", True),
+    ("Captain.America.The.Winter.Soldier.2014.1080p.3D.BluRay.AVC.DTS-HD.MA.7.1-RARBG", True),
+    ("RARBG.com.mp4", True),
+    ("Pulp.Fiction.1994.1080p.3D.FULL-SBS.HEVC.ENG-HUN", True),
+    ("Avatar.2009.COMPLETE.BLURAY-GROUP", True),
+    ("Movie.2010.1080p.BluRay.BDMV", True),
+    ("Piranha.3D.2010.1080p.BluRay.x264", False),
+    ("Jackass.3D.2010.1080p.WEB-DL", False),
+    ("Ant-Man.2015.1080p.BluRay.x264-SPARKS", False),
+    ("Ant-Man.2015.1080p.BluRay.REMUX.AVC.DTS-HD.MA.7.1-RARBG", False),
+])
+def test_default_filter_drops_3d_disc_images_and_the_rarbg_promo(title, hit):
+    import re
+    assert bool(re.search(sc.DEFAULT_FILTER_OUT[1], title, re.IGNORECASE)) is hit
+
+
+@pytest.mark.parametrize("title,hit", [
+    ("Heart.of.the.Beast.2026.MULTi.1080p.WEB.H265-YTO", True),
+    ("Ava.2020.iTA-ENG.Bluray.1080p.x264-CYBER", True),
+    ("John.Wick.2014.MULTi4.2160p.HDR.BluRay.AV1-Kleinmike", True),
+    ("Knowing (2009) 1080p BluRay x264 {Dual Audio} {Hindi DD+2.0-English BD 5.1}", True),
+    ("Deadpool.and.Wolverine.2024.MULTi.VF2.HDR.2160p.WEB.H265", True),
+    ("Fast.X.2023.1080p.REMUX.ENG.Multi.Sub", False),
+    ("Fast.X.2023.1080p.REMUX.Multi-Subs", False),
+    ("Heart.of.the.Beast.2026.1080p.WEB-DL.DDP5.1.H.264-FLUX", False),
+])
+def test_default_preferred_filter_out_ranks_down_multi_audio(title, hit):
+    import re
+    pat, weight = sc.DEFAULT_PREFERRED_FILTER_OUT[0]
+    assert weight == 400
+    assert bool(re.search(pat, title, re.IGNORECASE)) is hit
+
+
+def _pfo(cfg, v="1080p"):
+    return cfg["Scraping"]["versions"][v]["preferred_filter_out"]
+
+
+def test_null_preferred_filter_out_adds_the_default_and_rerun_is_a_no_op():
+    cfg = seed_cli()
+    assert sc.converge_cli(cfg, {"versions": ["1080p"], "preferred_filter_out": None})
+    assert _pfo(cfg) == sc.DEFAULT_PREFERRED_FILTER_OUT
+    assert not sc.converge_cli(cfg, {"versions": ["1080p"], "preferred_filter_out": None})
+
+
+def test_preferred_filter_out_upserts_by_pattern_and_keeps_ui_pairs():
+    cfg = seed_cli()
+    cfg["Scraping"] = {"versions": {"1080p": {"preferred_filter_out": [["CAM", 5000], ["x", 10]]}}}
+    assert sc.converge_cli(cfg, {"versions": ["1080p"], "preferred_filter_out": [["x", 400.0], ["y", 7]]})
+    assert _pfo(cfg) == [["CAM", 5000], ["x", 400], ["y", 7]]
+
+
+def test_absent_or_empty_preferred_filter_out_changes_nothing():
+    cfg = seed_cli()
+    assert not sc.converge_cli(cfg, {"versions": ["1080p"]})
+    assert not sc.converge_cli(cfg, {"versions": ["1080p"], "preferred_filter_out": []})
+
+
+@pytest.mark.parametrize("env", ["dev", "staging", "prod"])
+def test_playbooks_pass_the_preferred_filter_knob(env):
+    text = PLAYBOOKS[env].read_text()
+    assert "'preferred_filter_out': skstream.CLI_DEBRID_PREFERRED_FILTER_OUT | default(None)" in text
+
+
+# ---- Reverse Parser default version (version-less rows skip every filter) ---------
+
+def test_null_reverse_parser_default_is_the_first_managed_version():
+    cfg = seed_cli()
+    cfg["Reverse Parser"] = {"version_terms": {}, "default_version": ""}
+    assert sc.converge_cli(cfg, {"versions": ["1080p"], "reverse_parser_default_version": None})
+    assert cfg["Reverse Parser"] == {"version_terms": {}, "default_version": "1080p"}
+    assert not sc.converge_cli(cfg, {"versions": ["1080p"], "reverse_parser_default_version": None})
+
+
+def test_absent_reverse_parser_knob_changes_nothing():
+    cfg = seed_cli()
+    cfg["Reverse Parser"] = {"default_version": ""}
+    assert not sc.converge_cli(cfg, {"versions": ["1080p"]})
+    assert cfg["Reverse Parser"]["default_version"] == ""
+
+
+@pytest.mark.parametrize("env", ["dev", "staging", "prod"])
+def test_playbooks_pass_the_reverse_parser_knob(env):
+    text = PLAYBOOKS[env].read_text()
+    assert ("'reverse_parser_default_version': skstream.CLI_DEBRID_REVERSE_PARSER_DEFAULT_VERSION | default(None)"
+            in text)

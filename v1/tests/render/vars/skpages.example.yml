@@ -1,0 +1,5 @@
+# Public, obviously fake example vault for the real-Ansible render gate
+# (v1/tests/render/render_playbooks.py). SKPages holds no secrets; DOCROOT is
+# the only key without a default.
+skpages:
+  DOCROOT: /var/data/skhub-prod/data/__groupfolders/1/files

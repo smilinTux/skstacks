@@ -21,6 +21,12 @@ http:
     default:
       chain:
         middlewares:
+{% if skfence.CROWDSEC_ENABLED | default(false) | bool %}
+          # Opt-in, same as skfenceha: the sksec bouncer (crowdsec-bouncer@file,
+          # defined by sksec's dynamic/sksec.yml) must be deployed first. It
+          # fails closed, so every router on this chain then depends on it.
+          - crowdsec-bouncer@file
+{% endif %}
           - rate-limit@file
           - default-security-headers@file
           - error-pages@file

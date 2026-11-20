@@ -350,7 +350,7 @@ skflow:
   SSO_MIDDLEWARE: ""                        # e.g. authentik@file; forward auth on the UI router
   SSO_EXEMPT_PREFIXES: ["/api/"]            # paths kept OUT of forward auth when SSO_MIDDLEWARE is set
   SSO_OUTPOST_SERVICE: ""                   # default sksso[-env]-server@swarm
-  TLS_OPTIONS: ""                           # default intermediate@file; "none" = no tls.options label
+  TLS_OPTIONS: ""                           # default "none" = no tls.options label (Traefik default options, skstacks #463)
   SERVER_REPLICAS: 1
   SERVER_CPUS: "1.00"
   SERVER_MEMORY_LIMIT: 2048M

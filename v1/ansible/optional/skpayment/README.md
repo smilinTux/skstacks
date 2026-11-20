@@ -68,7 +68,7 @@ skpayment:
   WEBHOOK_IP_ALLOWLIST: false     # true: only WEBHOOK_SOURCE_RANGES reach the webhook path
   WEBHOOK_SOURCE_RANGES: []       # default: Stripe's published webhook IPs (below)
   WEBHOOK_IP_STRATEGY_DEPTH: ""   # Traefik ipStrategy.depth for the allowlist; default unset
-  TLS_OPTIONS: ""                 # default intermediate@file; "none" = no tls.options label (Traefik default options)
+  TLS_OPTIONS: ""                 # default "none" = no tls.options label (Traefik default options, skstacks #463)
   networks: []                    # override the overlay networks (subnet registry)
 ```
 
@@ -78,7 +78,7 @@ skpayment:
 | `APP_REF` / `APP_SHA256` | the app repo's `v1.1.0` commit and its file hash | Both are required in effect: the ref says where, the hash proves what. Before v2.26.6 the default was the first release (`17b0080`), which accepted unsigned webhooks when `STRIPE_WEBHOOK_SECRET` was empty. |
 | `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | none | Both set, or both empty ("Stripe not configured", below). One without the other is refused. |
 | `DATA_PATH` / `DATA_NODE` | shared storage, floating | SQLite over NFS works for this write volume (a few rows per subscription event). For local disk set both; the play stops on a local `DATA_PATH` without `DATA_NODE`, same rule as skgraph/skvector. |
-| `TLS_OPTIONS` | `intermediate@file` (sniStrict) | A file-provider TLS option. `none` omits the label, so the router gets Traefik's default TLS options (the built-in option named `default` cannot be referenced as `default@file`: Traefik rejects the router with "unknown TLS options"). With sniStrict, a host without a certificate fails the handshake (a lab without ACME). |
+| `TLS_OPTIONS` | `none` | A file-provider TLS option. `none` omits the label, so the router gets Traefik's default TLS options (the built-in option named `default` cannot be referenced as `default@file`: Traefik rejects the router with "unknown TLS options"). With sniStrict, a host without a certificate fails the handshake (a lab without ACME). |
 | `HOSTNAME` | `skpayment[-env].<base domain>` | `<base domain>` is `DOMAIN` with `CLOUDFLARED: true`, else `CLUSTERNAME.DOMAIN` (the same expressions the skhub routers use since v2.26.3). The gateway's `BASE_URL` is `https://<HOSTNAME>`. |
 
 ### Stripe not configured

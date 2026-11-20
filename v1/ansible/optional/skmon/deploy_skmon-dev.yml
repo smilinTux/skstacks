@@ -377,6 +377,17 @@
       tags:
         - dashboards
 
+    # SOURCES.yml is the vendoring provenance of the boards, not a provider config. Grafana parses
+    # every YAML file at the top of provisioning/dashboards as one and refuses to start on it
+    # (found on skstack06, v2.26.27 gate), so it never stays on the data node.
+    - name: Remove the dashboards provenance file from the Grafana provisioning tree
+      file:
+        path: "{{ skmon_data_path }}/grafana-provisioning/dashboards/SOURCES.yml"
+        state: absent
+      delegate_to: "{{ skmon_data_node }}"
+      tags:
+        - dashboards
+
     # The dashboards tree is two levels deep by design (dashboards/<folder>/<file>.json), so both
     # listings are a bounded, read-only find (-maxdepth 2), never a recursive walk (R84).
     - name: List the dashboards the role ships (controller)

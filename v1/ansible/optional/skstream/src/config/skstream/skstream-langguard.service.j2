@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+# English audio for every Plex viewer; resets cli_debrid items that break the
+# rule (see skstream-langguard). Triggered by skstream-langguard{{ skstream_sfx }}.timer.
+[Unit]
+Description=skstream audio-language guard ({{ env }})
+After=skstream-dumb{{ skstream_sfx }}.service
+Requires=skstream-dumb{{ skstream_sfx }}.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/skstream-langguard-run skstream-dumb{{ skstream_sfx }} {{ skstream_uid }}:{{ skstream_gid }} "/var/data/{{ app }}-{{ env }}/plex/config/Library/Application Support/Plex Media Server/Preferences.xml" {{ '--apply' if (skstream.LANGGUARD_APPLY | default(true) | bool) else '' }} --max-resets {{ skstream.LANGGUARD_MAX_RESETS | default(20) | int }}
+TimeoutStartSec=2h
+Nice=10

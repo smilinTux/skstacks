@@ -1,0 +1,10 @@
+# 07:00 local, the same minute as the dashboard's own email digest.
+[Unit]
+Description=skpatch-hosts daily summary (%i), 07:00
+
+[Timer]
+OnCalendar=*-*-* 07:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

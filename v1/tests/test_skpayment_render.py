@@ -110,7 +110,6 @@ def test_default_routers_use_the_framework_host_crowdsec_on_the_site_webhook_exe
         "traefik.http.routers.skpayment.entrypoints": "websecure",
         "traefik.http.routers.skpayment.tls": "true",
         "traefik.http.routers.skpayment.tls.certresolver": "main",
-        "traefik.http.routers.skpayment.tls.options": "intermediate@file",
         "traefik.http.routers.skpayment.middlewares": "default@file",
         "traefik.http.routers.skpayment.service": "skpayment",
         "traefik.http.routers.skpayment-webhook.rule":
@@ -119,7 +118,6 @@ def test_default_routers_use_the_framework_host_crowdsec_on_the_site_webhook_exe
         "traefik.http.routers.skpayment-webhook.entrypoints": "websecure",
         "traefik.http.routers.skpayment-webhook.tls": "true",
         "traefik.http.routers.skpayment-webhook.tls.certresolver": "main",
-        "traefik.http.routers.skpayment-webhook.tls.options": "intermediate@file",
         "traefik.http.routers.skpayment-webhook.middlewares": "default-no-crowdsec@file",
         "traefik.http.routers.skpayment-webhook.service": "skpayment",
         "traefik.http.services.skpayment.loadbalancer.server.port": "8000",
@@ -330,7 +328,7 @@ def test_default_splits_into_a_crowdsec_site_router_and_an_exempt_webhook_router
     assert lab[f"{w}.entrypoints"] == "websecure"
     assert lab[f"{w}.tls"] == "true"
     assert lab[f"{w}.tls.certresolver"] == "main"
-    assert lab[f"{w}.tls.options"] == "intermediate@file"
+    assert f"{w}.tls.options" not in lab  # default TLS options (skstacks #463)
     assert lab[f"{w}.service"] == "skpayment"      # the same backend, no second service
     assert not [k for k in lab if ".middlewares.skpayment" in k]   # no IP allowlist by default
 
