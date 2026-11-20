@@ -1,0 +1,59 @@
+# sksso.SKGIT_OIDC_ENABLED, before the stack deploy: render the Authentik
+# blueprint that gives skgit (Forgejo) its OAuth2 sign-in
+# (skgit.AUTH_MODE: oidc). The blueprint lives in
+# /var/data/config/sksso-<env>/blueprints (mounted at /blueprints/custom in
+# server and worker); the worker applies it. The client secret reaches
+# Authentik as the SKGIT_OIDC_CLIENT_SECRET env var (see sksso.env.j2) and is
+# read with !Env, so it is not in the blueprint file. See the README section
+# "skgit (Forgejo) OIDC login".
+
+- name: Resolve the skgit OIDC settings
+  set_fact:
+    sksso_skgit_base: "{{ sksso.DOMAIN if (sksso.CLOUDFLARED | default(false) | bool) else (sksso.CLUSTERNAME ~ '.' ~ sksso.DOMAIN) }}"
+    sksso_skgit_client_id: "{{ sksso.SKGIT_OIDC_CLIENT_ID | default('skgit', true) }}"
+    sksso_skgit_app_name: "{{ sksso.SKGIT_APP_NAME | default('SKGit (Forgejo)', true) }}"
+    sksso_skgit_source_name: "{{ sksso.SKGIT_OIDC_SOURCE_NAME | default('SKStack SSO', true) }}"
+    sksso_skgit_authentication_flow: "{{ sksso.SKGIT_OIDC_AUTHENTICATION_FLOW | default('', true) | string }}"
+  no_log: true
+
+- name: Resolve the skgit public host and the URL-encoded auth source name
+  # Forgejo's callback path carries the auth source name, URL-encoded. The
+  # name is restricted below to characters whose only encoding is the space
+  # (%20), so the encoding is unambiguous.
+  set_fact:
+    sksso_skgit_host: "{{ sksso.SKGIT_HOST | default('git' ~ ('' if env == 'prod' else '-' ~ env) ~ '.' ~ sksso_skgit_base, true) }}"
+    sksso_skgit_source_name_enc: "{{ sksso_skgit_source_name | urlencode }}"
+  no_log: true
+
+- name: Check the skgit OIDC vault keys
+  assert:
+    that:
+      - "(sksso.SKGIT_OIDC_CLIENT_SECRET | default('') | string | length) >= 32"
+      - "sksso_skgit_host is match('^[A-Za-z0-9][A-Za-z0-9.-]*$')"
+      - "sksso_skgit_client_id is match('^[a-z0-9][a-z0-9-]*$')"
+      - "sksso_skgit_source_name is match('^[A-Za-z0-9][A-Za-z0-9 ._-]*$')"
+      - "sksso_skgit_authentication_flow == '' or sksso_skgit_authentication_flow is match('^[a-z0-9][a-z0-9-]*$')"
+    fail_msg: >-
+      sksso.SKGIT_OIDC_CLIENT_SECRET needs 32+ characters (openssl rand -hex
+      32, the same value as skgit.OIDC_CLIENT_SECRET), SKGIT_HOST a plain host
+      name, SKGIT_OIDC_CLIENT_ID a lowercase slug, SKGIT_OIDC_SOURCE_NAME
+      letters, digits, spaces, dots, dashes and underscores (it is the
+      Forgejo auth source name and sits in the callback URL), and
+      SKGIT_OIDC_AUTHENTICATION_FLOW empty or a lowercase flow slug.
+    quiet: true
+
+- name: Create the Authentik blueprints directory
+  file:
+    path: /var/data/config/{{ app }}-{{ env }}/blueprints
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Render the skgit-oidc blueprint (no secret inside)
+  template:
+    src: "{{ playbook_dir }}/src/config/{{ app }}/blueprints/skgit-oidc.yaml.j2"
+    dest: /var/data/config/{{ app }}-{{ env }}/blueprints/skgit-oidc.yaml
+    owner: root
+    group: root
+    mode: '0644'
