@@ -280,6 +280,13 @@ def _img(i: dict) -> str:
     return i["image"].partition("@")[0]
 
 
+def _services(i: dict, n: int) -> str:
+    names = i.get("services") or []
+    if not names:
+        return "no service"
+    return ", ".join(names[:n]) + (f" +{len(names) - n} more" if len(names) > n else "")
+
+
 def _ranked(images: list[dict]) -> list[dict]:
     return sorted((i for i in images if i.get("status") == "ok" and (i.get("critical") or i.get("high"))),
                   key=lambda i: (-i.get("critical", 0), -i.get("high", 0), _img(i)))
@@ -307,7 +314,7 @@ def vuln_summary_lines(report: dict, images: dict | None, now: dt.datetime, top:
         head += f" (stale: last scan {_short(at)})"
     lines.append(head)
     ranked = _ranked(images.get("images", []))
-    lines += [f"- {_img(i)} ({', '.join(i.get('services') or []) or 'no service'}): "
+    lines += [f"- {_img(i)} ({_services(i, 3)}): "
               f"{i.get('critical', 0)} critical, {i.get('high', 0)} high" for i in ranked[:top]]
     if len(ranked) > top:
         lines.append(f"- and {len(ranked) - top} more image(s)")

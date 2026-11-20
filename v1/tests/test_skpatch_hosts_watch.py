@@ -247,7 +247,7 @@ def _v(sev, cve, pkg, inst="1.36.0-r9", fix="1.36.1-r1"):
     return {"id": cve, "severity": sev, "package": pkg, "installed": inst, "fixed": fix}
 
 
-IMAGES = {"estate": "nor", "generated_at": "2026-11-14T06:15:00+00:00", "error": None,
+IMAGES = {"estate": "lab", "generated_at": "2026-11-14T06:15:00+00:00", "error": None,
           "totals": {"images": 3, "scanned": 2, "failed": 1, "critical": 3, "high": 7, "ignored": 2},
           "images": [
               _image("traefik:v3.1@sha256:" + "1" * 64, ["skproxy_traefik"], [_v("HIGH", "CVE-2025-1", "stdlib", "1.22", "1.22.9")]),
@@ -283,14 +283,16 @@ def test_the_digest_counts_image_vulnerabilities_and_ranks_the_worst_images_firs
     block = text.split("Image vulnerabilities")[1]
     assert block.index("alpine:3.18.0 (skweb_app, skweb_worker): 3 critical, 6 high") < block.index("traefik:v3.1 (skproxy_traefik): 0 critical, 1 high")
     assert "sha256:" not in block
+    wide = {**IMAGES, "images": [_image("w:1", [f"svc{n}" for n in range(5)], [_v("HIGH", "CVE-1", "p")])]}
+    assert "- w:1 (svc0, svc1, svc2 +2 more): 0 critical, 1 high" in sw.digest_text(VULN_REPORT, {}, NOW, 90, "t", wide)
     assert "- scan failed for 1 image(s): ghcr.io/example/private:1" in block
     assert "CVE-" not in text  # the ids go in the reply only
 
 
 def test_the_reply_lists_every_package_and_cve_with_versions():
-    detail = sw.digest_detail(VULN_REPORT, IMAGES, "skpatch nor daily summary")
+    detail = sw.digest_detail(VULN_REPORT, IMAGES, "skpatch lab daily summary")
     lines = detail.splitlines()
-    assert lines[0] == "🔎 skpatch nor daily summary: vulnerabilities, full list"
+    assert lines[0] == "🔎 skpatch lab daily summary: vulnerabilities, full list"
     assert lines[1:3] == ["Security updates by host:", "alpha-1: 5"]
     assert "- sudo 1.0 -> 1.1 (apt)" in lines and "zeta-1: 1" in lines
     assert lines.index("alpha-1: 5") < lines.index("zeta-1: 1")

@@ -516,7 +516,8 @@ to by a dedicated account, and email kept for the daily digest only.
 | Host unreachable | the dashboard's webhook channel from `TALK` | immediately (on the reachable-to-unreachable transition) |
 | Upgrade failed, sudo denied (a provisioning gap), package manager issue (Repair), reboot required for more than 8 days on one boot | `tools/skpatch_watch.py` (timer every 15 min) | once when it opens, once when it clears |
 | Drift, unprovisioned, uncovered manager, DNS port 53 conflict | `tools/skpatch_compliance.py` (daily timer) | once when it opens, once when it clears |
-| Daily summary: pending updates, the last 24 h of scheduled runs, OS end-of-life and end-of-support warnings, open issues | `skpatch_watch.py --digest` | 07:00 |
+| Daily summary: pending updates, vulnerabilities (pending security updates per host, image CVEs), the last 24 h of scheduled runs, OS end-of-life and end-of-support warnings, open issues | `skpatch_watch.py --digest` | 07:00, the full vulnerability list as a reply in its thread |
+| Image vulnerability scan of the swarm's running images (input for the summary, posts nothing itself) | `tools/skpatch_image_vulns.py` (Trivy on the controller) | 06:15 |
 | Reboot required (normal) | nobody | never an alert |
 | Email digest | the dashboard's email channel in the `notification_digest` schedule | 07:00 (fallback) |
 
@@ -543,7 +544,8 @@ Setup per estate:
    `~/.config/skpatch-talk/<estate>.env` (the unit headers list the keys;
    the app password lives in a 0600 file named there), enable both timers.
    Point the compliance unit's `SKPC_HOOK` at `tools/skpatch-talk-notify.sh`;
-   it reads the same `skpatch-talk` env file.
+   it reads the same `skpatch-talk` env file. For image CVEs in the summary,
+   also set up the image scan below ("Daily vulnerability list").
 4. Test: `POST /api/notifications/<id>/test` on the dashboard channel, then
    `systemctl --user start skpatch-watch@<estate>` (posts the real open
    issues once; a second run posts nothing).
@@ -578,6 +580,101 @@ the stamp of a host with actions granted is resolved as "sudoers now covers it".
 
 The hook's state survives a failed post: an issue whose raise did not reach
 the room is retried on the next run instead of being recorded as sent.
+
+### Daily vulnerability list (host security updates and image CVEs)
+
+The 07:00 summary carries a **Vulnerabilities** section, and the full list
+goes out as a reply in the summary's own Talk thread, so the room shows one
+compact message a day and the detail is one click away.
+
+Main message (counts and the top 5 of each):
+
+```
+Vulnerabilities (pending security updates): 6 on 2 host(s)
+- mgr-1: curl, libssl3, openssl (+2 more)
+- worker-1: openssl
+
+Image vulnerabilities: 3 critical, 7 high (fix available) in 2 of 66 images, 2 ignored
+- alpine:3.18.0 (skweb_app, skweb_worker): 3 critical, 6 high
+- traefik:v3.7.19 (skproxy_traefik): 0 critical, 1 high
+- scan failed for 1 image(s): skgit.example/private/app:latest
+```
+
+Reply ("🔎 ... vulnerabilities, full list"): every host's security updates
+as `- <package> <installed> -> <candidate> (<manager>)`, then every image
+with its findings as `- <SEVERITY> <CVE id> <package> <installed> -> <fixed>`,
+then each image that failed to scan with its error.
+
+What each line means:
+
+| Line | Meaning |
+|---|---|
+| `Vulnerabilities (pending security updates): N on H host(s)` | N pending updates the dashboard flags as security, on H hosts, sorted by host. The same visible list as the dashboard's security count (hidden updates are left out). |
+| `- <host>: <packages>` | The first three package names; the reply has all of them with versions. `names not in this report` means a dashboard report from before this change (count only). |
+| `Image vulnerabilities: C critical, H high (fix available) in K of T images` | HIGH and CRITICAL findings that have a fixed version (Trivy `--ignore-unfixed`), in K of the T unique images the swarm runs. `I ignored` counts findings the ignore file silenced. |
+| `(stale: last scan <time>)` | The scan summary is more than 36 hours old: the 06:15 scan has not been succeeding. |
+| `- <image> (<services>): ...` | The worst images first (critical, then high); the digest is left out of the name. |
+| `scan failed for N image(s)` | Trivy could not scan those (a private registry without credentials, an image that exists only on the nodes, a registry error). The rest of the run is unaffected. |
+| `Image vulnerabilities: scan failed: ...` | The scan could not list the swarm's services at all (ssh, docker), or there is no summary file yet. |
+| `... and N more lines (cut to fit one Talk message)` | Talk refuses a message over 32000 characters; both messages are cut at a whole line under `--max-message-chars` (30000). The full data is the summary JSON on the controller. |
+
+**CVE ids for host packages:** the pinned dashboard (2026.10.9) does not
+store any. It marks an update as security when its apt repository is a
+`-security` pocket (`server/ssh/parsers/apt.ts`); the other package managers
+never set it. So host lines are package names and versions; CVE ids are
+only on image lines.
+
+**Where the data comes from.** Host lines: `dashboard_report.js`, which now
+also reads `GET /api/systems/<id>` (`updates`, `isSecurity`) for each system
+with a security count, still GET only. Image lines:
+`tools/skpatch_image_vulns.py`, stdlib only, on the same controller as the
+watch:
+
+1. `ssh <SKPW_SWARM_SSH> docker service ls --format '{{.Name}}\t{{.Image}}'`
+   (read-only, `sudo -n docker` when the user is not in the docker group).
+2. Each unique image is scanned with Trivy run as a container on the
+   controller, pinned by digest (`aquasec/trivy:0.76.2@sha256:8f6bb947...`,
+   the index digest the registry serves), no docker socket mounted: Trivy
+   pulls the image from its registry itself. Its DB lives in the unit's
+   cache directory.
+3. Results are cached per image digest for 24 hours (and dropped when the
+   Trivy pin changes), so a rerun the same day scans only what changed or
+   failed. A failed scan is recorded for that image and is never cached.
+4. The summary (`$STATE_DIRECTORY/<estate>.json`) lists image, services,
+   digest, status/error and each finding: id, severity, package, installed,
+   fixed version. Exit 1 when some image failed (not a unit failure), 2 when
+   the service list could not be read (the summary then carries the error).
+
+Setup on the controller (per estate, after the watch above is running;
+needs local docker for the user running the units):
+
+1. Install `tools/systemd/skpatch-image-vulns@.{service,timer}` next to the
+   watch units.
+2. Add to `~/.config/skpatch-watch/<estate>.env`:
+   `SKPW_SWARM_SSH=<a swarm manager>` and
+   `SKPW_IMAGE_VULNS=~/.local/state/skpatch-hosts/image-vulns/<estate>.json`
+   (what the digest reads; without it the digest has no image line).
+   Optional: `SKPW_IMAGE_IGNORE=<ignore file>`, and
+   `SKPW_IMAGE_ARGS=--registry-auth <docker config.json>` for images on a
+   private registry (mounted read-only into the Trivy container).
+3. `systemctl --user daemon-reload && systemctl --user enable --now skpatch-image-vulns@<estate>.timer`,
+   then `systemctl --user start skpatch-image-vulns@<estate>` once by hand
+   (the first run downloads the Trivy DB and every image; give it time).
+
+**Silencing a known false positive.** Put the id in the ignore file named
+by `SKPW_IMAGE_IGNORE`, one rule per line, `#` for a comment and always a
+reason:
+
+```
+# <vulnerability id> [<image glob>]   # why, and until when
+CVE-2022-48174 alpine:*               # busybox ash, no shell reachable in this image
+CVE-2025-0001                         # every image: vendor disputes it, see ticket 42
+```
+
+The glob matches the image reference without its digest. An ignored
+finding is counted (`N ignored` in the main line), never listed. It takes
+effect on the next scan run, cached results included (the cache stores
+findings before the ignore file is applied).
 
 ## Selected-package upgrades (wrappers, and a known limitation)
 

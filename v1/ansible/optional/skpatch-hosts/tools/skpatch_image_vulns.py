@@ -126,14 +126,22 @@ def trivy_command(ref: str, trivy_image: str, db_dir: Path, docker: str = "docke
                   "--ignore-unfixed", ref]
 
 
+def trivy_error(stderr: str) -> str:
+    """The useful part of a failed scan: Trivy lists every image source it
+    tried (docker, containerd, podman, remote); with no daemon mounted only
+    the registry's answer matters."""
+    text = " ".join(l.strip() for l in stderr.splitlines() if l.strip())
+    _, sep, remote = text.partition("remote error:")
+    return (remote.strip() if sep else text)[-300:] or "no error output"
+
+
 def scan(ref: str, trivy_image: str, db_dir: Path, docker: str = "docker", timeout: int = 900,
          registry_auth: Path | None = None) -> list[dict]:
     db_dir.mkdir(parents=True, exist_ok=True)
     proc = subprocess.run(trivy_command(ref, trivy_image, db_dir, docker, registry_auth),
                           capture_output=True, text=True, timeout=timeout)
     if proc.returncode != 0:
-        err = [l for l in proc.stderr.splitlines() if l.strip()]
-        raise RuntimeError(f"trivy exit {proc.returncode}: {' '.join(err[-3:])[-400:]}")
+        raise RuntimeError(f"trivy exit {proc.returncode}: {trivy_error(proc.stderr)}")
     try:
         return parse_trivy(json.loads(proc.stdout))
     except ValueError as e:

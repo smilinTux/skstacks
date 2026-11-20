@@ -61,6 +61,18 @@ def test_the_trivy_command_is_pinned_and_mounts_only_its_cache():
     assert "/h/cfg.json:/root/.docker/config.json:ro" in auth
 
 
+def test_a_failed_scan_keeps_only_the_registry_answer():
+    # recorded from Trivy 0.76.2 against an image that exists only on the nodes
+    err = ("2026-11-20T15:01:02Z\tFATAL\tFatal error\trun error: image scan error: unable to find the specified image\n"
+           "\t* docker error: unable to inspect the image: Cannot connect to the Docker daemon\n"
+           "\t* containerd error: containerd socket not found: /run/containerd/containerd.sock\n"
+           "\t* podman error: unable to initialize Podman client: no podman socket found\n"
+           "\t* remote error: GET https://index.docker.io/v2/library/x/manifests/latest: UNAUTHORIZED: authentication required\n")
+    assert iv.trivy_error(err) == ("GET https://index.docker.io/v2/library/x/manifests/latest: "
+                                   "UNAUTHORIZED: authentication required")
+    assert iv.trivy_error("plain failure\n") == "plain failure" and iv.trivy_error("") == "no error output"
+
+
 def _scanner(calls, fail=()):
     def scan(ref):
         calls.append(ref)
@@ -72,7 +84,7 @@ def _scanner(calls, fail=()):
 
 def test_one_image_failing_is_reported_not_fatal(tmp_path):
     calls = []
-    s = iv.build_summary("nor", "mgr", SERVICES, tmp_path, iv.TRIVY_IMAGE, TTL, [], _scanner(calls, ["broken"]), NOW)
+    s = iv.build_summary("lab", "mgr", SERVICES, tmp_path, iv.TRIVY_IMAGE, TTL, [], _scanner(calls, ["broken"]), NOW)
     assert len(calls) == 2
     ok, bad = s["images"]
     assert (ok["status"], ok["critical"], ok["high"], ok["services"]) == ("ok", 3, 6, ["skweb_app", "skweb_worker"])
@@ -85,20 +97,20 @@ def test_one_image_failing_is_reported_not_fatal(tmp_path):
 
 def test_a_rerun_inside_24_hours_scans_nothing_and_after_it_scans_again(tmp_path):
     calls = []
-    iv.build_summary("nor", "mgr", SERVICES, tmp_path, iv.TRIVY_IMAGE, TTL, [], _scanner(calls, ["broken"]), NOW)
+    iv.build_summary("lab", "mgr", SERVICES, tmp_path, iv.TRIVY_IMAGE, TTL, [], _scanner(calls, ["broken"]), NOW)
     calls.clear()
-    s = iv.build_summary("nor", "mgr", SERVICES, tmp_path, iv.TRIVY_IMAGE, TTL, [], _scanner(calls),
+    s = iv.build_summary("lab", "mgr", SERVICES, tmp_path, iv.TRIVY_IMAGE, TTL, [], _scanner(calls),
                          NOW + dt.timedelta(hours=23))
     assert calls == [f"ghcr.io/example/broken:1@{D2}"]  # only the one that failed last time
     assert s["images"][0]["cached"] is True and s["images"][0]["critical"] == 3
     assert s["images"][0]["scanned_at"] == NOW.isoformat(timespec="seconds")
     calls.clear()
-    iv.build_summary("nor", "mgr", SERVICES, tmp_path, iv.TRIVY_IMAGE, TTL, [], _scanner(calls),
+    iv.build_summary("lab", "mgr", SERVICES, tmp_path, iv.TRIVY_IMAGE, TTL, [], _scanner(calls),
                      NOW + dt.timedelta(hours=25))
     assert calls == [f"alpine:3.18.0@{D1}"]  # stale now; broken was cached at +23h
     # a new Trivy pin invalidates every cached result
     calls.clear()
-    iv.build_summary("nor", "mgr", SERVICES, tmp_path, "aquasec/trivy:9@sha256:" + "c" * 64, TTL, [], _scanner(calls),
+    iv.build_summary("lab", "mgr", SERVICES, tmp_path, "aquasec/trivy:9@sha256:" + "c" * 64, TTL, [], _scanner(calls),
                      NOW + dt.timedelta(hours=25))
     assert len(calls) == 2
 
@@ -114,7 +126,7 @@ def test_the_ignore_file_silences_by_id_and_image_glob(tmp_path):
                  "CVE-2025-26519\n\nCVE-2023-5363 other/*\n")
     rules = iv.load_ignores(f)
     assert rules == [("CVE-2022-48174", "alpine:*"), ("CVE-2025-26519", "*"), ("CVE-2023-5363", "other/*")]
-    s = iv.build_summary("nor", "mgr", {f"alpine:3.18.0@{D1}": ["a"]}, tmp_path, iv.TRIVY_IMAGE, TTL, rules,
+    s = iv.build_summary("lab", "mgr", {f"alpine:3.18.0@{D1}": ["a"]}, tmp_path, iv.TRIVY_IMAGE, TTL, rules,
                          _scanner([]), NOW)
     i = s["images"][0]
     assert (i["critical"], i["high"], i["ignored"]) == (0, 4, 5)
@@ -141,7 +153,7 @@ def _bin(tmp_path, ssh_out, ssh_rc=0):
 
 def _cli(tmp_path, bindir, *extra):
     env = {"PATH": f"{bindir}:/usr/bin:/bin", "SKPW_SWARM_SSH": "mgr-node"}
-    return subprocess.run([sys.executable, str(TOOL), "--estate", "nor", "--out", str(tmp_path / "out" / "nor.json"),
+    return subprocess.run([sys.executable, str(TOOL), "--estate", "lab", "--out", str(tmp_path / "out" / "lab.json"),
                            "--cache-dir", str(tmp_path / "cache"), *extra],
                           capture_output=True, text=True, env=env, timeout=60)
 
@@ -151,10 +163,10 @@ def test_cli_lists_services_scans_each_unique_image_once_and_writes_the_summary(
                        f"skbroken_x\tghcr.io/example/broken:1@{D2}\n\n")
     proc = _cli(tmp_path, b)
     assert proc.returncode == 1, proc.stderr  # one image failed: written, flagged
-    s = json.loads((tmp_path / "out" / "nor.json").read_text())
-    assert s["estate"] == "nor" and s["manager"] == "mgr-node" and s["error"] is None
+    s = json.loads((tmp_path / "out" / "lab.json").read_text())
+    assert s["estate"] == "lab" and s["manager"] == "mgr-node" and s["error"] is None
     assert s["totals"] == {"images": 2, "scanned": 1, "failed": 1, "critical": 3, "high": 6, "ignored": 0}
-    assert s["images"][1]["error"].startswith("trivy exit 1: FATAL  image scan error")
+    assert s["images"][1]["error"] == "trivy exit 1: FATAL  image scan error: unable to find the specified image"
     argv = (tmp_path / "ssh.argv").read_text()
     assert "BatchMode=yes" in argv and "mgr-node" in argv and "service ls --format" in argv
     assert "service update" not in argv and "service rm" not in argv
@@ -170,7 +182,7 @@ def test_cli_writes_the_error_when_the_service_list_fails(tmp_path):
     b = _bin(tmp_path, "", ssh_rc=255)
     proc = _cli(tmp_path, b)
     assert proc.returncode == 2 and "docker service ls failed (exit 255)" in proc.stderr
-    s = json.loads((tmp_path / "out" / "nor.json").read_text())
+    s = json.loads((tmp_path / "out" / "lab.json").read_text())
     assert s["error"].startswith("docker service ls failed") and s["images"] == []
     assert not (tmp_path / "docker.log").exists()
 
