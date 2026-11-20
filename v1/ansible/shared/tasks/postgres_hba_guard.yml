@@ -1,0 +1,71 @@
+---
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Guarantee that an EXISTING Postgres data directory accepts password logins
+# over the network, BEFORE the stack deploy.
+#
+# Why: the official postgres entrypoint appends `host all all all
+# scram-sha-256` to pg_hba.conf only when it creates the cluster itself (no
+# PG_VERSION yet). A data directory made by hand, for example a manual initdb
+# during a restore (nor skgit, 2026-11-11), has only the local trust rules, so
+# the app container on the overlay network is refused and the service is down
+# until someone adds the line by hand.
+#
+# Behaviour: no PG_VERSION in either layout (fresh install) does nothing, the
+# entrypoint will write the rule. Any existing `host all all all <method>` rule
+# is left alone. Otherwise the scram rule is appended (the file keeps its owner
+# and mode) and the task reports changed; Postgres reads it at its next start
+# or `SELECT pg_reload_conf()`.
+#
+#   pre-18 layout:  <dir>/pg_hba.conf
+#   18+ layout:     <dir>/<major>/docker/pg_hba.conf
+#
+# Inputs (set with `vars:` on the include):
+#   pg_hba_app        label used in messages, e.g. skgit
+#   pg_hba_data_path  host directory bind-mounted as the Postgres data volume
+#   pg_hba_node       optional host that owns the path; default: the play host
+
+- name: Ensure {{ pg_hba_app }} pg_hba.conf allows password logins from the network
+  shell: |
+    D="{{ pg_hba_data_path }}"
+    F=""
+    if [ -f "$D/PG_VERSION" ]; then
+      F="$D/pg_hba.conf"
+    else
+      for v in "$D"/*/docker/PG_VERSION; do
+        [ -f "$v" ] && { F="$(dirname "$v")/pg_hba.conf"; break; }
+      done
+    fi
+    [ -n "$F" ] || { echo "fresh"; exit 0; }
+    [ -f "$F" ] || { echo "missing $F" >&2; exit 1; }
+    if grep -Eq '^[[:space:]]*host[[:space:]]+all[[:space:]]+all[[:space:]]+(all|0\.0\.0\.0/0)[[:space:]]+' "$F"; then
+      echo "present"
+      exit 0
+    fi
+    printf '\n# added by skstacks postgres_hba_guard: the app connects over the overlay network\nhost all all all scram-sha-256\n' >> "$F"
+    echo "added $F"
+  args:
+    executable: /bin/sh
+  delegate_to: "{{ pg_hba_node | default(inventory_hostname, true) }}"
+  register: pg_hba_probe
+  changed_when: pg_hba_probe.stdout.startswith('added')
+
+- name: Tell the operator a pg_hba rule was added for {{ pg_hba_app }}
+  debug:
+    msg: >-
+      {{ pg_hba_app }}: {{ pg_hba_probe.stdout }}. If Postgres keeps running through this
+      deploy, load it with SELECT pg_reload_conf() in the postgres container.
+  when: pg_hba_probe is changed
