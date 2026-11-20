@@ -1,0 +1,34 @@
+# skpatch image vulnerabilities (%i): Trivy scan of the images the estate's
+# swarm runs, written for the 07:00 digest (skpatch-watch-digest@%i reads it
+# when SKPW_IMAGE_VULNS points at the output). Runs on the controller: the
+# only contact with the estate is a read-only `docker service ls` over ssh
+# to SKPW_SWARM_SSH; Trivy runs here as a container (needs local docker).
+#
+#   install -D -m 0644 skpatch-image-vulns@.service skpatch-image-vulns@.timer -t ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now skpatch-image-vulns@<estate>.timer
+#
+# Keys in ~/.config/skpatch-watch/<estate>.env (the watch's own env file):
+#   SKPW_SWARM_SSH=<swarm manager ssh destination>
+#   SKPW_IMAGE_VULNS=~/.local/state/skpatch-hosts/image-vulns/<estate>.json
+#   SKPW_IMAGE_IGNORE=/path/to/<estate>.trivyignore   (optional)
+#   SKPW_IMAGE_ARGS=--registry-auth /path/to/docker-config.json   (optional)
+# The tool sits next to SKPW_TOOL (skpatch_watch.py).
+#
+# Exit 1 means "one or more images failed to scan" (listed in the summary
+# and the digest); only exit 2 (the service list could not be read) fails
+# the unit.
+[Unit]
+Description=skpatch image vulnerability scan (%i)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/skpatch-watch/%i.env
+ExecStart=/bin/sh -c 'exec /usr/bin/python3 "$(dirname "$SKPW_TOOL")/skpatch_image_vulns.py" --estate %i --out "$STATE_DIRECTORY/%i.json" --cache-dir "$CACHE_DIRECTORY/%i" $SKPW_IMAGE_ARGS'
+StateDirectory=skpatch-hosts/image-vulns
+CacheDirectory=skpatch-hosts/image-vulns
+SuccessExitStatus=1
+TimeoutStartSec=50min
+Nice=10

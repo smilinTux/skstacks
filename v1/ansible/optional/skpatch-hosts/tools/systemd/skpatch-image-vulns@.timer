@@ -1,0 +1,13 @@
+# 06:15 local, ahead of the 07:00 digest that reads its summary. The first
+# run downloads the Trivy DB and scans every image; later runs reuse the
+# per-digest cache (24 hours), so they finish in minutes.
+[Unit]
+Description=skpatch image vulnerability scan (%i), 06:15
+
+[Timer]
+OnCalendar=*-*-* 06:15:00
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target
