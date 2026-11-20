@@ -86,7 +86,7 @@
         skb_dump_path: "{{ skbom.DUMP_PATH | default('/var/data/' + app + '-' + env + '/database-dump', true) }}"
         skb_data_node: "{{ skbom.DATA_NODE | default('', true) | string }}"
         skb_middlewares: "{{ skbom.TRAEFIK_MIDDLEWARES | default('default-no-error-pages@file', true) }}"
-        skb_tls_options: "{{ skbom.TLS_OPTIONS | default('intermediate@file', true) }}"
+        skb_tls_options: "{{ skbom.TLS_OPTIONS | default('none', true) }}"
         skb_router: "skbom{{ '' if env == 'prod' else '-' + env }}"
         skb_oidc_on: "{{ skbom.OIDC_ENABLED | default(false) | bool }}"
       tags: [config]

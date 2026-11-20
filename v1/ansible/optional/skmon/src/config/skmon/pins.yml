@@ -49,9 +49,9 @@ images:
     source: https://github.com/grafana/grafana/releases/tag/v13.3.0
   pyroscope:
     repo: grafana/pyroscope
-    tag: 2.4.2
-    digest: sha256:ef9b48976386aa2781e84664dfdba7cc33a1b6793c0cc9d130812173a926ca1f
-    released: "2026-10-26"
+    tag: 2.4.3
+    digest: sha256:bf667534cd403320573063894e3faba20a5a5d1bfb92eddaecfabeb2446c502b
+    released: "2026-11-03"
     source: https://github.com/grafana/pyroscope/releases/tag/v2.4.2
   pve_exporter:
     repo: prompve/prometheus-pve-exporter

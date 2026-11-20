@@ -207,7 +207,11 @@ def test_worker_tls_template_comment_says_inert():
 
 
 def test_dynamic_tls_template_is_where_options_live():
-    d = yaml.safe_load((SRC / "dynamic-tls.yml.j2").read_text())
+    # Rendered first: default.sniStrict is a Jinja knob (DEFAULT_SNI_STRICT).
+    import jinja2
+    env = jinja2.Environment(undefined=jinja2.StrictUndefined)
+    env.filters["bool"] = lambda v: v if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes", "on")
+    d = yaml.safe_load(env.from_string((SRC / "dynamic-tls.yml.j2").read_text()).render(skfenceha={}))
     assert set(d) == {"tls"}
     assert {"default", "modern", "intermediate", "old"} <= set(d["tls"]["options"])
 

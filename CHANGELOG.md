@@ -4,7 +4,205 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
-## Unreleased
+## skstacks-v2.26.29 - 2026-11-19
+
+Patch on v2.26.28. Every Traefik router now uses the default TLS options, so a restarted service no
+longer strands HTTP/2 clients on 421. skha's VIP fails over again (the ACME master is preferred,
+not locked). Adds the SKPages role and a generated subnet registry. Instance action:
+redeploy skfence or skfenceha (TLS options), then any service whose routers carried
+`tls.options`; remove `TLS_OPTIONS`, `tls_options` or `TRAEFIK_TLS_OPTIONS` from vaults that set
+`intermediate@file`; set `DEFAULT_SNI_STRICT: true` where the estate ran `sniStrict` before and a
+certificate covers every router; redeploy skha on the whole manager group (see skha below).
+skpeek, skseek and skpdf now sit behind SSO by default (see the upgrade notes first).
+
+### Upgrade notes
+
+- **UPGRADE: skpeek, skseek, skpdf are now behind SSO forward auth by default; set
+  `SSO_MIDDLEWARE: none` to keep one public.** None of the three has a login of its own; on one
+  production instance they were open to the internet and skseek's `GET /api/config` returned the
+  model provider API keys. Each router appends `<svc>.SSO_MIDDLEWARE` (default `authentik@file`)
+  to the end of its chain, including an instance override of `TRAEFIK_MIDDLEWARES`, and never
+  adds it twice when the chain already names it (vaults that added `authentik@file` by hand
+  render unchanged). sksso must be deployed (the middleware must exist), or Traefik drops the
+  router and the app is unreachable. Empty or unset keeps the default (fail closed). Tests:
+  `v1/tests/test_sso_default_skpeek_skseek_skpdf.py`. **Instance action**: none to get SSO; set
+  `SSO_MIDDLEWARE: none` in the vault for an instance that must stay public, before redeploying.
+- **UPGRADE: skfence/skfenceha `DEFAULT_SNI_STRICT` defaults to false since #465** (the first
+  #463 candidate had it on). Instances that ran `sniStrict: true` on the `default` TLS option by
+  hand should pin the value they want explicitly in their vault before rolling out (false serves
+  hosts without a matching certificate with the default certificate instead of refusing the
+  handshake).
+
+### SKPages: agent-published HTML pages (new role, #461)
+
+- **`optional/skpages`**: one Caddy container serving a read-only docroot (usually a Nextcloud
+  group folder) at `pages.<cluster>.<domain>`, private behind `authentik@file`, with `/p/<token>/`
+  public by link. Knobs for the middleware chains (`TRAEFIK_MIDDLEWARES`,
+  `TRAEFIK_MIDDLEWARES_PUBLIC`), `CERTRESOLVER` and `AUTH`. The publishing CLI and skill are in
+  smilinTux/skpages. **Instance action**: none unless you deploy it (README, Deploy); an instance
+  that carried its own `optional/skpages` drops it and keeps its vault.
+- **`v1/ansible/shared/networks`** is now generated from every playbook's default subnets by
+  `v1/scripts/networks_registry.py`, with the free /24s listed at the bottom. CI fails when it is
+  stale, and `test_unique_subnets.py` now sees every subnet format (it missed bare `- subnet:`
+  lists and per-env maps before). **Instance action**: none.
+
+### Traefik: no router names a TLS option (#463)
+
+- A router with `tls.options=intermediate@file` made Traefik answer 421 Misdirected Request on
+  every request of an HTTP/2 connection opened while that router was missing (a service restart),
+  because its domain-fronting check compares option names. Browsers retry on 421; Forgejo runners
+  do not, so they stayed stuck until restarted (one nor runner slot for about 16 hours on
+  2026-11-18, 68,624 421s in the access log).
+- skfence and skfenceha: `sniStrict` on the `default` TLS options is opt-in,
+  `DEFAULT_SNI_STRICT` (default `false`). The first v2.26.29 candidate turned it on for every
+  router, which refused the handshake for any host with no matching certificate (ACME still
+  pending, or only Traefik's self-signed default cert); the skstack06 gate caught it. Routers
+  that used `intermediate@file` lose its sniStrict unless the instance sets the knob.
+  **Instance action**: set `DEFAULT_SNI_STRICT: true` only where a certificate covers every router.
+- Hardcoded `tls.options=intermediate@file` labels are removed from skgit (4 routers), skboard,
+  skorch, skpdf, skpeek, skport, skpulse, skseek, sksso, skstor, sksync and skvector. The
+  `TLS_OPTIONS` knobs of skaegis, skbom, skflow, skgym, skhome, skpatch-hosts, skpayment, skrac and
+  sksec-web default to `none`, and skgallery's `TRAEFIK_TLS_OPTIONS` renders only when set. An
+  explicit value still works.
+- Tests: baselines ignore the removed labels, render tests expect none by default, and a repo-wide
+  guard fails on any template that hardcodes or defaults a router to a named option.
+
+### skha: the VIP fails over again, no ACME-master lock by default (#466)
+
+- **Every manager is `state BACKUP` with `nopreempt` and tracks the health checks.** The ACME
+  master (label `traefik.acme.master`) used to be rendered `state MASTER`, priority 150, with no
+  health checks, so the VIP could never leave it. On 2026-11-19 one estate's ACME-master-configured
+  manager held the VIP while its Traefik worker could not start (NFS `/var/data` failed to
+  mount after the host crashed), public 443 was refused, and the two healthy workers never got
+  the VIP. skfenceha's ACME uses the Cloudflare DNS-01 challenge, so renewal never needed the VIP
+  there. The ACME master is now only preferred: `skha.acme_master_priority`, default 150.
+- **VIP gate checks** (`skha.vip_gate_checks`, default `[traefik]`) default to `require: true`
+  and `weight: 0` and start failed (`init_fail`). A node with no running `traefik-worker` fails
+  the check and goes to FAULT, and the VIP moves to a peer in about 10 s plus the master-down
+  timer. A negative weight alone never moves the VIP under `nopreempt`.
+- keepalived restarts on a redeploy go one manager at a time (`throttle: 1`) with a
+  `skha.restart_settle_seconds` (default 20) wait each, so a config change never drops the VIP.
+  `skha.vip_gate_checks` must be a list; the play fails on a string.
+- `skha.lock_vip_to_acme_master: true` restores the old lock, for an estate whose ACME challenge
+  needs inbound traffic. It has no failover.
+- Tests: `v1/tests/test_skha_failover.py`, plus gate cases in
+  `v1/tests/test_skha_health_check_require.py`. **Instance action**: redeploy skha on every
+  manager (`deploy_skha-<env>.yml`, whole manager group). Before running it, check that every
+  manager runs a `traefik-worker`. A manager without one goes to FAULT after the redeploy, which
+  is the point, but if NO manager has one, no node holds the VIP. That includes a fresh estate
+  where skha is deployed before skfenceha, and an estate that ran its ACME master without a
+  worker on purpose. If your own `skha.health_checks` names the Traefik check something other
+  than `traefik`, set `skha.vip_gate_checks` to that name.
+
+## skstacks-v2.26.28 - 2026-11-18
+
+Patch on v2.26.27. Fixes the Talk HPB on `TALK_TURN_EXTERNAL` estates and gives skfence the
+timeout knobs skfenceha already has. Instance action: redeploy skhub; an skfence estate with Talk
+internal signaling or large uploads sets `skfence.FORWARDING_TIMEOUTS`.
+
+### skhub: the talk-hpb healthcheck in `TALK_TURN_EXTERNAL` mode (#458, #459)
+
+- With `TALK_TURN_EXTERNAL: true` the default talk-hpb command runs no eturnal, but the service
+  inherited aio-talk's image healthcheck, which also requires eturnal and the TURN port. It never
+  passed, so Swarm stopped an otherwise healthy HPB about every 60 s and it stayed 0/1. The
+  external mode now gets its own healthcheck (signaling on 8081 with `/api/v1/stats`, and Janus on
+  8188). `TALK_HPB_HEALTHCHECK_TEST` replaces the test in any mode. Default renders are unchanged.
+
+### skfence: `FORWARDING_TIMEOUTS` and `RESPONDING_TIMEOUTS` (#460)
+
+- skfence hardcoded `responseHeaderTimeout: 30s`. Nextcloud Talk internal signaling long-polls
+  for 30 s, so every idle poll got a 504 and Talk showed "Lost connection to signaling server";
+  the same limit cut multi-GB skhub uploads. `skfence.FORWARDING_TIMEOUTS` (a map) replaces the
+  forwarding timeouts and `skfence.RESPONDING_TIMEOUTS` (a map) sets the websecure entrypoint's
+  responding timeouts, mirroring skfenceha's `WORKER_*` knobs. Unset, the render is byte-identical
+  and the default (30s/10s/90s) is skfenceha's. See the skfence README for the values to set.
+
+## skstacks-v2.26.27 - 2026-11-18
+
+Cut from main. Gated on skstack06 (fresh, PROFILE=full). Read the upgrade notes before rolling:
+skmon v2 replaces the skmon stack, skgit rolls once onto the code.forgejo.org registry, and the
+first skpatch run on workers now goes through the swarm upgrade gate. An instance that runs the
+Talk HPB next to the bundled skmesh coturn sets `skhub.TALK_TURN_EXTERNAL: true` with
+`TURN_DOMAIN` and `turn_secret` pointing at that coturn.
+
+### skmon v2: the stack starts (healthchecks, Grafana provisioning)
+
+Found by the skstack06 tier-2 gate, the first live deploy of skmon v2 (#373):
+
+- **VictoriaMetrics and vmalert never became healthy.** They listen on IPv4 only, and busybox
+  `wget http://localhost:<port>` tries `::1` first and is refused, so Swarm stopped both tasks over
+  and over. Every wget healthcheck now targets `127.0.0.1`.
+- **Grafana refused to start.** The dashboards copy put `SOURCES.yml` (the boards' vendoring
+  provenance) at the top of `provisioning/dashboards`, where Grafana parses every YAML file as a
+  provider config. The deploy now removes it after the copy, including from a data node that
+  already has it.
+- **No agent was scraped on a host with UFW.** The Alloy agent runs on the host network, so its
+  port (`AGENT_PORT`, 12345) is reached through INPUT, where a default-deny UFW (as the framework's
+  swarm-firewall role sets it) dropped every scrape after `SKMON-<ENV>` had let it through. When
+  UFW is active, the deploy now allows the agent port in UFW; `SKMON-<ENV>` still runs first and
+  drops every source that is not an allowlisted agent address. Loki, Pyroscope and `/healthz` are
+  Swarm-published ports and were never affected.
+
+### skhub: the Talk HPB can use an external TURN (`TALK_TURN_EXTERNAL`)
+
+- **`skhub.TALK_TURN_EXTERNAL: true` (with `enable_talk_hpb`)** keeps the HPB and hands TURN to the
+  server at `TURN_DOMAIN`, typically the bundled skmesh coturn (#450), which binds 3478 on the
+  managers' host network. talk-hpb then publishes no 3478 (the routing mesh would otherwise open it on
+  every node) and, with the default image, runs without eturnal (`dinit ... nats-server janus
+  signaling`). Janus and Talk use `TURN_DOMAIN:3478` with `turn_secret` (set it to the coturn's
+  `TURN_SECRET`); `TALK_TURNS_PORT` (e.g. 5349) adds the TLS entry. The deploy refuses it together
+  with the eturnal-only knobs (`TALK_TURN_TLS_443`, host publish mode, relay range or address).
+  Unset, everything renders as before. Tests: `v1/tests/test_skhub_talk_turn_external.py`.
+  **Instance action**: none unless you set it; an instance turning the HPB on next to the bundled
+  coturn sets `TALK_TURN_EXTERNAL: true`, `TURN_DOMAIN` and `turn_secret`.
+
+### skrac: agent watchdog for stale MeshCentral agent sessions
+
+- skrac: agent watchdog (`deploy_skrac-agent-watchdog.yml`): a timer restarts a MeshCentral agent whose server session went stale (nothing received for 10 min, no connection, or a spinning main process), and agent units get `Restart=always` and a 20 s stop timeout. Local signals only, no credentials on the host. From an agent that sat offline while its TCP connection stayed ESTABLISHED.
+
+### skgit: Forgejo pulls from code.forgejo.org (codeberg.org is NXDOMAIN)
+
+- codeberg.org stopped resolving on 2026-11-18 (`.org` answers NXDOMAIN), so
+  `codeberg.org/forgejo/forgejo:17.0.1` could not be pulled and the weekly
+  check-images canary failed on every run. The skgit image now defaults to
+  `code.forgejo.org/forgejo/forgejo`, Forgejo's own registry, which carries the
+  same release tags (the runner already came from there).
+- New `skgit.FORGEJO_IMAGE` sets the image repository (default
+  `code.forgejo.org/forgejo/forgejo`); `skgit.FORGEJO_VERSION` still sets the tag.
+  An instance that wants codeberg back sets `FORGEJO_IMAGE: codeberg.org/forgejo/forgejo`.
+- Deploying this changes the image reference of running skgit stacks, so the
+  next deploy rolls the forgejo service once (same version, new registry).
+
+### skrac, skmesh: portal tiles open in a new tab
+
+- **Both Authentik provisioners now set `open_in_new_tab`** on their application (knob
+  `<role>.AUTHENTIK_TILE_OPEN_IN_NEW_TAB`, default `true`), matching the shared portal-tile
+  helper's default. Before, they never set it, so a fresh create got Authentik's default (False)
+  and these were the only two tiles opening in the same tab (found on an instance 2026-11-17).
+  The deploy now also puts it back if it drifts. Tests: `v1/tests/test_authentik_tile_open_in_new_tab.py`.
+- **Instance action:** none. An instance that wants the old behaviour sets the knob to `false`.
+  On the next skrac or skmesh deploy the provisioner prints `application: updated (open_in_new_tab)`
+  where the tile was still False.
+
+### skmesh: the bundled coturn is reachable; skhub: Talk without the HPB
+
+- **skmesh coturn (`DEPLOY_COTURN`) now works.** It used `network_mode: host`, which `docker stack
+  deploy` ignores, and published no ports, so nothing listened on 3478/5349 and NetBird clients showed
+  STUN and TURN Unavailable (#449). coturn now joins Swarm's predefined `host` network, reads a mounted
+  `turnserver.conf` (the shared secret is no longer on the command line, and coturn no longer gets all of
+  `skmesh.env`), denies private and special peer ranges, and runs as `nobody` after start. New knobs:
+  `TURN_DOMAIN`, `COTURN_RELAY_IP`, `TURN_TLS` (5349 TLS/DTLS with the Traefik certificate skfence's
+  dumper writes; a no-op router on the dashboard makes Traefik obtain it, and coturn restarts on
+  renewal), `TURN_TLS_DUMP_DIR`, `TURN_ALLOWED_PEER_IPS`, `COTURN_PLACEMENT_CONSTRAINTS`, `COTURN_IMAGE`
+  (default now pinned by digest). With `DEPLOY_COTURN`, `TURN_TIME_BASED_CREDENTIALS` defaults to true
+  (coturn's `use-auth-secret` refuses static credentials). See skmesh README "Bundled coturn".
+- **skhub `TALK_SIGNALING: internal`**: Talk on its built-in signaling with TURN/STUN from an external
+  server (`TURN_DOMAIN`, `turn_secret`, optional `TALK_TURNS_PORT`, `TALK_STUN_SERVERS`); removes a stale
+  `signaling_servers`. See skhub README "Talk without the HPB".
+- **Instance action:** none unless `DEPLOY_COTURN` is true. Such an instance's coturn changes on the next
+  skmesh deploy (it starts listening; add router forwards and firewall allows for 3478 tcp+udp, 5349 if
+  `TURN_TLS`, and the relay range udp), and its peers switch to TURN REST credentials unless
+  `TURN_TIME_BASED_CREDENTIALS: false` is set.
 
 ### skpatch-hosts: the swarm upgrade gate covers workers and repairs stale vxlan devices
 

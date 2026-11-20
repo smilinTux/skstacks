@@ -29,6 +29,10 @@ gate.
   that service's router middlewares. Point the middleware's address at
   `http://sksso-<env>_server:9000/outpost.goauthentik.io/auth/traefik` and
   configure an Authentik Proxy Outpost of type "Traefik" to match.
+  A service that needs its own login policy (not the domain-wide
+  catch-all) gets its own forward_single Proxy Provider; see
+  `optional/skpages/README.md` (Deploy step 3) for a worked example,
+  including the `ak shell` redirect-URI fix.
 - **Native OIDC**: for apps that speak OIDC themselves, do **not** add the
   forward-auth middleware to that route - it would intercept the OIDC
   callback (`?code=...&state=...`) the app is waiting for. Create an OAuth2
@@ -547,9 +551,8 @@ Read this section for what is true today, and the design for where it is going.
   domain-wide catch-all. That catch-all is hand-made on each instance; no code here creates or binds it.
 - Authentik admits every authenticated user to an application that has NO policy bindings. An unbound
   catch-all therefore lets any user of the instance (including accounts that exist for other services)
-  through forward auth. `skrac` and `skmesh` write no binding for their applications either. Check each
-  instance by hand until the conformance check below exists: every application must show at least one
-  binding in the admin UI.
+  through forward auth. `skrac` and `skmesh` write no binding for their applications either. Run the
+  access conformance check below on each instance: every application must have at least one binding.
 - `OIDC_ADMIN_GROUPS` (sksec-web, skpatch-hosts) and `OIDC_ADMIN_GROUP` (skrac) are independent strings and
   are not derived from the Authentik binding.
 
@@ -579,6 +582,27 @@ Read this section for what is true today, and the design for where it is going.
   service account `sksvc-test`) skip interactive MFA only as members of the `sktest` group, and still pass
   through the application access policy. Credentials are per-estate `sksso.TEST_*` vault keys.
 - Existing instances migrate in additive steps first, and only later prune `authentik Admins` bindings.
+
+### Access conformance check
+
+`src/sksso/check-access.py` is the read-only conformance check (the standard's checks C1 to C10, design
+section 6). Python stdlib only, GET requests only, the token on stdin (or `AUTHENTIK_TOKEN`), never on the
+command line. Run it by hand from a framework checkout, against the instance's public SSO URL:
+
+```bash
+ansible-vault view --vault-password-file <pass> <sksso vault> \
+  | python3 -c 'import sys,yaml; print(yaml.safe_load(sys.stdin)["sksso"]["api_token"])' \
+  | python3 framework/v1/ansible/optional/sksso/src/sksso/check-access.py --url https://sso.<domain>
+```
+
+Output is one line per finding, `<slug> <check> <detail>` (a `warning:` or `info:` detail is not a
+violation), then `#` summary lines. Exit 0 conforms, 1 at least one violation, 2 the check could not run
+(including zero applications returned). `--strict` makes C2 (`authentik Admins` bindings) a violation instead
+of a warning. `--declarations <file.json>` adds the checks that need each app's declared mode; without it
+those are listed on a `# skipped:` line, not reported clean. `--who-passes <slug>` prints the usernames (no
+emails) that the app's current bindings admit, the pre-flight review before binding the catch-all to
+`skadmin`. `sksso.ACCESS_CHECK: true` also runs it after every sksso deploy as a report that never fails the
+deploy (`tasks/access_check.yml`, tag `access-check`).
 
 ## SSO for skhub and skflow
 

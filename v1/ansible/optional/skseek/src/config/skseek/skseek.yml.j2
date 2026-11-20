@@ -6,6 +6,17 @@ version: '3.8'
 # reaches it as skpeek-{{ env }}_skpeek over the shared skpeek-{{ env }}
 # overlay network rather than a public URL.
 
+{# Sign-in: skseek has no login of its own, so its router carries the sksso
+   forward-auth middleware (SSO_MIDDLEWARE, default authentik@file, defined by
+   skfence/skfenceha) APPENDED to the chain, including an instance override of
+   TRAEFIK_MIDDLEWARES, and never twice when the chain already names it.
+   SSO_MIDDLEWARE: none (or false) opts out for a deliberately public instance.
+   Empty or null keeps the default (fail closed). #}
+{% set _skseek_sso = skseek.SSO_MIDDLEWARE | default(none) %}
+{% set _skseek_sso = 'false' if _skseek_sso is sameas false else ('' if _skseek_sso is none else (_skseek_sso | string | trim)) %}
+{% set _skseek_sso = '' if (_skseek_sso | lower) in ('none', 'false') else (_skseek_sso or 'authentik@file') %}
+{% set _skseek_chain = skseek.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file', true) | string %}
+{% set skseek_middlewares = _skseek_chain ~ ((',' ~ _skseek_sso) if (_skseek_sso and _skseek_sso not in (_skseek_chain.split(',') | map('trim') | list)) else '') %}
 services:
   skseek:
     image: {{ skseek_image | default('itzcrazykns1337/perplexica:latest@sha256:343d2a02858cc3c15bb35bf94b3249923f4eb5de16eb80d266eddfef6d84951d') }}
@@ -55,8 +66,7 @@ services:
         - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
         - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
         - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
-        - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
-        - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares={{ skseek.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file', true) }}"
+        - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares={{ skseek_middlewares }}"
         - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}.service=skseek{% if env != 'prod' %}-{{ env }}{% endif %}"
         # === TRAEFIK: SERVICES ===
         - "traefik.http.services.skseek{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port={{ skseek.PORT | default('3000') }}"

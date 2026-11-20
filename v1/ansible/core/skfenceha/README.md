@@ -114,6 +114,11 @@ as that same node's own Traefik watch is concerned. `skfenceha.CERTS_WATCH_IMAGE
 image and poll interval; `certs-generated.yml` is a framework-reserved
 dynamic file name (an instance's `EXTRA_DYNAMIC_FILES` cannot use it).
 
+**Strict SNI (`DEFAULT_SNI_STRICT`)**: routers use the `default` TLS options in
+`tls.yml`. `skfenceha.DEFAULT_SNI_STRICT: true` makes `default` refuse a handshake whose
+SNI matches no certificate; unset (`false`), that host is served Traefik's self-signed
+default cert. Same knob as skfence.
+
 **Instance-owned dynamic files (`EXTRA_DYNAMIC_FILES`)**: the playbooks render
 a fixed set of Traefik dynamic files (`routers.yml`, `services.yml`,
 `middlewares.yml`, `tls.yml`). An instance that needs routes of its own (for

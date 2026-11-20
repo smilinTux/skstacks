@@ -9,6 +9,13 @@
 {%- set _mw_raw = skmesh.TRAEFIK_MIDDLEWARES | default([], true) -%}
 {%- set _skmesh_mw = (_mw_raw.split(',') if _mw_raw is string else _mw_raw) | map('trim') | reject('equalto', '') | join(',') -%}
 {%- set _mode = skmesh.AUTH_MODE | default('standalone') | string | lower -%}
+{%- set _turn_domain = skmesh.TURN_DOMAIN | default('turn.' ~ _base_domain, true) -%}
+{%- set _turn_tls = (skmesh.DEPLOY_COTURN | default(false)) and ((skmesh.TURN_TLS | default(false) | string | lower) in ['true', 'yes', '1']) -%}
+{#- The dumper's output root, not the domain's own directory: the dumper runs
+    with --clean and recreates every domain directory on each dump (a bind
+    mount of one would keep the deleted directory), and Swarm rejects a bind
+    mount whose source does not exist yet (before Traefik has the cert). -#}
+{%- set _turn_cert_dir = skmesh.TURN_TLS_DUMP_DIR | default('/var/data/runtime/skfence-' ~ env ~ '/certs', true) -%}
 {%- set _sso = skmesh.SSO_HOST | default('sso' ~ ('' if env == 'prod' else '-' ~ env) ~ '.' ~ _base_domain) -%}
 version: "3.9"
 
@@ -23,6 +30,14 @@ networks:
     external: true
   cloud-public-{{ env }}:
     external: true
+{% if skmesh.DEPLOY_COTURN | default(false) %}
+  # Swarm's predefined host network. A swarm service ignores network_mode, so
+  # this is how coturn gets the host's own sockets: 3478/5349 and the whole
+  # relay range bound directly, real client addresses, no per-port mapping.
+  hostnet:
+    external: true
+    name: host
+{% endif %}
 
 services:
 {# Postgres 18+ images moved PGDATA to /var/lib/postgresql/<major>/docker and declare VOLUME
@@ -110,7 +125,7 @@ services:
     logging: *logging
 
   management:
-    image: {{ skmesh.MANAGEMENT_IMAGE | default('netbirdio/management:0.82.0@sha256:07c8f979fcc980678cc64e584cf6b7b27204ceb4c871531b29e2dce39592e9ff') }}
+    image: {{ skmesh.MANAGEMENT_IMAGE | default('netbirdio/management:0.83.1@sha256:77c74f342e4d36251ad4b920c2f21a9f13e62c69d8ae51a2ec5060052cd485d8') }}
     container_name: skmesh-management
     env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
 {% if _mode == 'authentik' %}
@@ -181,7 +196,7 @@ services:
       - postgres
 
   signal:
-    image: {{ skmesh.SIGNAL_IMAGE | default('netbirdio/signal:0.82.0@sha256:0c0c38bbef7dcdfa1822b6d59844615db55dc7303b664e7aed498151edc0dbfb') }}
+    image: {{ skmesh.SIGNAL_IMAGE | default('netbirdio/signal:0.83.1@sha256:9ceb99a656b3b35b573afcce91507db8c39e0f9412a7634be0a620f4e74c5b58') }}
     container_name: skmesh-signal
     env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
     networks:
@@ -211,7 +226,7 @@ services:
       - management
 
   relay:
-    image: {{ skmesh.RELAY_IMAGE | default('netbirdio/relay:0.82.0@sha256:8f6b9e4193653ede89e83dd4aa4e2cf2562579b3e2481dcf259a7ab28bcd5fa1') }}
+    image: {{ skmesh.RELAY_IMAGE | default('netbirdio/relay:0.83.1@sha256:7b52c1077c964ea01535c311a5e57d7c1c9b7ff4c974ff42995772e4c3546d1a') }}
     env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
     # Peers dial wss://<NB_EXPOSED_ADDRESS host>/relay; Traefik terminates
     # TLS on :443 and forwards the WebSocket here in plain HTTP.
@@ -247,7 +262,7 @@ services:
     # depends on (that image is not published here - see README). Default:
     # the upstream dashboard release paired with the management version
     # (dashboard v2.96.0 for NetBird 0.82), tag plus digest.
-    image: {{ skmesh.DASHBOARD_IMAGE | default('netbirdio/dashboard:v2.96.0@sha256:340b13c00b84349572a2acc5605e907cb09250a9e6461c757097eabdb8e02f2c') }}
+    image: {{ skmesh.DASHBOARD_IMAGE | default('netbirdio/dashboard:v2.97.0@sha256:203b2dc90dc20d3fd45729caac7c922deb399586a68202e0a35be099720bac7d') }}
     container_name: skmesh-dashboard
     env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
     networks:
@@ -267,6 +282,15 @@ services:
 {% endif %}
         - "traefik.http.routers.skmesh-dash.tls.certresolver=main"
         - "traefik.http.services.skmesh-dash.loadbalancer.server.port=80"
+{% if _turn_tls %}
+        # Only so Traefik obtains (and renews) a certificate for the TURN
+        # domain; skfence's certs-dumper writes it where coturn mounts it.
+        # The router answers nothing (noop@internal): TURN is not HTTP.
+        - "traefik.http.routers.skmesh-turn-cert.rule=Host(`{{ _turn_domain }}`)"
+        - "traefik.http.routers.skmesh-turn-cert.entrypoints=websecure"
+        - "traefik.http.routers.skmesh-turn-cert.tls.certresolver=main"
+        - "traefik.http.routers.skmesh-turn-cert.service=noop@internal"
+{% endif %}
         - "traefik.swarm.network=cloud-public-{{ env }}"
     logging: *logging
     depends_on:
@@ -274,21 +298,26 @@ services:
 
 {% if skmesh.DEPLOY_COTURN | default(false) %}
   coturn:
-    image: coturn/coturn:4.18.0-trixie
-    container_name: skmesh-coturn
-    network_mode: host
-    command:
-      - -n
-      - --log-file=stdout
-      - --min-port=49152
-      - --max-port=65535
-      - --realm=turn.{{ _base_domain }}
-      - --static-auth-secret={{ skmesh.TURN_SECRET }}
-    env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
+    # Config (with the shared secret) and the entrypoint script are rendered
+    # files, so no secret sits in the service spec. Starts as root to read the
+    # TLS key; turnserver drops to nobody (proc-user). See README "TURN / STUN".
+    image: {{ skmesh.COTURN_IMAGE | default('coturn/coturn:4.19.1-trixie@sha256:81f69dc7cb672eb73ab3414afbb199637c37ab8069919d1c6caaed96ff16fb88') }}
+    user: "0:0"
+    entrypoint: ["/bin/sh", "/coturn-run.sh"]
+    networks:
+      - hostnet
+    volumes:
+      - /var/data/config/skmesh-{{ env }}/turnserver.conf:/etc/coturn/turnserver.conf:ro
+      - /var/data/config/skmesh-{{ env }}/coturn-run.sh:/coturn-run.sh:ro
+{% if _turn_tls %}
+      - {{ _turn_cert_dir }}:/certs-dump:ro
+{% endif %}
     deploy:
       mode: global
       placement:
-        constraints:
-          - node.role == manager
+        constraints: {{ skmesh.COTURN_PLACEMENT_CONSTRAINTS | default(['node.role == manager'], true) | tojson }}
+      restart_policy:
+        condition: any
+        delay: 5s
     logging: *logging
 {% endif %}

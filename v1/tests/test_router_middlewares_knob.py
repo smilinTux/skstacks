@@ -56,6 +56,27 @@ SERVICES = {
 # same way skgym/skrac never joined this generic dict.
 CASES = [(svc, sfx) for svc, routers in SERVICES.items() for sfx in routers]
 OVERRIDE = "crowdsec-bouncer@file,default@file"
+# skpdf, skpeek and skseek have no login of their own: since the SSO-by-default
+# change their router appends SSO_MIDDLEWARE (default authentik@file) to whatever
+# TRAEFIK_MIDDLEWARES resolves to (test_sso_default_skpeek_skseek_skpdf.py).
+# The knob semantics tested here are unchanged, so these tests expect that one
+# suffix on those routers and strip it before comparing with the v2.26.4 bytes.
+SSO_DEFAULT = {"skpdf", "skpeek", "skseek"}
+SSO_SUFFIX = ",authentik@file"
+
+
+def _sso(svc, chain):
+    return chain + SSO_SUFFIX if svc in SSO_DEFAULT else chain
+
+
+def _drop_sso(text, svc):
+    """Strip the appended SSO middleware from the router labels of SSO_DEFAULT services."""
+    if svc not in SSO_DEFAULT:
+        return text
+    return "".join(
+        l.replace(SSO_SUFFIX + '"', '"') if ".middlewares=" in l else l
+        for l in text.splitlines(keepends=True)
+    )
 
 
 def compose_path(svc):
@@ -101,9 +122,12 @@ def test_unset_knobs_render_byte_identical_to_v2_26_4(svc, env):
     # skgit's API router is new since v2.26.4 (test_skgit_api_router_*): the
     # rest of the stack must still match the baseline byte for byte.
     text = render(svc, env)
+    base = (BASELINE / f"{svc}-{env}.yml").read_text()
+    base = _drop_tls_options(base)
     if svc == "skgit":
         text = _drop_skgit_api(text)
-    assert normalize_images(text) == normalize_images((BASELINE / f"{svc}-{env}.yml").read_text())
+    text = _drop_sso(text, svc)
+    assert normalize_images(text) == normalize_images(base)
 
 
 _SKGIT_INIT_COMMENT = (
@@ -112,6 +136,12 @@ _SKGIT_INIT_COMMENT = (
     "    # toward the container pids limit",
     "    # stall). Docker's init",
 )
+
+
+def _drop_tls_options(text):
+    """Drop the v2.26.4 routers' tls.options labels: every router now uses Traefik's
+    default TLS options (skstacks #463, see test_skgit_routers_set_no_tls_options)."""
+    return "".join(l for l in text.splitlines(keepends=True) if ".tls.options=" not in l)
 
 
 def _drop_skgit_api(text):
@@ -126,7 +156,7 @@ def _drop_skgit_api(text):
 @pytest.mark.parametrize("svc,sfx", CASES)
 def test_default_chain_is_the_old_hardcoded_one(svc, sfx, env):
     _, default = SERVICES[svc][sfx]
-    assert router_middlewares(render(svc, env), svc, env, sfx) == [default(env)]
+    assert router_middlewares(render(svc, env), svc, env, sfx) == [_sso(svc, default(env))]
 
 
 @pytest.mark.parametrize("svc", SERVICES)
@@ -141,10 +171,10 @@ def test_empty_knobs_render_byte_identical_to_unset(svc):
 def test_override_replaces_only_that_routers_chain(svc, sfx, env):
     knob, _ = SERVICES[svc][sfx]
     text = render(svc, env, **{knob: OVERRIDE})
-    assert router_middlewares(text, svc, env, sfx) == [OVERRIDE]
+    assert router_middlewares(text, svc, env, sfx) == [_sso(svc, OVERRIDE)]
     for other, (_, default) in SERVICES[svc].items():
         if other != sfx:
-            assert router_middlewares(text, svc, env, other) == [default(env)]
+            assert router_middlewares(text, svc, env, other) == [_sso(svc, default(env))]
     # nothing else in the stack moves: only that one label line differs.
     # Exception: putting crowdsec-bouncer on skgit's main router also renders the
     # skgit runner RPC router (test_skgit_runner_rpc_router_follows_the_crowdsec_knob).
@@ -154,7 +184,7 @@ def test_override_replaces_only_that_routers_chain(svc, sfx, env):
     new = [l for l in text.splitlines() if not (svc == "skgit" and ("-runner-rpc." in l or "-api." in l))]
     assert len(old) == len(new)
     diff = [(a, b) for a, b in zip(old, new) if a != b]
-    assert len(diff) == 1 and diff[0][1].rstrip().endswith(f'.middlewares={OVERRIDE}"'), diff
+    assert len(diff) == 1 and diff[0][1].rstrip().endswith(f'.middlewares={_sso(svc, OVERRIDE)}"'), diff
 
 
 @pytest.mark.parametrize("svc", SERVICES)
@@ -185,7 +215,6 @@ RUNNER_RPC_LIVE = [
     "traefik.http.routers.skgit-runner-rpc.entrypoints=websecure",
     "traefik.http.routers.skgit-runner-rpc.tls=true",
     "traefik.http.routers.skgit-runner-rpc.tls.certresolver=main",
-    "traefik.http.routers.skgit-runner-rpc.tls.options=intermediate@file",
     "traefik.http.routers.skgit-runner-rpc.priority=200",
     "traefik.http.routers.skgit-runner-rpc.middlewares=default-no-error-pages@file",
     "traefik.http.routers.skgit-runner-rpc.service=skgit",
@@ -267,3 +296,32 @@ def test_skgit_forgejo_runs_under_an_init():
     """forgejo as PID 1 never reaps git zombies; tini does."""
     svc = yaml.safe_load(render("skgit", "prod"))["services"]["forgejo"]
     assert svc["init"] is True
+
+
+
+@pytest.mark.parametrize("env", ENVS)
+@pytest.mark.parametrize("bouncer", (False, True))
+def test_skgit_routers_set_no_tls_options(env, bouncer):
+    # A tls.options name on skgit's routers made Traefik answer 421 Misdirected
+    # Request on runner HTTP/2 connections opened while skgit was down, until the
+    # runner restarted (2026-11-18). Every skgit router stays on Traefik's default.
+    over = {"TRAEFIK_MIDDLEWARES": "crowdsec-bouncer@file,default-no-crowdsec@file"} if bouncer else {}
+    text = render("skgit", env, **over)
+    assert "routers.skgit" in text
+    if bouncer:
+        assert "-runner-rpc.rule=" in text
+    assert ".tls.options=" not in text
+
+
+def test_no_template_defaults_a_router_to_a_named_tls_option():
+    # Fleet-wide form of the skgit rule (skstacks #463): routers use Traefik's
+    # default TLS options, which skfence/skfenceha define identical to
+    # intermediate. A hardcoded or defaulted option name brings back the 421 trap.
+    bad = []
+    for p in (V1 / "ansible").rglob("*"):
+        if p.suffix not in (".j2", ".yml") or not p.is_file():
+            continue
+        t = p.read_text(errors="ignore")
+        if re.search(r'tls\.options=(intermediate|modern|old)@file"', t) or "default('intermediate@file'" in t:
+            bad.append(str(p.relative_to(V1)))
+    assert bad == []

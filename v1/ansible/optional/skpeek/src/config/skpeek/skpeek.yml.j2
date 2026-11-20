@@ -1,5 +1,16 @@
 version: '3.8'
 
+{# Sign-in: skpeek has no login of its own, so its router carries the sksso
+   forward-auth middleware (SSO_MIDDLEWARE, default authentik@file, defined by
+   skfence/skfenceha) APPENDED to the chain, including an instance override of
+   TRAEFIK_MIDDLEWARES, and never twice when the chain already names it.
+   SSO_MIDDLEWARE: none (or false) opts out for a deliberately public instance.
+   Empty or null keeps the default (fail closed). #}
+{% set _skpeek_sso = skpeek.SSO_MIDDLEWARE | default(none) %}
+{% set _skpeek_sso = 'false' if _skpeek_sso is sameas false else ('' if _skpeek_sso is none else (_skpeek_sso | string | trim)) %}
+{% set _skpeek_sso = '' if (_skpeek_sso | lower) in ('none', 'false') else (_skpeek_sso or 'authentik@file') %}
+{% set _skpeek_chain = skpeek.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file', true) | string %}
+{% set skpeek_middlewares = _skpeek_chain ~ ((',' ~ _skpeek_sso) if (_skpeek_sso and _skpeek_sso not in (_skpeek_chain.split(',') | map('trim') | list)) else '') %}
 services:
   skpeek:
     image: {{ skpeek_image | default('docker.io/searxng/searxng@sha256:a31763b7af3caf6ae9aac1816ba774214eb550252e06a4998f276ded8d60461b') }}
@@ -41,8 +52,7 @@ services:
         - "traefik.http.routers.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
         - "traefik.http.routers.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
         - "traefik.http.routers.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
-        - "traefik.http.routers.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
-        - "traefik.http.routers.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares={{ skpeek.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file', true) }}"
+        - "traefik.http.routers.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares={{ skpeek_middlewares }}"
         - "traefik.http.routers.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.service=skpeek{% if env != 'prod' %}-{{ env }}{% endif %}"
         # === TRAEFIK: SERVICES ===
         - "traefik.http.services.skpeek{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=8080"
