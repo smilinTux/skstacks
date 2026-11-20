@@ -26,6 +26,7 @@ works out which router Traefik would pick for a path, and asserts:
 The chain swap itself (CrowdSec, rate limit and headers kept, upload buffering
 kept, custom middlewares kept, knob replaces) is tested per behaviour below.
 """
+import json
 import pathlib
 import re
 
@@ -79,6 +80,10 @@ VAULT_CHAIN_KEY = {"skbook": "router_middlewares", "skstream": "router_middlewar
 def _jinja():
     e = jinja2.Environment(undefined=jinja2.ChainableUndefined, trim_blocks=True, keep_trailing_newline=True)
     e.filters["bool"] = lambda v: v if isinstance(v, bool) else str(v).lower() in ("yes", "true", "1", "on")
+    # Ansible's JSON filters, which templates on main use (skpatch-hosts renders hosts with to_json).
+    e.filters["to_json"] = lambda v, **kw: json.dumps(v, **kw)
+    e.filters["to_nice_json"] = lambda v, indent=4, **kw: json.dumps(v, indent=indent, sort_keys=True, **kw)
+    e.filters["from_json"] = json.loads
     return e
 
 
