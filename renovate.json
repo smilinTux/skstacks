@@ -204,6 +204,77 @@
         "v1/ansible/optional/skmon/**"
       ],
       "minimumReleaseAge": "14 days"
+    },
+    {
+      "description": "Nextcloud supports MariaDB up to 12.3 LTS; 13.x is a rolling release it does not support (migration plan 2026-11-20)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "mariadb"
+      ],
+      "allowedVersions": "<13"
+    },
+    {
+      "description": "Fleet Postgres target is 18 (guarded roles); 19.0 is unvalidated. Revisit at 19.1+ (migration plan 2026-11-20)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "postgres",
+        "pgvector/pgvector",
+        "prodrigestivill/postgres-backup-local"
+      ],
+      "allowedVersions": "<19"
+    },
+    {
+      "description": "skgallery: the dump sidecar must match Immich's Postgres server (14, upstream compose); hold both until Immich moves",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchFileNames": [
+        "v1/ansible/optional/skgallery/**"
+      ],
+      "matchPackageNames": [
+        "postgres",
+        "ghcr.io/immich-app/postgres"
+      ],
+      "allowedVersions": "<15"
+    },
+    {
+      "description": "skflow/skbom have no Postgres major guard or PG18 mount layout yet; stay on 17 until they do",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchFileNames": [
+        "v1/ansible/optional/skflow/**",
+        "v1/ansible/optional/skbom/**",
+        "v1/ansible/optional/skmem-pg/**"
+      ],
+      "matchPackageNames": [
+        "postgres"
+      ],
+      "allowedVersions": "<18"
+    },
+    {
+      "description": "MySQL: LTS 8.4 line only, no innovation releases",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "mysql"
+      ],
+      "allowedVersions": "<9"
+    },
+    {
+      "description": "Promtail is deprecated; skmon moves to Alloy instead of promtail 3",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "grafana/promtail"
+      ],
+      "allowedVersions": "<3"
     }
   ],
   "rebaseWhen": "conflicted"
