@@ -51,7 +51,9 @@ def test_included_file_selects_a_manager_then_registers_through_it():
     on_node = [t for t in tasks if t.get("delegate_to") == "{{ skp_reg_node }}"]
     assert [t["name"] for t in on_mgr] == ["Find the node running the dashboard"]
     assert {t["name"] for t in on_node} == {"Stage the registrar on the dashboard's node",
-                                            "Register this run's target nodes as dashboard systems (creates, never edits or deletes)"}
+                                            "Register this run's target nodes as dashboard systems (creates, never edits or deletes)",
+                                            "Read the dashboard's systems and recent sudo failures (compliance report)",
+                                            "Record this run's sudo coverage on the dashboard's node"}
     for t in on_mgr + on_node:
         assert "ansible_connection" in t.get("connection", "") and t.get("become") is True
     reg = next(t for t in on_node if t["name"].startswith("Register"))
@@ -93,3 +95,32 @@ def test_old_api_token_settings_are_refused_with_the_migration_path():
     refuse = next(t for p in plays for t in _tasks(p) if t.get("name") == "Refuse the old API-token registration settings")
     assert "API_TOKEN" in refuse["when"]
     assert "API tokens cannot configure SSH connections" in refuse["fail"]["msg"] and "REGISTER_AS" in refuse["fail"]["msg"]
+
+
+def test_dashboard_lookup_runs_in_check_mode_and_the_registrar_does_not():
+    """A --check --diff run must not fail on the read-only dashboard lookup
+    (found live: it was skipped, so the next task saw "no running task"), and
+    the registrar itself, which writes, must stay skipped under --check."""
+    text = (Path(__file__).resolve().parents[1] / "ansible/optional/skpatch-hosts/tasks/register_systems.yml").read_text()
+    lookup = text.split("- name: Find the node running the dashboard")[1].split("- name:")[0]
+    assert "check_mode: false" in lookup
+    registrar = text.split("- name: Register this run's target nodes")[1]
+    assert "check_mode" not in registrar.split("- name:")[0]
+
+
+def test_a_skipped_registrar_under_check_is_not_reported_as_a_failure():
+    text = (Path(__file__).resolve().parents[1] / "ansible/optional/skpatch-hosts/tasks/register_systems.yml").read_text()
+    gate = text.split("- name: Fail if host registration failed")[1]
+    assert "not (skp_reg_result.skipped | default(false))" in gate
+    assert "'registration: ok' not in" in gate
+
+
+def test_the_coverage_stamp_is_written_only_for_hosts_whose_sudoers_was_written_and_never_under_check():
+    import yaml as _y
+    tasks = _y.safe_load((ROLE / "tasks" / "register_systems.yml").read_text())
+    t = next(t for t in tasks if t["name"] == "Record this run's sudo coverage on the dashboard's node")
+    assert t["when"] == "not ansible_check_mode" and t["become"] is True
+    assert "skp_sudoers_write" in t["args"]["stdin"] and "provisioned_at" in t["args"]["stdin"]
+    assert "skpatch-coverage.json" in t["shell"] and "os.replace" in t["shell"]
+    play = (ROLE / "provision_skpatch_hosts_nodes.yml").read_text()
+    assert "register: skp_sudoers_write" in play.split("- name: Write the sudoers rule (present)")[1].split("- name:")[0]

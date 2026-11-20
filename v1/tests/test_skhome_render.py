@@ -125,7 +125,7 @@ def test_default_auth_mode_is_sso_authentik_on_the_whole_router(base_out):
     lab = labels(compose(base_out)["services"]["app"])
     assert lab["traefik.http.routers.skhome.rule"] == "Host(`skhome.render.example.test`)"
     assert lab["traefik.http.routers.skhome.middlewares"] == "default-no-error-pages@file,authentik@file"
-    assert lab["traefik.http.routers.skhome.tls.options"] == "intermediate@file"
+    assert "traefik.http.routers.skhome.tls.options" not in lab  # default TLS options (skstacks #463)
     assert lab["traefik.http.services.skhome.loadbalancer.server.port"] == "3000"
     assert lab["traefik.http.services.skhome.loadbalancer.healthcheck.path"] == "/api/health"
 

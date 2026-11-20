@@ -225,7 +225,7 @@ UI's own settings/session state backed up anyway can point `skbackup` at
 `default-no-error-pages@file` (skfenceha: rate limit, security headers,
 gzip) **not** the usual `default@file`: the dashboard's own API routes
 return JSON errors its UI needs to read, same reasoning as skhome.
-`TLS_OPTIONS` defaults to `intermediate@file`; `none` omits the label.
+`TLS_OPTIONS` defaults to `none`, which omits the label (Traefik default options, identical to intermediate; skstacks #463).
 
 ### Health checks
 
@@ -262,7 +262,7 @@ sksec_web:
   # OIDC_END_SESSION: true
   # HOSTNAME: sksec-web.example.com
   # TRAEFIK_MIDDLEWARES: default-no-error-pages@file
-  # TLS_OPTIONS: intermediate@file
+  # TLS_OPTIONS: none
   # DATA_PATH: /var/data/sksec-web-<env>/data
   # DATA_NODE: ""
   # PLACEMENT_CONSTRAINTS: ["node.role == worker"]
@@ -304,7 +304,7 @@ sksso side (the Authentik blueprint).
 On by default (`sksec_web.AUTHENTIK_TILE`, default `true`; set to `false` to opt out): the next deploy creates
 or updates an Authentik `core.Application` named `AUTHENTIK_TILE_NAME`
 (default `SKSec Web (CrowdSec)`), launch URL `https://<the public host above>`, icon
-`AUTHENTIK_TILE_ICON` (default `fa://fa-shield-halved`), bound to the group
+`AUTHENTIK_TILE_ICON` (default `fa://fa-shield-alt`), bound to the group
 `AUTHENTIK_TILE_GROUP` (default `skadmin`, which must already exist).
 **`AUTH_MODE: sso`/`local`:** this adds a provider-less dashboard bookmark only;
 it creates no provider and changes nothing about

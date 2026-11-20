@@ -2,7 +2,7 @@
 
 Deploys and operates [linux-update-dashboard](https://github.com/TheDuffman85/linux-update-dashboard) (AGPL-3.0) on the swarm: a self-hosted, SSH-driven dashboard for Linux package updates across a fleet of hosts, report-only by default. Called by: the operator (deploys and provisioning), and, for the image-patching half of the same program, `skflow` `f/skpatch` flows (see [`docs/skpatch-program.md`](../../../../docs/skpatch-program.md)). Companion: [README.md](./README.md) (what it is, the security model, the package-manager matrix).
 
-Conventions in this file: behaviour without a marker is merged on `main`. **Pending in PR #N** marks behaviour described from an open PR's branch. The PR list is in README "Pending work". Placeholders: `<host>`, `<estate>`, `<env>`, `<instance>`, `<skhub-url>`; real names live in the instance repo.
+Conventions in this file: behaviour without a marker is merged on `main`. **Since PR #N** marks behaviour that PR added; all of it is on `main` (#403 and #406 shipped in v2.26.22). Placeholders: `<host>`, `<estate>`, `<env>`, `<instance>`, `<skhub-url>`; real names live in the instance repo.
 
 ## 1. Overview
 
@@ -43,7 +43,7 @@ flowchart TD
     class armed gated;
 ```
 
-Onboarding flow (one provisioning run; the parts that are **Pending in PR #406** are marked):
+Onboarding flow (one provisioning run; the parts added by **PR #406** are marked):
 
 ```mermaid
 sequenceDiagram
@@ -56,9 +56,9 @@ sequenceDiagram
 
     Op->>PB: run -l <host> --check --diff, then for real
     PB->>H: create group + user (fixed uid), authorized_key exclusive
-    Note over PB,H: Pending #406: detect apt, dpkg, pacman, flatpak, pvesh; refuse an uncovered manager; skip a paused host
+    Note over PB,H: Since #406: detect apt, dpkg, pacman, flatpak, pvesh; refuse an uncovered manager; skip a paused host
     PB->>H: render /etc/sudoers.d/skpatch, visudo -cf, install (0440)
-    Note over PB,H: Pending #403/#406: install wrappers and dpkg conffile policy on armed hosts
+    Note over PB,H: Since #403/#406: install wrappers and dpkg conffile policy on armed hosts
     PB->>M: find the node running the dashboard task
     PB->>D: docker exec: register_systems.js (systems, schedules, channels)
     D-->>PB: "registration: ok" or the failure line
@@ -120,12 +120,23 @@ python -m pytest v1/tests/test_skpatch_hosts_provision.py -v
 # enforces the session signature and CSRF, plus the include
 python -m pytest v1/tests/test_skpatch_hosts_register_systems_js.py v1/tests/test_skpatch_hosts_registration_include.py -v
 
-# Repo-wide gates this role must also keep passing
+# Sudo coverage: the template against the pinned image's own sudo commands
+# (fails after an image bump until the fixture is regenerated and reviewed)
+python -m pytest v1/tests/test_skpatch_hosts_sudo_coverage.py -v
+python3 v1/ansible/optional/skpatch-hosts/tools/extract_sudo_commands.py   # regenerate (docker)
+
+# Fleet compliance tool and its read-only dashboard report, the Talk hook
+python -m pytest v1/tests/test_skpatch_hosts_compliance.py -v
+
+# Dashboard watch (immediate classes) and the daily summary
+python -m pytest v1/tests/test_skpatch_hosts_watch.py -v
+
+# Repo-wide gate this role must also keep passing
 python -m pytest v1/tests/test_no_latest_images.py -v
 python -m pytest v1/tests/test_portal_tile_lint.py -v
 ```
 
-> **Pending in PR #403 / PR #406.** `test_skpatch_hosts_wrappers.py` and `test_skpatch_hosts_wrappers_pacman_flatpak.py` run each wrapper through `sh`, `dash` and `bash` against a stub binary (rejects option-shaped and malformed arguments, checks the exact argv and that the caller's environment does not leak). `test_skpatch_hosts_sudo_coverage.py` fails when the pinned image is not the fixture's image (so a Renovate bump fails CI), when the image runs a sudo command no decision in `sudo-coverage.yml` covers, and when the rendered template misses an exact rule or grants a rule no decision backs. `test_skpatch_hosts_compliance.py` covers the compliance tool.
+> **Since PR #403 and #406.** `test_skpatch_hosts_wrappers.py` and `test_skpatch_hosts_wrappers_pacman_flatpak.py` run each wrapper through `sh`, `dash` and `bash` against a stub binary (rejects option-shaped and malformed arguments, checks the exact argv and that the caller's environment does not leak). `test_skpatch_hosts_sudo_coverage.py` fails when the pinned image is not the fixture's image (so a Renovate bump fails CI), when the image runs a sudo command no decision in `sudo-coverage.yml` covers, and when the rendered template misses an exact rule or grants a rule no decision backs. `test_skpatch_hosts_compliance.py` covers the compliance tool.
 
 The green-bar gate that blocks a release is the framework's own release gate (`framework-tests.yml` plus the end-to-end harness run); nothing in this role bypasses it.
 
@@ -277,7 +288,7 @@ skpatch_hosts:
   OIDC_READ_ONLY_GROUPS: ""                 # CSV, default none
   OIDC_UNMATCHED_ROLE: deny                 # deny | admin | read-only
   OIDC_END_SESSION: true
-  TLS_OPTIONS: ""                           # default intermediate@file; "none" = no tls.options label
+  TLS_OPTIONS: ""                           # default "none" = no tls.options label (Traefik default options, skstacks #463)
   TZ: UTC
   LUDASH_LOG_LEVEL: info
   extra_env: {}                             # any other upstream app variable, verbatim into skpatch-hosts.env
@@ -285,6 +296,7 @@ skpatch_hosts:
   DATA_PATH: ""                             # default /var/data/skpatch-hosts-<env>/data
   DATA_NODE: ""                             # pin dashboard to this node (required with a local path)
   PLACEMENT_CONSTRAINTS: []                 # default ["node.role == worker"]
+  EXTRA_HOSTS: []                           # ["host:address", ...] added to the container's /etc/hosts (README "Notification delivery")
   HEALTH_CHECK_INTERVAL: 30s
   HEALTH_CHECK_TIMEOUT: 10s
   HEALTH_CHECK_RETRIES: 3
@@ -304,6 +316,7 @@ skpatch_hosts:
   PROVISION_USER: skpatch-ro                # the low-privilege account's name
   PROVISION_UID: 5201                       # its fixed uid and gid; never a system uid (containers share the host's uid space)
   SSH_PUBLIC_KEY: ""                        # required by provision_skpatch_hosts_nodes.yml; one keypair per estate
+  DPKG_KEEP_CONFFILES: true                 # armed hosts answer dpkg's conffile prompt with its default (README "What an armed host gets")
   # Host auto-registration (README.md "Automatic host registration"); REGISTER_AS plus a credential, else skipped
   REGISTER_AS: ""                           # an existing dashboard admin's username (local or OIDC)
   SSH_PRIVATE_KEY: ""                       # private half of SSH_PUBLIC_KEY; the registrar creates the credential from it
@@ -336,9 +349,22 @@ This beats the vault's instance-wide `ALLOW_ACTIONS: true` unconditionally; noth
 | `skpatch_hosts_upgrade_mode` | the vault `UPGRADE_MODE` | `upgrade` or `full-upgrade` for that one system. |
 | `skpatch_hosts_dashboard_address`, `skpatch_hosts_dashboard_port` | `ansible_host`, `ansible_port` | What the dashboard container dials, when the controller's address does not resolve there. |
 
-> **Pending in PR #406.** Also `skpatch_hosts_paused` (maintenance pause), `skpatch_hosts_proxmox` (force the `pvesh` guard line), `skpatch_hosts_pkg_managers` (override package-manager detection, for example `[pacman, flatpak]`), `skpatch_hosts_unsupported_managers_ok` (allow a manager the template does not cover, for example `[dnf]`), and vault keys `EXTRA_HOSTS`, `DPKG_KEEP_CONFFILES` and `DASHBOARD_SETTINGS` (default `{cmd_timeout_seconds: 600}`).
+> **Since PR #406.** Also `skpatch_hosts_paused` (maintenance pause), `skpatch_hosts_proxmox` (force the `pvesh` guard line), `skpatch_hosts_pkg_managers` (override package-manager detection, for example `[pacman, flatpak]`), `skpatch_hosts_unsupported_managers_ok` (allow a manager the template does not cover, for example `[dnf]`), and vault keys `EXTRA_HOSTS`, `DPKG_KEEP_CONFFILES` and `DASHBOARD_SETTINGS` (default `{cmd_timeout_seconds: 600}`).
 
-**Package managers other than apt and snap.** The merged template covers apt and snap only. A pacman, flatpak, dnf, yum, apk or deb-get host is provisioned without sudo lines for its manager, so every dashboard check on it fails with "sudo: a password is required" (RB-SKPATCH-07). Do not add lines by hand: copy the command from the image's own `# Sudoers-relevant command:` annotation, never from the upstream README, and add it to the template. **Pending in PR #406:** pacman and flatpak are covered, and provisioning refuses a host with a manager that is still uncovered.
+**Package managers other than apt and snap.** The merged template covers apt and snap only. A pacman, flatpak, dnf, yum, apk or deb-get host is provisioned without sudo lines for its manager, so every dashboard check on it fails with "sudo: a password is required" (RB-SKPATCH-07). Do not add lines by hand: copy the command from the image's own `# Sudoers-relevant command:` annotation, never from the upstream README, and add it to the template. **Since PR #406:** pacman and flatpak are covered, and provisioning refuses a host with a manager that is still uncovered.
+
+**Selected-package upgrades.** An armed host also gets two root-owned
+wrappers, `/usr/local/sbin/skpatch-apt-only-upgrade` and
+`/usr/local/sbin/skpatch-snap-refresh`, granted in sudoers by absolute path
+(no wildcard, ever: an `apt-get`/`snap` wildcard is root). Each validates
+every argument against a strict regex and execs one fixed command. **Known
+limitation:** the pinned dashboard's "upgrade selected packages" still calls
+`apt-get`/`snap` directly (`server/services/script-service.ts`,
+`builtinUpgradeSelectedCommand`, lines 1134 and 1147 of 2026.10.9) and has no
+env or config knob for it; point it at the wrappers once per system with a
+custom script override. Recipe, regexes and caveats: README "Selected-package
+upgrades". Applied with `provision_skpatch_hosts_nodes.yml`; do not apply it
+to a host whose skpatch sudoers is paused for maintenance.
 
 ## 7. API / Reference
 
@@ -356,7 +382,7 @@ Files a provisioned host carries (merged):
 | `/etc/sudoers.d/skpatch` | `0440` root:root | The exact-command allowlist, validated by `visudo -cf` before install. |
 | `~<PROVISION_USER>/.ssh/authorized_keys` | per `authorized_key` | Exactly the estate public key. |
 
-> **Pending in PR #403 / PR #406.** `/usr/local/sbin/skpatch-apt-only-upgrade`, `skpatch-snap-refresh`, `skpatch-pacman-upgrade`, `skpatch-flatpak-update` (`root:root`, `0755`, armed hosts only); `/etc/dpkg/dpkg.cfg.d/90-skpatch-hosts` (`force-confdef`, `force-confold`, apt hosts, armed only); `/etc/skpatch-hosts.paused` (the emergency pause marker, written by an operator, not by the playbook).
+> **Since PR #403 and #406.** `/usr/local/sbin/skpatch-apt-only-upgrade`, `skpatch-snap-refresh`, `skpatch-pacman-upgrade`, `skpatch-flatpak-update` (`root:root`, `0755`, armed hosts only); `/etc/dpkg/dpkg.cfg.d/90-skpatch-hosts` (`force-confdef`, `force-confold`, apt hosts, armed only); `/etc/skpatch-hosts.paused` (the emergency pause marker, written by an operator, not by the playbook).
 
 Registrar output (status lines, never secrets): `... : created`, `... : updated`, `... : unchanged`, `... : key synced`, `upgrade mode set`, and a final `registration: ok`. The play fails unless `registration: ok` is present.
 
@@ -375,10 +401,6 @@ Symptom to check. Runbook ids are in Appendix A; known-error ids (KE-SKPATCH-n) 
 | A check or action fails with `sudo: a password is required` | KE-SKPATCH-1. RB-SKPATCH-07. |
 | A node still cannot be upgraded or rebooted with `ALLOW_ACTIONS: true` | That node's own `skpatch_hosts_allow_actions` is `false`. The vault flag never overrides a host-level `false`, by design. |
 | Upgrade-all ends "warning" on the snap step | The host was provisioned before the `snap refresh` sudoers line existed; rerun provisioning against it. |
-| Repair fails with `sudo: a password is required` | On `main` the `dpkg --configure -a` line is not granted. RB-SKPATCH-05 (do it by hand now). Pending in PR #406. |
-| "Upgrade selected" fails with `sudo: a password is required` | On `main` no rule exists, on purpose (a wildcard would be root). Pending in PR #403 and PR #406: wrappers plus default scripts. Until then use Upgrade all, or run the command on the host. |
-| An upgrade fails with `debconf: unable to initialize frontend` or `end of file on stdin at conffile prompt` | KE-SKPATCH-2. Pending in PR #406. Until then RB-SKPATCH-05 after each occurrence. |
-| A reboot of a Proxmox host says "Reboot blocked" | KE-SKPATCH-4. RB-SKPATCH-06. |
 | A command shows a timeout in the history | RB-SKPATCH-10. |
 | `provision_skpatch_hosts_nodes.yml` leaves an account on a node it should not | Rerun with `-e skpatch_hosts_provision_state=absent` against that node (RB-SKPATCH-02). It is reversible by design. |
 | Host registration fails: `no dashboard user named ...` or `is read-only` | `REGISTER_AS` must be an existing ADMIN account. Sign in once (local or OIDC) so the account exists, or fix its role. |
@@ -390,11 +412,29 @@ Symptom to check. Runbook ids are in Appendix A; known-error ids (KE-SKPATCH-n) 
 | A retired node still shows in the dashboard | Expected: registration never deletes. Remove it by hand (RB-SKPATCH-02). |
 | A schedule or channel changed in the dashboard reverted | It is declared in `SCHEDULES` or `NOTIFICATIONS` (or `skpatch_hosts_schedules`); every registrar run converges it back. Change it there. |
 | `upgrade mode pending (package manager not detected yet ...)` | Expected right after a system is registered; the next run sets it. |
-| Every email notification and the digest fail, the SMTP host works from a shell | KE-SKPATCH-8 (the container cannot reach the estate's own public address). Pending in PR #406: `EXTRA_HOSTS`. |
-| Provisioning fails: "has package manager(s) ... that the skpatch-hosts sudoers template does not cover" | Pending in PR #406. By design: every dashboard action for that manager would fail on sudo. Add coverage, or disable the manager for that system in the dashboard and set `skpatch_hosts_unsupported_managers_ok`. |
-| `test_fixture_is_for_the_pinned_image` fails | Pending in PR #406. The dashboard image was bumped. RB-SKPATCH-09. |
-| Compliance reports `drift`, `sudo-denied:<action>`, `dashboard-only` or `not-provisioned` | Pending in PR #406. `drift`: provisioning would change that host; rerun it (`--check --diff` first). `sudo-denied`: rerun provisioning for the host. `dashboard-only`: provision it, fix its name or address, or remove it from the dashboard. |
-| A host was skipped with "skpatch-hosts PAUSED" | Pending in PR #406. Expected: the pause marker is set (RB-SKPATCH-03). |
+| Upgrade-all ends "warning" on the snap step | The host was provisioned before the `snap refresh` sudoers line existed; rerun the provisioning playbook against it. |
+| "Upgrade selected" fails with `sudo: a password is required` | The dashboard runs `apt-get ... install --only-upgrade -y <pkgs>` (or `snap refresh <names>`) directly and sudoers deliberately has no wildcard for it. Rerun the provisioning playbook: it installs the wrappers and converges the default "upgrade selected" scripts that call them (README "Selected-package upgrades"). A wrapper exiting 2 with `refusing invalid ... name` means an argument failed its regex, by design. |
+| A reboot of a Proxmox host says "Reboot blocked: could not verify Proxmox backup activity" | The host was provisioned before the `pvesh` guard line existed, or actions are off for it. Rerun the provisioning playbook (it detects `/usr/bin/pvesh`; `skpatch_hosts_proxmox: true` forces it). "Reboot blocked: Proxmox backup task is running" is the guard working: wait for the backup. |
+| Repair fails with `sudo: a password is required` | The host was provisioned before the `dpkg --configure -a` line existed; rerun the provisioning playbook. |
+| An upgrade fails with `debconf: unable to initialize frontend` or `end of file on stdin at conffile prompt` | The host predates the `DEBIAN_FRONTEND` env_keep and the dpkg conffile policy; rerun the provisioning playbook, then press Repair. |
+| Upgrade all succeeds with "The following upgrades have been deferred due to phasing" and "0 upgraded", and the dashboard still lists the packages (Ubuntu) | The host lacks `/etc/apt/apt.conf.d/99skpatch-phased`. Run the provisioning playbook with `--tags phased` (config only), then Check. |
+| Every email notification and the digest fail with "Connection timeout", the SMTP host works from a shell | The mailer resolves the SMTP host by DNS and gets the estate's public address; `EXTRA_HOSTS` does not help email while the name has a public record. Fix DNS or the port forward (README "Notification delivery"), or rely on the Talk room. |
+| Nothing reaches the Talk room | `POST /api/notifications/<id>/test` on the Talk channel: HTTP 401 is the app password, 404 the room token or the account is not a participant. For the watch: `journalctl --user -u skpatch-watch@<estate>`; "Talk post failed: HTTP ..." is the hook. A failed post is retried next run. |
+| The same problem is posted again and again | It should not be: the watch and the compliance check post once per `host|issue`. Check that the unit's `StateDirectory` is writable and not shared between estates. |
+| A host that needs a reboot was never posted | Expected for 8 days: a pending reboot alerts only after `--reboot-days` on the same boot (the normal case is no alert). |
+| Provisioning fails: "has package manager(s) ... that the skpatch-hosts sudoers template does not cover" | By design: every dashboard action for that manager would fail on sudo. Add coverage (README "Sudo coverage and drift detection"), or disable the manager for that system in the dashboard and set `skpatch_hosts_unsupported_managers_ok`. |
+| `test_fixture_is_for_the_pinned_image` fails | The dashboard image was bumped. Run `tools/extract_sudo_commands.py`, review the fixture diff, update `sudo-coverage.yml` and the sudoers template, rerun the tests. |
+| Compliance reports `drift` | Provisioning would change that host (listed tasks). Usually the framework moved on: rerun the provisioning playbook for it (`--check --diff` first). |
+| The watch posts `upgrade-failed:<action>` | The dashboard's latest run of that action failed (not on sudo). Read the run in the system's history; the issue clears with the next successful run of the action. |
+| The watch posts `package-manager` | The dashboard reports a package manager issue on that system: open it and press Repair. If the banner says "dpkg was interrupted" but `dpkg --audit` on the host shows no half-configured package (for example only a warning about a foreign architecture such as i386 that dpkg has not registered), Repair cannot clear it: the app treats any audit output as "interrupted". Fix what the audit names. |
+| A `sudo-denied` alert says "known gap, fix in PR #..." | Expected until that host is provisioned with the fix: the framework knows the cause (`src/skpatch-hosts/known-gaps.json`). Provision the host with that release; the alert resolves by itself through the coverage stamp. |
+| A sudo denial never resolves after reprovisioning | Check `skpatch-coverage.json` on the dashboard's node for the host: no entry means the sudoers task did not run for it (paused, failed, or run under `--check`). |
+| Compliance reports `sudo-denied:<action>` | The dashboard's latest run of that action hit sudo. Rerun provisioning for the host; the issue clears with the next successful run of the action. |
+| Compliance reports `dashboard-only` | A dashboard system matches no inventory host: provision it, fix its name/address, or remove it from the dashboard. |
+| Provisioning warns "serves DNS and has a port 53 conflict", or compliance reports `dns-conflict` | On a resolver host, NetBird's DNS (or another process) can take port 53 before the DNS server. Run `netbird up --disable-dns` on that host, restart the DNS server, rerun the check (README "DNS server hosts and NetBird"). |
+| An upgrade or check fails on a resolver host right after a reboot | Check `ss -lnptu 'sport = :53'` on it: NetBird holding :53 means the DNS server never started. Same fix as the row above. |
+| A host was skipped with "skpatch-hosts PAUSED" | Expected: host var `skpatch_hosts_paused` or `/etc/skpatch-hosts.paused`. Remove it and rerun to resume. |
+| A retired node still shows in the dashboard | Expected: registration never deletes. Remove it by hand once its history is no longer needed. |
 
 **Docs check.** The evidence block at the end of this file is the DOCS_FRESHNESS_STANDARD tier 3 contract. `sk-standards` [`scripts/docs_check.py`](https://github.com/smilinTux/sk-standards/blob/main/scripts/docs_check.py) reads `SOP.md` at the repository root, and this SOP lives under the role, so run the same block from the repository root with this loop (each check must exit 0):
 
@@ -469,7 +509,7 @@ Preconditions: the estate keypair exists (`SSH_PUBLIC_KEY` in the vault, private
 
 If registration is not configured, add the host by hand in the dashboard with the estate credential (user `PROVISION_USER`).
 
-> **Pending in PR #406.** Steps 2 and 3 become the whole procedure: the run also detects the package managers, refuses an uncovered one before changing anything, installs the wrappers and the dpkg policy, and registers the host with default scripts, settings, schedules and channels. A build playbook for a new VM or LXC should end by importing this playbook for the new host. The compliance check finds a host that is in the dashboard but was never provisioned.
+> **Since PR #406.** Steps 2 and 3 become the whole procedure: the run also detects the package managers, refuses an uncovered one before changing anything, installs the wrappers and the dpkg policy, and registers the host with default scripts, settings, schedules and channels. A build playbook for a new VM or LXC should end by importing this playbook for the new host. The compliance check finds a host that is in the dashboard but was never provisioned.
 
 ### RB-SKPATCH-02: Offboard a host
 
@@ -486,7 +526,7 @@ If registration is not configured, add the host by hand in the dashboard with th
 4. Remove the system in the dashboard by hand. Registration never deletes, so a retired host stays listed until you do.
 5. Remove the host from the inventory group (or leave it out of the next provisioning run).
 
-> **Pending in PR #403.** `absent` also removes the wrappers.
+> **Since PR #403.** `absent` also removes the wrappers.
 
 ### RB-SKPATCH-03: Pause and resume a host for maintenance
 
@@ -506,7 +546,7 @@ On `main` the available pause is to **disarm** the host:
 3. Verify: `sudo -l -U <PROVISION_USER>` shows only the two read-only rules.
 4. Resume: undo steps 1 and 2 and rerun. Verify with a manual Check.
 
-> **Pending in PR #406.** A first-class pause: set `skpatch_hosts_paused: true` in the instance repo, or, in an emergency on the host, create `/etc/skpatch-hosts.paused`. A paused host is left exactly as it is: provisioning changes nothing on it and does not register it, and the compliance check reports `paused`, never drift. Remove the marker and rerun provisioning to resume. Do not apply a provisioning run to a host whose sudoers is paused for maintenance.
+> **Since PR #406.** A first-class pause: set `skpatch_hosts_paused: true` in the instance repo, or, in an emergency on the host, create `/etc/skpatch-hosts.paused`. A paused host is left exactly as it is: provisioning changes nothing on it and does not register it, and the compliance check reports `paused`, never drift. Remove the marker and rerun provisioning to resume. Do not apply a provisioning run to a host whose sudoers is paused for maintenance.
 
 ### RB-SKPATCH-04: Patch and reboot a host by hand from the dashboard
 
@@ -542,7 +582,7 @@ Symptoms: a "package manager needs repair" banner, "dpkg was interrupted, you mu
 4. If a conffile prompt is the cause, the package keeps its old config unless you choose otherwise; review the `.dpkg-dist` file it leaves.
 5. Verify: `dpkg --audit` prints nothing, then run **Check** in the dashboard and confirm no repair banner.
 
-> **Pending in PR #406.** The Repair button works on an armed host (`dpkg --configure -a` is granted). The root cause of most occurrences is also closed: sudo's `env_reset` used to drop the app's `DEBIAN_FRONTEND=noninteractive` (a `Defaults:<account> env_keep += "DEBIAN_FRONTEND"` line fixes it) and dpkg stopped at conffile prompts with stdin on `/dev/null` (`/etc/dpkg/dpkg.cfg.d/90-skpatch-hosts` sets `force-confdef` and `force-confold`; `DPKG_KEEP_CONFFILES: false` opts out). Rerun provisioning for hosts that predate it, then press Repair.
+> **Since PR #406.** The Repair button works on an armed host (`dpkg --configure -a` is granted). The root cause of most occurrences is also closed: sudo's `env_reset` used to drop the app's `DEBIAN_FRONTEND=noninteractive` (a `Defaults:<account> env_keep += "DEBIAN_FRONTEND"` line fixes it) and dpkg stopped at conffile prompts with stdin on `/dev/null` (`/etc/dpkg/dpkg.cfg.d/90-skpatch-hosts` sets `force-confdef` and `force-confold`; `DPKG_KEEP_CONFFILES: false` opts out). Rerun provisioning for hosts that predate it, then press Repair.
 
 ### RB-SKPATCH-06: Proxmox reboot guard
 
@@ -563,7 +603,7 @@ The dashboard's reboot runs a guard first. On a host where `pveversion` or `pves
 
 Policy: hypervisors are `skpatch_hosts_allow_actions: false`, have no reboot schedule, and are rebooted from Proxmox. Do not replace the guard with a custom script.
 
-> **Pending in PR #406.** On an armed host where `/usr/bin/pvesh` exists (or `skpatch_hosts_proxmox: true`), sudoers grants exactly `pvesh get /cluster/tasks --output-format json`, only together with the reboot line, so a hypervisor can be rebooted from the app by hand with the guard working. Whether it also gets a schedule is the operator's choice; most estates give hypervisors none.
+> **Since PR #406.** On an armed host where `/usr/bin/pvesh` exists (or `skpatch_hosts_proxmox: true`), sudoers grants exactly `pvesh get /cluster/tasks --output-format json`, only together with the reboot line, so a hypervisor can be rebooted from the app by hand with the guard working. Whether it also gets a schedule is the operator's choice; most estates give hypervisors none.
 
 ### RB-SKPATCH-07: "sudo: a password is required"
 
@@ -581,7 +621,7 @@ The account's sudo rules are exact commands. The error means the dashboard ran a
 3. Look up the action in README "Package managers, dashboard operations and sudo". If the host's manager is not covered, or the action is one the matrix says is not granted on `main`, the template has a gap, not the host.
 4. If the host is armed, the line exists in the template, but the file on the host lacks it: the host predates it. Run provisioning with `--check --diff` for the host, read the added lines, apply.
 5. If the host is report-only, that is the design: upgrade, autoremove and reboot are armed-only. Arm it only through a change (RB-SKPATCH-01 class rule).
-6. If the template has a gap: open a PR that adds the **exact** command from the image's own `# Sudoers-relevant command:` annotation (never a wildcard, never `NOPASSWD: ALL`). **Pending in PR #406:** a CI test fails the build when the pinned image runs a command the template does not decide.
+6. If the template has a gap: open a PR that adds the **exact** command from the image's own `# Sudoers-relevant command:` annotation (never a wildcard, never `NOPASSWD: ALL`). **Since PR #406:** a CI test fails the build when the pinned image runs a command the template does not decide.
 7. Verify: rerun the action in the dashboard; the history entry succeeds.
 
 ### RB-SKPATCH-08: SSO login lockout after an SSO outage
@@ -611,7 +651,7 @@ Provisioning and registration keep working while locked out: the registrar signs
 
 A break-glass path if the IdP cannot come back (redeploy with `AUTH_MODE: local`) has **not** been exercised against the pinned image and depends on a local account with a password existing; do not rely on it. Restore the IdP.
 
-> **Pending in PR #401.** With `AUTH_MODE: oidc` the swarm healthcheck reads `/api/auth/status` with `node` and exits non-zero unless the response is 2xx or 3xx and `oidcEnabled === true`; bad JSON, a 5xx, a missing field and a refused connection all fail. `start_period` defaults to `90s` in oidc mode (`HEALTH_CHECK_START_PERIOD` still overrides). Swarm then replaces a task that came up with SSO off, so this runbook becomes the exception path. `sso` and `local` keep the plain `/` probe.
+> **Since PR #401.** With `AUTH_MODE: oidc` the swarm healthcheck reads `/api/auth/status` with `node` and exits non-zero unless the response is 2xx or 3xx and `oidcEnabled === true`; bad JSON, a 5xx, a missing field and a refused connection all fail. `start_period` defaults to `90s` in oidc mode (`HEALTH_CHECK_START_PERIOD` still overrides). Swarm then replaces a task that came up with SSO off, so this runbook becomes the exception path. `sso` and `local` keep the plain `/` probe.
 
 ### RB-SKPATCH-09: Upgrade the dashboard image and regenerate the sudo-command fixture
 
@@ -629,7 +669,7 @@ A break-glass path if the IdP cannot come back (redeploy with `AUTH_MODE: local`
 5. Deploy dev, then staging, then prod: `--check --diff` first, then for real. Verify the probe passes and sign-in works.
 6. Provision a canary host with `--check --diff` and confirm the sudoers diff is empty or explained.
 
-> **Pending in PR #406.** The image's sudo commands are a contract with the template, kept by a test. After an image bump: (a) run `python3 v1/ansible/optional/skpatch-hosts/tools/extract_sudo_commands.py` (needs docker; it runs the image's own `buildCommandReference()` in a throwaway container with no network) to regenerate `v1/tests/fixtures/skpatch_hosts_sudo_commands.json`; (b) review the fixture diff; every new command needs a decision in `src/skpatch-hosts/sudo-coverage.yml`: `exact` (granted verbatim), `wrapper` (only a validated wrapper is granted) or `denied` (with the reason); (c) update the template; (d) rerun `v1/tests/test_skpatch_hosts_sudo_coverage.py`, which fails if the pinned image is not the fixture's, if a command has no decision, or if the template misses an exact rule or grants one no decision backs; (e) after the release, rerun provisioning for the fleet (the compliance check reports `drift` until you do).
+> **Since PR #406.** The image's sudo commands are a contract with the template, kept by a test. After an image bump: (a) run `python3 v1/ansible/optional/skpatch-hosts/tools/extract_sudo_commands.py` (needs docker; it runs the image's own `buildCommandReference()` in a throwaway container with no network) to regenerate `v1/tests/fixtures/skpatch_hosts_sudo_commands.json`; (b) review the fixture diff; every new command needs a decision in `src/skpatch-hosts/sudo-coverage.yml`: `exact` (granted verbatim), `wrapper` (only a validated wrapper is granted) or `denied` (with the reason); (c) update the template; (d) rerun `v1/tests/test_skpatch_hosts_sudo_coverage.py`, which fails if the pinned image is not the fixture's, if a command has no decision, or if the template misses an exact rule or grants one no decision backs; (e) after the release, rerun provisioning for the fleet (the compliance check reports `drift` until you do).
 
 ### RB-SKPATCH-10: Command and SSH timeouts
 
@@ -648,7 +688,7 @@ A long `apt-get upgrade` or `full-upgrade` can outlast 120 s. A timeout in the h
 2. When it finishes, `dpkg --audit` must print nothing; if not, RB-SKPATCH-05.
 3. Raise the command timeout in the dashboard settings (up to 600 s), or set `extra_env: {LUDASH_DEFAULT_CMD_TIMEOUT: "600"}` in the vault to change the default. Re-run Check.
 
-> **Pending in PR #406.** The registrar converges app settings from `DASHBOARD_SETTINGS`, default `{cmd_timeout_seconds: 600}`, so a rebuilt database gets the raised command timeout. **No PR yet (design):** an SSH timeout of 60 s for slow links and busy hosts. When it lands it is a setting in the same mechanism and this runbook names it.
+> **Since PR #406.** The registrar converges app settings from `DASHBOARD_SETTINGS`, default `{cmd_timeout_seconds: 600}`, so a rebuilt database gets the raised command timeout. **No PR yet (design):** an SSH timeout of 60 s for slow links and busy hosts. When it lands it is a setting in the same mechanism and this runbook names it.
 
 ### RB-SKPATCH-11: Back up and restore the dashboard database
 
@@ -672,14 +712,14 @@ Seed text for the Known Error Database. The ids are local to this document. Toda
 
 | Id | Symptom | Root cause | Workaround | Runbook | State |
 |---|---|---|---|---|---|
-| KE-SKPATCH-1 | A dashboard action fails with `sudo: a password is required` | The dashboard ran a sudo command no rule matches exactly: host not provisioned or predates a rule, report-only host, uncovered package manager, or a gap in the template. First seen 2026-10-28, when every check failed because the template had been written from the upstream README instead of the image's own annotations. | Rerun provisioning for the host; otherwise fix the template with the exact command. Never a wildcard. | RB-SKPATCH-07 | Open as a class. Pending in PR #406: CI coverage test. |
-| KE-SKPATCH-2 | Upgrade fails with `debconf: unable to initialize frontend`, or stops at a dpkg conffile prompt, leaving dpkg interrupted | sudo's `env_reset` drops `DEBIAN_FRONTEND=noninteractive`; debconf falls back to Teletype and reads EOF. dpkg prompts for a changed conffile with stdin on `/dev/null`. | `dpkg --configure -a` as root, then `apt-get -f install`. | RB-SKPATCH-05 | Pending in PR #406 (env_keep and conffile policy). |
-| KE-SKPATCH-3 | Dashboard up, no SSO button, nobody can sign in (`AUTH_MODE: oidc`) | OIDC discovery runs once at startup and is not retried; the identity provider was unreachable at that moment. Seen on two estates for about 36 hours. | Restore the IdP, then `docker service update --force` the dashboard. | RB-SKPATCH-08 | Pending in PR #401 (healthcheck replaces the task). |
-| KE-SKPATCH-4 | Reboot blocked: "could not verify Proxmox backup activity" | The app's guard needs `pvesh get /cluster/tasks`; the rule is not granted on `main`. | Reboot the hypervisor from Proxmox. | RB-SKPATCH-06 | Pending in PR #406 (exact `pvesh` line, armed Proxmox only). |
+| KE-SKPATCH-1 | A dashboard action fails with `sudo: a password is required` | The dashboard ran a sudo command no rule matches exactly: host not provisioned or predates a rule, report-only host, uncovered package manager, or a gap in the template. First seen 2026-10-28, when every check failed because the template had been written from the upstream README instead of the image's own annotations. | Rerun provisioning for the host; otherwise fix the template with the exact command. Never a wildcard. | RB-SKPATCH-07 | Open as a class. Since PR #406: CI coverage test. |
+| KE-SKPATCH-2 | Upgrade fails with `debconf: unable to initialize frontend`, or stops at a dpkg conffile prompt, leaving dpkg interrupted | sudo's `env_reset` drops `DEBIAN_FRONTEND=noninteractive`; debconf falls back to Teletype and reads EOF. dpkg prompts for a changed conffile with stdin on `/dev/null`. | `dpkg --configure -a` as root, then `apt-get -f install`. | RB-SKPATCH-05 | Fixed in PR #406, v2.26.22 (env_keep and conffile policy). |
+| KE-SKPATCH-3 | Dashboard up, no SSO button, nobody can sign in (`AUTH_MODE: oidc`) | OIDC discovery runs once at startup and is not retried; the identity provider was unreachable at that moment. Seen on two estates for about 36 hours. | Restore the IdP, then `docker service update --force` the dashboard. | RB-SKPATCH-08 | Fixed in PR #401 (healthcheck replaces the task). |
+| KE-SKPATCH-4 | Reboot blocked: "could not verify Proxmox backup activity" | The app's guard needs `pvesh get /cluster/tasks`; the rule is not granted on `main`. | Reboot the hypervisor from Proxmox. | RB-SKPATCH-06 | Fixed in PR #406, v2.26.22 (exact `pvesh` line, armed Proxmox only). |
 | KE-SKPATCH-5 | Registration fails `403 API tokens cannot configure SSH connections` | The pinned dashboard refuses every API-token request that creates or edits a system or credential. | Use `REGISTER_AS` (session-based registrar); remove `API_TOKEN`. | README "Automatic host registration" | Fixed on `main`. |
-| KE-SKPATCH-6 | A command times out in the history while the upgrade continues | Default command timeout is 120 s; upgrades are longer but survive the session (`nohup setsid`). | Wait, verify dpkg, raise the timeout. | RB-SKPATCH-10 | Pending in PR #406 (600 s default). |
+| KE-SKPATCH-6 | A command times out in the history while the upgrade continues | Default command timeout is 120 s; upgrades are longer but survive the session (`nohup setsid`). | Wait, verify dpkg, raise the timeout. | RB-SKPATCH-10 | Fixed in PR #406, v2.26.22 (600 s default). |
 | KE-SKPATCH-7 | Stored credentials unreadable after a restore or redeploy | `LUDASH_ENCRYPTION_KEY` changed or was lost. | Restore the key from the vault, or re-enter the credentials. | RB-SKPATCH-11 | By design. |
-| KE-SKPATCH-8 | Email notifications and the digest time out, the SMTP host works from a shell | The container resolves the SMTP host to the estate's own public address and the router does not hairpin NAT. | Pin the name for the container with `EXTRA_HOSTS`. | README "Alerting" | Pending in PR #406. |
+| KE-SKPATCH-8 | Email notifications and the digest time out, the SMTP host works from a shell | The container resolves the SMTP host to the estate's own public address and the router does not hairpin NAT. | Pin the name for the container with `EXTRA_HOSTS`. | README "Alerting" | Fixed in PR #406, v2.26.22. |
 | KE-SKPATCH-9 | `userdel` refuses to remove the account on a swarm node | The account had been created as a system user and got uid 999, which postgres images use, so container processes "ran as" it. | The account now has a fixed uid and gid (`PROVISION_UID`, default 5201). Deprovision ends the account's sessions first. | RB-SKPATCH-02 | Fixed on `main`. |
 
 <!-- docs-evidence

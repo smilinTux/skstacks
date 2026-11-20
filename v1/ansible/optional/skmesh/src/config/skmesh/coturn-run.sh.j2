@@ -1,0 +1,38 @@
+#!/bin/sh
+# coturn entrypoint for skmesh (rendered by the deploy, mounted read-only).
+# Runs as root only long enough for turnserver to read its config and the TLS
+# key (turnserver drops to nobody itself, proc-user in turnserver.conf).
+{% if (skmesh.TURN_TLS | default(false) | string | lower) in ['true', 'yes', '1'] %}
+# The certificate comes from skfence's traefik-certs-dumper, which re-dumps
+# it on every renewal. turnserver reads it only at start, so when the files
+# change this script stops turnserver and exits; Swarm restarts the task.
+{% set _base = skmesh.DOMAIN if (skmesh.CLOUDFLARED | default(false)) else (skmesh.CLUSTERNAME ~ '.' ~ skmesh.DOMAIN) %}
+cert=/certs-dump/{{ skmesh.TURN_DOMAIN | default('turn.' ~ _base, true) }}/certificate.crt
+key=/certs-dump/{{ skmesh.TURN_DOMAIN | default('turn.' ~ _base, true) }}/privatekey.key
+waited=0
+until [ -s "$cert" ] && [ -s "$key" ]; do
+    [ $((waited % 60)) -eq 0 ] && echo "coturn: waiting for $cert (Traefik obtains it for the TURN domain)"
+    sleep 10
+    waited=$((waited + 10))
+done
+sum() { cat "$cert" "$key" | sha256sum; }
+before=$(sum)
+{% endif %}
+turnserver -c /etc/coturn/turnserver.conf &
+pid=$!
+trap 'kill "$pid" 2>/dev/null' TERM INT
+while kill -0 "$pid" 2>/dev/null; do
+    sleep {{ skmesh.COTURN_CERT_CHECK_S | default(600) }} &
+    wait $!
+{% if (skmesh.TURN_TLS | default(false) | string | lower) in ['true', 'yes', '1'] %}
+    # A re-dump (renewal) rewrites the files; while it is half done the sum
+    # differs too, and the restarted task waits for both files again.
+    if [ "$(sum 2>/dev/null)" != "$before" ]; then
+        echo "coturn: certificate changed, restarting to load it"
+        kill "$pid"
+        wait "$pid"
+        exit 0
+    fi
+{% endif %}
+done
+wait "$pid"

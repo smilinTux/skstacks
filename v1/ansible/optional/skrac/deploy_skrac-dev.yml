@@ -70,7 +70,7 @@
         skr_sso_middleware: "{{ skrac.SSO_MIDDLEWARE | default('', true) | string }}"
         skr_sso_host_ip: "{{ skrac.SSO_HOST_IP | default('', true) | string }}"
         skr_extra_ca: "{{ skrac.EXTRA_CA_CERT | default('', true) | string }}"
-        skr_tls_options: "{{ skrac.TLS_OPTIONS | default('intermediate@file', true) }}"
+        skr_tls_options: "{{ skrac.TLS_OPTIONS | default('none', true) }}"
         skr_internal_port: "{{ skrac.INTERNAL_PORT | default(4430, true) | int }}"
         skr_auth_mode: "{{ skrac.AUTH_MODE | default('local', true) | lower }}"
         skr_router: "skrac{{ '' if env == 'prod' else '-' + env }}"

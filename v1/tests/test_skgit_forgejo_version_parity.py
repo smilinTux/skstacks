@@ -18,8 +18,22 @@ def render(**skgit):
 
 
 def test_forgejo_version_defaults_to_pinned_release():
-    assert render() == "codeberg.org/forgejo/forgejo:17.0.1"
+    assert render() == "code.forgejo.org/forgejo/forgejo:17.0.1"
 
 
 def test_instance_can_pin_the_live_floating_major_as_an_exact_tag():
-    assert render(FORGEJO_VERSION="12.0.3") == "codeberg.org/forgejo/forgejo:12.0.3"
+    assert render(FORGEJO_VERSION="12.0.3") == "code.forgejo.org/forgejo/forgejo:12.0.3"
+
+
+def test_default_registry_is_forgejos_own_not_codeberg():
+    # codeberg.org went NXDOMAIN on 2026-11-18; code.forgejo.org is Forgejo's
+    # own registry and carries the same release tags.
+    assert "codeberg.org" not in render()
+
+
+def test_instance_can_override_the_image_repository():
+    assert render(FORGEJO_IMAGE="registry.example.com/forgejo/forgejo") == "registry.example.com/forgejo/forgejo:17.0.1"
+
+
+def test_override_composes_with_a_version_pin():
+    assert render(FORGEJO_IMAGE="codeberg.org/forgejo/forgejo", FORGEJO_VERSION="17.0.1") == "codeberg.org/forgejo/forgejo:17.0.1"
