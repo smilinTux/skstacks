@@ -78,6 +78,11 @@ MAX_BATCH_SIZE = 20
 [actions]
 ENABLED = true
 DEFAULT_ACTIONS_URL = https://code.forgejo.org
+# Forgejo keeps CI artifacts 90 days by default. One busy e2e pipeline
+# uploaded about 80 MB per run and grew the data dir (and every backup of
+# it) by 21 GB in a week. Artifacts are reproducible by re-running CI, so
+# keep them a week; the built-in cleanup_actions cron expires them daily.
+ARTIFACT_RETENTION_DAYS = {{ skgit.ARTIFACT_RETENTION_DAYS | default(7) | int }}
 
 [packages]
 ENABLED = true
