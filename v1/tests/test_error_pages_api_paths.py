@@ -329,6 +329,9 @@ def test_ui_only_entries_are_not_stale():
 
 # ---------------------------------------------------------------- the derived chain
 
+SSO_DEFAULT_APPS = ("skpdf", "skseek", "skpeek")
+
+
 def _api_chain(app, **over):
     rs = routers(render(app, **over))
     names = [n for n in rs if n.endswith("-api")]
@@ -341,13 +344,15 @@ def _api_chain(app, **over):
     ("skseek", "TRAEFIK_MIDDLEWARES"), ("skpeek", "TRAEFIK_MIDDLEWARES"), ("skboard", "TRAEFIK_MIDDLEWARES"),
     ("skgallery", "TRAEFIK_MIDDLEWARES")])
 def test_derived_chain_keeps_crowdsec_and_custom_middlewares_and_drops_only_error_pages(app, knob):
+    # skpdf/skseek/skpeek append SSO_MIDDLEWARE (#474) and the API router keeps it
+    sso = ",authentik@file" if app in SSO_DEFAULT_APPS else ""
     got = _api_chain(app, **{knob: "crowdsec-bouncer@file,my-mw@file,default@file"})
-    assert got == "crowdsec-bouncer@file,my-mw@file,default-no-error-pages@file"
+    assert got == "crowdsec-bouncer@file,my-mw@file,default-no-error-pages@file" + sso
     got = _api_chain(app, **{knob: "default-no-crowdsec@file"})
-    assert got == "default-no-error-pages@file"
+    assert got == "default-no-error-pages@file" + sso
     # a chain that has both default forms must not name the swap target twice
     got = _api_chain(app, **{knob: "default@file,default-no-crowdsec@file"})
-    assert got == "default-no-error-pages@file"
+    assert got == "default-no-error-pages@file" + sso
 
 
 def test_upload_chains_keep_their_buffering_and_headers_but_lose_error_pages():
@@ -359,9 +364,9 @@ def test_upload_chains_keep_their_buffering_and_headers_but_lose_error_pages():
 
 
 def test_skpdf_keeps_its_own_upload_buffering_middleware():
-    assert _api_chain("skpdf") == "default-no-error-pages@file,skpdf-upload"
+    assert _api_chain("skpdf") == "default-no-error-pages@file,skpdf-upload,authentik@file"
     rs = routers(render("skpdf", "dev"))
-    assert rs["skpdf-dev-api"]["middlewares"] == "default-no-error-pages@file,skpdf-dev-upload"
+    assert rs["skpdf-dev-api"]["middlewares"] == "default-no-error-pages@file,skpdf-dev-upload,authentik@file"
 
 
 @pytest.mark.parametrize("app", ["skorch", "skport", "skpdf", "skseek", "skpeek", "skboard", "skgallery", "skflow",

@@ -68,7 +68,7 @@ def test_pyroscope_service_shape():
     assert (r["reservations"]["memory"], str(r["limits"]["cpus"])) == ("256M", "0.5")
     assert f"node.hostname == {DATA}" in s["deploy"]["placement"]["constraints"]
     assert "/srv/local/skmon-prod/pyroscope:/data" in s["volumes"]
-    assert re.search(r":\d+\.\d+\.\d+@sha256:", s["image"]) and "2.4.2" in s["image"]
+    assert re.search(r":\d+\.\d+\.\d+@sha256:", s["image"]) and "2.4.3" in s["image"]
 
 
 def test_retention_knob_and_port_knob():

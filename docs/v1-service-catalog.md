@@ -60,12 +60,12 @@ tag yet.
 | [skmon](#skmon) | optional | Observability stack (metrics, logs, alerts, optional profiles) | VictoriaMetrics `v1.155.0`, Grafana Alloy `v1.21.3`, Loki `3.7.9`, Grafana `13.3.0`, Alertmanager `v0.34.2` (all digest-pinned, `pins.yml`) | Authentik (Grafana OIDC, forward auth for vmui and Alertmanager, tiles) | `skmon\|vmui\|alertmanager[-env].<cluster>.<domain>` | `DATA_PATH` on `DATA_NODE` (local disk, default `/srv/local/skmon-<env>`) | `DATA_NODE`, `ESTATE`, `CLUSTERNAME`, `DOMAIN`, `GRAFANA_ADMIN_USER/_PASSWORD`, `GRAFANA_SECRET_KEY`, `GRAFANA_OIDC_CLIENT_ID/_SECRET`, `AUTHENTIK_HOST`, `HEALTHZ_ALLOW`, `SKALERT_SCRIPT_SRC/_SHA256`, `ALERT_ROUTING`, `ALERT_SECRETS`, `ALERT_OUT_OF_DOMAIN_CHANNEL` | `DATA_PATH`, `PROBES` (default: every Traefik router host), `PROFILING`, `PVE`, `METRICS_RETENTION` (90d), `LOGS_RETENTION` (30d), `replicas` (1; 0 = parked); full table in the [README](../v1/ansible/optional/skmon/README.md) | v2.15.0 |
 | [skorch](#skorch) | optional | n8n workflow automation | n8n (digest-pinned) + pgvector Postgres | none | `skorch[-env].<cluster>.<domain>` | `skorch-<env>/{n8n_data,database-backup,gpg-keys}` | `POSTGRES_USER/_PASSWORD/_DB`, `REDIS_PASSWORD` | `enable_gpg_signer` (false) | v2.18.0 |
 | [skpatch-hosts](#skpatch-hosts) | optional | Linux update/patch dashboard (SSH, holds a key per estate); host half of the [skpatch program](./skpatch-program.md) | linux-update-dashboard `2026.10.9` (upstream, digest-pinned) | skfence or skfenceha; sksso for default `AUTH_MODE: sso` | `skpatch-hosts[-env].<cluster>.<domain>` | `skpatch-hosts-<env>/data` | `LUDASH_ENCRYPTION_KEY`, `SSH_PUBLIC_KEY` (provisioning) | `AUTH_MODE` (sso), `ALLOW_ACTIONS` (false, enforced by `provision_skpatch_hosts_nodes.yml`, not this deploy), `DATA_NODE` (floating) | pending |
-| [skpdf](#skpdf) | optional | Stirling-PDF toolkit | Stirling-PDF `2.14.3` | none | `skpdf[-env].<cluster>.<domain>` | `skpdf-<env>/{trainingData,customFiles}` | `CLUSTERNAME`, `DOMAIN`; `SECURITY_INITIAL_PASSWORD` if login on | `SECURITY_ENABLELOGIN` (false) | v2.13.0 |
-| [skpeek](#skpeek) | optional | SearXNG metasearch engine | SearXNG (digest-pinned) + Valkey `8-alpine` | none | `skpeek[-env].<cluster>.<domain>` | `skpeek-<env>/etc` | `SECRET_KEY` | none notable | v2.16.0 |
+| [skpdf](#skpdf) | optional | Stirling-PDF toolkit | Stirling-PDF `2.14.3` | sksso (forward auth by default, `SSO_MIDDLEWARE: none` opts out) | `skpdf[-env].<cluster>.<domain>` | `skpdf-<env>/{trainingData,customFiles}` | `CLUSTERNAME`, `DOMAIN`; `SECURITY_INITIAL_PASSWORD` if login on | `SECURITY_ENABLELOGIN` (false) | v2.13.0 |
+| [skpeek](#skpeek) | optional | SearXNG metasearch engine | SearXNG (digest-pinned) + Valkey `8-alpine` | sksso (forward auth by default, `SSO_MIDDLEWARE: none` opts out) | `skpeek[-env].<cluster>.<domain>` | `skpeek-<env>/etc` | `SECRET_KEY` | none notable | v2.16.0 |
 | [skport](#skport) | optional | Portainer CE (Swarm web UI) | Portainer CE `2.45.1` | skfence or skfenceha (socket-proxy) | `skport[-env].<cluster>.<domain>` | `skport-<env>/data` | `CLUSTERNAME`, `DOMAIN` | none (no baked admin password) | v2.19.0 |
 | [skpulse](#skpulse) | optional | Uptime Kuma status monitoring | Uptime Kuma `2.5.5` | sksso (Authentik forward auth, `AUTH_MODE: sso`, the default) | `skpulse[-env].<cluster>.<domain>` | `skpulse-<env>/uptime-kuma` | `CLUSTERNAME`, `DOMAIN` | `AUTH_MODE` (sso/local), `SSO_MIDDLEWARE`, `METRICS_BYPASS_SSO`, manual `discover-traefik-frontends.sh` helper | v2.16.0 (AUTH_MODE: v2.26.11) |
 | [skreg](#skreg) | optional | Docker Registry v2 | `registry:2` (floating) | none | `:5000` (no Traefik/TLS) | `skreg-<env>/data` | `vault_skreg_registry_http_secret` | none | v2.14.0 |
-| [skseek](#skseek) | optional | Perplexica AI search UI | Perplexica (digest-pinned) | **skpeek** (must be deployed first, same env) | `skseek[-env].<cluster>.<domain>` | `skseek-<env>/data` | none framework-required (model keys all opt-in) | model provider keys (all off) | v2.19.0 |
+| [skseek](#skseek) | optional | Perplexica AI search UI | Perplexica (digest-pinned) | **skpeek** (must be deployed first, same env); sksso (forward auth by default, `SSO_MIDDLEWARE: none` opts out) | `skseek[-env].<cluster>.<domain>` | `skseek-<env>/data` | none framework-required (model keys all opt-in) | model provider keys (all off) | v2.19.0 |
 | [sksso](#sksso) | optional | Authentik OIDC identity provider | Authentik `2024.4.2` | none | `sso[-env].<cluster or bare>.<domain>` | `sksso-<env>/media`, `runtime/sksso-<env>/postgres` | `postgres_user/_password`, `authentik_secret_key`, `CLUSTERNAME`, `DOMAIN` | `csrf_extra_origins` ([]) | pending |
 | [skstor](#skstor) | optional | Garage S3-compatible object storage | Garage `v2.4.1` (digest-pinned) | none (consumed by skhub/skform/skbackup) | `skstor[-env].<cluster>.<domain>`, S3 API `:3900` | `skstor-<env>/{meta,data}` | `rpc_secret`, `CLUSTERNAME`, `DOMAIN` | `REPLICATION_FACTOR` (1), `db_engine` (sqlite) | v2.18.0 |
 | [sksync](#sksync) | optional | Syncthing continuous file sync | Syncthing `2.0.13` (hardcoded) | none | `sksync[-env].<cluster>.<domain>`, `:22000` tcp/udp | `sksync-<env>/sync-data` | `SYNCWALLET`, `ENCRYPTION_TOKEN`, `UUID`, `TZ` | none | v2.16.0 |
@@ -93,19 +93,19 @@ kept. `[-env]` is empty on prod and `-dev`/`-staging` otherwise.
 | `skgit.API_MIDDLEWARES` | `skgit[-env]-api` (`/api/`, git smart HTTP, LFS) | the main chain with `default@file` and `default-no-crowdsec@file` swapped for `default-no-error-pages@file` |
 | `skgit.RUNNER_RPC_MIDDLEWARES` | `skgit[-env]-runner-rpc` (only with the bouncer on the main router) | `default-no-error-pages@file` |
 | `skorch.TRAEFIK_MIDDLEWARES` | `skorch[-env]` | `default-no-crowdsec@file` |
-| `skpdf.TRAEFIK_MIDDLEWARES` | `skpdf[-env]` | `default-no-crowdsec@file,skpdf[-env]-upload` |
-| `skpeek.TRAEFIK_MIDDLEWARES` | `skpeek[-env]` | `default-no-crowdsec@file` |
+| `skpdf.TRAEFIK_MIDDLEWARES` | `skpdf[-env]` | `default-no-crowdsec@file,skpdf[-env]-upload` (then `SSO_MIDDLEWARE`) |
+| `skpeek.TRAEFIK_MIDDLEWARES` | `skpeek[-env]` | `default-no-crowdsec@file` (then `SSO_MIDDLEWARE`) |
 | `skport.TRAEFIK_MIDDLEWARES` | `skport[-env]` | `default-no-crowdsec@file` |
 | `skpulse.TRAEFIK_MIDDLEWARES` | `skpulse[-env]` | `default-no-crowdsec@file` |
-| `skseek.TRAEFIK_MIDDLEWARES` | `skseek[-env]` | `default-no-crowdsec@file` |
+| `skseek.TRAEFIK_MIDDLEWARES` | `skseek[-env]` | `default-no-crowdsec@file` (then `SSO_MIDDLEWARE`) |
 | `skstor.TRAEFIK_MIDDLEWARES` | `skstor[-env]` (web, the S3 API) | `default-no-error-pages@file` (S3 clients need the XML error bodies) |
 | `skvector.TRAEFIK_MIDDLEWARES` | `skvector[-env]` (HTTP) | `skvector[-env]-buffering,default-no-error-pages@file` |
 | `skvector.TRAEFIK_MIDDLEWARES_GRPC` | `skvector[-env]-grpc` | `default-no-error-pages@file` |
 | `skorch.API_MIDDLEWARES` | `skorch[-env]-api` (`/webhook`, `/api/`, `/rest/`, `/mcp`, `/healthz`, `/metrics`) | derived, see below |
 | `skport.API_MIDDLEWARES` | `skport[-env]-api` (`/api/`) | derived |
-| `skpdf.API_MIDDLEWARES` | `skpdf[-env]-api` (`/api/`, `/v3/api-docs`) | derived (keeps `skpdf[-env]-upload`) |
-| `skseek.API_MIDDLEWARES` | `skseek[-env]-api` (`/api/`) | derived |
-| `skpeek.API_MIDDLEWARES` | `skpeek[-env]-api` (`/search`, `/healthz`, `/autocompleter`, `/config`) | derived |
+| `skpdf.API_MIDDLEWARES` | `skpdf[-env]-api` (`/api/`, `/v3/api-docs`) | derived from the resolved chain (keeps `skpdf[-env]-upload` and `SSO_MIDDLEWARE`) |
+| `skseek.API_MIDDLEWARES` | `skseek[-env]-api` (`/api/`) | derived from the resolved chain (keeps `SSO_MIDDLEWARE`) |
+| `skpeek.API_MIDDLEWARES` | `skpeek[-env]-api` (`/search`, `/healthz`, `/autocompleter`, `/config`) | derived from the resolved chain (keeps `SSO_MIDDLEWARE`) |
 | `skboard.API_MIDDLEWARES` | `skboard[-env]-api` (`/api/`, `/dav/`, `/.well-known/`, `/health`) | derived |
 | `skgallery.API_MIDDLEWARES` | `skgallery[-env]-api` (`/api/`, `/.well-known/`) | `large-upload-buffering@file,default-security-headers@file` |
 | `skflow.API_MIDDLEWARES` | `skflow[-env]-api` (`/api/`, or `SSO_EXEMPT_PREFIXES` with SSO) | derived |
@@ -137,6 +137,11 @@ skbook, skstream, sksso, skhub) only gets the API router when that chain is set.
 are API-only, so their default chain simply has no error pages. `v1/tests/test_error_pages_api_paths.py` asserts
 the real machine paths of each app and fails a new app that routes through error-pages without declaring its
 machine paths.
+
+skpdf, skpeek and skseek append `<svc>.SSO_MIDDLEWARE` (default
+`authentik@file`) after the chain, including an overridden one; see each
+service below. Do not copy it into `TRAEFIK_MIDDLEWARES` (it is never added
+twice, but it is not needed either).
 
 Example (prod, one router behind the bouncer):
 
@@ -1001,7 +1006,7 @@ side of the same effort.
 
 Stirling-PDF: merge, split, OCR, convert, sign.
 
-**Prerequisites**: none.
+**Prerequisites**: sksso (see Sign-in below).
 
 **Minimal vault snippet**:
 
@@ -1015,6 +1020,17 @@ skpdf:
 ```
 
 **Deploy**: `deploy_skpdf-<env>.yml`, standard invocation.
+
+**Sign-in (SSO by default)**: skpdf has no login of its own, so its router
+appends `skpdf.SSO_MIDDLEWARE` (default `authentik@file`, the sksso forward
+auth that skfence/skfenceha define) to the end of the chain, whatever
+`TRAEFIK_MIDDLEWARES` resolves to, and never twice when the chain already
+names it. **sksso must be deployed** (the middleware must exist), or Traefik
+drops the router and the app is unreachable. `SSO_MIDDLEWARE: none` (or
+`false`) keeps a deliberately public instance open; empty or unset keeps the
+default. Stirling's own login
+(`SECURITY_ENABLELOGIN`) or OAuth2 sits behind it, not instead of it; set
+`SSO_MIDDLEWARE: none` only if Stirling's own login is the gate you want.
 
 **Health check**: no container-level healthcheck ships. Verify via
 `curl -f https://skpdf.<cluster>.<domain>/` or `docker service ls`.
@@ -1037,7 +1053,7 @@ unset or set a UUID: Stirling replaces any other value with a random key.
 
 SearXNG self-hosted metasearch engine, backed by Valkey.
 
-**Prerequisites**: none, though **skseek** depends on this being deployed
+**Prerequisites**: sksso (see Sign-in below), and **skseek** depends on this being deployed
 first if you plan to run both.
 
 **Minimal vault snippet**:
@@ -1048,6 +1064,17 @@ skpeek:
 ```
 
 **Deploy**: `deploy_skpeek-<env>.yml`, standard invocation.
+
+**Sign-in (SSO by default)**: skpeek has no login of its own, so its router
+appends `skpeek.SSO_MIDDLEWARE` (default `authentik@file`, the sksso forward
+auth that skfence/skfenceha define) to the end of the chain, whatever
+`TRAEFIK_MIDDLEWARES` resolves to, and never twice when the chain already
+names it. **sksso must be deployed** (the middleware must exist), or Traefik
+drops the router and the app is unreachable. `SSO_MIDDLEWARE: none` (or
+`false`) keeps a deliberately public instance open; empty or unset keeps the
+default. skseek reaches skpeek over
+the `skpeek-<env>` overlay, not through Traefik, so SSO here does not affect
+skseek's search backend.
 
 **Health check**: compose healthcheck `wget --spider http://localhost:8080/`.
 
@@ -1156,6 +1183,19 @@ skseek:
 ```
 
 **Deploy**: `deploy_skseek-<env>.yml`, standard invocation.
+
+**Sign-in (SSO by default)**: skseek has no login of its own, so its router
+appends `skseek.SSO_MIDDLEWARE` (default `authentik@file`, the sksso forward
+auth that skfence/skfenceha define) to the end of the chain, whatever
+`TRAEFIK_MIDDLEWARES` resolves to, and never twice when the chain already
+names it. **sksso must be deployed** (the middleware must exist), or Traefik
+drops the router and the app is unreachable. `SSO_MIDDLEWARE: none` (or
+`false`) keeps a deliberately public instance open; empty or unset keeps the
+default. This matters more here than
+anywhere: Perplexica's `GET /api/config` returns the configured model
+provider API keys to any caller. `/api` and the websocket hang off the same
+`Host` router, so they are gated too; the browser UI sends the Authentik
+session cookie on its same-origin calls.
 
 **Health check**: container healthcheck `curl -sf http://localhost:3000/`.
 

@@ -1,5 +1,16 @@
 version: '3.8'
 
+{# Sign-in: skpdf has no login of its own, so its router carries the sksso
+   forward-auth middleware (SSO_MIDDLEWARE, default authentik@file, defined by
+   skfence/skfenceha) APPENDED to the chain, including an instance override of
+   TRAEFIK_MIDDLEWARES, and never twice when the chain already names it.
+   SSO_MIDDLEWARE: none (or false) opts out for a deliberately public instance.
+   Empty or null keeps the default (fail closed). #}
+{% set _skpdf_sso = skpdf.SSO_MIDDLEWARE | default(none) %}
+{% set _skpdf_sso = 'false' if _skpdf_sso is sameas false else ('' if _skpdf_sso is none else (_skpdf_sso | string | trim)) %}
+{% set _skpdf_sso = '' if (_skpdf_sso | lower) in ('none', 'false') else (_skpdf_sso or 'authentik@file') %}
+{% set _skpdf_chain = skpdf.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file,skpdf' ~ ('' if env == 'prod' else '-' ~ env) ~ '-upload', true) | string %}
+{% set skpdf_middlewares = _skpdf_chain ~ ((',' ~ _skpdf_sso) if (_skpdf_sso and _skpdf_sso not in (_skpdf_chain.split(',') | map('trim') | list)) else '') %}
 services:
   stirling-pdf:
     image: frooodle/s-pdf:{{ skpdf.IMAGE_TAG | default('3.3.0@sha256:ed7b1775c6706b5e5ea24fa6155f078eff1027bd35a17d21834e4407036025e6') }}
@@ -56,7 +67,7 @@ services:
         # never attached to this router, so MAX_UPLOAD_SIZE / MAX_RESPONSE_SIZE had
         # no effect and large PDFs hit Traefik's defaults. Appended to the chain.
         # Bare name resolves within the same (swarm) provider, i.e. ...-upload@swarm.
-        - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares={{ skpdf.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file,skpdf' ~ ('' if env == 'prod' else '-' ~ env) ~ '-upload', true) }}"
+        - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares={{ skpdf_middlewares }}"
         - "traefik.http.routers.skpdf{% if env != 'prod' %}-{{ env }}{% endif %}.service=skpdf{% if env != 'prod' %}-{{ env }}{% endif %}"
 {# === API ROUTER (raw upstream status codes) ===
     Stirling-PDF's REST API (`/api/v1/...`) and its OpenAPI document.
@@ -68,7 +79,8 @@ services:
     buffering). skpdf.API_MIDDLEWARES replaces the derived chain. #}
 {% set _api_swap = {'default@file': 'default-no-error-pages@file', 'default-no-crowdsec@file': 'default-no-error-pages@file', 'upload-chain@file': 'large-upload-buffering@file,default-security-headers@file', 'upload-chain-no-crowdsec@file': 'large-upload-buffering@file,default-security-headers@file', 'skai-chain@file': 'skai-headers@file,gzip@file', 'error-pages@file': '', 'error-pages-all@file': ''} %}
 {% set _api_mw = [] %}
-{% for _m in (skpdf.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file,skpdf' ~ ('' if env == 'prod' else '-' ~ env) ~ '-upload', true)).split(',') %}
+{# The API router derives from the resolved chain, so it keeps SSO_MIDDLEWARE (skseek /api/config must never skip sign-in). #}
+{% for _m in skpdf_middlewares.split(',') %}
 {% set _s = _api_swap.get(_m | trim, _m | trim) %}
 {% if _s %}
 {% set _ = _api_mw.append(_s) %}

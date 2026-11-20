@@ -336,6 +336,20 @@
       debug:
         msg: "Server service exists: {{ server_service.service.ID | default('Not found') }}"
 
+    - name: SSO access conformance report, read-only and non-fatal (sksso.ACCESS_CHECK)
+      include_tasks:
+        file: tasks/access_check.yml
+        apply:
+          tags:
+            - deploy
+            - access-check
+      when:
+        - sksso.ACCESS_CHECK | default(false) | bool
+        - (sksso.api_token | default('') | string | length) >= 32
+      tags:
+        - deploy
+        - access-check
+
     # portal-tile: opt-out (sksso is Authentik itself, the identity
     # provider that renders the portal; a tile pointing at itself from
     # within its own portal has no purpose, and the admin UI is already

@@ -134,7 +134,17 @@
   # (hosts: selected_manager_group), so no delegate_to is needed or
   # correct here. Found live 2026-10-28: delegating this to sksw_app_node
   # (the worker) failed immediately: "This node is not a swarm manager."
+  #
+  # Retried (issue #464): this runs right after the deploy's own service
+  # update converged, and Swarm can still refuse it with "update out of
+  # sequence" (optimistic concurrency against a service version that is
+  # still being committed). The error is transient; a retry a few seconds
+  # later succeeds.
   shell: docker service update --force "{{ app }}-{{ env }}_app" >/dev/null
+  register: sksw_app_force_update
+  until: sksw_app_force_update.rc == 0
+  retries: 5
+  delay: 3
   when: sksw_app_config_write is changed
   tags: [config, deploy]
 

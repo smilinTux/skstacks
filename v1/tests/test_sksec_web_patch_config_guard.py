@@ -37,7 +37,7 @@ READONLY_LOOKUPS = {
     "Check whether the app's config.yaml exists yet (not yet on first install -- env vars seed it)",
     "Read the existing config.yaml",
 }
-EXPECTED_DROPPED_REGISTERS = {"sksw_app_node", "sksw_app_config_patch", "sksw_app_config_backup"}
+EXPECTED_DROPPED_REGISTERS = {"sksw_app_node", "sksw_app_config_patch", "sksw_app_config_backup", "sksw_app_force_update"}
 
 
 def _tasks():
