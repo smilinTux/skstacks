@@ -269,6 +269,20 @@
         - deploy
         - postgres-major
 
+    - name: Guarantee the network login rule in an existing Postgres data dir (before the deploy)
+      include_tasks:
+        file: ../../shared/tasks/postgres_hba_guard.yml
+        apply:
+          tags:
+            - deploy
+            - postgres-hba
+      vars:
+        pg_hba_app: skgit
+        pg_hba_data_path: "/var/data/runtime/{{ app }}-{{ env }}/postgres"
+      tags:
+        - deploy
+        - postgres-hba
+
     - name: Deploy {{ app }} stack
       shell: |
         cd /var/data/{{ app }}-{{ env }}
