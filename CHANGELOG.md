@@ -11,7 +11,7 @@ limits, a 7-day Actions artifact expiry and a Postgres login-rule guard for rest
 sksec-web keeps its data dir's owner on redeploy. skbackup can recover from a full pool.
 Machine and API paths bypass the HTML error pages on every app. New read-only SSO conformance
 check and a per-app SSO access resolver. The skpatch digest lists each day's vulnerabilities.
-Immich defaults to v3.4.2. Instance action: read the upgrade notes first (SSO
+Immich defaults to v3.4.2. skflow and skbom get the Postgres major guard. Instance action: read the upgrade notes first (SSO
 defaults), then redeploy skgit, sksec-web, skbackup, skpatch-hosts and the apps listed under
 "Routers" below; set `SSO_MIDDLEWARE: none` before redeploying any of skpeek, skseek or skpdf
 that must stay public.
@@ -137,9 +137,18 @@ that must stay public.
   compose has it. **Instance action**: none for an instance that pins `IMMICH_VERSION`; one on the
   default upgrades on its next skgallery redeploy (read Immich's v3 upgrade notes first).
 
-### Docs: Postgres 16 to 18 restore runbooks (skgit, skmesh, skorch, sksso)
+### skflow, skbom: Postgres major guard and PG18 data-mount layout (#484)
 
-- Step 4 of "dump and restore (16 to 18)" now stops the app and its backup sidecar again, drops the
+- All six deploy playbooks run `shared/tasks/postgres_major_guard.yml` before the stack deploy, as
+  sksso, skgit, skmesh and skorch already do (skflow skips it for an external `DATABASE_URL`). The
+  data mount follows the image: `/var/lib/postgresql` for 18 and newer, `/var/lib/postgresql/data`
+  before, so an 18 image no longer lands on an anonymous volume. Defaults stay on 17.7 and render
+  byte-identical. Each README gets a "17 to 18" dump-and-restore runbook. **Instance action**: none
+  on the defaults; move to 18 only by the runbook, pinning both images.
+
+### Docs: Postgres to 18 restore runbooks (skgit, skmesh, skorch, sksso, skflow, skbom)
+
+- Step 4 of "dump and restore (16 to 18)" (and skflow and skbom's new "17 to 18") now stops the app and its backup sidecar again, drops the
   fresh application database and only then restores the full `pg_dumpall`. Step 3's deploy starts
   the app, which migrates the empty 18 cluster, so restoring on top collided with that schema, and
   the sidecar could dump the empty interim database. Found on a live sksso upgrade. **Instance
