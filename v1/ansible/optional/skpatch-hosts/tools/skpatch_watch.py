@@ -23,8 +23,13 @@ its own state file):
                            normal "reboot required" is never an alert
 
 Digest mode (--digest, once a day): one message with OS end-of-life and
-support warnings, the last 24 hours of scheduled runs, pending update totals
-and the issues still open.
+support warnings, the last 24 hours of scheduled runs, pending update totals,
+the vulnerabilities (pending security updates per host and, with
+--image-vulns, the HIGH/CRITICAL fixable findings of the swarm's images from
+skpatch_image_vulns.py) and the issues still open. The main message keeps
+counts and the top items; the full vulnerability list is posted as a reply
+in the same thread (the hook prints the message id), cut to
+--max-message-chars with an "and N more" line.
 
 Usage:
     skpatch_watch.py --ssh <dashboard node> --register-as <admin> \\
@@ -38,6 +43,7 @@ import base64
 import datetime as dt
 import importlib.util
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -49,6 +55,11 @@ MARK = "@@SKP-REPORT@@"
 COVER = "@@SKP-COVERAGE@@"
 KNOWN_GAPS = HERE.parent / "src" / "skpatch-hosts" / "known-gaps.json"
 QUIET_LIFECYCLE = {None, "", "supported", "unknown"}
+# Nextcloud Talk refuses a chat message over 32000 characters; leave room
+# for the hook's own prefix.
+MAX_MESSAGE_CHARS = 30000
+TOP_ITEMS = 5
+IMAGE_SCAN_STALE_HOURS = 36
 
 _spec = importlib.util.spec_from_file_location("skpatch_compliance", HERE / "skpatch_compliance.py")
 sc = importlib.util.module_from_spec(_spec)
@@ -222,7 +233,135 @@ def lifecycle_lines(report: dict, warn_days: int) -> list[str]:
     return out
 
 
-def digest_text(report: dict, open_issues: dict, now: dt.datetime, warn_days: int, title: str) -> str:
+def fit(lines: list[str], limit: int) -> str:
+    """Join lines, keeping whole lines under limit; what does not fit becomes
+    one "... and N more lines" line (room for it is always kept)."""
+    out: list[str] = []
+    size = 0
+    for i, line in enumerate(lines):
+        rest = len(lines) - i
+        tail = f"... and {rest} more line{'s' if rest != 1 else ''} (cut to fit one Talk message)"
+        need = len(line) + 1 + (0 if rest == 1 else len(tail) + 1)
+        if size + need > limit:
+            out.append(tail)
+            break
+        out.append(line)
+        size += len(line) + 1
+    return "\n".join(out)
+
+
+def security_hosts(report: dict) -> list[dict]:
+    """Hosts with pending security updates, by name."""
+    return sorted((s for s in report.get("systems", []) if s.get("security", 0) > 0 or s.get("security_updates")),
+                  key=lambda s: s["name"])
+
+
+def _pkgs(s: dict, n: int | None = None) -> str:
+    names = [u["package"] for u in s.get("security_updates") or []]
+    if not names:
+        return f"{s.get('security', 0)} security update(s), names not in this report"
+    if n is None or len(names) <= n:
+        return ", ".join(names)
+    return ", ".join(names[:n]) + f" (+{len(names) - n} more)"
+
+
+def load_image_vulns(path: Path | None) -> dict | None:
+    if not path:
+        return None
+    try:
+        return json.loads(path.read_text())
+    except FileNotFoundError:
+        return {"error": f"no scan result at {path} (has skpatch-image-vulns run?)"}
+    except (OSError, ValueError) as err:
+        return {"error": f"unreadable scan result {path}: {err}"}
+
+
+def _img(i: dict) -> str:
+    return i["image"].partition("@")[0]
+
+
+def _services(i: dict, n: int) -> str:
+    names = i.get("services") or []
+    if not names:
+        return "no service"
+    return ", ".join(names[:n]) + (f" +{len(names) - n} more" if len(names) > n else "")
+
+
+def _ranked(images: list[dict]) -> list[dict]:
+    return sorted((i for i in images if i.get("status") == "ok" and (i.get("critical") or i.get("high"))),
+                  key=lambda i: (-i.get("critical", 0), -i.get("high", 0), _img(i)))
+
+
+def vuln_summary_lines(report: dict, images: dict | None, now: dt.datetime, top: int = TOP_ITEMS) -> list[str]:
+    """The compact part for the main message: counts and the top items."""
+    hosts = security_hosts(report)
+    n = sum(len(s.get("security_updates") or []) or s.get("security", 0) for s in hosts)
+    lines = [f"\nVulnerabilities (pending security updates): " + (f"{n} on {len(hosts)} host(s)" if hosts else "none")]
+    lines += [f"- {s['name']}: {_pkgs(s, 3)}" for s in hosts[:top]]
+    if len(hosts) > top:
+        lines.append(f"- and {len(hosts) - top} more host(s)")
+    if images is None:
+        return lines
+    if images.get("error"):
+        return lines + [f"\nImage vulnerabilities: scan failed: {images['error']}"]
+    t = images.get("totals") or {}
+    head = (f"\nImage vulnerabilities: {t.get('critical', 0)} critical, {t.get('high', 0)} high (fix available)"
+            f" in {len(_ranked(images.get('images', [])))} of {t.get('images', 0)} images")
+    if t.get("ignored"):
+        head += f", {t['ignored']} ignored"
+    at = images.get("generated_at")
+    if at and now - dt.datetime.fromisoformat(at) > dt.timedelta(hours=IMAGE_SCAN_STALE_HOURS):
+        head += f" (stale: last scan {_short(at)})"
+    lines.append(head)
+    ranked = _ranked(images.get("images", []))
+    lines += [f"- {_img(i)} ({_services(i, 3)}): "
+              f"{i.get('critical', 0)} critical, {i.get('high', 0)} high" for i in ranked[:top]]
+    if len(ranked) > top:
+        lines.append(f"- and {len(ranked) - top} more image(s)")
+    failed = [i for i in images.get("images", []) if i.get("status") == "failed"]
+    if failed:
+        names = ", ".join(_img(i) for i in failed[:top]) + (f" and {len(failed) - top} more" if len(failed) > top else "")
+        lines.append(f"- scan failed for {len(failed)} image(s): {names}")
+    return lines
+
+
+def vuln_detail_lines(report: dict, images: dict | None) -> list[str]:
+    """The full list, for the reply. Empty when there is nothing to list."""
+    lines: list[str] = []
+    hosts = security_hosts(report)
+    if hosts:
+        lines.append("Security updates by host:")
+        for s in hosts:
+            ups = s.get("security_updates") or []
+            lines.append(f"{s['name']}: {len(ups) or s.get('security', 0)}")
+            lines += [f"- {u['package']} {u.get('current') or '?'} -> {u.get('new') or '?'}"
+                      + (f" ({u['pkgManager']})" if u.get("pkgManager") else "") for u in ups]
+            if not ups:
+                lines.append("- (package names not in this report)")
+    if images and not images.get("error"):
+        ranked = _ranked(images.get("images", []))
+        failed = [i for i in images.get("images", []) if i.get("status") == "failed"]
+        if ranked or failed:
+            lines.append(("\n" if lines else "") + "Image vulnerabilities (fix available):")
+        for i in ranked:
+            lines.append(f"{_img(i)} ({', '.join(i.get('services') or [])}): "
+                         f"{i.get('critical', 0)} critical, {i.get('high', 0)} high")
+            lines += [f"- {v['severity']} {v['id']} {v['package']} {v.get('installed') or '?'} -> {v.get('fixed') or '?'}"
+                      for v in i.get("vulns", [])]
+        for i in failed:
+            lines.append(f"{_img(i)}: scan failed: {i.get('error') or 'unknown error'}")
+    return lines
+
+
+def digest_detail(report: dict, images: dict | None, title: str, limit: int = MAX_MESSAGE_CHARS) -> str | None:
+    lines = vuln_detail_lines(report, images)
+    if not lines:
+        return None
+    return fit([f"🔎 {title}: vulnerabilities, full list"] + lines, limit)
+
+
+def digest_text(report: dict, open_issues: dict, now: dt.datetime, warn_days: int, title: str,
+                images: dict | None = None, limit: int = MAX_MESSAGE_CHARS) -> str:
     lines = [f"📋 {title}, {now.astimezone().strftime('%a %Y-%m-%d')}"]
     systems = report.get("systems", [])
     pending = [s for s in systems if s.get("updates", 0) > 0]
@@ -237,6 +376,7 @@ def digest_text(report: dict, open_issues: dict, now: dt.datetime, warn_days: in
     lines.append(f"\nLast 24 hours of scheduled runs: {len(runs)}")
     lines += [f"- {'✅' if d['status'] == 'success' else '⚠️'} {d['name']}: {d['message'] or d['status']}"
               for d in sorted(runs, key=lambda d: d["last_run_at"])]
+    lines += vuln_summary_lines(report, images, now)
     lc = lifecycle_lines(report, warn_days)
     lines.append("\nOS lifecycle: " + ("no warnings" if not lc else f"{len(lc)} warning(s)"))
     lines += lc
@@ -245,7 +385,7 @@ def digest_text(report: dict, open_issues: dict, now: dt.datetime, warn_days: in
     unreachable = [s["name"] for s in systems if s.get("reachable") is False]
     if unreachable:
         lines.append(f"\nUnreachable now: {', '.join(sorted(unreachable))}")
-    return "\n".join(lines)
+    return fit("\n".join(lines).split("\n"), limit)
 
 
 def main() -> int:
@@ -262,6 +402,9 @@ def main() -> int:
     ap.add_argument("--digest", action="store_true", help="post the daily summary instead of watching")
     ap.add_argument("--title", default="skpatch daily summary")
     ap.add_argument("--dashboard-url", help="dashboard base URL, for /systems/<id> links in alerts")
+    ap.add_argument("--image-vulns", type=Path, default=os.environ.get("SKPW_IMAGE_VULNS") or None,
+                    help="summary from skpatch_image_vulns.py, for the digest (default $SKPW_IMAGE_VULNS)")
+    ap.add_argument("--max-message-chars", type=int, default=MAX_MESSAGE_CHARS)
     ap.add_argument("--coverage-path", default="/var/data/config/skpatch-hosts-prod/skpatch-coverage.json",
                     help="sudo coverage stamp on the dashboard's node (written by provisioning)")
     args = ap.parse_args()
@@ -279,10 +422,23 @@ def main() -> int:
 
     if args.digest:
         open_issues = json.loads(args.state.read_text() or "{}") if args.state.exists() else {}
-        text = digest_text(report, open_issues, now, args.lifecycle_warn_days, args.title)
+        images = load_image_vulns(args.image_vulns.expanduser() if args.image_vulns else None)
+        text = digest_text(report, open_issues, now, args.lifecycle_warn_days, args.title, images,
+                           args.max_message_chars)
+        detail = digest_detail(report, images, args.title, args.max_message_chars)
         print(text)
-        if args.alert_hook and sc.alert(args.alert_hook, "post", "digest", "info", text) is None:
+        if detail:
+            print("\n" + detail)
+        if not args.alert_hook:
+            return 0
+        out = sc.alert(args.alert_hook, "post", "digest", "info", text)
+        if out is None:
             return 2
+        if detail:
+            ref = out.splitlines()[-1].strip() if out else ""
+            if sc.alert(args.alert_hook, "post", "digest-detail", "info", detail,
+                        ref if ref.isdigit() else None) is None:
+                return 2
         return 0
 
     prev = json.loads(args.state.read_text() or "{}") if args.state.exists() else {}

@@ -151,3 +151,108 @@ def test_scanner_catches_an_unwired_role():
             assert not is_covered("optional", "skfake")
         finally:
             ROOT = real_root
+
+
+# ===========================================================================
+# SSO access declaration (docs/design/sso-app-access-provisioning.md, 4.8, 7)
+# ===========================================================================
+#
+# Phase 1 adds shared/tasks/sso_access_resolve.yml and makes the shared tile
+# task resolve the access itself when a role still passes only `group:` (the
+# compatibility shim). Phase 3 moves every role to resolving early and passing
+# `access: "{{ sso_access }}"`. This is a ratchet: the roles that exist today
+# are listed as pending and still pass, a NEW tile role must handle SSO access,
+# and a pending role that gets migrated must be taken off the list.
+
+import re  # noqa: E402
+
+SHARED_TASKS = ROOT / "shared" / "tasks"
+TILE_INCLUDE_RE = re.compile(r"""include_tasks:\s*["']?[^\n]*authentik_portal_tile\.yml""")
+SSO_HANDLING_RE = re.compile(r"""sso_access_resolve\.yml|^\s+access:\s*["']?\{\{\s*sso_access\b""", re.M)
+
+PHASE3_PENDING = frozenset({
+    "core/skfence", "core/skfenceha",
+    "optional/skaegis", "optional/skboard", "optional/skbom", "optional/skbook", "optional/skdash",
+    "optional/skfetch", "optional/skflow", "optional/skgallery", "optional/skgit", "optional/skgym",
+    "optional/skhome", "optional/skhub", "optional/skmail", "optional/skmon", "optional/skorch",
+    "optional/skpatch-hosts", "optional/skpayment", "optional/skpdf", "optional/skpeek", "optional/skport",
+    "optional/skpulse", "optional/sksec-web", "optional/skseek", "optional/skstor", "optional/skstream",
+    "optional/sksync", "optional/skvector", "optional/skwhoami",
+})
+
+
+def role_task_texts(kind: str, role: str):
+    role_dir = ROOT / kind / role
+    paths = sorted(role_dir.glob("deploy_*.yml")) + sorted((role_dir / "tasks").glob("*.yml"))
+    return [p.read_text(errors="ignore") for p in paths]
+
+
+def uses_shared_tile(kind: str, role: str) -> bool:
+    return any(TILE_INCLUDE_RE.search(t) for t in role_task_texts(kind, role))
+
+
+def has_sso_access_handling(kind: str, role: str) -> bool:
+    return any(SSO_HANDLING_RE.search(t) for t in role_task_texts(kind, role))
+
+
+def tile_roles():
+    return [f"{kind}/{role}" for kind, role in ROLE_DIRS if uses_shared_tile(kind, role)]
+
+
+def test_shared_tile_task_resolves_access_and_passes_it():
+    text = (SHARED_TASKS / "authentik_portal_tile.yml").read_text()
+    assert "include_tasks: sso_access_resolve.yml" in text  # the compatibility shim
+    assert 'access: "{{ portal_tile_access }}"' in text  # the provisioner gets the resolved object
+    assert (SHARED_TASKS / "sso_access_resolve.yml").exists()
+
+
+def test_tile_role_detection_sees_known_roles():
+    found = set(tile_roles())
+    for expected in ("optional/skpulse", "optional/skmon", "core/skfenceha", "optional/skfetch"):
+        assert expected in found
+    assert "optional/sksso" not in found  # it is the portal (opt-out)
+
+
+def test_new_tile_roles_handle_sso_access():
+    missing = sorted(r for r in tile_roles() if not has_sso_access_handling(*r.split("/")) and r not in PHASE3_PENDING)
+    assert not missing, (
+        "these roles wire an Authentik portal tile but never resolve their SSO access: "
+        + ", ".join(missing)
+        + '. Include shared/tasks/sso_access_resolve.yml early and pass access: "{{ sso_access }}" '
+        "in portal_tile (docs/design/sso-app-access-provisioning.md, 4.8)."
+    )
+
+
+def test_phase3_pending_list_has_no_stale_entries():
+    found = set(tile_roles())
+    stale = sorted(r for r in PHASE3_PENDING if r not in found or has_sso_access_handling(*r.split("/")))
+    assert not stale, "take these off PHASE3_PENDING (no longer a tile role, or now migrated): " + ", ".join(stale)
+
+
+def test_sso_access_scanner_catches_an_unhandled_tile_role():
+    global ROOT
+    with tempfile.TemporaryDirectory() as tmp:
+        role = Path(tmp) / "optional" / "skfake"
+        (role / "tasks").mkdir(parents=True)
+        play = role / "deploy_skfake-prod.yml"
+        play.write_text(
+            "- hosts: all\n  tasks:\n    - include_tasks: ../../shared/tasks/authentik_portal_tile.yml\n"
+            "      vars:\n        portal_tile:\n          group: skadmin\n"
+        )
+        real_root = ROOT
+        try:
+            ROOT = Path(tmp)
+            assert uses_shared_tile("optional", "skfake")
+            assert not has_sso_access_handling("optional", "skfake")
+            # migrated form: resolve early, pass the fact
+            play.write_text(
+                "- hosts: all\n  tasks:\n"
+                "    - include_tasks: ../../shared/tasks/sso_access_resolve.yml\n"
+                "      vars:\n        sso_access_slug: skfake\n"
+                "    - include_tasks: \"{{ playbook_dir }}/../../shared/tasks/authentik_portal_tile.yml\"\n"
+                "      vars:\n        portal_tile:\n          access: \"{{ sso_access }}\"\n"
+            )
+            assert uses_shared_tile("optional", "skfake")
+            assert has_sso_access_handling("optional", "skfake")
+        finally:
+            ROOT = real_root

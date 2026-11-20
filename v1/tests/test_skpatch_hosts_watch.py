@@ -166,7 +166,7 @@ def _run(tmp_path, *extra, report=REPORT, rc=0, coverage=None):
     hook = tmp_path / "hook.sh"
     # like the Talk hook: print a message id on raise, log the ref on resolve
     hook.write_text(f'#!/bin/sh\nprintf "%s|%s|%s%s\\n" "$1" "$2" "$3" "${{5:+|ref=$5}}" >> {log}\n'
-                    '[ "$1" = raise ] && echo 4242\nexit 0\n')
+                    '[ "$1" = raise ] && echo 4242\n[ "$1" = post ] && echo 5151\nexit 0\n')
     hook.chmod(0o755)
     env = {"PATH": f"{bindir}:/usr/bin:/bin"}
     proc = subprocess.run([sys.executable, str(TOOL), "--ssh", "dash-node", "--register-as", "admin",
@@ -207,11 +207,126 @@ def test_a_reprovisioned_host_resolves_its_sudo_denial_in_the_same_thread(tmp_pa
     assert "sudo-1|sudo-denied:upgrade_package" not in json.loads((tmp_path / "state" / "e.json").read_text())
 
 
-def test_the_digest_posts_one_message(tmp_path):
-    proc, log = _run(tmp_path, "--digest")
+def test_the_digest_posts_one_message_without_vulnerabilities(tmp_path):
+    clean = {"systems": [s for s in REPORT["systems"] if not s.get("security")], "schedules": []}
+    proc, log = _run(tmp_path, "--digest", report=clean)
     assert proc.returncode == 0, proc.stderr
     assert log.read_text().splitlines() == ["post|digest|info"]
     assert "skpatch daily summary" in proc.stdout
+    assert "Vulnerabilities (pending security updates): none" in proc.stdout
+
+
+def test_the_digest_posts_the_full_vulnerability_list_as_a_reply_in_its_thread(tmp_path):
+    images = tmp_path / "images.json"
+    images.write_text(json.dumps(IMAGES))
+    proc, log = _run(tmp_path, "--digest", "--image-vulns", str(images), report=VULN_REPORT)
+    assert proc.returncode == 0, proc.stderr
+    assert log.read_text().splitlines() == ["post|digest|info", "post|digest-detail|info|ref=5151"]
+    assert "Image vulnerabilities: 3 critical, 7 high (fix available) in 2 of 3 images" in proc.stdout
+    assert "- CRITICAL CVE-2022-48174 busybox 1.36.0-r9 -> 1.36.1-r1" in proc.stdout
+
+
+# --- vulnerabilities in the digest ---------------------------------------------
+
+def _sec(name, *pkgs):
+    ups = [{"package": p, "pkgManager": "apt", "current": "1.0", "new": "1.1", "repository": "jammy-security"} for p in pkgs]
+    return system(name, updates=len(pkgs) + 1, security=len(pkgs), security_updates=ups)
+
+
+VULN_REPORT = {"systems": [_sec("zeta-1", "openssl"), system("clean-1", updates=3),
+                           _sec("alpha-1", "curl", "libssl3", "openssl", "sudo", "tzdata")], "schedules": []}
+
+
+def _image(ref, services, vulns, **kw):
+    return {"image": ref, "services": services, "status": "ok", "error": None, "ignored": 0, "cached": False,
+            "critical": sum(v["severity"] == "CRITICAL" for v in vulns),
+            "high": sum(v["severity"] == "HIGH" for v in vulns), "vulns": vulns, **kw}
+
+
+def _v(sev, cve, pkg, inst="1.36.0-r9", fix="1.36.1-r1"):
+    return {"id": cve, "severity": sev, "package": pkg, "installed": inst, "fixed": fix}
+
+
+IMAGES = {"estate": "lab", "generated_at": "2026-11-14T06:15:00+00:00", "error": None,
+          "totals": {"images": 3, "scanned": 2, "failed": 1, "critical": 3, "high": 7, "ignored": 2},
+          "images": [
+              _image("traefik:v3.1@sha256:" + "1" * 64, ["skproxy_traefik"], [_v("HIGH", "CVE-2025-1", "stdlib", "1.22", "1.22.9")]),
+              _image("alpine:3.18.0@sha256:" + "2" * 64, ["skweb_app", "skweb_worker"],
+                     [_v("CRITICAL", "CVE-2022-48174", "busybox"), _v("CRITICAL", "CVE-2022-48174", "busybox-binsh"),
+                      _v("CRITICAL", "CVE-2022-48174", "ssl_client")] + [_v("HIGH", f"CVE-2024-{n}", "libssl3") for n in range(6)]),
+              {"image": "ghcr.io/example/private:1@sha256:" + "3" * 64, "services": ["skpriv_x"], "status": "failed",
+               "error": "trivy exit 1: UNAUTHORIZED", "critical": 0, "high": 0, "vulns": [], "ignored": 0}]}
+
+
+def test_the_digest_lists_security_updates_by_host_compactly():
+    text = sw.digest_text(VULN_REPORT, {}, NOW, 90, "skpatch daily summary")
+    assert "Vulnerabilities (pending security updates): 6 on 2 host(s)" in text
+    # sorted by host, the first three packages in the main message
+    assert "- alpha-1: curl, libssl3, openssl (+2 more)\n- zeta-1: openssl" in text
+    assert "clean-1:" not in text.split("Vulnerabilities")[1]
+    assert "Image vulnerabilities" not in text  # not configured: no line at all
+
+
+def test_the_digest_without_any_vulnerability_says_none_and_has_no_reply():
+    rep = {"systems": [system("clean-1", updates=3)], "schedules": []}
+    assert "Vulnerabilities (pending security updates): none" in sw.digest_text(rep, {}, NOW, 90, "t")
+    assert sw.digest_detail(rep, None, "t") is None
+    clean = {**IMAGES, "totals": {"images": 1, "scanned": 1, "failed": 0, "critical": 0, "high": 0},
+             "images": [_image("a:1", ["s"], [])]}
+    assert "Image vulnerabilities: 0 critical, 0 high (fix available) in 0 of 1 images" in sw.digest_text(rep, {}, NOW, 90, "t", clean)
+    assert sw.digest_detail(rep, clean, "t") is None
+
+
+def test_the_digest_counts_image_vulnerabilities_and_ranks_the_worst_images_first():
+    text = sw.digest_text(VULN_REPORT, {}, NOW, 90, "t", IMAGES)
+    assert "Image vulnerabilities: 3 critical, 7 high (fix available) in 2 of 3 images, 2 ignored" in text
+    block = text.split("Image vulnerabilities")[1]
+    assert block.index("alpine:3.18.0 (skweb_app, skweb_worker): 3 critical, 6 high") < block.index("traefik:v3.1 (skproxy_traefik): 0 critical, 1 high")
+    assert "sha256:" not in block
+    wide = {**IMAGES, "images": [_image("w:1", [f"svc{n}" for n in range(5)], [_v("HIGH", "CVE-1", "p")])]}
+    assert "- w:1 (svc0, svc1, svc2 +2 more): 0 critical, 1 high" in sw.digest_text(VULN_REPORT, {}, NOW, 90, "t", wide)
+    assert "- scan failed for 1 image(s): ghcr.io/example/private:1" in block
+    assert "CVE-" not in text  # the ids go in the reply only
+
+
+def test_the_reply_lists_every_package_and_cve_with_versions():
+    detail = sw.digest_detail(VULN_REPORT, IMAGES, "skpatch lab daily summary")
+    lines = detail.splitlines()
+    assert lines[0] == "🔎 skpatch lab daily summary: vulnerabilities, full list"
+    assert lines[1:3] == ["Security updates by host:", "alpha-1: 5"]
+    assert "- sudo 1.0 -> 1.1 (apt)" in lines and "zeta-1: 1" in lines
+    assert lines.index("alpha-1: 5") < lines.index("zeta-1: 1")
+    assert "alpine:3.18.0 (skweb_app, skweb_worker): 3 critical, 6 high" in lines
+    assert "- CRITICAL CVE-2022-48174 busybox-binsh 1.36.0-r9 -> 1.36.1-r1" in lines
+    assert "ghcr.io/example/private:1: scan failed: trivy exit 1: UNAUTHORIZED" in lines
+
+
+def test_a_report_without_package_names_still_lists_the_host():
+    rep = {"systems": [system("old-1", updates=4, security=2)]}
+    assert "- old-1: 2 security update(s), names not in this report" in sw.digest_text(rep, {}, NOW, 90, "t")
+    assert "- (package names not in this report)" in sw.digest_detail(rep, None, "t")
+
+
+def test_a_long_list_is_cut_to_the_limit_with_an_and_n_more_line():
+    many = {**IMAGES, "images": [_image("big:1", ["s"], [_v("HIGH", f"CVE-2026-{n:05d}", f"pkg{n}") for n in range(2000)])]}
+    detail = sw.digest_detail({"systems": []}, many, "t", limit=4000)
+    assert len(detail) <= 4000
+    last = detail.splitlines()[-1]
+    assert last.startswith("... and ") and last.endswith(" more lines (cut to fit one Talk message)")
+    shown = sum(l.startswith("- HIGH") for l in detail.splitlines())
+    assert int(last.split()[2]) == 2000 - shown
+    # the default limit leaves room under Talk's 32000 characters
+    assert len(sw.digest_detail({"systems": []}, many, "t")) <= 30000
+    assert sw.fit(["a", "b"], 100) == "a\nb"
+
+
+def test_a_failed_or_stale_image_scan_is_said_not_hidden(tmp_path):
+    text = sw.digest_text(VULN_REPORT, {}, NOW, 90, "t", {"error": "docker service ls failed (exit 255): x"})
+    assert "Image vulnerabilities: scan failed: docker service ls failed (exit 255): x" in text
+    stale = sw.digest_text(VULN_REPORT, {}, NOW + dt.timedelta(days=2), 90, "t", IMAGES)
+    assert "(stale: last scan 2026-11-14 06:15Z)" in stale
+    missing = sw.load_image_vulns(tmp_path / "nope.json")
+    assert "no scan result at" in missing["error"]
 
 
 def test_a_failed_report_is_exit_2_and_alerts_nothing(tmp_path):

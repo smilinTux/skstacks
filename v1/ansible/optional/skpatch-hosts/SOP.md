@@ -131,6 +131,10 @@ python -m pytest v1/tests/test_skpatch_hosts_compliance.py -v
 # Dashboard watch (immediate classes) and the daily summary
 python -m pytest v1/tests/test_skpatch_hosts_watch.py -v
 
+# Image vulnerability scan (Trivy report parsing from a recorded fixture,
+# cache, a failing image, ignore file)
+python -m pytest v1/tests/test_skpatch_image_vulns.py -v
+
 # Repo-wide gate this role must also keep passing
 python -m pytest v1/tests/test_no_latest_images.py -v
 python -m pytest v1/tests/test_portal_tile_lint.py -v
@@ -428,6 +432,11 @@ Symptom to check. Runbook ids are in Appendix A; known-error ids (KE-SKPATCH-n) 
 | The watch posts `upgrade-failed:<action>` | The dashboard's latest run of that action failed (not on sudo). Read the run in the system's history; the issue clears with the next successful run of the action. |
 | The watch posts `package-manager` | The dashboard reports a package manager issue on that system: open it and press Repair. If the banner says "dpkg was interrupted" but `dpkg --audit` on the host shows no half-configured package (for example only a warning about a foreign architecture such as i386 that dpkg has not registered), Repair cannot clear it: the app treats any audit output as "interrupted". Fix what the audit names. |
 | A `sudo-denied` alert says "known gap, fix in PR #..." | Expected until that host is provisioned with the fix: the framework knows the cause (`src/skpatch-hosts/known-gaps.json`). Provision the host with that release; the alert resolves by itself through the coverage stamp. |
+| The summary says `Image vulnerabilities: scan failed: no scan result at ...` | `skpatch-image-vulns@<estate>` has not run (or `SKPW_IMAGE_VULNS` points elsewhere than its `$STATE_DIRECTORY/<estate>.json`). `systemctl --user status skpatch-image-vulns@<estate>.timer`; start the service once by hand. |
+| `Image vulnerabilities: scan failed: docker service ls failed` | The controller cannot ssh to `SKPW_SWARM_SSH`, or docker there needs a password for sudo. Fix access; the host lines are unaffected. |
+| `scan failed for N image(s)` in the summary | Read the reply (or the summary JSON): `UNAUTHORIZED` / `DENIED` is a private registry (set `SKPW_IMAGE_ARGS=--registry-auth <config.json>`); "unable to find the specified image" is an image built on the nodes and in no registry (expected, Trivy cannot reach it). The failure is retried every run, never cached. |
+| An image CVE is a known false positive | Add `<id> [<image glob>]  # reason` to the file named by `SKPW_IMAGE_IGNORE` (README "Daily vulnerability list"); it is counted as ignored from the next scan. |
+| `(stale: last scan ...)` after the image line | The 06:15 scan has failed for more than 36 hours: `journalctl --user -u skpatch-image-vulns@<estate>`. |
 | A sudo denial never resolves after reprovisioning | Check `skpatch-coverage.json` on the dashboard's node for the host: no entry means the sudoers task did not run for it (paused, failed, or run under `--check`). |
 | Compliance reports `sudo-denied:<action>` | The dashboard's latest run of that action hit sudo. Rerun provisioning for the host; the issue clears with the next successful run of the action. |
 | Compliance reports `dashboard-only` | A dashboard system matches no inventory host: provision it, fix its name/address, or remove it from the dashboard. |

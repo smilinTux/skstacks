@@ -200,6 +200,17 @@ def _items(task, ctx, base):
     return [_render(i, ctx) for i in loop]
 
 
+def _include_path(inc, base, origin):
+    """Where Ansible finds an included task file: a relative name is looked up
+    beside the including task file first, then under the playbook dir."""
+    rel = pathlib.Path(inc)
+    if not rel.is_absolute():
+        beside = (ANSIBLE / origin).parent / rel
+        if beside.is_file():
+            return beside.resolve()
+    return (base / rel).resolve()
+
+
 def _walk(tasks, ctx, base, origin):
     """Yield (origin, task_name, src, dest, mode) for every template task."""
     for task in tasks or []:
@@ -213,7 +224,7 @@ def _walk(tasks, ctx, base, origin):
                 inc = task[key]
                 inc = inc.get("file") if isinstance(inc, dict) else inc
         if inc:
-            path = (base / _render(inc, tctx)).resolve()
+            path = _include_path(_render(inc, tctx), base, origin)
             yield from _walk(yaml.safe_load(path.read_text()), tctx, base, path.relative_to(ANSIBLE))
             continue
         mod = task.get("template") or task.get("ansible.builtin.template")

@@ -202,6 +202,16 @@ class FakeDash:
         self.issues = {2: [{"pkgManager": "apt", "issueKey": "apt_dpkg_interrupted", "title": "APT needs repair",
                             "message": "dpkg was interrupted.", "active": 1, "detectedAt": fmt(now - 86400)},
                            {"pkgManager": "apt", "issueKey": "old", "title": "gone", "active": 0}]}
+        self.details = []
+        # GET /systems/:id `updates` rows as the app serializes update_cache
+        # (server/db/schema.ts): camelCase, isSecurity an integer
+        self.updates = {2: [{"pkgManager": "apt", "packageName": "openssl", "currentVersion": "3.0.2-1",
+                             "newVersion": "3.0.2-2", "repository": "jammy-security", "isSecurity": 1, "isKeptBack": 0},
+                            {"pkgManager": "apt", "packageName": "vim", "currentVersion": "9.0", "newVersion": "9.1",
+                             "repository": "jammy-updates", "isSecurity": 0, "isKeptBack": 0},
+                            {"pkgManager": "apt", "packageName": "curl", "currentVersion": "7.81.0-1",
+                             "newVersion": "7.81.0-1.1", "repository": "jammy-security", "isSecurity": 1,
+                             "isKeptBack": 0}]}
         self.schedules = [{"id": 3, "name": "Nightly", "type": "update", "enabled": 1, "config": {"cron": "0 3 * * *"},
                            "lastRunAt": fmt(now - 600), "lastRunStatus": "warning",
                            "lastRunMessage": "Checked 2 systems, upgraded 1, skipped 0, 1 failed"}]
@@ -272,7 +282,10 @@ def fake(tmp_path):
             if self.path == "/api/systems":
                 return self._send(200, {"systems": d.systems})
             if self.path.startswith("/api/systems/") and self.path.count("/") == 3:
-                return self._send(200, {"system": {}, "packageIssues": d.issues.get(int(self.path.split("/")[3]), [])})
+                sid = int(self.path.split("/")[3])
+                d.details.append(sid)
+                return self._send(200, {"system": {}, "packageIssues": d.issues.get(sid, []),
+                                        "updates": d.updates.get(sid, [])})
             if self.path == "/api/schedules":
                 return self._send(200, {"schedules": d.schedules})
             if self.path.startswith("/api/systems/") and self.path.endswith("/history"):
@@ -343,6 +356,12 @@ def test_report_lists_systems_and_only_the_latest_sudo_denial_per_action(fake):
     sched = json.loads(line[len("@@SKP-REPORT@@"):])["schedules"]
     assert sched == [{"name": "Nightly", "type": "update", "enabled": True, "last_run_at": sched[0]["last_run_at"],
                       "status": "warning", "message": "Checked 2 systems, upgraded 1, skipped 0, 1 failed"}]
+    # the security-flagged rows only, by package; systems with neither a
+    # package issue nor a security update cost no detail GET
+    assert a["security_updates"] == [
+        {"package": "curl", "pkgManager": "apt", "current": "7.81.0-1", "new": "7.81.0-1.1", "repository": "jammy-security"},
+        {"package": "openssl", "pkgManager": "apt", "current": "3.0.2-1", "new": "3.0.2-2", "repository": "jammy-security"}]
+    assert systems["mgr-1"]["security_updates"] == [] and fake.details == [2]
     assert fake.methods == {"GET"}
 
 
