@@ -29,6 +29,7 @@ import pytest
 import yaml
 
 from test_secret_files_not_world_readable import (
+    _include_path,
     ALLOWED,
     ANSIBLE,
     PLAYBOOKS,
@@ -60,7 +61,7 @@ def _flatten(tasks, ctx, base, origin):
                 inc = task[key]
                 inc = inc.get("file") if isinstance(inc, dict) else inc
         if inc:
-            path = (base / _render(inc, tctx)).resolve()
+            path = _include_path(_render(inc, tctx), base, origin)
             yield from _flatten(yaml.safe_load(path.read_text()), tctx, base, path.relative_to(ANSIBLE))
             continue
         yield origin, task, tctx

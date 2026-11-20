@@ -1,0 +1,205 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# Shared task: resolve one app's SSO access declaration ONCE and set the fact
+# `sso_access` (docs/design/sso-app-access-provisioning.md, section 4.8).
+# Names and modes follow the sk-standards APPLICATION_ACCESS_SSO_STANDARD:
+# global groups skadmin and skuser, per-app groups app-<slug>-admins and
+# app-<slug>-users, modes admin-only (default), app-groups (with SSO_BASELINE),
+# any-account and public.
+#
+# Caller contract (include_tasks with vars):
+#   sso_access_slug: skpulse             # required, the Application slug
+#   sso_access_cfg: "{{ skpulse }}"      # optional, the role's dict; only its
+#                                         # SSO_* keys are read:
+#                                         #   SSO_ACCESS     admin-only | app-groups | any-account | public
+#                                         #   SSO_BASELINE   bool, app-groups only
+#                                         #   SSO_PROVIDER   catch-all | own
+#                                         #   SSO_ADMINS_GROUP, SSO_USERS_GROUP  name overrides
+#                                         #   SSO_EXEMPTION  {reason, owner, approved, review_by}
+#   sso_access_sksso: {...}              # optional, the `sksso` dict from sksso's vault
+#                                         # (ADMIN_GROUP, USER_GROUP, BASELINE_APPS). When
+#                                         # not given, sksso's vault is loaded if it exists
+#                                         # (same path rule as authentik_portal_tile.yml),
+#                                         # otherwise the standard's defaults apply.
+#   sso_access_legacy_groups: []         # optional, deprecated single-group inputs
+#                                         # (AUTHENTIK_TILE_GROUP) kept as additive bindings
+#   sso_access_forward_auth: false       # optional, true when the role's router carries
+#                                         # authentik@file (render-time check C7)
+#   sso_access_today: "2026-11-20"       # optional, for exemption expiry (tests)
+#
+# Result, `sso_access`:
+#   mode, in_baseline, admin_global, user_global, admins, users, extra, legacy,
+#   bindings ("additive" in this release), provider (catch-all | own), exemption,
+#   bound_groups      the group set the mode derives (what the tile binds, besides legacy)
+#   policy            sso-allow-any-account / sso-allow-public, or ""
+#   oidc_admin_csv    "<admin_global>,<admins>" for OIDC admin role mapping
+#   oidc_user_csv     users (+ user_global when baseline), "" in admin-only
+#   forward_auth_ok   true unless forward auth would route a non admin-only app
+#                     through the catch-all
+# A declaration that breaks a rule fails here, before any template renders.
+
+- name: "SSO access ({{ sso_access_slug | default('?') }}): require a slug"
+  assert:
+    that:
+      - sso_access_slug is defined
+      - (sso_access_slug | string | length) > 0
+    fail_msg: "sso_access_resolve.yml needs sso_access_slug"
+    quiet: true
+
+- name: "SSO access ({{ sso_access_slug }}): locate sksso's vault"
+  set_fact:
+    _sso_vault_file: >-
+      {{ (vault_file_path | replace('/core/group_vars/', '/optional/group_vars/') | dirname) ~ '/'
+         ~ (vault_file_path | basename | regex_replace('^' ~ app ~ '-', 'sksso-')) }}
+  when:
+    - sso_access_sksso is not defined
+    - vault_file_path is defined
+    - app is defined
+
+- name: "SSO access ({{ sso_access_slug }}): check sksso's vault exists"
+  stat:
+    path: "{{ _sso_vault_file }}"
+  register: _sso_vault_stat
+  delegate_to: localhost
+  become: false
+  when:
+    - sso_access_sksso is not defined
+    - _sso_vault_file is defined
+
+- name: "SSO access ({{ sso_access_slug }}): load sksso's vault"
+  include_vars:
+    file: "{{ _sso_vault_file }}"
+    name: _sso_vault
+  no_log: true
+  when:
+    - sso_access_sksso is not defined
+    - _sso_vault_stat.stat.exists | default(false)
+
+- name: "SSO access ({{ sso_access_slug }}): read the declaration"
+  set_fact:
+    # Only the three keys this file reads: never keep sksso's token in a fact.
+    _sso_sk: >-
+      {{ (sso_access_sksso if sso_access_sksso is defined else (_sso_vault.sksso | default({})))
+         | default({}, true) | dict2items
+         | selectattr('key', 'in', ['ADMIN_GROUP', 'USER_GROUP', 'BASELINE_APPS']) | items2dict }}
+    _sso_cfg: "{{ sso_access_cfg | default({}, true) }}"
+  no_log: true
+
+- name: "SSO access ({{ sso_access_slug }}): derive"
+  set_fact:
+    _sso_mode: "{{ _sso_cfg.SSO_ACCESS | default('admin-only', true) }}"
+    _sso_g: "{{ _sso_sk.ADMIN_GROUP | default('skadmin', true) }}"
+    _sso_s: "{{ _sso_sk.USER_GROUP | default('skuser', true) }}"
+    _sso_a: "{{ _sso_cfg.SSO_ADMINS_GROUP | default('app-' ~ sso_access_slug ~ '-admins', true) }}"
+    _sso_u: "{{ _sso_cfg.SSO_USERS_GROUP | default('app-' ~ sso_access_slug ~ '-users', true) }}"
+    _sso_role_baseline: "{{ _sso_cfg.SSO_BASELINE | default(false) | bool }}"
+    # sksso.BASELINE_APPS, when defined (even empty), replaces every role's SSO_BASELINE.
+    _sso_estate_list: "{{ _sso_sk.BASELINE_APPS is defined and _sso_sk.BASELINE_APPS is not none }}"
+    _sso_baseline: >-
+      {{ (sso_access_slug in (_sso_sk.BASELINE_APPS | default([], true)))
+         if (_sso_sk.BASELINE_APPS is defined and _sso_sk.BASELINE_APPS is not none)
+         else (_sso_cfg.SSO_BASELINE | default(false) | bool) }}
+    _sso_exemption: "{{ _sso_cfg.SSO_EXEMPTION | default({}, true) }}"
+    _sso_legacy: "{{ sso_access_legacy_groups | default([], true) | select | list }}"
+    _sso_today: "{{ sso_access_today | default(now(utc=true).strftime('%Y-%m-%d'), true) }}"
+
+- name: "SSO access ({{ sso_access_slug }}): derive the provider and the bound set"
+  set_fact:
+    _sso_provider: "{{ _sso_cfg.SSO_PROVIDER | default('catch-all' if _sso_mode == 'admin-only' else 'own', true) }}"
+    _sso_bound: >-
+      {{ [_sso_g] if _sso_mode == 'admin-only'
+         else (([_sso_g, _sso_a, _sso_u] + ([_sso_s] if (_sso_baseline | bool) else []))
+               if _sso_mode == 'app-groups' else []) }}
+    _sso_policy: >-
+      {{ {'any-account': 'sso-allow-any-account', 'public': 'sso-allow-public'}.get(_sso_mode, '') }}
+
+- name: "SSO access ({{ sso_access_slug }}): validate the declaration"
+  assert:
+    that:
+      - _sso_mode in ['admin-only', 'app-groups', 'any-account', 'public']
+      - ([_sso_g, _sso_s, _sso_a, _sso_u] + _sso_legacy) | reject('match', '^[A-Za-z0-9][A-Za-z0-9 _.-]*$') | list | length == 0
+      - not (_sso_baseline | bool) or _sso_mode == 'app-groups'
+      - _sso_provider in ['catch-all', 'own']
+      - _sso_provider == 'own' or _sso_mode == 'admin-only'
+      - (_sso_bound | length) > 0 or _sso_mode in ['any-account', 'public']
+    fail_msg: >-
+      Invalid SSO access declaration for {{ sso_access_slug }}: SSO_ACCESS={{ _sso_mode }},
+      baseline={{ _sso_baseline }}{{ ' (from sksso.BASELINE_APPS)' if (_sso_estate_list | bool) else '' }},
+      SSO_PROVIDER={{ _sso_provider }}, groups={{ [_sso_g, _sso_s, _sso_a, _sso_u] + _sso_legacy }}.
+      Rules: mode is one of admin-only, app-groups, any-account, public; group names match
+      ^[A-Za-z0-9][A-Za-z0-9 _.-]*$; SSO_BASELINE (or a BASELINE_APPS entry) needs app-groups;
+      SSO_PROVIDER catch-all only serves admin-only.
+    quiet: true
+
+- name: "SSO access ({{ sso_access_slug }}): validate the exemption record"
+  assert:
+    that:
+      - (_sso_exemption.reason | default('') | string | trim | length) > 0
+      - (_sso_exemption.owner | default('') | string | trim | length) > 0
+      - (_sso_exemption.approved | default('') | string) is match('^\d{4}-\d{2}-\d{2}$')
+      - (_sso_exemption.review_by | default('') | string) is match('^\d{4}-\d{2}-\d{2}$')
+      - (_sso_exemption.review_by | string) >= (_sso_exemption.approved | string)
+      - >-
+        (_sso_exemption.review_by | string) <=
+        (((_sso_exemption.approved | string)[:4] | int + 1) | string) ~ ((_sso_exemption.approved | string)[4:])
+      - (_sso_exemption.review_by | string) >= _sso_today
+    fail_msg: >-
+      SSO_ACCESS={{ _sso_mode }} for {{ sso_access_slug }} needs a valid SSO_EXEMPTION
+      (reason, owner, approved and review_by as YYYY-MM-DD, review_by at most 12 months
+      after approved and not before today, {{ _sso_today }}). Approval is an ITIL change.
+    quiet: true
+  when: _sso_mode in ['any-account', 'public']
+
+- name: "SSO access ({{ sso_access_slug }}): set sso_access"
+  set_fact:
+    sso_access:
+      mode: "{{ _sso_mode }}"
+      in_baseline: "{{ _sso_baseline | bool }}"
+      admin_global: "{{ _sso_g }}"
+      user_global: "{{ _sso_s }}"
+      admins: "{{ _sso_a }}"
+      users: "{{ _sso_u }}"
+      extra: []
+      legacy: "{{ _sso_legacy | reject('equalto', _sso_g) | unique | list }}"
+      bindings: additive
+      provider: "{{ _sso_provider }}"
+      exemption: "{{ _sso_exemption }}"
+      bound_groups: "{{ _sso_bound }}"
+      policy: "{{ _sso_policy | trim }}"
+      oidc_admin_csv: "{{ [_sso_g, _sso_a] | join(',') }}"
+      oidc_user_csv: >-
+        {{ '' if _sso_mode == 'admin-only'
+           else ([_sso_u] + ([_sso_s] if (_sso_baseline | bool) else [])) | join(',') }}
+      forward_auth_ok: >-
+        {{ not ((sso_access_forward_auth | default(false) | bool)
+                and _sso_mode != 'admin-only' and _sso_provider == 'catch-all') }}
+
+- name: "SSO access ({{ sso_access_slug }}): forward auth must not serve a non admin-only app through the catch-all"
+  assert:
+    that:
+      - sso_access.forward_auth_ok | bool
+    fail_msg: >-
+      {{ sso_access_slug }} routes through authentik@file with SSO_ACCESS={{ sso_access.mode }}
+      and SSO_PROVIDER=catch-all. The catch-all admits admins only (check C7); use SSO_PROVIDER: own.
+    quiet: true
+
+- name: "SSO access ({{ sso_access_slug }}): deprecation notice for a legacy tile group"
+  debug:
+    msg: >-
+      DEPRECATION: {{ sso_access_slug }} binds {{ sso_access.legacy | join(', ') }} through the old
+      single-group input (AUTHENTIK_TILE_GROUP). It stays bound additively for one release;
+      declare SSO_ACCESS instead (docs/design/sso-app-access-provisioning.md, 4.2).
+  when: sso_access.legacy | length > 0

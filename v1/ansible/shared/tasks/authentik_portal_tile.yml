@@ -14,7 +14,8 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # Shared task: create or update a provider-less Authentik portal tile
-# (core.Application, no provider, bound to a group) for a service that
+# (core.Application, no provider, bound to the groups its declared SSO
+# access derives, docs/design/sso-app-access-provisioning.md) for a service that
 # already sits behind the cluster's domain-wide Traefik ForwardAuth
 # catch-all. This gives it a dashboard bookmark on the Authentik portal
 # without touching auth itself.
@@ -26,7 +27,16 @@
 #     slug: skpulse                      # Application slug
 #     name: "SKPulse (Uptime Kuma)"      # Application display name
 #     launch_url: "https://skpulse.example.com"
-#     group: "skadmin"                   # must already exist in Authentik
+#     access: "{{ sso_access }}"         # preferred: the fact set by
+#                                         # shared/tasks/sso_access_resolve.yml
+#                                         # (mode, groups, bindings; design 4.8)
+#     group: "skadmin"                   # DEPRECATED single group (AUTHENTIK_TILE_GROUP).
+#                                         # Without `access`, this task resolves the
+#                                         # access itself (admin-only, or `sso:` below)
+#                                         # and keeps a non-default group as a legacy
+#                                         # additive binding with a deprecation line.
+#     sso: {}                            # optional, only without `access`: SSO_* keys
+#                                         # handed to the resolver (see its header)
 #     icon: "fa://fa-heartbeat"        # optional fallback, "fa://fa-..." or an
 #                                         # already-uploaded "application-icons/<file>"
 #     icon_file: "icon.png"              # optional: a file the role ships at
@@ -63,9 +73,14 @@
 # optional role, so for a core role (skfence, skfenceha) the directory is
 # also swapped from core/group_vars to optional/group_vars.
 #
-# Nothing here creates the group: a typo in `portal_tile.group`, or a
-# cluster where that group does not exist yet, fails loudly instead of
-# silently shipping a tile nobody can see.
+# Groups: the provisioner creates any missing group it binds (the global
+# skadmin/skuser and the per-app app-<slug>-admins/app-<slug>-users), marked
+# `sk-managed`, with no members and no parent. A typo in an override name
+# therefore yields an empty group, which is fail-closed (only skadmin gets
+# in), and the deploy log shows "group: created <name>". Bindings are
+# additive in this release: nothing is ever removed. The run fails if the
+# application ends with no enabled binding, or (outside any-account and
+# public) without the global admin group.
 
 # sksso may not be deployed yet: a fresh cluster (or the release lab) brings
 # up roles that sit before sksso in the stage order. The provisioner joins
@@ -132,6 +147,25 @@
     quiet: true
   when: portal_tile_on | default(false) | bool
 
+# Compatibility shim: a role that still passes only `group:` (every role
+# until phase 3 of the design) gets its access resolved here, so it keeps
+# working unchanged. A role that already passes `access:` skips this.
+- name: "Portal tile ({{ app }}): resolve the access declaration (compatibility shim)"
+  include_tasks: sso_access_resolve.yml
+  vars:
+    sso_access_slug: "{{ portal_tile.slug }}"
+    sso_access_cfg: "{{ portal_tile.sso | default({}, true) }}"
+    sso_access_sksso: "{{ portal_tile_sksso_vault.sksso | default({}) }}"
+    sso_access_legacy_groups: "{{ [portal_tile.group | default('', true)] }}"
+  when:
+    - portal_tile_on | default(false) | bool
+    - portal_tile.access is not defined
+
+- name: "Portal tile ({{ app }}): pick the access object for the provisioner"
+  set_fact:
+    portal_tile_access: "{{ portal_tile.access if portal_tile.access is defined else sso_access }}"
+  when: portal_tile_on | default(false) | bool
+
 - name: "Portal tile ({{ app }}): check whether the role ships an icon file"
   stat:
     path: "{{ playbook_dir }}/src/config/{{ app }}/{{ portal_tile.icon_file }}"
@@ -181,7 +215,9 @@
       slug: "{{ portal_tile.slug }}"
       name: "{{ portal_tile.name }}"
       launch_url: "{{ portal_tile.launch_url }}"
-      group: "{{ portal_tile.group | default('skadmin') }}"
+      access: "{{ portal_tile_access }}"
+      # Only with an explicit `access`: a legacy group on top is bound additively.
+      group: "{{ portal_tile.group | default('', true) if portal_tile.access is defined else '' }}"
       icon: "{{ portal_tile_resolved_icon | default('') }}"
       open_in_new_tab: "{{ portal_tile.open_in_new_tab | default(true) | bool }}"
       description: "{{ portal_tile.description | default('') }}"
@@ -198,7 +234,7 @@
     mode: '0644'
   when: portal_tile_on | default(false) | bool
 
-- name: "Portal tile ({{ app }}): create or update the Application and its group binding"
+- name: "Portal tile ({{ app }}): create or update the Application, its groups and bindings"
   command:
     argv:
       - docker
