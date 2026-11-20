@@ -80,7 +80,7 @@ variable "disable_auto_updates" {
   default     = false
 }
 variable "apt_proxy" {
-  description = "Optional HTTP proxy for apt on every VM, as http://host[:port] (e.g. \"http://apt-cache.example:3142\" for an apt-cacher-ng pull-through cache). Rendered through cloud-init's native apt: key before the package install runs. Only plain-HTTP apt sources are cached (the Ubuntu archive); https sources such as the Docker repo are fetched direct (https_proxy: DIRECT). Empty = no proxy, and the rendered cloud-init is byte-identical to a module without this variable. No credentials in the URL."
+  description = "Optional HTTP proxy for apt on every VM, as http://host[:port] (e.g. \"http://apt-cache.example:3142\" for an apt-cacher-ng pull-through cache). Rendered through cloud-init's native apt: key before the package install runs. Only plain-HTTP apt sources are cached (the Ubuntu archive); https sources such as the Docker repo are fetched direct (no https proxy is set). Empty = no proxy, and the rendered cloud-init is byte-identical to a module without this variable. No credentials in the URL."
   type        = string
   default     = ""
   validation {

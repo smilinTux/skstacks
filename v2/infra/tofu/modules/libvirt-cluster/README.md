@@ -25,7 +25,7 @@ a module without this variable. The value must be `http://host[:port]` (no
 credentials, no path, no https); anything else fails validation at plan time.
 
 What it renders: cloud-init's native `apt:` key with `http_proxy` set to your
-value, `https_proxy: DIRECT` and `preserve_sources_list: true`, applied before
+value and `preserve_sources_list: true` (no https proxy), applied before
 the package install runs. The install path is unchanged; only where bytes come
 from changes.
 
@@ -34,9 +34,8 @@ from changes.
   distro packages.
 - **Docker's repo is not cached.** `download.docker.com` is https. An apt https
   proxy only tunnels (CONNECT), so it cannot cache, and it needs the proxy to
-  allow CONNECT. The simplest correct choice is to leave that repo direct:
-  `https_proxy: DIRECT` makes this explicit, so an https proxy never
-  intercepts it. Caching it would mean rewriting the repo URL to the proxy's
+  allow CONNECT. The simplest correct choice is to leave that repo direct, so
+  the module sets no https proxy at all. Caching it would mean rewriting the repo URL to the proxy's
   `http://HOST/HTTPS///download.docker.com/...` remap form and configuring the
   proxy to match, which changes the install path this feature promises to keep.
   The Docker GPG key is fetched with `curl` in `runcmd`, which ignores apt

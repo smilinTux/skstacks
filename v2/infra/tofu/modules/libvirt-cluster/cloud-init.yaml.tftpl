@@ -11,12 +11,11 @@ users:
       - ${ssh_public_key}
 ssh_pwauth: false
 %{ if apt_proxy != "" ~}
-# Only http sources are cached. The Docker repo is https, so it goes direct
-# (https_proxy DIRECT); preserve_sources_list keeps the image's own apt sources.
+# Only http sources go through the cache. No https proxy is set, so the https
+# Docker repo is fetched direct; preserve_sources_list keeps the image's sources.
 apt:
   preserve_sources_list: true
   http_proxy: "${apt_proxy}"
-  https_proxy: DIRECT
 %{ endif ~}
 %{ if daemon_json != "" || disable_auto_updates ~}
 write_files:
