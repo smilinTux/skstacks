@@ -62,7 +62,20 @@ manager; `<env>` is your environment, `<stack>` is `skorch-<env>`.
 3. **Pin nothing and deploy.** With the default image, run the usual deploy for `skorch`. The guard
    sees an empty directory (fresh install) and passes; the 18 image initialises `/var/data/runtime/skorch-<env>/postgres/18/docker`
    from the credentials in the stack's `postgres.env`/vault. Wait for the `postgres` service to report healthy.
-4. **Restore into the new cluster:**
+4. **Stop the app again, drop the fresh database, restore.** Step 3 started n8n too, and it ran its
+   migrations on the empty 18 cluster, so a restore on top collides with that schema (not only the
+   bootstrap role). The backup sidecar would also dump the empty interim database if it fired now.
+   Stop both, drop the fresh database, then restore the whole dump:
+
+   ```bash
+   docker service scale <stack>_n8n=0 <stack>_postgres-backup=0
+   C=$(docker ps -q -f name=<stack>_postgres)
+   docker exec "$C" psql -U <POSTGRES_USER from postgres.env> -d postgres \
+     -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '<POSTGRES_DB from postgres.env>' AND pid <> pg_backend_pid()" \
+     -c 'DROP DATABASE "<POSTGRES_DB from postgres.env>"'
+   ```
+
+   Then restore into the new cluster:
 
    ```bash
    C=$(docker ps -q -f name=<stack>_postgres)
@@ -70,10 +83,11 @@ manager; `<env>` is your environment, `<stack>` is `skorch-<env>`.
    grep -v "already exists" /tmp/restore.err | head    # anything else here needs a look
    ```
 
-   `already exists` errors for the bootstrap role and database are expected: `initdb` created them.
+   An `already exists` error for the bootstrap role is expected: `initdb` created it. The dump
+   re-creates the database itself, so an error about its tables means the drop above did not run.
    The pgvector extension is created by the init script on the empty cluster, so its `already exists` error is expected too.
 5. **Verify:** `docker exec "$C" psql -U <POSTGRES_USER from postgres.env> -c "SHOW server_version" -c "SHOW data_checksums"`, then bring the
-   writers back (`docker service scale <stack>_n8n=1`) and check the skorch health endpoint and a real login or request.
+   writers back (`docker service scale <stack>_n8n=1 <stack>_postgres-backup=1`) and check the skorch health endpoint and a real login or request.
 6. **Clean up** after a few days of good operation: remove `/var/data/runtime/skorch-<env>/postgres.pg16` and the dump file.
 
 **Rollback.** The old directory is untouched. `docker stack rm <stack>`, move `/var/data/runtime/skorch-<env>/postgres` aside,

@@ -331,9 +331,13 @@ All commands run on the swarm manager (with `DATA_NODE` set, run the `mv`/`mkdir
    `mv <skflow.POSTGRES_PATH, default /var/data/runtime/skflow-<env>/postgres> <skflow.POSTGRES_PATH, default /var/data/runtime/skflow-<env>/postgres>.pg17`, `mkdir -p <skflow.POSTGRES_PATH, default /var/data/runtime/skflow-<env>/postgres> && chown 70:70 <skflow.POSTGRES_PATH, default /var/data/runtime/skflow-<env>/postgres>` (uid 70 = `postgres` in the alpine image).
 3. **Pin** `POSTGRES_IMAGE` and `POSTGRES_BACKUP_IMAGE` to 18 as above and deploy. The guard sees an empty
    directory and passes; the 18 image initialises `<skflow.POSTGRES_PATH, default /var/data/runtime/skflow-<env>/postgres>/18/docker`. Wait for `postgres` to be healthy.
-4. **Restore and verify:** `docker exec -i <postgres container> psql -U windmill -d postgres < .../pre-pg18.sql`
-   (`already exists` errors for the bootstrap role and the `windmill` database are expected), check
-   `SHOW server_version`, scale the writers back up and check the Windmill UI and a test run.
+4. **Stop the app again, drop the fresh database, restore and verify.** Step 3 started Windmill, which
+   migrated the empty 18 cluster, and the backup sidecar could dump that empty database, so first
+   `docker service scale <stack>_server=0 <stack>_worker=0 <stack>_worker-native=0 <stack>_postgres-db-backup=0`, then in the postgres container
+   `psql -U windmill -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'windmill' AND pid <> pg_backend_pid()" -c 'DROP DATABASE "windmill"'`.
+   Restore the whole dump: `docker exec -i <postgres container> psql -U windmill -d postgres < .../pre-pg18.sql`
+   (an `already exists` error for the bootstrap role is expected; one about the `windmill` tables means the drop did not run), check
+   `SHOW server_version`, scale the writers and `<stack>_postgres-db-backup` back up and check the Windmill UI and a test run.
 5. **Clean up** after a few days of good operation: remove `<skflow.POSTGRES_PATH, default /var/data/runtime/skflow-<env>/postgres>.pg17` and the dump file.
 
 **Rollback.** `docker stack rm <stack>`, move the new directory aside, move `.pg17` back, pin both knobs

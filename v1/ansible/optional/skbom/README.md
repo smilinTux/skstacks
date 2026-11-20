@@ -177,9 +177,13 @@ All commands run on the swarm manager (with `DATA_NODE` set, run the `mv`/`mkdir
    `mv <skbom.POSTGRES_PATH, default /var/data/runtime/skbom-<env>/postgres> <skbom.POSTGRES_PATH, default /var/data/runtime/skbom-<env>/postgres>.pg17`, `mkdir -p <skbom.POSTGRES_PATH, default /var/data/runtime/skbom-<env>/postgres> && chown 70:70 <skbom.POSTGRES_PATH, default /var/data/runtime/skbom-<env>/postgres>` (uid 70 = `postgres` in the alpine image).
 3. **Pin** `POSTGRES_IMAGE` and `POSTGRES_BACKUP_IMAGE` to 18 as above and deploy. The guard sees an empty
    directory and passes; the 18 image initialises `<skbom.POSTGRES_PATH, default /var/data/runtime/skbom-<env>/postgres>/18/docker`. Wait for `postgres` to be healthy.
-4. **Restore and verify:** `docker exec -i <postgres container> psql -U <DB_USERNAME, default dtrack> -d postgres < .../pre-pg18.sql`
-   (`already exists` errors for the bootstrap role and the `dtrack` database are expected), check
-   `SHOW server_version`, scale the writers back up and check `/health` on the apiserver and the project list in the UI.
+4. **Stop the app again, drop the fresh database, restore and verify.** Step 3 started Dependency-Track, which
+   migrated the empty 18 cluster, and the backup sidecar could dump that empty database, so first
+   `docker service scale <stack>_apiserver=0 <stack>_frontend=0 <stack>_postgres-db-backup=0`, then in the postgres container
+   `psql -U <DB_USERNAME, default dtrack> -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'dtrack' AND pid <> pg_backend_pid()" -c 'DROP DATABASE "dtrack"'`.
+   Restore the whole dump: `docker exec -i <postgres container> psql -U <DB_USERNAME, default dtrack> -d postgres < .../pre-pg18.sql`
+   (an `already exists` error for the bootstrap role is expected; one about the `dtrack` tables means the drop did not run), check
+   `SHOW server_version`, scale the writers and `<stack>_postgres-db-backup` back up and check `/health` on the apiserver and the project list in the UI.
 5. **Clean up** after a few days of good operation: remove `<skbom.POSTGRES_PATH, default /var/data/runtime/skbom-<env>/postgres>.pg17` and the dump file.
 
 **Rollback.** `docker stack rm <stack>`, move the new directory aside, move `.pg17` back, pin both knobs
