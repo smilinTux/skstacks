@@ -246,23 +246,41 @@
         - /var/data/{{ app }}-{{ env }}/bin
         - /var/data/config/{{ app }}-{{ env }}
 
-    - name: Create the {{ app }} data directory on shared storage (not recursive, root only)
-      file:
+    # Create the data dir only when it is missing (issue #446). The image's
+    # entrypoint chowns /app/data to its unprivileged user at startup, and the
+    # app keeps its SQLite file there. Asserting root:root 0700 on every run
+    # took the dir back from a running app ("unable to open database file")
+    # until the next forced restart, and a redeploy with an unchanged spec
+    # starts no new task to chown it again. So: stat first, never touch an
+    # existing dir's owner or mode.
+    - name: Check whether the {{ app }} data directory exists
+      stat:
         path: "{{ sksw_data_path }}"
-        state: directory
-        owner: root
-        group: root
-        mode: '0700'
-      when: sksw_data_path.startswith('/var/data/')
+      register: sksw_data_dir_stat
+      delegate_to: "{{ (sksec_web.DATA_NODE | default(inventory_hostname, true)) if not sksw_data_path.startswith('/var/data/') else inventory_hostname }}"
+      check_mode: false
 
-    - name: Create the {{ app }} local data directory on the data node (not recursive, root only)
+    - name: Create the {{ app }} data directory on shared storage when missing (not recursive, root 0700 until the entrypoint chowns it)
       file:
         path: "{{ sksw_data_path }}"
         state: directory
         owner: root
         group: root
         mode: '0700'
-      when: not sksw_data_path.startswith('/var/data/')
+      when:
+        - sksw_data_path.startswith('/var/data/')
+        - not (sksw_data_dir_stat.stat.exists | default(false))
+
+    - name: Create the {{ app }} local data directory on the data node when missing (not recursive, root 0700 until the entrypoint chowns it)
+      file:
+        path: "{{ sksw_data_path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+      when:
+        - not sksw_data_path.startswith('/var/data/')
+        - not (sksw_data_dir_stat.stat.exists | default(false))
       delegate_to: "{{ sksec_web.DATA_NODE | default(inventory_hostname, true) }}"
 
     - name: Process {{ app }} app env (root only)
