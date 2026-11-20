@@ -67,8 +67,13 @@ What the gates cover: [docs/testing.md](./docs/testing.md).
   rerun in full.
 - **Tests first:** pytest under `v1/tests`, render gate under `v1/tests/render`; at least happy
   path, edge case and failure per behavior. Never skip, weaken or delete an assertion to get a pass.
-- **CHANGELOG:** every behavior change gets a bullet under the target release in
+- **CHANGELOG:** every behavior change gets a bullet in the TOPMOST section of
   [CHANGELOG.md](./CHANGELOG.md), saying what an instance must do (`**Instance action**: ...`).
+  That section is `## Unreleased`, or the release being cut, and never a release that is already
+  tagged: after a tag, start a fresh `## Unreleased` on top. CI (`tools/changelog_placement.py`)
+  fails a PR that adds lines anywhere else.
+- **Merging:** `main` uses a merge queue. Queue a green PR with `gh pr merge <N> --squash`; do not
+  pass `--admin`, which bypasses the queue. See [CONTRIBUTING.md](./CONTRIBUTING.md).
 - **Attribution:** a `Co-Authored-By` trailer names the agent that actually did the work, or is
   left out. Never one you cannot evidence.
 - **Generated files:** the published config template is generated from `templates/config-repo/`

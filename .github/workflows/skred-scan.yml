@@ -9,7 +9,12 @@ on:
     # Every branch: once the public repo is canonical, any pushed branch is
     # public, so scanning only main/develop would let a feature branch leak
     # unscanned until a PR is opened.
-    branches: ['**']
+    # The merge queue's own gh-readonly-queue/* branches are scanned by the
+    # merge_group event below, so they are excluded here to avoid a second run.
+    branches: ['**', '!gh-readonly-queue/**']
+  # The merge queue (main): `scan` is the required check, so it must report on
+  # the queued merge commit. merge_group takes no paths filter: it always runs.
+  merge_group:
   pull_request:
     # No paths filter. gitleaks walks up to the git root and scans the whole
     # repo regardless of --source, so a v2-only filter never limited the scan,

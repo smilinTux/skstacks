@@ -4,6 +4,17 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
+## Unreleased
+
+### CI: merge queue on `main`; CONTRIBUTING.md
+
+- `skred-scan.yml` (the required `scan` check) and `framework-tests.yml` run on `merge_group`, so
+  the merge queue tests each queued merge commit once instead of a full rerun after every BEHIND
+  rebase. Both skip the queue's own `gh-readonly-queue/*` branches on `push`, so nothing runs
+  twice. New `CONTRIBUTING.md` (branches, tests, the CHANGELOG placement rule, the merge queue);
+  AGENTS.md now says queue with `gh pr merge <N> --squash`, never `--admin`. **Instance action**:
+  none.
+
 ## skstacks-v2.26.30 - 2026-11-20
 
 Patch on v2.26.29. skpeek, skseek and skpdf sit behind SSO by default. skgit gets bounded git pack

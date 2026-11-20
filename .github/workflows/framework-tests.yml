@@ -4,10 +4,14 @@
 name: framework tests
 on:
   push:
-    branches: ['**']
+    branches: ['**', '!gh-readonly-queue/**']
     paths: ['v1/**', 'v2/platform/**', 'v2/infra/tofu/**', 'tools/**', '.github/workflows/framework-tests.yml']
   pull_request:
     paths: ['v1/**', 'v2/platform/**', 'v2/infra/tofu/**', 'tools/**', '.github/workflows/framework-tests.yml']
+  # The merge queue tests the queued merge commit once (main plus every PR ahead
+  # of it), instead of a rerun after each BEHIND rebase. No paths filter exists
+  # for merge_group, so every queued PR gets the full run; advisory, as on PRs.
+  merge_group:
 
 concurrency:
   # One run per workflow per PR (or ref): a new push to a PR cancels the
