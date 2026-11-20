@@ -1,0 +1,47 @@
+{% load i18n %}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>[[ e.name ]]</title>
+[# Shared layout for every email the SSO sends (sksso branding/_email).
+   Inline styles and tables only, no images: mail clients strip SVG and block
+   remote images, so the mark is text in a table cell. The classes below keep
+   any stock template that extends this layout readable. #]
+<style type="text/css">
+  .btn-primary { background-color:[[ e.accent ]]; border-radius:8px; text-align:center; }
+  .btn-primary a { display:inline-block; padding:14px 32px; color:[[ e.accent_text ]]; font-weight:700; text-decoration:none; }
+  .properties-table { width:100%; border-collapse:collapse; font-size:13px; }
+  .properties-table td { padding:4px 8px; vertical-align:top; }
+  .td-right { text-align:right; white-space:nowrap; color:[[ e.muted ]]; }
+</style>
+</head>
+<body style="margin:0;padding:0;background-color:[[ e.page_bg ]];">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:[[ e.page_bg ]];">
+<tr><td align="center" style="padding:32px 16px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background-color:#ffffff;border-radius:12px;border:1px solid [[ e.card_border ]];font-family:[[ e.font ]];">
+    <tr><td style="background-color:[[ e.header_bg ]];padding:24px 32px;border-radius:12px 12px 0 0;border-bottom:4px solid [[ e.accent ]];">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+        <td height="44" align="center" valign="middle" style="min-width:44px;height:44px;padding:0 10px;background-color:[[ e.accent ]];border-radius:10px;color:[[ e.accent_text ]];font-size:20px;font-weight:800;line-height:44px;">[[ e.mark ]]</td>
+        <td style="padding-left:14px;color:[[ e.header_text ]];font-family:[[ e.heading_font | default(e.font) ]];font-size:24px;font-weight:800;line-height:1.2;">[[ e.name ]][% if e.tagline | default('') %]<br><span style="font-family:[[ e.font ]];font-size:13px;font-weight:400;color:[[ e.header_muted | default(e.header_text) ]];">[[ e.tagline ]]</span>[% endif %]</td>
+      </tr></table>
+    </td></tr>
+    <tr><td style="padding:32px 32px 8px 32px;color:[[ e.text ]];font-size:16px;line-height:1.6;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="color:[[ e.text ]];font-size:16px;line-height:1.6;">
+      {% block content %}{% endblock %}
+      </table>
+    </td></tr>
+    <tr><td style="padding:8px 32px 32px 32px;border-top:1px solid [[ e.card_border ]];color:[[ e.muted ]];font-size:13px;line-height:20px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="color:[[ e.muted ]];font-size:13px;line-height:20px;">
+      {% block sub_content %}{% endblock %}
+      </table>
+    </td></tr>
+  </table>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;">
+    <tr><td align="center" style="padding:16px;font-family:[[ e.font ]];font-size:12px;line-height:18px;color:[[ e.muted ]];">[% if e.support_line | default('') %][[ e.support_line ]]<br>[% endif %][[ e.footer | default(e.name) ]]</td></tr>
+  </table>
+</td></tr>
+</table>
+</body>
+</html>

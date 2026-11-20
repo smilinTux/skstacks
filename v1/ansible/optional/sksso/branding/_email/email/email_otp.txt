@@ -1,0 +1,13 @@
+{% load i18n %}{% autoescape off %}{% trans 'Your [[ e.name ]] sign-in code' %}
+
+{% blocktrans with name=user.name|default:user.username %}Hi {{ name }},{% endblocktrans %}
+
+{% trans 'Enter this code to finish signing in:' %}
+
+    {{ token }}
+
+{% blocktrans with expires=expires|timeuntil %}The code is valid for {{ expires }}. If you did not try to sign in, ignore this email and consider changing your password.{% endblocktrans %}
+
+[[ e.name ]][% if e.support_line | default("") %]
+[[ e.support_line ]][% endif %]
+{% endautoescape %}

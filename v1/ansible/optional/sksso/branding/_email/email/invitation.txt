@@ -1,0 +1,13 @@
+{% load i18n %}{% autoescape off %}{% if user %}{% blocktrans with name=user.name|default:user.username %}Welcome to [[ e.name ]], {{ name }}{% endblocktrans %}{% else %}{% trans 'You are invited to [[ e.name ]]' %}{% endif %}
+[% if e.invite_intro | default('') %]
+[[ e.invite_intro ]]
+[% endif %]
+{% if user %}{% blocktrans with username=user.username %}An account has been created for you. Your username is {{ username }}. Open the link below to choose your password and finish setting up:{% endblocktrans %}{% else %}{% trans 'Open the link below to create your account and get started:' %}{% endif %}
+
+{{ url }}
+
+{% if expires %}{% blocktrans with expires=expires|date:'l, F j, Y, g:i A' %}This link works once and expires on {{ expires }} UTC. If it has expired, ask us for a fresh one. {% endblocktrans %}{% endif %}{% trans 'If you were not expecting this email, you can ignore it.' %}
+
+[[ e.name ]][% if e.support_line | default("") %]
+[[ e.support_line ]][% endif %]
+{% endautoescape %}

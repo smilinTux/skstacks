@@ -27,53 +27,6 @@ def test_pack_is_self_contained():
     assert not (PACK / "nextcloud-theming.sh").exists()
 
 
-def test_pack_ships_recovery_email_templates_without_authentik():
-    for name in ("skworld_recovery.html", "skworld_recovery.txt"):
-        tpl = PACK / "templates" / name
-        assert tpl.is_file(), name
-        text = tpl.read_text()
-        assert "{{ url }}" in text, name
-        assert "SKWorld" in text, name
-        assert "authentik" not in text.lower(), name
-        assert "{% load i18n %}" in text, name
-    html = (PACK / "templates" / "skworld_recovery.html").read_text()
-    # mail clients strip SVG and block remote images: the mark is text only
-    assert "<img" not in html and "<svg" not in html
-
-
-def _django_templates():
-    import django
-    from django.conf import settings
-    if not settings.configured:
-        settings.configure(
-            USE_I18N=True,
-            USE_TZ=True,
-            TEMPLATES=[{"BACKEND": "django.template.backends.django.DjangoTemplates",
-                        "DIRS": [str(PACK / "templates")]}],
-        )
-        django.setup()
-    from django.template.loader import get_template
-    return get_template
-
-
-def test_recovery_templates_render_with_authentik_context():
-    import pytest
-    pytest.importorskip("django")
-    from datetime import timedelta
-    from types import SimpleNamespace
-    get_template = _django_templates()
-    from django.utils import timezone
-    ctx = {"url": "https://sso.example.test/if/flow/recovery/?flow_token=abc",
-           "user": SimpleNamespace(name="Ada", username="ada"),
-           "expires": timezone.now() + timedelta(minutes=30)}
-    for name in ("skworld_recovery.html", "skworld_recovery.txt"):
-        out = get_template(name).render(ctx)
-        assert ctx["url"] in out, name
-        assert "Hi Ada," in out, name
-        assert "(ada)" in out, name
-        assert "authentik" not in out.lower(), name
-
-
 def test_apply_branding_compiles_and_sets_brand_and_recovery(tmp_path):
     src = PACK / "media" / "apply_branding.py"
     py_compile.compile(str(src), cfile=str(tmp_path / "x.pyc"), doraise=True)
@@ -88,19 +41,17 @@ def test_apply_branding_compiles_and_sets_brand_and_recovery(tmp_path):
         assert re.search(r'print\("%s ' % prefix, code), prefix
 
 
-def test_apply_branding_brands_the_recovery_email_and_flow_titles():
-    code = (PACK / "media" / "apply_branding.py").read_text()
-    assert '"default-recovery-email": ("skworld_recovery.html", RECOVERY_SUBJECT)' in code
-    assert "SKWORLD_RECOVERY_SUBJECT" in code
-    assert 'title__icontains="authentik"' in code
-    sh = (PACK / "apply-branding.sh").read_text()
-    assert "SKWORLD_RECOVERY_SUBJECT" in sh
-    # the optional subject must reach docker exec as one argument, not word-split
-    assert '"${ENVS[@]}"' in sh
-
-
 def _tasks():
     return yaml.safe_load(TASKS.read_text())
+
+
+def _all_tasks():
+    out = []
+    for t in _tasks():
+        out.append(t)
+        for key in ("block", "always", "rescue"):
+            out.extend(t.get(key, []))
+    return out
 
 
 def test_branding_yml_templates_and_nextcloud_helper_are_optional():
@@ -121,7 +72,7 @@ def test_branding_yml_templates_and_nextcloud_helper_are_optional():
 def test_nam_pack_still_complete():
     nam = ROLE / "branding" / "nam"
     assert (nam / "nextcloud-theming.sh").is_file()
-    assert (nam / "templates" / "nam_recovery.html").is_file()
+    assert (nam / "email.yml").is_file()
 
 
 def test_no_estate_identifiers_in_pack():
@@ -140,11 +91,14 @@ def _resolve_task():
 
 def test_every_pack_path_goes_through_the_resolved_src():
     text = TASKS.read_text()
-    # playbook_dir appears only in the default branch of the resolver
-    assert text.count("playbook_dir") == 1
+    # playbook_dir is used for the resolver's default and for the shared
+    # branding/_email set, never for a pack file
     assert "{{ playbook_dir }}/branding/{{ sksso.branding }}" in _resolve_task()["set_fact"]["sksso_branding_src"]
-    srcs = [t["copy"]["src"] for t in _tasks() if "copy" in t and "src" in t["copy"]]
-    assert srcs and all(s.startswith("{{ sksso_branding_src }}") for s in srcs), srcs
+    other = [l for l in text.splitlines() if "playbook_dir" in l and "branding/_email/" not in l]
+    assert len(other) == 1, other
+    srcs = [t["copy"]["src"] for t in _all_tasks() if "copy" in t and "src" in t["copy"]]
+    pack = [s for s in srcs if "_email" not in s and "sksso_email_tmp" not in s]
+    assert pack and all(s.startswith("{{ sksso_branding_src }}") for s in pack), srcs
 
 
 def _render(branding, branding_dir, inventory_dir="/inst/envs/prod", playbook_dir="/fw/sksso"):
