@@ -92,7 +92,7 @@ def test_secret_is_not_in_the_service_spec():
 
 
 def test_coturn_image_is_pinned():
-    assert is_pinned(_compose(COTURN)["services"]["coturn"]["image"], "coturn/coturn", "4.18.")
+    assert is_pinned(_compose(COTURN)["services"]["coturn"]["image"], "coturn/coturn", "4.19.")
 
 
 def test_tls_mounts_the_dumped_certificate_and_requests_it_from_traefik():

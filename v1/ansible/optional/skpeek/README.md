@@ -28,11 +28,29 @@ skpeek:
   DEBUG: false                       # optional, settings.yml general.debug
   THEME: "simple"                    # optional, settings.yml ui.default_theme
   TRAEFIK_MIDDLEWARES: ""            # optional, router middleware chain (default default-no-crowdsec@file)
+  SSO_MIDDLEWARE: ""                 # optional, appended forward auth (default authentik@file; none = public)
   extra_env:                         # optional, appended to skpeek.env
     SEARXNG_PRIVACY: "1"
 ```
 
 `CLUSTERNAME`/`DOMAIN` fall back to the inventory `cluster_name`/`domain`.
+
+### Sign-in: SSO by default (`skpeek.SSO_MIDDLEWARE`)
+
+SearXNG has no login of its own, so the router appends `SSO_MIDDLEWARE`
+(default `authentik@file`, the sksso forward auth defined by
+skfence/skfenceha) to the END of the chain, whether `TRAEFIK_MIDDLEWARES` is
+the default or an instance override, and never twice when the chain already
+names it. **sksso must be deployed** (the middleware must exist), or Traefik
+drops the router and skpeek is unreachable.
+
+- `SSO_MIDDLEWARE: none` (or `false`): no forward auth, for a deliberately
+  public instance.
+- empty or unset: the default, `authentik@file` (fail closed).
+- any other value: that middleware instead (for example a second sksso).
+
+skseek calls skpeek over the `skpeek-<env>` overlay network, not through
+Traefik, so this does not affect skseek's search backend.
 
 ### Custom settings.yml: `skpeek.SETTINGS_YML`
 

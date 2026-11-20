@@ -34,5 +34,10 @@ case "$rc" in
   0) exit 0 ;;
   255) send warn "backup-check-unreachable" "[$prefix] warn: backup check could not reach $target over ssh" ;;
   *) msg=$(printf '%s\n' "$out" | grep -E '^(STALE|WARN) ' | head -12)
-     send warn "backup-check-$(printf '%s' "$msg" | sha1sum | cut -c1-12)" "[$prefix] warn: backups on $target: $msg" ;;
+     # The key names the CONDITION, not the reading: digits (ages, percents,
+     # snapshot stamps) are dropped before hashing, so a condition that
+     # persists keeps one key and threads instead of opening a new alert
+     # every hour (hourly-new keys buried a filling pool in noise).
+     key=$(printf '%s' "$msg" | sed 's/[0-9]\{1,\}//g' | sha1sum | cut -c1-12)
+     send warn "backup-check-$key" "[$prefix] warn: backups on $target: $msg" ;;
 esac

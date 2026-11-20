@@ -1,0 +1,63 @@
+# sksso.ACCESS_CHECK (default false): after the stack deploy, run the
+# read-only SSO access conformance check (src/sksso/check-access.py, checks
+# C1 to C10 of the application access standard) and print its findings.
+#
+# A REPORT ONLY. Nothing here can fail the deploy: every task is
+# failed_when: false, and the script itself only sends GET requests. It runs
+# in a throwaway python container on this stack's network against the
+# server directly, the same way capauth_provision.yml does; the automation
+# token (sksso.api_token) goes in on stdin and is never logged. No
+# declarations file is passed yet (the roles render none until phase 3 of
+# docs/design/sso-app-access-provisioning.md), so the report lists the
+# declaration-dependent checks as skipped. See README "Access conformance
+# check".
+
+- name: Stage the access conformance check
+  copy:
+    src: "{{ playbook_dir }}/src/{{ app }}/check-access.py"
+    dest: "/var/data/config/{{ app }}-{{ env }}/check-access.py"
+    owner: root
+    group: root
+    mode: '0644'
+  register: sksso_access_check_staged
+  failed_when: false
+
+- name: Run the access conformance check (read-only, non-fatal)
+  command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - -i
+      - --network
+      - "{{ app }}-{{ env }}"
+      - -v
+      - "/var/data/config/{{ app }}-{{ env }}/check-access.py:/check-access.py:ro"
+      - "{{ sksso.PROVISIONER_IMAGE | default('python:3.13.15-alpine@sha256:79e7a9b9ff1cbceff819f856fb374477792a5967759d94df266de7b7b4120e6f') }}"
+      - python
+      - /check-access.py
+      - --url
+      - "http://{{ app }}-{{ env }}_server:9000"
+      - --host
+      - "{{ sksso.CAPAUTH_SSO_HOST | default('sso' ~ ('' if env == 'prod' else '-' ~ env) ~ '.' ~ sksso_access_check_base) }}"
+    stdin: "{{ sksso.api_token | default('') }}"
+  vars:
+    sksso_access_check_base: "{{ sksso.DOMAIN if (sksso.CLOUDFLARED | default(false)) else (sksso.CLUSTERNAME ~ '.' ~ sksso.DOMAIN) }}"
+  register: sksso_access_check
+  # exit 2 = could not run (the server may still be starting): retry a little
+  until: (sksso_access_check.rc | default(2)) != 2
+  retries: 5
+  delay: 10
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: not (sksso_access_check_staged.failed | default(false))
+
+# The script prints findings and summaries only (usernames never, the token
+# never), so its output is safe to show; the task above is no_log because
+# its stdin is secret.
+- name: Show the access conformance report (never fails the deploy)
+  debug:
+    msg: "{{ ['exit ' ~ (sksso_access_check.rc | default('not run')) ~ ': 0 conforms, 1 violations found, 2 could not run']
+             + (sksso_access_check.stdout_lines | default([])) + (sksso_access_check.stderr_lines | default([])) }}"
+  failed_when: false
