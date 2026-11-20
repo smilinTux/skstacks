@@ -55,7 +55,6 @@ services:
         - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints=websecure"
         - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
         - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver=main"
-        - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options=intermediate@file"
         - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares={{ skseek.TRAEFIK_MIDDLEWARES | default('default-no-crowdsec@file', true) }}"
         - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}.service=skseek{% if env != 'prod' %}-{{ env }}{% endif %}"
 {# === API ROUTER (raw upstream status codes) ===
@@ -78,7 +77,6 @@ services:
         - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}-api.entrypoints=websecure"
         - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}-api.tls=true"
         - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}-api.tls.certresolver=main"
-        - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}-api.tls.options=intermediate@file"
         - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}-api.priority=150"
         - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}-api.middlewares={{ skseek.API_MIDDLEWARES | default(_api_mw | unique | join(','), true) }}"
         - "traefik.http.routers.skseek{% if env != 'prod' %}-{{ env }}{% endif %}-api.service=skseek{% if env != 'prod' %}-{{ env }}{% endif %}"

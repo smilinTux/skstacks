@@ -124,7 +124,7 @@
         - { path: "/var/data/{{ app }}-{{ env }}/data", owner: "1000", group: "1000", mode: "0750" }
         - { path: "/var/data/{{ app }}-{{ env }}/config", owner: "1000", group: "1000", mode: "0755" }
         - { path: "/var/data/logs/{{ app }}-{{ env }}", owner: "1000", group: "1000", mode: "0755" }
-        - { path: "/var/data/runtime/{{ app }}-{{ env }}/postgres", owner: "999", group: "999", mode: "0755" }
+        - { path: "/var/data/runtime/{{ app }}-{{ env }}/postgres", owner: "999", group: "999", mode: "0700" }
         - { path: "/var/data/{{ app }}-{{ env }}/database-dump", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/runtime/{{ app }}-{{ env }}/runner", owner: "1000", group: "1000", mode: "0755" }
         - { path: "/var/data/runtime/{{ app }}-{{ env }}/docker_certs", owner: "root", group: "root", mode: "0755" }
@@ -397,7 +397,10 @@
           echo "no running {{ app }}-{{ env }}_forgejo container on this node yet" >&2
           exit 1
         fi
-        docker exec "$CID" curl -sf http://localhost:3000/api/v1/version >/dev/null || { echo "Forgejo API not answering yet" >&2; exit 1; }
+        # /api/healthz, not /api/v1/version: with REQUIRE_SIGNIN_VIEW=true every anonymous
+        # /api/v1 call answers 403, so a version probe never turns green. healthz stays public
+        # and only answers 200 once the database is reachable.
+        docker exec "$CID" curl -sf http://localhost:3000/api/healthz >/dev/null || { echo "Forgejo API not answering yet" >&2; exit 1; }
       delegate_to: "{{ forgejo_node.stdout | trim }}"
       register: forgejo_api
       until: forgejo_api.rc == 0

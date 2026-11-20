@@ -70,6 +70,10 @@
   become: true
   register: skp_reg_dashboard_node
   changed_when: false
+  # Read-only: runs under --check too, so a check run reaches the registrar
+  # step (which check mode then skips) instead of failing here with "no
+  # running task" because this lookup was skipped.
+  check_mode: false
 
 - name: Use the dashboard's node
   set_fact:
@@ -110,7 +114,10 @@
                          'private_key': skp_reg_private_key},
           'sync_credential': skpatch_hosts.SYNC_CREDENTIAL | default(false) | bool,
           'upgrade_mode': skpatch_hosts.UPGRADE_MODE | default('', true) | string,
+          'scripts': (lookup('file', playbook_dir ~ '/src/skpatch-hosts/dashboard-scripts.json') | from_json).scripts,
+          'settings': skpatch_hosts.DASHBOARD_SETTINGS | default({'cmd_timeout_seconds': 1800, 'ssh_timeout_seconds': 60}, true),
           'notifications': skpatch_hosts.NOTIFICATIONS | default([], true),
+          'talk': skpatch_hosts.TALK | default({}, true),
           'schedules': skpatch_hosts_schedules | default(skpatch_hosts.SCHEDULES | default([], true), true),
           'systems': skp_reg_systems | default([])} | to_json }}
   delegate_to: "{{ skp_reg_node }}"
@@ -119,6 +126,7 @@
   register: skp_reg_result
   changed_when: >-
     ': created' in skp_reg_result.stdout or ': updated' in skp_reg_result.stdout
+    or 'settings: set' in skp_reg_result.stdout
     or ': key synced' in skp_reg_result.stdout or 'upgrade mode set' in skp_reg_result.stdout
   failed_when: false
   no_log: true  # stdin carries the private key
@@ -132,6 +140,91 @@
 - name: Fail if host registration failed
   fail:
     msg: "skpatch-hosts host registration failed (rc={{ skp_reg_result.rc | default('?') }}), see the lines above"
+  # Under --check the registrar is skipped (it writes), so there is no result
+  # to judge: a check run reports it skipped instead of failing here.
   when: >-
-    (skp_reg_result.rc | default(1)) != 0
-    or 'registration: ok' not in (skp_reg_result.stdout | default(''))
+    not (skp_reg_result.skipped | default(false))
+    and ((skp_reg_result.rc | default(1)) != 0
+         or 'registration: ok' not in (skp_reg_result.stdout | default('')))
+
+# Sudo coverage stamp, read by tools/skpatch_watch.py: for every host of
+# this run whose sudoers file was just written from this framework's template,
+# record when (and whether actions are granted). A sudo denial in the
+# dashboard that is OLDER than the stamp is resolved ("sudoers now covers
+# it"); one that is newer is a real gap. Lives beside the staged registrar on
+# the dashboard's node, merged per host, never touched under --check.
+- name: Record this run's sudo coverage on the dashboard's node
+  shell: |
+    set -euo pipefail
+    f=/var/data/config/{{ app }}-{{ env }}/skpatch-coverage.json
+    python3 -c '
+    import json, os, sys, tempfile
+    f = sys.argv[1]
+    cur = {}
+    if os.path.exists(f):
+        try:
+            cur = json.load(open(f))
+        except ValueError:
+            cur = {}
+    cur.update(json.load(sys.stdin))
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(f))
+    with os.fdopen(fd, "w") as fh:
+        json.dump(cur, fh, indent=1, sort_keys=True)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, f)
+    print("coverage stamped: " + ", ".join(sorted(json.load(open(f)))))
+    ' "$f"
+  args:
+    executable: /bin/bash
+    stdin: >-
+      {%- set out = {} -%}
+      {%- for s in skp_reg_systems | default([]) -%}
+      {%- set w = hostvars[s.name].skp_sudoers_write | default({}) -%}
+      {%- if w and not (w.skipped | default(false)) and not (w.failed | default(false)) -%}
+      {%- set _ = out.update({s.name: {'provisioned_at': now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                                        'actions': hostvars[s.name].skp_node_allow_actions | default(false) | bool}}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out | to_json }}
+  delegate_to: "{{ skp_reg_node }}"
+  connection: "{{ hostvars[skp_reg_node].ansible_connection | default('ssh') }}"
+  become: true
+  register: skp_coverage_result
+  changed_when: "'coverage stamped' in skp_coverage_result.stdout"
+  when: not ansible_check_mode
+
+# Compliance report (tools/skpatch_compliance.py sets
+# skpatch_hosts_compliance_report to a controller path). Read-only: GET
+# requests through the same signed session, run even under --check, so the
+# compliance run is ONE `provision ... --check` that shows both host drift
+# and the dashboard's view. The script is passed through the environment,
+# not staged, because a --check run must not write to the node.
+- name: Read the dashboard's systems and recent sudo failures (compliance report)
+  shell: |
+    set -euo pipefail
+    c=$(docker ps -q --filter "name={{ app }}-{{ env }}_dashboard." | head -n1)
+    [ -n "$c" ] || { echo "report failed: no {{ app }}-{{ env }}_dashboard container on this node" >&2; exit 2; }
+    docker exec -i "$c" node --no-warnings -e "$SKP_REPORT_JS"
+  args:
+    executable: /bin/bash
+    stdin: "{{ {'register_as': skp_reg_as, 'history_days': skpatch_hosts_compliance_history_days | default(14) | int} | to_json }}"
+  environment:
+    SKP_REPORT_JS: "{{ lookup('file', playbook_dir ~ '/src/skpatch-hosts/dashboard_report.js') }}"
+  delegate_to: "{{ skp_reg_node }}"
+  connection: "{{ hostvars[skp_reg_node].ansible_connection | default('ssh') }}"
+  become: true
+  register: skp_report_result
+  changed_when: false
+  check_mode: false
+  when: skpatch_hosts_compliance_report is defined
+
+- name: Save the compliance report on the controller
+  copy:
+    content: "{{ (skp_report_result.stdout_lines | select('match', '^@@SKP-REPORT@@') | first)[14:] }}\n"
+    dest: "{{ skpatch_hosts_compliance_report }}"
+    mode: '0600'
+  delegate_to: localhost
+  connection: local
+  become: false
+  check_mode: false
+  when: skpatch_hosts_compliance_report is defined

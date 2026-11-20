@@ -23,8 +23,15 @@ version: '3.8'
 {% set sfx = '' if env == 'prod' else '-' + env %}
 {% set local_root = skstream.LOCAL_ROOT | default('/var/lib/skstream' + sfx) %}
 {% set constraints = (skstream.placement_constraints | default(['node.labels.skstream-media == true'])) | tojson %}
+{# PLEX_MODE host: Plex runs as skstream-plex.service on the media node instead
+   (a swarm service cannot get /dev/dri for hardware transcoding). #}
+{% set plex_swarm = (skstream.PLEX_MODE | default('swarm') | string | lower) != 'host' %}
+{% set kometa_on = skstream.KOMETA_ENABLED | default(false) | bool %}
 
 services:
+{% if not plex_swarm and not kometa_on %}  {}
+{% endif %}
+{% if plex_swarm %}
   plex:
     image: {{ skstream.PLEX_IMAGE | default('plexinc/pms-docker:1.43.5.11079-b3b13e506@sha256:6d778d41daae68f89115aa87a44ae14a96b23e71a2093da173b5a9aac4091336') }}
     # Plex needs time to close its SQLite DB cleanly.
@@ -127,7 +134,8 @@ services:
         - "traefik.http.routers.skstream{{ sfx }}-api.middlewares={{ skstream.API_MIDDLEWARES | default(_api_mw | unique | join(','), true) }}"
         - "traefik.http.routers.skstream{{ sfx }}-api.service=skstream{{ sfx }}"
 {% endif %}
-{% if skstream.KOMETA_ENABLED | default(false) | bool %}
+{% endif %}
+{% if kometa_on %}
 
   kometa:
     image: {{ skstream.KOMETA_IMAGE | default('kometateam/kometa@sha256:93b0909d1a34d75985c2258f451aac4ece4216d02f0c4914a0a4fa4be39a88c0') }}

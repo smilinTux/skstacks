@@ -3,6 +3,10 @@
 {% set fqdn = 'skfenceha' + ('-' + env if env != 'prod' else '') + '.' + base_cluster + '.' + base_domain %}
 {% set dashboard_fqdn = skfenceha.DASHBOARD_HOST | default(fqdn) %}
 {% set acme_on = skfenceha.ACME_ENABLED | default(false) %}
+{# skfenceha.DASHBOARD_AUTH_MODE: sso (default) | basic | lan. Must match the
+   same expression in dynamic-middlewares.yml.j2 (it decides whether the
+   traefikAuth middleware exists). #}
+{% set dashboard_auth_mode = skfenceha.DASHBOARD_AUTH_MODE | default('sso', true) %}
 {# skfenceha.ROUTER_CERT_RESOLVER: resolver for every router except the
    dashboard one (default main; empty renders `tls: {}`, i.e. Traefik picks a
    stored certificate matching the SNI without asking the resolver). #}
@@ -28,12 +32,13 @@ http:
         - websecure
       middlewares:
         - dashboard-chain@file
-{# skfenceha.DASHBOARD_SSO_MIDDLEWARE (e.g. authentik@file): SSO-gated
-    dashboard, no basic auth on top. Unset: traefikAuth@file, which is basic
-    auth when DASHBOARD_AUTH_HASH is set and a LAN-only allowlist otherwise
-    (dynamic-middlewares.yml.j2), so the dashboard is never public by default. #}
-{% if skfenceha.DASHBOARD_SSO_MIDDLEWARE | default('', true) %}
-        - {{ skfenceha.DASHBOARD_SSO_MIDDLEWARE }}
+{# Dashboard gate, exactly one (see dashboard_auth_mode above and the README):
+   sso   (default) the forward-auth middleware, no basic auth on top.
+   basic traefikAuth@file, basic auth from DASHBOARD_AUTH_HASH (LAN-only
+         allowlist when the hash is empty).
+   lan   traefikAuth@file, the LAN-only allowlist. #}
+{% if dashboard_auth_mode == 'sso' %}
+        - {{ skfenceha.DASHBOARD_SSO_MIDDLEWARE | default('authentik@file', true) }}
 {% else %}
         - traefikAuth@file
 {% endif %}

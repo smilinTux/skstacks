@@ -127,7 +127,7 @@ def test_default_single_router_no_sso(base_out):
     lab = labels(compose(base_out)["services"]["server"])
     assert lab["traefik.http.routers.skflow.rule"] == "Host(`skflow.render.example.test`)"
     assert lab["traefik.http.routers.skflow.middlewares"] == "default-no-crowdsec@file"
-    assert lab["traefik.http.routers.skflow.tls.options"] == "intermediate@file"
+    assert "traefik.http.routers.skflow.tls.options" not in lab  # default TLS options (skstacks #463)
     assert lab["traefik.http.services.skflow.loadbalancer.server.port"] == "8000"
     assert not any(k.startswith("traefik.http.routers.skflow-outpost") for k in lab)
     # the API (webhooks, job runs, tokens) gets its own router without error-pages (test_error_pages_api_paths.py)

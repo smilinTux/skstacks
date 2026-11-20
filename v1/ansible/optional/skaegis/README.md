@@ -114,14 +114,14 @@ Every other key is optional. Defaults are the playbook's own.
 | `EXTRA_CA_CERT` | empty | PEM of a private CA that signs the issuer's certificate; mounted into the indexer and dashboard as a trusted CA. |
 | `TRAEFIK_MIDDLEWARES` | `default@file` | Router middleware chain (includes the CrowdSec bouncer). |
 | `SSO_MIDDLEWARE` | empty | Optional forward-auth layer on top of the dashboard's own login. |
-| `TLS_OPTIONS` | `intermediate@file` | Traefik TLS options, or `none`. |
+| `TLS_OPTIONS` | `none` | Traefik TLS options; `none` (default) omits the label. Naming an option risks 421s (skstacks #463). |
 | `BACKUP_ENABLED` | `true` | Deploy the backup sidecar. |
 | `BACKUP_FREQUENCY`, `BACKUP_KEEP_DAYS`, `BACKUP_START_DELAY` | `86400`, `7`, `300` | Seconds between runs, retention in days, delay before the first run. |
 | `BACKUP_SNAPSHOTS` | `true` | Also take an indexer snapshot each run (the manager tarball is always taken). |
 | `AUTHENTIK_TILE` | `true` | Create or update the portal tile (the same application sksso's blueprint creates). |
 | `AUTHENTIK_TILE_SLUG`, `AUTHENTIK_TILE_NAME` | `OIDC_CLIENT_ID`, `skaegis` | Tile slug (must match the OAuth2 application) and name. |
 | `AUTHENTIK_TILE_GROUP` | `skadmin` | The gate group. Never "authentik Admins". |
-| `AUTHENTIK_TILE_ICON`, `AUTHENTIK_TILE_DESCRIPTION`, `AUTHENTIK_TILE_CATEGORY`, `AUTHENTIK_TILE_OPEN_IN_NEW_TAB` | `fa://fa-shield-halved`, a one-line text, `Security`, `true` | Tile presentation. |
+| `AUTHENTIK_TILE_ICON`, `AUTHENTIK_TILE_DESCRIPTION`, `AUTHENTIK_TILE_CATEGORY`, `AUTHENTIK_TILE_OPEN_IN_NEW_TAB` | `fa://fa-shield-alt`, a one-line text, `Security`, `true` | Tile presentation. |
 
 Minimal vault:
 

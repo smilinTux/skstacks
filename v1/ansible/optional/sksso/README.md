@@ -29,6 +29,10 @@ gate.
   that service's router middlewares. Point the middleware's address at
   `http://sksso-<env>_server:9000/outpost.goauthentik.io/auth/traefik` and
   configure an Authentik Proxy Outpost of type "Traefik" to match.
+  A service that needs its own login policy (not the domain-wide
+  catch-all) gets its own forward_single Proxy Provider; see
+  `optional/skpages/README.md` (Deploy step 3) for a worked example,
+  including the `ak shell` redirect-URI fix.
 - **Native OIDC**: for apps that speak OIDC themselves, do **not** add the
   forward-auth middleware to that route - it would intercept the OIDC
   callback (`?code=...&state=...`) the app is waiting for. Create an OAuth2
@@ -101,7 +105,8 @@ sksso:
 
 ## Branding
 
-Two packs ship: `nam` (below) and `skworld`. A pack is optional parts only: the
+Two packs ship: `nam` (below) and `skworld`. An instance can bring its own (see
+"Instance packs" below). A pack is optional parts only: the
 media dir is required, `templates/` and `nextcloud-theming.sh` are copied only when
 the pack has them.
 
@@ -152,6 +157,27 @@ The email sender display name comes from `sksso.email_from`; changing it needs
 a rolling update of `_server` and `_worker` (env change). The look is the
 NAMhub palette (teal `#00B4A0` on deep navy `#0D1A24`, leaf mark) restored from
 `namstacks/ansible/deployment/namhub-exapps/src/namhub-theme-notes.md`.
+
+### Instance packs (`branding_dir`)
+
+A pack that belongs to one instance (its own logo, colours, wording) lives in
+that instance's repo, not here. Point the role at it with `sksso.branding_dir`
+and keep `sksso.branding` as the pack's name:
+
+```yaml
+sksso:
+  branding: acme                 # names media/public/acme/
+  branding_dir: ../../branding/sksso/acme   # relative to inventory_dir, or absolute
+```
+
+The directory has the same layout as a shipped pack: `media/` (required),
+`apply-branding.sh` (required), and optional `templates/` and
+`nextcloud-theming.sh`. A relative `branding_dir` is resolved against the
+instance's inventory dir (`inventory_dir`, e.g. `envs/prod/`), never against the
+framework checkout, the same rule as skfence `EXTRA_DYNAMIC_FILES`.
+`sksso.branding` must be a plain name (letters, digits, `.`, `_`, `-`). Empty
+`branding_dir` (the default) keeps today's behaviour: `branding/<pack>/` in this
+role.
 
 ## Automation API token
 

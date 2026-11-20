@@ -112,7 +112,9 @@ services:
         - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.entrypoints={{ skgallery.TRAEFIK_ENTRYPOINT | default('websecure') }}"
         - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.tls=true"
         - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.tls.certresolver={{ skgallery.TRAEFIK_CERTRESOLVER | default('main') }}"
-        - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options={{ skgallery.TRAEFIK_TLS_OPTIONS | default('intermediate@file') }}"
+{% if (skgallery.TRAEFIK_TLS_OPTIONS | default('none', true)) != 'none' %}
+        - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.tls.options={{ skgallery.TRAEFIK_TLS_OPTIONS }}"
+{% endif %}
         # NOTE: middlewares default excludes gzip compression, which can cause
         # buffering issues (ECONNRESET) on large file uploads through the proxy.
         - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}.middlewares={{ skgallery.TRAEFIK_MIDDLEWARES | default('upload-chain-no-crowdsec@file') }}"
@@ -138,7 +140,9 @@ services:
         - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}-api.entrypoints={{ skgallery.TRAEFIK_ENTRYPOINT | default('websecure') }}"
         - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}-api.tls=true"
         - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}-api.tls.certresolver={{ skgallery.TRAEFIK_CERTRESOLVER | default('main') }}"
-        - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}-api.tls.options={{ skgallery.TRAEFIK_TLS_OPTIONS | default('intermediate@file') }}"
+{% if (skgallery.TRAEFIK_TLS_OPTIONS | default('none', true)) != 'none' %}
+        - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}-api.tls.options={{ skgallery.TRAEFIK_TLS_OPTIONS }}"
+{% endif %}
         - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}-api.priority=150"
         - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}-api.middlewares={{ skgallery.API_MIDDLEWARES | default(_api_mw | unique | join(','), true) }}"
         - "traefik.http.routers.skgallery{% if env != 'prod' %}-{{ env }}{% endif %}-api.service=skgallery{% if env != 'prod' %}-{{ env }}{% endif %}"

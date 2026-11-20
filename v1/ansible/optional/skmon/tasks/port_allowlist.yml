@@ -110,6 +110,39 @@
   become: true
   when: skmon_fw_state | default('present') != 'absent' and (skmon_fw_script.changed or skmon_fw_unit.changed)
 
+# The agent runs on the host network, so its port is reached through INPUT, where a host firewall
+# with a default-deny policy (UFW, as the framework's swarm-firewall role enables it) drops it after
+# SKMON-<ENV> has returned (found on skstack06, v2.26.27 gate: 0 of 4 agents scraped). Loki,
+# Pyroscope and /healthz are Swarm-published ports and take Docker's own FORWARD path, unaffected.
+# Opening the agent port in UFW for any source is safe: SKMON-<ENV> runs first in INPUT and drops
+# every source that is not an allowlisted agent address.
+- name: Check whether UFW is active on the firewall node
+  command: ufw status
+  register: skmon_fw_ufw_status
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  delegate_to: "{{ skmon_fw_node }}"
+  become: true
+
+- name: Derive whether UFW is active
+  set_fact:
+    skmon_fw_ufw_active: "{{ (skmon_fw_ufw_status.rc | default(1)) == 0 and 'Status: active' in (skmon_fw_ufw_status.stdout | default('')) }}"
+
+- name: Open the agent port in UFW (SKMON-<ENV> keeps the allowlist)
+  # Plain ufw (no collection dependency). "Skipping" is ufw's answer for a rule that already
+  # exists (allow) or does not exist (delete): that is no change.
+  command:
+    argv: "{{ (['ufw'] + (['delete'] if skmon_fw_state | default('present') == 'absent' else []) + ['allow', (skmon_fw_ports.agent | string) ~ '/tcp']) + ([] if skmon_fw_state | default('present') == 'absent' else ['comment', 'skmon-' ~ env ~ ' agent (allowlist in SKMON-' ~ (env | upper) ~ ')']) }}"
+  register: skmon_fw_ufw_rule
+  changed_when: "'Skipping' not in (skmon_fw_ufw_rule.stdout | default(''))"
+  failed_when: >-
+    skmon_fw_ufw_rule.rc != 0
+    and not (skmon_fw_state | default('present') == 'absent' and 'Could not delete non-existent rule' in (skmon_fw_ufw_rule.stdout ~ skmon_fw_ufw_rule.stderr | default('')))
+  delegate_to: "{{ skmon_fw_node }}"
+  become: true
+  when: skmon_fw_ufw_active | bool
+
 # --- state: absent: the unit, script, hooks and chain go -------------------------------
 
 - name: Stop and disable the port allowlist unit when absent

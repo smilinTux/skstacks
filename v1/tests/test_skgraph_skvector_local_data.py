@@ -112,7 +112,7 @@ def test_unset_knobs_render_byte_identical_to_v2_26_1(stack, env):
         # skvector is API-only: its default chains dropped error-pages after v2.26.1
         # (test_error_pages_api_paths.py). Nothing else may move.
         text = text.replace("default-no-error-pages@file", "default-no-crowdsec@file")
-    assert normalize_images(text) == normalize_images((BASELINE / f"{stack}-{env}.yml").read_text())
+    assert normalize_images(text) == normalize_images(_without_tls_options((BASELINE / f"{stack}-{env}.yml").read_text()))
 
 
 @pytest.mark.parametrize("env", ENVS)
@@ -403,3 +403,9 @@ def test_readme_documents_the_knobs_and_the_migration(stack):
                 "rsync -aHAX --numeric-ids", "STALE-moved-to-", "Never delete"]:
         assert key in text, key
     assert "\u2014" not in text and "\u2013" not in text
+
+
+def _without_tls_options(text):
+    """The baseline's tls.options=intermediate@file labels: removed since (skstacks #463),
+    every router now uses Traefik's default TLS options."""
+    return "".join(l for l in text.splitlines(keepends=True) if ".tls.options=intermediate@file" not in l)

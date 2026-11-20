@@ -91,9 +91,14 @@ Namespace `skstream`. Required: `RD_API_KEY`, `PLEX_TOKEN`, `MEDIA_NODE`.
 | `CUTOFF_DATE` | `''` | watchlist cutoff: `YYYY-MM-DD` or days (e.g. `7`); `''` takes whole back catalogs of watchlisted shows |
 | `WATCHLIST_CHECK_MINUTES` | `5` | |
 | `CLI_DEBRID_HYBRID_MODE` | `true` | cli_debrid `Scraping.hybrid_mode`: take a cached release if any, else the best uncached one |
-| `CLI_DEBRID_FILTER_OUT` | Russian-release filter | list of cli_debrid `filter_out` patterns added to each managed scraping version on every deploy (append only: patterns added in the UI stay, and removing one here does not remove it there). Unset uses `DEFAULT_FILTER_OUT` in `skstream-converge`, which rejects `Rus`/`Ru`/`Ukr` tags, Russian dub and tracker groups (LostFilm, ColdFilm, ViruseProject, Ultradox and others) and any Cyrillic letter in a release name. `language_code: en` alone only lowers a foreign release's score, so a cached Russian pack can still win. `[]` adds nothing |
+| `CLI_DEBRID_FILTER_OUT` | Russian-release filter | list of cli_debrid `filter_out` patterns added to each managed scraping version on every deploy (append only: patterns added in the UI stay, and removing one here does not remove it there). Unset uses `DEFAULT_FILTER_OUT` in `skstream-converge`, which rejects `Rus`/`Ru`/`Ukr` tags, Russian dub and tracker groups (LostFilm, ColdFilm, ViruseProject, Ultradox and others) and any Cyrillic letter in a release name, plus 3D Blu-ray disc images (`3D.BluRay`, SBS, BDMV, ISO, COMPLETE BLURAY, `RARBG.com`: cli_debrid does not count an `.iso` as video and "collected" the 0 MB `RARBG.com.mp4` promo instead). `language_code: en` alone only lowers a foreign release's score, so a cached Russian pack can still win. `[]` adds nothing |
+| `CLI_DEBRID_PREFERRED_FILTER_OUT` | multi-audio penalty | list of `[pattern, weight]` pairs for cli_debrid `preferred_filter_out` on each managed scraping version, upserted by pattern on every deploy (pairs added in the UI stay). Unset uses `DEFAULT_PREFERRED_FILTER_OUT`: `-400` for MULTi/DUAL, iTA/HINDI/LATINO/VF2/TRUEFRENCH tags and the dub groups behind them, which carry English but mark a foreign track as the default. A plain English release (~640) then wins, while a title that only exists as multi-audio (~240) is still found. `Multi.Sub` is not matched. `[]` adds nothing |
 | `CLI_DEBRID_FOREIGN_LANGUAGE_PENALTY` | `1000` | cli_debrid `foreign_language_penalty` on each managed scraping version, set on every deploy. With `language_weight` 3 a release tagged with another audio language (cli_debrid's own detection; subtitle tags, MULTi/DUAL/DL and the title's original language are exempt) scores about -2350, so together with `CLI_DEBRID_MINIMUM_SCRAPE_SCORE` it is dropped, not just ranked down. That matters because the Adding queue takes any cached release before any uncached one whatever its score. cli_debrid's stock value is `30` |
 | `CLI_DEBRID_MINIMUM_SCRAPE_SCORE` | `1.0` | cli_debrid `Scraping.minimum_scrape_score`, set on every deploy; global, drops every result scoring below it. Real releases scored 483-953 on nor. `0.0` turns the filter off (and with it the drop above) |
+| `CLI_DEBRID_REVERSE_PARSER_DEFAULT_VERSION` | first managed version (`1080p`) | cli_debrid `Reverse Parser.default_version`, set on every deploy. Rows cli_debrid makes for files it did not scrape get `<this>**`; with the seed's empty value they were a bare `**`, which a rescrape strips to no version at all, and cli_debrid scrapes a version-less item with no filters |
+| `LANGGUARD_ENABLED` | `true` | install and run `skstream-langguard` (below) every `LANGGUARD_INTERVAL` (`30min`) |
+| `LANGGUARD_APPLY` | `true` | `false` makes the guard report only (journal of `skstream-langguard.service`) |
+| `LANGGUARD_MAX_RESETS` | `20` | most items one guard run resets |
 | `RCLONE_MOUNT_NAME` | `rclone_RD` | directory under the mount; Plex libraries live below `/mnt/debrid/<name>/` |
 | `PLEX_MOVIE_LIBRARIES`, `PLEX_SHOW_LIBRARIES` | `Movies`, `TV Shows` | comma lists, for cli_debrid |
 | `KOMETA_ENABLED` | `false` | `KOMETA_TIME` (`03:00`) |
@@ -103,6 +108,12 @@ Namespace `skstream`. Required: `RD_API_KEY`, `PLEX_TOKEN`, `MEDIA_NODE`.
 | `DUMB_MEMORY_LIMIT` | `2g` | |
 | `PLEX_ENDPOINT_MODE` | `dnsrr` | `vip` or `dnsrr`; keep dnsrr while host-level containers share the overlay (see above) |
 | `PLEX_EXTRA_BINDS` | `[]` | list of `{source, target}` read-only binds into Plex, e.g. `{source: /var/data/skfetch-prod/media, target: /skfetch/media}` so libraries can include skfetch folders |
+| `PLEX_MODE` | `swarm` | `swarm` (Plex in the stack) or `host` (Plex as `skstream-plex.service` on the media node, needed for hardware transcoding; see "Plex hardware transcoding") |
+| `PLEX_HW_TRANSCODE` | `false` | `host` mode only: pass `/dev/dri` into Plex (needs Plex Pass and a GPU on the media node) |
+| `PLEX_LAN_BIND_ADDRESS` | | `host` mode, required: the media node's LAN IPv4; Plex publishes 32400 there and the Traefik route points at it |
+| `TRAEFIK_DYNAMIC_DIR` | | `host` mode: Traefik file-provider directory on the managers (as in skfetch); the play writes `skstream[-env].yml` there |
+| `PLEX_TRANSCODE_DIR` | `/var/data/skstream-<env>/plex/transcode` | `host` mode: host path for Plex's transcode scratch; a local disk path keeps transcode writes off NFS |
+| `PLEX_RENDER_GID` | from `/dev/dri/renderD128` | `host` mode: group Plex joins to open the render node; found automatically |
 | `DUMB_EXTRA_BINDS` | `[]` | list of `{source, target, read_only}` binds into the DUMB container (`read_only` default `true`), rendered as `-v source:target[:ro]` after the `/data` bind. The source file is yours to place on `MEDIA_NODE`; absolute paths without spaces or colons (the play checks). The play refuses a bind over `/cli_debrid/content_checkers/plex_watchlist.py` while `CLI_DEBRID_VERSION` pins a release: the managed Plex Home fix it once carried is upstream now |
 | `CLI_DEBRID_VERSION` | `v0.7.81` | cli_debrid release DUMB installs (set in `dumb_config.json` on every deploy; a change restarts `skstream-dumb`). `''` leaves DUMB's own selection alone. DUMB images up to at least 2.23.0 bake cli_debrid 0.7.23, and the container runs with `--rm`, so a pin is downloaded from GitHub on each start of `skstream-dumb`. A pin also sets `cli_battery.enabled: false`: cli_debrid v0.7.29 and later run CLI Battery in-process and ship no `cli_battery/main.py`, so DUMB's standalone battery service crashes and holds cli_debrid back. It also points cli_debrid's data paths (`USER_CONFIG`, `USER_LOGS`, `USER_DB_CONTENT`, `config_file`, `log_file`) at `/data/cli_debrid` directly: DUMB reinstalls a pinned release into `/cli_debrid` on every start and its `/cli_debrid/data` symlink did not survive that. Drop the pin once a `DUMB_IMAGE` bakes the release you want |
 | `PLEX_OTHER_WATCHLISTS` | `[]` | list of `{username, token, display_name}`: one "Other Plex Watchlist" source per viewer, each with that viewer's own plex.tv token. `username` is the plex.tv username, or the profile title for a managed Plex Home user. Tokens are secrets: vault only (see [Viewers](#viewers-and-their-watchlists)) |
@@ -192,6 +203,62 @@ Library access is plex.tv account state, not deploy state: give a new viewer
 the same libraries and Downloads as the others in Plex (Settings, Manage
 Library Access) or with plexapi `updateFriend(user, server,
 sections=server.library.sections())`.
+
+## Audio language
+
+Release names cannot show what is inside a file: an untagged Spanish dub
+scores like an English release, and a MULTi or iTA-ENG release carries English
+but marks a foreign track as its default. Plex plays the default for any
+viewer without a preferred audio language, which includes every friend
+account (their language settings live in their own plex.tv account). On nor in
+2026-11 that was ~1150 files, ~60 with no English audio at all.
+
+`skstream-langguard` (a systemd timer on `MEDIA_NODE`, running inside
+`skstream-dumb`) reads the tracks Plex indexed for items added since its last
+run and enforces one rule: **English audio, unless the audio is the title's
+original language and there are English subtitles** (Parasite in Korean is
+fine, a Hebrew dub of Minions is not). It
+
+- selects the English track (and drops a foreign forced subtitle) for the
+  owner and every user the server is shared with, the per-user choice Plex
+  stores on this server. A newly shared user gets every mixed-audio item once.
+- resets a cli_debrid item that breaks the rule to Wanted (the rescrape
+  route's SQL, so the old release is skipped), deletes its Real-Debrid torrent
+  when no other collected item uses it, and removes the Plex media entry, so
+  cli_debrid fetches another release. A blank or `**` version (rows cli_debrid's
+  Plex sync made) is set to `1080p` on the way, since cli_debrid scrapes a
+  version-less item with no filters at all.
+- only reports untagged audio, titles whose original language cli_debrid does
+  not know, files cli_debrid does not manage, and items it already reset three
+  times.
+
+Run it by hand on the media node: `systemctl start skstream-langguard` and
+`journalctl -u skstream-langguard`, or for a report of the whole library
+`skstream-langguard-run skstream-dumb 1000:1000 "<plex config>/Library/Application Support/Plex Media Server/Preferences.xml" --full`
+(no `--apply`, changes nothing).
+
+## Plex hardware transcoding
+
+A swarm service cannot get a device, so swarm Plex cannot open `/dev/dri` and
+transcodes on the CPU only. `PLEX_MODE: host` moves Plex out of the stack into
+`skstream-plex.service` on the media node, the same pattern as
+`skstream-dumb.service`:
+
+- it joins the `skstream-<env>` overlay with the alias `plex`, so DUMB, Kometa
+  and the zurg hook keep calling `http://plex:32400`;
+- it publishes 32400 on `PLEX_LAN_BIND_ADDRESS` only, and Traefik reaches it
+  through a file-provider route (`TRAEFIK_DYNAMIC_DIR`) with the same host,
+  TLS options and middlewares as the swarm labels (middlewares must be `@file`);
+- it never starts beside a swarm Plex task: the deploy removes the swarm
+  service first (`--prune`), and the unit waits until no swarm Plex task runs
+  on the node. Going back to `swarm` stops and disables the unit and removes
+  the file route before the stack deploy.
+
+With `PLEX_HW_TRANSCODE: true` the unit adds `--device /dev/dri` and the render
+group. Turn on "Use hardware acceleration when available" in Plex
+(Settings > Transcoder) once. On a Proxmox VM the GPU has to be passed through
+first (`hostpci0`), and the VM CPU type should be `host` so software
+transcodes get AVX2. Passthrough pins all of the VM's RAM on the host.
 
 ## Using it
 

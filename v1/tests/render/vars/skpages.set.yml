@@ -1,0 +1,10 @@
+# Second render pass: merged over skpages.example.yml to drive the optional
+# knobs down their "set" path. Fake values only.
+skpages:
+  CLOUDFLARED: true
+  AUTH: false
+  CERTRESOLVER: ""
+  TRAEFIK_MIDDLEWARES: crowdsec-bouncer@file,default@file
+  TRAEFIK_MIDDLEWARES_PUBLIC: crowdsec-bouncer@file,default@file
+  UID: 1000
+  GID: 1000

@@ -97,7 +97,7 @@
              else ('invite' if (skgym.INVITE_ONLY | bool) else 'open') if (skgym.INVITE_ONLY is defined and skgym.INVITE_ONLY is not none and skgym.INVITE_ONLY | string | length > 0)
              else 'auto' }}
         skg_signup_conflict: "{{ (skgym.SIGNUP | default('', true) | string | length > 0) and (skgym.INVITE_ONLY is defined and skgym.INVITE_ONLY is not none and skgym.INVITE_ONLY | string | length > 0) }}"
-        skg_tls_options: "{{ skgym.TLS_OPTIONS | default('intermediate@file', true) }}"
+        skg_tls_options: "{{ skgym.TLS_OPTIONS | default('none', true) }}"
         skg_router: "skgym{{ '' if env == 'prod' else '-' + env }}"
       tags: [config]
 

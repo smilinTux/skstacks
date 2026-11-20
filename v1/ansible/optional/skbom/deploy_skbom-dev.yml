@@ -86,7 +86,7 @@
         skb_dump_path: "{{ skbom.DUMP_PATH | default('/var/data/' + app + '-' + env + '/database-dump', true) }}"
         skb_data_node: "{{ skbom.DATA_NODE | default('', true) | string }}"
         skb_middlewares: "{{ skbom.TRAEFIK_MIDDLEWARES | default('default-no-error-pages@file', true) }}"
-        skb_tls_options: "{{ skbom.TLS_OPTIONS | default('intermediate@file', true) }}"
+        skb_tls_options: "{{ skbom.TLS_OPTIONS | default('none', true) }}"
         skb_router: "skbom{{ '' if env == 'prod' else '-' + env }}"
         skb_oidc_on: "{{ skbom.OIDC_ENABLED | default(false) | bool }}"
       tags: [config]
@@ -301,7 +301,7 @@
           name: "{{ skbom.AUTHENTIK_TILE_NAME | default('SKBom (Dependency-Track)', true) }}"
           launch_url: "https://{{ skb_host }}"
           group: "{{ skbom.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
-          icon: "{{ skbom.AUTHENTIK_TILE_ICON | default('fa://fa-shield-halved', true) }}"
+          icon: "{{ skbom.AUTHENTIK_TILE_ICON | default('fa://fa-shield-alt', true) }}"
           icon_file: "{{ skbom.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"
           icon_name: "{{ skbom.AUTHENTIK_TILE_ICON_NAME | default('skbom', true) }}"
           open_in_new_tab: "{{ skbom.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"

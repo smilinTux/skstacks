@@ -3,7 +3,19 @@
 {%- else -%}
   {%- set _base_domain = skmesh.CLUSTERNAME ~ '.' ~ skmesh.DOMAIN -%}
 {%- endif -%}
+{#- skmesh.TRAEFIK_MIDDLEWARES (list or comma string, default empty): middlewares
+    for every skmesh HTTP router, e.g. [crowdsec-bouncer@file]. Empty renders no
+    middlewares label at all, exactly as before. -#}
+{%- set _mw_raw = skmesh.TRAEFIK_MIDDLEWARES | default([], true) -%}
+{%- set _skmesh_mw = (_mw_raw.split(',') if _mw_raw is string else _mw_raw) | map('trim') | reject('equalto', '') | join(',') -%}
 {%- set _mode = skmesh.AUTH_MODE | default('standalone') | string | lower -%}
+{%- set _turn_domain = skmesh.TURN_DOMAIN | default('turn.' ~ _base_domain, true) -%}
+{%- set _turn_tls = (skmesh.DEPLOY_COTURN | default(false)) and ((skmesh.TURN_TLS | default(false) | string | lower) in ['true', 'yes', '1']) -%}
+{#- The dumper's output root, not the domain's own directory: the dumper runs
+    with --clean and recreates every domain directory on each dump (a bind
+    mount of one would keep the deleted directory), and Swarm rejects a bind
+    mount whose source does not exist yet (before Traefik has the cert). -#}
+{%- set _turn_cert_dir = skmesh.TURN_TLS_DUMP_DIR | default('/var/data/runtime/skfence-' ~ env ~ '/certs', true) -%}
 {%- set _sso = skmesh.SSO_HOST | default('sso' ~ ('' if env == 'prod' else '-' ~ env) ~ '.' ~ _base_domain) -%}
 version: "3.9"
 
@@ -18,6 +30,14 @@ networks:
     external: true
   cloud-public-{{ env }}:
     external: true
+{% if skmesh.DEPLOY_COTURN | default(false) %}
+  # Swarm's predefined host network. A swarm service ignores network_mode, so
+  # this is how coturn gets the host's own sockets: 3478/5349 and the whole
+  # relay range bound directly, real client addresses, no per-port mapping.
+  hostnet:
+    external: true
+    name: host
+{% endif %}
 
 services:
 {# Postgres 18+ images moved PGDATA to /var/lib/postgresql/<major>/docker and declare VOLUME
@@ -141,12 +161,18 @@ services:
         - "traefik.enable=true"
         - "traefik.http.routers.skmesh-mgmt-api.rule=Host(`skmesh{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && PathPrefix(`/api`)"
         - "traefik.http.routers.skmesh-mgmt-api.entrypoints=websecure"
+{% if _skmesh_mw %}
+        - "traefik.http.routers.skmesh-mgmt-api.middlewares={{ _skmesh_mw }}"
+{% endif %}
         - "traefik.http.routers.skmesh-mgmt-api.tls.certresolver=main"
         - "traefik.http.routers.skmesh-mgmt-api.service=skmesh-mgmt-api-svc"
         - "traefik.http.services.skmesh-mgmt-api-svc.loadbalancer.server.port=80"
         - "traefik.http.services.skmesh-mgmt-api-svc.loadbalancer.server.scheme=http"
         - "traefik.http.routers.skmesh-mgmt-grpc.rule=Host(`skmesh{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && PathPrefix(`/management`)"
         - "traefik.http.routers.skmesh-mgmt-grpc.entrypoints=websecure"
+{% if _skmesh_mw %}
+        - "traefik.http.routers.skmesh-mgmt-grpc.middlewares={{ _skmesh_mw }}"
+{% endif %}
         - "traefik.http.routers.skmesh-mgmt-grpc.tls.certresolver=main"
         - "traefik.http.routers.skmesh-mgmt-grpc.service=skmesh-mgmt-grpc-svc"
         - "traefik.http.services.skmesh-mgmt-grpc-svc.loadbalancer.server.port=33073"
@@ -155,6 +181,9 @@ services:
         # embedded IdP (Dex) is served by management's HTTP port at /oauth2
         - "traefik.http.routers.skmesh-mgmt-oauth2.rule=Host(`skmesh{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && PathPrefix(`/oauth2`)"
         - "traefik.http.routers.skmesh-mgmt-oauth2.entrypoints=websecure"
+{% if _skmesh_mw %}
+        - "traefik.http.routers.skmesh-mgmt-oauth2.middlewares={{ _skmesh_mw }}"
+{% endif %}
         - "traefik.http.routers.skmesh-mgmt-oauth2.tls.certresolver=main"
         - "traefik.http.routers.skmesh-mgmt-oauth2.service=skmesh-mgmt-api-svc"
 {% endif %}
@@ -182,6 +211,9 @@ services:
         - "traefik.enable=true"
         - "traefik.http.routers.skmesh-signal.rule=Host(`skmesh{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && PathPrefix(`/signalexchange.SignalExchange`)"
         - "traefik.http.routers.skmesh-signal.entrypoints=websecure"
+{% if _skmesh_mw %}
+        - "traefik.http.routers.skmesh-signal.middlewares={{ _skmesh_mw }}"
+{% endif %}
         - "traefik.http.routers.skmesh-signal.tls.certresolver=main"
         - "traefik.http.routers.skmesh-signal.service=skmesh-signal-svc"
         - "traefik.http.services.skmesh-signal-svc.loadbalancer.server.port=10000"
@@ -212,6 +244,9 @@ services:
         - "traefik.enable=true"
         - "traefik.http.routers.skmesh-relay.rule=Host(`skmesh{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && PathPrefix(`/relay`)"
         - "traefik.http.routers.skmesh-relay.entrypoints=websecure"
+{% if _skmesh_mw %}
+        - "traefik.http.routers.skmesh-relay.middlewares={{ _skmesh_mw }}"
+{% endif %}
         - "traefik.http.routers.skmesh-relay.tls.certresolver=main"
         - "traefik.http.routers.skmesh-relay.service=skmesh-relay-svc"
         - "traefik.http.services.skmesh-relay-svc.loadbalancer.server.port=33080"
@@ -242,8 +277,20 @@ services:
         - "traefik.enable=true"
         - "traefik.http.routers.skmesh-dash.rule=Host(`skmesh{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && !PathPrefix(`/api`) && !PathPrefix(`/management`) && !PathPrefix(`/signalexchange.SignalExchange`) && !PathPrefix(`/relay`){% if _mode != 'authentik' %} && !PathPrefix(`/oauth2`){% endif %}"
         - "traefik.http.routers.skmesh-dash.entrypoints=websecure"
+{% if _skmesh_mw %}
+        - "traefik.http.routers.skmesh-dash.middlewares={{ _skmesh_mw }}"
+{% endif %}
         - "traefik.http.routers.skmesh-dash.tls.certresolver=main"
         - "traefik.http.services.skmesh-dash.loadbalancer.server.port=80"
+{% if _turn_tls %}
+        # Only so Traefik obtains (and renews) a certificate for the TURN
+        # domain; skfence's certs-dumper writes it where coturn mounts it.
+        # The router answers nothing (noop@internal): TURN is not HTTP.
+        - "traefik.http.routers.skmesh-turn-cert.rule=Host(`{{ _turn_domain }}`)"
+        - "traefik.http.routers.skmesh-turn-cert.entrypoints=websecure"
+        - "traefik.http.routers.skmesh-turn-cert.tls.certresolver=main"
+        - "traefik.http.routers.skmesh-turn-cert.service=noop@internal"
+{% endif %}
         - "traefik.swarm.network=cloud-public-{{ env }}"
     logging: *logging
     depends_on:
@@ -251,21 +298,26 @@ services:
 
 {% if skmesh.DEPLOY_COTURN | default(false) %}
   coturn:
-    image: coturn/coturn:4.18.0-trixie
-    container_name: skmesh-coturn
-    network_mode: host
-    command:
-      - -n
-      - --log-file=stdout
-      - --min-port=49152
-      - --max-port=65535
-      - --realm=turn.{{ _base_domain }}
-      - --static-auth-secret={{ skmesh.TURN_SECRET }}
-    env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
+    # Config (with the shared secret) and the entrypoint script are rendered
+    # files, so no secret sits in the service spec. Starts as root to read the
+    # TLS key; turnserver drops to nobody (proc-user). See README "TURN / STUN".
+    image: {{ skmesh.COTURN_IMAGE | default('coturn/coturn:4.18.0-trixie@sha256:bbefd3e1fdfdc0d58770fe01b581fd8b00d9f3a5580d00acb77cf719a6bc78e3') }}
+    user: "0:0"
+    entrypoint: ["/bin/sh", "/coturn-run.sh"]
+    networks:
+      - hostnet
+    volumes:
+      - /var/data/config/skmesh-{{ env }}/turnserver.conf:/etc/coturn/turnserver.conf:ro
+      - /var/data/config/skmesh-{{ env }}/coturn-run.sh:/coturn-run.sh:ro
+{% if _turn_tls %}
+      - {{ _turn_cert_dir }}:/certs-dump:ro
+{% endif %}
     deploy:
       mode: global
       placement:
-        constraints:
-          - node.role == manager
+        constraints: {{ skmesh.COTURN_PLACEMENT_CONSTRAINTS | default(['node.role == manager'], true) | tojson }}
+      restart_policy:
+        condition: any
+        delay: 5s
     logging: *logging
 {% endif %}
