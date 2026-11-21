@@ -4,7 +4,15 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
-## Unreleased
+## skstacks-v2.26.31 - 2026-11-21
+
+Patch on v2.26.30. skgit can sign users in through Authentik over OIDC, managed as code on both
+ends (opt-in, off by default). skha keepalived restarts wait for each node to be ready instead of a
+fixed pause, and a `vip_gate_checks` entry that names no health check is rejected. skreg no longer
+recreates its own overlay network. The portal tile provisioner retries Authentik's "starting" 503.
+`main` merges through a merge queue. The libvirt-cluster module can route test VMs' apt through a
+cache, with retries (opt-in). Instance action: redeploy skha (check `vip_gate_checks` first, see
+below); everything else is opt-in or needs nothing.
 
 ### skreg: overlay network task no longer recreates an existing network
 
@@ -13,6 +21,7 @@ Each entry says what an instance must do, if anything.
   network the registry was attached to and the deploy failed ("network ... is in use by service").
   Unencrypted is the overlay default, so new networks are unchanged. Tests:
   `v1/tests/test_skreg_network_no_driver_options.py`. **Instance action**: none.
+
 ### libvirt-cluster: apt retries behind `apt_proxy`
 
 - With `apt_proxy` set, cloud-init also writes `Acquire::Retries "5"`. A test cluster's four VMs filling an

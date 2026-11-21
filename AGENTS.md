@@ -72,7 +72,8 @@ What the gates cover: [docs/testing.md](./docs/testing.md).
   That section is `## Unreleased`, or the release being cut, and never a release that is already
   tagged: after a tag, start a fresh `## Unreleased` on top. CI (`tools/changelog_placement.py`)
   fails a PR that adds lines anywhere else.
-- **Merging:** `main` uses a merge queue. Queue a green PR with `gh pr merge <N> --squash`; do not
+- **Merging:** `main` uses a merge queue. Queue a green PR with "Merge when ready" or the
+  `enqueuePullRequest` call in CONTRIBUTING.md (`gh pr merge --squash` needs auto-merge, which is off); do not
   pass `--admin`, which bypasses the queue. See [CONTRIBUTING.md](./CONTRIBUTING.md).
 - **Attribution:** a `Co-Authored-By` trailer names the agent that actually did the work, or is
   left out. Never one you cannot evidence.
