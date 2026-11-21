@@ -133,10 +133,22 @@ class _LenientUndefined(jinja2.ChainableUndefined):
         return other if isinstance(other, str) else NotImplemented
 
 
+def _difference(a, b=()):
+    """Ansible's `difference` filter: the items of `a` not in `b`, order kept, no duplicates."""
+    a = a if isinstance(a, (list, tuple)) else []
+    b = b if isinstance(b, (list, tuple, set)) else []
+    out = []
+    for x in a:
+        if x not in b and x not in out:
+            out.append(x)
+    return out
+
+
 def _env(native=False):
     cls = jinja2.nativetypes.NativeEnvironment if native else jinja2.Environment
     env = cls(undefined=_LenientUndefined)
-    env.filters.update(basename=_basename, regex_replace=_regex_replace, product=_product, bool=_bool)
+    env.filters.update(basename=_basename, regex_replace=_regex_replace, product=_product, bool=_bool,
+                       difference=_difference)
     return env
 
 
@@ -336,3 +348,10 @@ def test_secret_bearing_files_not_world_readable():
             rel = _rel(src)
             bad.append(f"{origin}: {dest} mode={mode or '(none)'} [{reason}] <- {rel}")
     assert not bad, f"{len(bad)} secret-bearing files world-readable:\n" + "\n".join(sorted(set(bad)))
+
+
+def test_difference_filter_matches_ansible():
+    # skha's vip_gate_checks validation (#490) renders `| difference(...)`.
+    assert _difference(["traefik", "nope", "traefik"], ["app"]) == ["traefik", "nope"]
+    assert _difference(["a", "b"], ["b"]) == ["a"]
+    assert _difference(None, ["b"]) == []

@@ -6,6 +6,12 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+### Tests: Ansible's `difference` filter in the secret-file render env
+
+- `v1/tests/test_secret_files_not_world_readable.py` renders playbooks with plain Jinja, which has no
+  `difference` filter; #490's skha `vip_gate_checks` validation uses it, so 4 tests failed on main. The
+  test env now provides an Ansible-compatible `difference`. Test-only. **Instance action**: none.
+
 ### skha: restarts wait for a ready node; gate names validated
 
 - The `restart keepalived` handler no longer sleeps a fixed 20 s. It waits, one manager at a time,
