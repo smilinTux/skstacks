@@ -6,6 +6,13 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+### skreg: overlay network task no longer recreates an existing network
+
+- `deploy_skreg-{dev,staging,prod}.yml` stop passing `driver_options: {encrypted: "false"}`. An
+  overlay created without that option read as changed, so `docker_network` tried to recreate a
+  network the registry was attached to and the deploy failed ("network ... is in use by service").
+  Unencrypted is the overlay default, so new networks are unchanged. Tests:
+  `v1/tests/test_skreg_network_no_driver_options.py`. **Instance action**: none.
 ### libvirt-cluster: apt retries behind `apt_proxy`
 
 - With `apt_proxy` set, cloud-init also writes `Acquire::Retries "5"`. A test cluster's four VMs filling an
