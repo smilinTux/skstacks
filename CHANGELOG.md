@@ -10,8 +10,11 @@ Each entry says what an instance must do, if anything.
 
 - The `restart keepalived` handler no longer sleeps a fixed 20 s. It waits, one manager at a time,
   until that node reports MASTER or BACKUP (`skha_notify.sh` now also writes `/run/skha.state`),
-  and fails (stopping the rollout, `any_errors_fatal`) if the node is not ready within
-  `skha.restart_settle_seconds`. That setting is now a
+  and fails if the node is not ready within `skha.restart_settle_seconds`. The handler is one
+  `run_once` task looping over the managers whose config changed (`src/keepalived/restart_keepalived.yml`,
+  delegated to each in turn), so a failed node stops the rollout and no later manager restarts.
+  (`throttle: 1` plus `any_errors_fatal` does not stop it: the linear strategy still runs the task
+  on every host first.) That setting is now a
   maximum, not a fixed pause, and its default is derived from the health checks (30 s for the
   default Traefik check). A manager that cannot carry the VIP is reported instead of passed over.
 - `skha.vip_gate_checks` is rejected when it is a mapping, and when it names a check that is not

@@ -303,6 +303,7 @@
         owner: root
         group: root
         mode: '0600'
+      register: skha_conf
       notify: restart keepalived
 
     - name: Enable and start keepalived
@@ -324,38 +325,18 @@
 
   handlers:
     # One manager at a time, and the next one only after this one reports
-    # MASTER or BACKUP (skha_notify.sh writes /run/skha.state). Its gate
-    # checks start failed (init_fail), so until they pass `rise` times the
-    # node is FAULT and cannot take the VIP. Restarting every manager at once
-    # leaves no node holding the VIP for several seconds. A node still not
-    # ready after skha_restart_wait seconds fails the handler, so a node that
-    # cannot carry the VIP is reported instead of silently skipped, and
-    # any_errors_fatal stops the rollout there: restarting the next manager
-    # (perhaps the VIP holder) would leave no node able to take the VIP.
-    # Only a state written after the stop counts (newer than the marker),
-    # so a notify from the old daemon cannot end the wait early.
+    # MASTER or BACKUP. Its gate checks start failed (init_fail), so until
+    # they pass `rise` times the node is FAULT and cannot take the VIP.
+    # Restarting every manager at once leaves no node holding the VIP for
+    # several seconds. A node still not ready after skha_restart_wait seconds
+    # stops the rollout there: restarting the next manager (perhaps the VIP
+    # holder) would leave no node able to take the VIP. The loop runs from
+    # one run_once task, so it really stops (see restart_keepalived.yml).
     - name: restart keepalived
-      ansible.builtin.shell: |
-        systemctl stop keepalived
-        rm -f /run/skha.state
-        sleep 1
-        marker=$(mktemp)
-        trap 'rm -f "$marker"' EXIT
-        if ! systemctl start keepalived; then
-          journalctl -u keepalived -n 20 --no-pager >&2
-          exit 1
-        fi
-        for _ in $(seq {{ skha_restart_wait }}); do
-          if [ /run/skha.state -nt "$marker" ]; then
-            case "$(cat /run/skha.state)" in
-              master|backup) systemctl is-active keepalived; exit 0 ;;
-            esac
-          fi
-          sleep 1
-        done
-        echo "keepalived not MASTER/BACKUP after {{ skha_restart_wait }} s (state: $(cat /run/skha.state 2>/dev/null || echo none))" >&2
-        exit 1
-      args:
-        executable: /bin/bash
-      throttle: 1
-      any_errors_fatal: true
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/src/keepalived/restart_keepalived.yml"
+      loop: >-
+        {{ ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars, ['skha_conf', 'changed']))
+           | selectattr(1) | map(attribute=0) | list }}
+      loop_control:
+        loop_var: skha_node
+      run_once: true
