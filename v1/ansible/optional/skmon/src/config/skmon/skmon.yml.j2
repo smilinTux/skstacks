@@ -403,7 +403,7 @@ services:
   # target parameter. Always present in the stack so a toggle is one redeploy; replicas 0 when
   # PVE is off or skmon is parked.
   pve-exporter:
-    image: {{ skmon.PVE_EXPORTER_IMAGE | default('prompve/prometheus-pve-exporter:3.10.2@sha256:7ed5dbff1b145e62e94003cb78d70226d9a7c4d4d1c928b3c7daed21ae9a84d8') }}
+    image: {{ skmon.PVE_EXPORTER_IMAGE | default('prompve/prometheus-pve-exporter:3.11.0@sha256:290756c34fd13e1d9972b8e64344d49a15ab99dd0053b29d9716f1ca4ae4c069') }}
     command: ["--config.file=/etc/prometheus/pve.yml"]
     user: "{{ pve_uid }}:{{ pve_uid }}"
     secrets:
