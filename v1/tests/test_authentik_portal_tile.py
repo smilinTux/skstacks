@@ -865,3 +865,73 @@ def test_tile_task_passes_an_explicit_access_through(tmp_path):
     proc, data = tile_input(tmp_path, {"access": explicit, "group": "ops"})
     assert data["access"] == explicit
     assert data["group"] == "ops"  # the script binds it additively on top
+
+
+def _http_error(code, body):
+    class FakeHTTPError(urllib.error.HTTPError):
+        def __init__(self):
+            super().__init__("http://x", code, "err", {}, None)
+
+        def read(self):
+            return body
+
+    return FakeHTTPError()
+
+
+class _Resp:
+    status = 200
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self):
+        return b'{"results": []}'
+
+
+def test_api_call_retries_a_503_authentik_starting(monkeypatch):
+    calls, sleeps = [], []
+
+    def fake_urlopen(req, timeout=30):
+        calls.append(req.get_method())
+        if len(calls) < 3:
+            raise _http_error(503, b'{"error":"authentik starting"}')
+        return _Resp()
+
+    monkeypatch.setattr(tile.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(tile.time, "sleep", sleeps.append)
+    api = tile.Api("http://sksso-prod_server:9000", "sso.example.com", "token")
+    assert api.call("GET", "/core/groups/?name=skadmin") == {"results": []}
+    assert len(calls) == 3 and sleeps == [5, 10]
+
+
+def test_api_call_gives_up_after_the_last_503(monkeypatch):
+    calls = []
+
+    def fake_urlopen(req, timeout=30):
+        calls.append(1)
+        raise _http_error(503, b'{"error":"authentik starting"}')
+
+    monkeypatch.setattr(tile.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(tile.time, "sleep", lambda s: None)
+    api = tile.Api("http://sksso-prod_server:9000", "sso.example.com", "token")
+    with pytest.raises(tile.ApiError, match="HTTP 503"):
+        api.call("POST", "/core/applications/", {"slug": "x"})
+    assert len(calls) == tile.RETRY_ATTEMPTS
+
+
+def test_api_call_does_not_retry_other_errors(monkeypatch):
+    calls = []
+
+    def fake_urlopen(req, timeout=30):
+        calls.append(1)
+        raise _http_error(500, b"boom")
+
+    monkeypatch.setattr(tile.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(tile.time, "sleep", lambda s: pytest.fail("slept on a 500"))
+    api = tile.Api("http://sksso-prod_server:9000", "sso.example.com", "token")
+    with pytest.raises(tile.ApiError, match="HTTP 500"):
+        api.call("GET", "/core/applications/")
+    assert len(calls) == 1

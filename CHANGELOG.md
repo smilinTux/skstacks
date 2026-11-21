@@ -30,6 +30,14 @@ Each entry says what an instance must do, if anything.
 - **Instance action**: none for the defaults. If you set `restart_settle_seconds` below the time
   your gate checks need to pass `rise` times, raise it or remove it.
 
+### Portal tiles: retry Authentik's "starting" 503
+
+- The portal tile provisioner (`v1/ansible/shared/src/authentik_portal_tile.py`) retries an HTTP 503
+  `{"error":"authentik starting"}` up to 6 times (5 to 25 s backoff, about 75 s) instead of failing
+  the deploy. Authentik's front server sends it before the request reaches the backend, so every
+  method is safe to resend. Other errors still fail at once. A release gate deploy failed on one such
+  503 with the server up for 22 minutes. **Instance action**: none.
+
 ### CI: merge queue on `main`; CONTRIBUTING.md
 
 - `skred-scan.yml` (the required `scan` check) and `framework-tests.yml` run on `merge_group`, so
