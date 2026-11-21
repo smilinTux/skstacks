@@ -13,9 +13,13 @@ ssh_pwauth: false
 %{ if apt_proxy != "" ~}
 # Only http sources go through the cache. No https proxy is set, so the https
 # Docker repo is fetched direct; preserve_sources_list keeps the image's sources.
+# A shared cache serving several VMs at once can answer one request 503 (seen
+# on a cache's first fill); apt retries instead of failing the package install.
 apt:
   preserve_sources_list: true
   http_proxy: "${apt_proxy}"
+  conf: |
+    Acquire::Retries "5";
 %{ endif ~}
 %{ if daemon_json != "" || disable_auto_updates ~}
 write_files:

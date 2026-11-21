@@ -6,6 +6,13 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+### libvirt-cluster: apt retries behind `apt_proxy`
+
+- With `apt_proxy` set, cloud-init also writes `Acquire::Retries "5"`. A test cluster's four VMs filling an
+  empty apt-cacher-ng at once got one 503 on a package and one 500 on the archive's `InRelease`, and the
+  HWE kernel install failed on that VM. Unset `apt_proxy` still renders byte-identical cloud-init.
+  **Instance action**: none, opt-in.
+
 ### skgit and sksso: Forgejo sign-in through Authentik OIDC, managed as code (opt-in)
 
 - **`skgit.AUTH_MODE: oidc`** makes the skgit deploy create, or update in place, ONE Forgejo OAuth2
