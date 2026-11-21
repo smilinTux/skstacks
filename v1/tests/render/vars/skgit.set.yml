@@ -5,3 +5,8 @@ skgit:
   METRICS_TOKEN: example-metrics-token-not-a-secret
   placement_constraints: ["node.role == worker"]
   TRAEFIK_MIDDLEWARES: crowdsec-bouncer@file,default@file
+  AUTH_MODE: oidc
+  OIDC_CLIENT_SECRET: example-skgit-oidc-secret-not-a-secret-0123456789
+  OIDC_SOURCE_NAME: Example SSO
+  OIDC_AUTO_REGISTRATION: true
+  OIDC_ACCOUNT_LINKING_BY_EMAIL: true
