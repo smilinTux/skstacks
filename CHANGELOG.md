@@ -11,8 +11,15 @@ ends (opt-in, off by default). skha keepalived restarts wait for each node to be
 fixed pause, and a `vip_gate_checks` entry that names no health check is rejected. skreg no longer
 recreates its own overlay network. The portal tile provisioner retries Authentik's "starting" 503.
 `main` merges through a merge queue. The libvirt-cluster module can route test VMs' apt through a
-cache, with retries (opt-in). Instance action: redeploy skha (check `vip_gate_checks` first, see
+cache, with retries (opt-in). Five Renovate image updates for gated apps. Instance action: redeploy skha (check `vip_gate_checks` first, see
 below); everything else is opt-in or needs nothing.
+
+### Dependency updates (Renovate, apps covered by the release gate)
+
+- skpulse Uptime Kuma 2.5.12 (#496), skport Portainer 2.45.4 (#497), skgit Actions runner Docker
+  29.10.0 dind/cli (#498), skorch n8n 2.49.1 (#499), skmon prometheus-pve-exporter 3.11.0 (#500).
+  Digest pins kept where the old default had one. **Instance action**: redeploy a service to pick up
+  its new default image, as usual; vault-pinned images are unchanged.
 
 ### libvirt-cluster: `apt_proxy` no longer sends https through the cache
 
