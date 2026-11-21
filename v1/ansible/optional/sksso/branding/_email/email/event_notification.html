@@ -1,0 +1,10 @@
+[% import "_macros.j2" as m with context %]{% extends "email/base.html" %}{% load i18n %}{% load humanize %}
+{% block content %}
+[[ m.h1("{{ title }}") ]]
+[[ m.p("{{ body|linebreaksbr }}") ]]
+{% if link %}[[ m.button("{{ link.target }}", "{{ link.label|default:link.target }}") ]]{% endif %}
+{% if key_value %}<tr><td style="padding:0 0 16px 0;"><table class="properties-table" role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top:1px solid [[ e.card_border ]];border-bottom:1px solid [[ e.card_border ]];font-size:13px;">{% for key, value in key_value.items %}<tr><td class="td-right" style="padding:6px 8px;text-align:right;white-space:nowrap;color:[[ e.muted ]];vertical-align:top;">{{ key }}</td><td style="padding:6px 8px;word-break:break-all;">{{ value }}</td></tr>{% endfor %}</table></td></tr>{% endif %}
+{% endblock %}
+{% block sub_content %}
+[[ m.note("{% if source %}{% blocktrans with name=source.from %}Sent by the " ~ e.name ~ " notification rule {{ name }}.{% endblocktrans %}{% else %}{% trans 'You receive this because notifications are enabled for your " ~ e.name ~ " account.' %}{% endif %}") ]]
+{% endblock %}

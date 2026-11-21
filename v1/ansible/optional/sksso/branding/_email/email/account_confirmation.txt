@@ -1,0 +1,13 @@
+{% load i18n %}{% autoescape off %}{% trans 'Confirm your [[ e.name ]] account' %}
+
+{% blocktrans with name=user.name|default:user.username %}Hi {{ name }},{% endblocktrans %}
+
+{% trans 'Thanks for signing up. Open the link below to confirm your email address and finish creating your account.' %}
+
+{{ url }}
+
+{% if expires %}{% blocktrans with expires=expires|timeuntil %}This link is valid for {{ expires }}. {% endblocktrans %}{% endif %}{% trans 'If you did not sign up, you can ignore this email.' %}
+
+[[ e.name ]][% if e.support_line | default("") %]
+[[ e.support_line ]][% endif %]
+{% endautoescape %}

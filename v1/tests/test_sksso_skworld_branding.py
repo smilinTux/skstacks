@@ -24,7 +24,6 @@ def test_pack_ships_media_and_apply_script():
 
 
 def test_pack_is_self_contained():
-    assert not (PACK / "templates").exists()
     assert not (PACK / "nextcloud-theming.sh").exists()
 
 
@@ -46,6 +45,15 @@ def _tasks():
     return yaml.safe_load(TASKS.read_text())
 
 
+def _all_tasks():
+    out = []
+    for t in _tasks():
+        out.append(t)
+        for key in ("block", "always", "rescue"):
+            out.extend(t.get(key, []))
+    return out
+
+
 def test_branding_yml_templates_and_nextcloud_helper_are_optional():
     tasks = _tasks()
     stat = next(t for t in tasks if "stat" in t and "loop" in t)
@@ -64,7 +72,7 @@ def test_branding_yml_templates_and_nextcloud_helper_are_optional():
 def test_nam_pack_still_complete():
     nam = ROLE / "branding" / "nam"
     assert (nam / "nextcloud-theming.sh").is_file()
-    assert (nam / "templates" / "nam_recovery.html").is_file()
+    assert (nam / "email.yml").is_file()
 
 
 def test_no_estate_identifiers_in_pack():
@@ -83,11 +91,14 @@ def _resolve_task():
 
 def test_every_pack_path_goes_through_the_resolved_src():
     text = TASKS.read_text()
-    # playbook_dir appears only in the default branch of the resolver
-    assert text.count("playbook_dir") == 1
+    # playbook_dir is used for the resolver's default and for the shared
+    # branding/_email set, never for a pack file
     assert "{{ playbook_dir }}/branding/{{ sksso.branding }}" in _resolve_task()["set_fact"]["sksso_branding_src"]
-    srcs = [t["copy"]["src"] for t in _tasks() if "copy" in t and "src" in t["copy"]]
-    assert srcs and all(s.startswith("{{ sksso_branding_src }}") for s in srcs), srcs
+    other = [l for l in text.splitlines() if "playbook_dir" in l and "branding/_email/" not in l]
+    assert len(other) == 1, other
+    srcs = [t["copy"]["src"] for t in _all_tasks() if "copy" in t and "src" in t["copy"]]
+    pack = [s for s in srcs if "_email" not in s and "sksso_email_tmp" not in s]
+    assert pack and all(s.startswith("{{ sksso_branding_src }}") for s in pack), srcs
 
 
 def _render(branding, branding_dir, inventory_dir="/inst/envs/prod", playbook_dir="/fw/sksso"):

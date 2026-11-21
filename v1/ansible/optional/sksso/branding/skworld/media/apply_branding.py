@@ -1,9 +1,11 @@
 # Run inside Authentik: ak shell < apply_branding.py
 # Applies the SKWorld brand to the default brand, makes sure the stock
 # password-recovery flow exists, and wires "Forgot password?" into the login
-# page. Idempotent. Files are deployed to /media/public/skworld/ by the role
-# (see README "Branding"). No secrets here: recovery email uses sksso's global
-# email settings.
+# page. Idempotent. The emails and the remaining "authentik" flow titles are
+# handled by apply_email.py (shared set in branding/_email, values in
+# skworld/email.yml). Files are deployed to /media/public/skworld/ by the role
+# (see README "Branding"). No secrets here: recovery email is sent through
+# sksso's global email settings.
 import os
 
 from authentik.blueprints.v1.importer import Importer
