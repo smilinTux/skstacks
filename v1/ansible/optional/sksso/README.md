@@ -492,6 +492,78 @@ blueprint above); clean it up by hand if the app is being retired, not just
 switched back to forward auth.
 
 
+## skgit (Forgejo) OIDC login
+
+`sksso.SKGIT_OIDC_ENABLED: true` plus `sksso.SKGIT_OIDC_CLIENT_SECRET` (32+ chars,
+`openssl rand -hex 32`) give `skgit` (Forgejo) a sign-in through Authentik as code,
+when skgit's own `AUTH_MODE: oidc` is set (see `optional/skgit/README.md` "Sign-in
+through Authentik (OIDC)", which creates the matching Forgejo auth source). Off by
+default: with the flag unset or false, every rendered file is byte-identical to a
+release without this feature (a secret alone changes nothing). On, the deploy renders
+`/var/data/config/sksso-<env>/blueprints/skgit-oidc.yaml` (no secret inside) and mounts
+the blueprints directory at `/blueprints/custom` (read only) in `server` and `worker`,
+the same mechanism as the sections above. The secret lands in `sksso.env` (0600) as
+`SKGIT_OIDC_CLIENT_SECRET`, which the blueprint reads with `!Env`.
+
+**Which vault holds the secret.** Both ends hold the same value, one in each role's vault:
+`sksso.SKGIT_OIDC_CLIENT_SECRET` in the sksso vault and `skgit.OIDC_CLIENT_SECRET` in the
+skgit vault. Generate it once and put it in both.
+
+The blueprint creates or adopts (matched by name or slug, so an object made by hand is
+taken over, not duplicated):
+
+| Object | Value |
+|---|---|
+| OAuth2 provider `skgit` | confidential, client id `skgit` (`SKGIT_OIDC_CLIENT_ID` overrides), strict redirect `https://<skgit host>/user/oauth2/<source name, URL-encoded>/callback`, authorization flow `default-provider-authorization-implicit-consent`, invalidation flow `default-provider-invalidation-flow`, signing key `authentik Self-signed Certificate`, subject mode `hashed_user_id`, issuer mode `per_provider`, scopes openid, email, profile, grant types authorization code and refresh token |
+| Application `skgit` | name `SKGIT_APP_NAME` (default `SKGit (Forgejo)`), launch URL `https://<skgit host>/` |
+
+**One source name, in both vaults.** Forgejo's callback path carries the auth source name,
+so the redirect URI is built from it. It comes from one knob on each side that must hold
+the same value: `sksso.SKGIT_OIDC_SOURCE_NAME` here and `skgit.OIDC_SOURCE_NAME` there
+(default `SKStack SSO` on both, which renders `.../user/oauth2/SKStack%20SSO/callback`).
+The name may hold letters, digits, spaces, dots, dashes and underscores; the deploy
+refuses anything else.
+
+**No policy binding here, as with sksec-web.** The Application slug (`skgit`) is the same
+slug skgit's portal tile defaults `AUTHENTIK_TILE_SLUG` to, so
+`shared/tasks/authentik_portal_tile.yml` (run from skgit's own deploy) finds this exact
+Application, keeps this provider and manages the tile and its **group binding**: one
+Authentik Application, not two. Who may sign in is therefore skgit's
+`AUTHENTIK_TILE_GROUP` (default `skadmin`); widen it for everyone who should use SSO.
+
+**CapAuth (PGP, passwordless).** `SKGIT_OIDC_AUTHENTICATION_FLOW: capauth-authentication`
+binds the flow from "CapAuth login (optional)" above to this one application, the way
+`skmesh.AUTHENTIK_AUTHENTICATION_FLOW` does for skmesh. It needs `CAPAUTH_ENABLED: true`
+(the flow must exist). Unset (the default), the provider renders `authentication_flow:
+null`, the brand's default login; removing the knob unbinds the flow again.
+
+```yaml
+sksso:
+  SKGIT_OIDC_ENABLED: true                       # a YAML boolean, default false
+  SKGIT_OIDC_CLIENT_SECRET: "..."                # same value as skgit.OIDC_CLIENT_SECRET
+  SKGIT_OIDC_SOURCE_NAME: "SKStack SSO"          # same value as skgit.OIDC_SOURCE_NAME
+  SKGIT_HOST: git.example.org                    # default git[-<env>].<base>
+  SKGIT_OIDC_CLIENT_ID: skgit                    # default skgit (the portal tile slug)
+  SKGIT_APP_NAME: "SKGit (Forgejo)"
+  SKGIT_OIDC_AUTHENTICATION_FLOW: ""             # or capauth-authentication
+```
+
+`SKGIT_HOST` defaults to Forgejo's own default host (`git`, `git-<env>` outside prod, on
+the cluster base domain, or the bare domain with `CLOUDFLARED`). Set it when skgit
+overrides `SUBDOMAIN_PREFIX`. Set `SKGIT_OIDC_CLIENT_ID` when skgit overrides
+`AUTHENTIK_TILE_SLUG` or `OIDC_CLIENT_ID`.
+
+Run order: deploy (or redeploy) `sksso` with the flag and secret set, THEN deploy `skgit`
+with its own `AUTH_MODE: oidc` (Forgejo reads Authentik's discovery document when it
+registers the auth source, so the Application must exist and answer first; if it does
+not, skgit's deploy stops with the Forgejo error and a redeploy after sksso fixes it).
+Running skgit first does no harm to sksso: the portal tile creates a provider-less
+Application that the next blueprint apply gives its provider. There is no teardown path: turning the flag off
+stops the blueprint from being rendered or re-applied, but the provider and application
+it created stay in Authentik (same limitation as the blueprints above); delete them by
+hand when retiring the sign-in.
+
+
 ## skaegis (OIDC) login
 
 `sksso.SKAEGIS_OIDC_CLIENT_SECRET` (32+ chars, `openssl rand -hex 32`) gives

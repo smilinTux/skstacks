@@ -26,3 +26,7 @@ sksso:
   REDIS_DATA_PATH: /var/lib/sksso/redis
   router_middlewares: [example-chain@file]
   SERVER_BACKEND_SCHEME: https
+  SKGIT_OIDC_ENABLED: true
+  SKGIT_OIDC_CLIENT_SECRET: example-skgit-oidc-secret-not-a-secret-0123456789
+  SKGIT_OIDC_SOURCE_NAME: Example SSO
+  SKGIT_OIDC_AUTHENTICATION_FLOW: capauth-authentication

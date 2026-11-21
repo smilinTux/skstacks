@@ -6,6 +6,35 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+### skgit and sksso: Forgejo sign-in through Authentik OIDC, managed as code (opt-in)
+
+- **`skgit.AUTH_MODE: oidc`** makes the skgit deploy create, or update in place, ONE Forgejo OAuth2
+  auth source (provider `openidConnect`, discovery URL
+  `https://<sso host>/application/o/<slug>/.well-known/openid-configuration`), named by
+  `skgit.OIDC_SOURCE_NAME` (default `SKStack SSO`). It runs `forgejo admin auth list`, finds the
+  source by name, then `update-oauth --id N` or `add-oauth`. It never deletes an auth source and
+  never touches one of another name; a same-named source of another type stops the deploy. The
+  client secret travels by environment variable name (in no `docker` argv, no output, `no_log`).
+  Optional knobs: `OIDC_AUTO_REGISTRATION` and `OIDC_ACCOUNT_LINKING_BY_EMAIL` (both off by
+  default, rendered into `app.ini` `[oauth2_client]` only in oidc mode), `OIDC_USERNAME_CLAIM`,
+  `OIDC_CLIENT_ID`, `OIDC_SSO_HOST`, `OIDC_DISCOVERY_URL`. The default `AUTH_MODE: local` leaves
+  every rendered file byte-identical.
+- **`sksso.SKGIT_OIDC_ENABLED: true`** (default off) renders the Authentik blueprint
+  `skgit-oidc.yaml` (OAuth2 provider + application, secret read with `!Env` from
+  `sksso.SKGIT_OIDC_CLIENT_SECRET`, redirect URI
+  `https://<skgit host>/user/oauth2/<source name, URL-encoded>/callback`). The application slug is
+  skgit's portal tile slug, so there is one Application. `sksso.SKGIT_OIDC_AUTHENTICATION_FLOW:
+  capauth-authentication` opts this one application into the CapAuth (PGP, passwordless) login.
+- Both ends share one secret and one source name, kept in each role's own vault
+  (`sksso.SKGIT_OIDC_CLIENT_SECRET` and `skgit.OIDC_CLIENT_SECRET`; `sksso.SKGIT_OIDC_SOURCE_NAME`
+  and `skgit.OIDC_SOURCE_NAME`). Tests: `v1/tests/test_skgit_oidc_sksso.py`.
+- **Instance action**: none unless you want Forgejo SSO. To enable: generate one secret
+  (`openssl rand -hex 32`), set `sksso.SKGIT_OIDC_ENABLED: true` and `SKGIT_OIDC_CLIENT_SECRET`, deploy
+  sksso, then set `skgit.AUTH_MODE: oidc` and `OIDC_CLIENT_SECRET` (same value) and deploy skgit. An
+  instance that made the Forgejo auth source or the Authentik application by hand: use the same
+  source name, and the deploy takes the objects over instead of duplicating them. See the two role
+  READMEs.
+
 ### Tests: Ansible's `difference` filter in the secret-file render env
 
 - `v1/tests/test_secret_files_not_world_readable.py` renders playbooks with plain Jinja, which has no
