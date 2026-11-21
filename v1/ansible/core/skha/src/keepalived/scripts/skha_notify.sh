@@ -24,5 +24,7 @@ HOSTNAME=$(hostname)
 
 logger -t keepalived "VRRP state changed to ${STATE} on ${HOSTNAME} at ${TIMESTAMP}"
 echo "${TIMESTAMP} - ${HOSTNAME} - VRRP state changed to ${STATE}" >> /var/log/keepalived-notify.log
+# Current state for the deploy handler, which waits for master or backup.
+echo "${STATE}" > /run/skha.state
 
 exit 0
