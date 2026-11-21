@@ -69,6 +69,7 @@ import datetime
 import json
 import re
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -81,6 +82,10 @@ ORDER_BASE = 10  # reserved band 10 to 19 for bindings this script writes
 ORDER_MAX = 19
 DEFAULT_ADMIN_GLOBAL = "skadmin"
 DEFAULT_USER_GLOBAL = "skuser"
+
+
+RETRY_ATTEMPTS = 6  # 503 retries back off 5, 10, 15, 20, 25 s: about 75 s in all
+RETRY_DELAY_S = 5
 
 
 class ApiError(Exception):
@@ -106,11 +111,19 @@ class Api:
             req.add_header("Host", self.host)
         if data is not None:
             req.add_header("Content-Type", "application/json")
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                status, raw = resp.status, resp.read()
-        except urllib.error.HTTPError as exc:
-            status, raw = exc.code, exc.read()
+        # A 503 "authentik starting" comes from Authentik's front server while its
+        # backend is not ready, before the request is handled, so any method is
+        # safe to resend. A v2.26.30 release gate failed a deploy on one such 503
+        # while the server had been up for 22 minutes.
+        for attempt in range(RETRY_ATTEMPTS):
+            try:
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    status, raw = resp.status, resp.read()
+            except urllib.error.HTTPError as exc:
+                status, raw = exc.code, exc.read()
+            if status != 503 or attempt == RETRY_ATTEMPTS - 1:
+                break
+            time.sleep(RETRY_DELAY_S * (attempt + 1))
         if status not in ok:
             raise ApiError(f"{method} {path}: HTTP {status}: {raw[:400].decode(errors='replace')}")
         return json.loads(raw) if raw else None
