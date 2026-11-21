@@ -11,8 +11,22 @@ ends (opt-in, off by default). skha keepalived restarts wait for each node to be
 fixed pause, and a `vip_gate_checks` entry that names no health check is rejected. skreg no longer
 recreates its own overlay network. The portal tile provisioner retries Authentik's "starting" 503.
 `main` merges through a merge queue. The libvirt-cluster module can route test VMs' apt through a
-cache, with retries (opt-in). Instance action: redeploy skha (check `vip_gate_checks` first, see
+cache, with retries (opt-in). Five Renovate image updates for gated apps. Instance action: redeploy skha (check `vip_gate_checks` first, see
 below); everything else is opt-in or needs nothing.
+
+### Dependency updates (Renovate, apps covered by the release gate)
+
+- skpulse Uptime Kuma 2.5.12 (#496), skport Portainer 2.45.4 (#497), skgit Actions runner Docker
+  29.10.0 dind/cli (#498), skorch n8n 2.49.1 (#499), skmon prometheus-pve-exporter 3.11.0 (#500).
+  Digest pins kept where the old default had one. **Instance action**: redeploy a service to pick up
+  its new default image, as usual; vault-pinned images are unchanged.
+
+### libvirt-cluster: `apt_proxy` no longer sends https through the cache
+
+- With `apt_proxy` set, cloud-init also writes `Acquire::https::Proxy "DIRECT"`. apt's https method falls
+  back to the http proxy when no https proxy is set; apt-cacher-ng answers that CONNECT with 403, so the
+  https Docker repo never loaded and Docker never installed. The README said https went direct; now it
+  does. Unset `apt_proxy` still renders byte-identical cloud-init. **Instance action**: none, opt-in.
 
 ### skreg: overlay network task no longer recreates an existing network
 
