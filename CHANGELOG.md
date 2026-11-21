@@ -10,11 +10,14 @@ Each entry says what an instance must do, if anything.
 
 - The `restart keepalived` handler no longer sleeps a fixed 20 s. It waits, one manager at a time,
   until that node reports MASTER or BACKUP (`skha_notify.sh` now also writes `/run/skha.state`),
-  and fails if the node is not ready within `skha.restart_settle_seconds`. That setting is now a
+  and fails (stopping the rollout, `any_errors_fatal`) if the node is not ready within
+  `skha.restart_settle_seconds`. That setting is now a
   maximum, not a fixed pause, and its default is derived from the health checks (30 s for the
   default Traefik check). A manager that cannot carry the VIP is reported instead of passed over.
 - `skha.vip_gate_checks` is rejected when it is a mapping, and when it names a check that is not
-  in `skha.health_checks` (such a gate never fails, so the VIP would never move on it).
+  in `skha.health_checks`, including the implicit default `[traefik]` (such a gate never fails,
+  so the VIP would never move on it). **Instance action** if your Traefik check has another
+  name: set `vip_gate_checks` to it, or the deploy now stops.
 - **Instance action**: none for the defaults. If you set `restart_settle_seconds` below the time
   your gate checks need to pass `rise` times, raise it or remove it.
 

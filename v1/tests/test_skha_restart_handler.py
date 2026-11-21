@@ -57,23 +57,54 @@ def test_notify_script_records_state():
 
 FAKE_SYSTEMCTL = """
 systemctl() {
-  if [ "$1" = restart ]; then
-    echo fault > "$ST"
-    if [ "$READY" = 1 ]; then (sleep 1; echo backup > "$ST") & fi
-  fi
-  [ "$1" = is-active ] && echo active
+  case "$1" in
+    stop) [ "$STALE" = 1 ] && (sleep 0.5; echo backup > "$ST") & ;;
+    start)
+      [ "$START_OK" = 0 ] && return 1
+      [ "$STALE" = 1 ] || echo fault > "$ST"
+      if [ "$READY" = 1 ]; then (sleep 1; echo backup > "$ST") & fi ;;
+    is-active) echo active ;;
+  esac
   return 0
 }
-export -f systemctl
+journalctl() { echo "journal tail"; }
+export -f systemctl journalctl
 """
 
 
-@pytest.mark.parametrize("ready,code", [(1, 0), (0, 1)])
-def test_handler_waits_for_backup_and_fails_when_stuck(tmp_path, ready, code):
-    state = tmp_path / "skha.state"
-    script = handler_script(SKHA / "deploy_skha-prod.yml", 3, '"$ST"')
-    env = {**os.environ, "ST": str(state), "READY": str(ready)}
-    res = subprocess.run(["bash", "-c", FAKE_SYSTEMCTL + script], env=env, capture_output=True, text=True, timeout=30)
-    assert res.returncode == code, res.stderr
-    if not ready:
-        assert "state: fault" in res.stderr
+def run_handler(tmp_path, path, ready=1, start_ok=1, stale=0, wait=3):
+    script = handler_script(path, wait, '"$ST"')
+    env = {**os.environ, "ST": str(tmp_path / "skha.state"), "READY": str(ready),
+           "START_OK": str(start_ok), "STALE": str(stale)}
+    return subprocess.run(["bash", "-c", FAKE_SYSTEMCTL + script], env=env, capture_output=True, text=True, timeout=30)
+
+
+@pytest.mark.parametrize("path", PLAYBOOKS, ids=lambda p: p.name)
+def test_handler_returns_once_node_is_backup(tmp_path, path):
+    res = run_handler(tmp_path, path)
+    assert res.returncode == 0, res.stderr
+
+
+@pytest.mark.parametrize("path", PLAYBOOKS, ids=lambda p: p.name)
+def test_handler_fails_when_node_stays_fault(tmp_path, path):
+    res = run_handler(tmp_path, path, ready=0)
+    assert res.returncode == 1
+    assert "state: fault" in res.stderr
+
+
+def test_handler_fails_fast_with_journal_when_start_fails(tmp_path):
+    res = run_handler(tmp_path, SKHA / "deploy_skha-prod.yml", start_ok=0, wait=20)
+    assert res.returncode == 1
+    assert "journal tail" in res.stderr
+
+
+def test_stale_state_from_old_daemon_does_not_end_the_wait(tmp_path):
+    # The old daemon writes backup while stopping and the new one writes
+    # nothing, so only the marker keeps that write from ending the wait.
+    res = run_handler(tmp_path, SKHA / "deploy_skha-prod.yml", ready=0, stale=1)
+    assert res.returncode == 1
+
+
+@pytest.mark.parametrize("path", PLAYBOOKS, ids=lambda p: p.name)
+def test_failed_node_stops_the_rollout(path):
+    assert tasks(path)["restart keepalived"]["any_errors_fatal"] is True

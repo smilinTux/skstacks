@@ -82,8 +82,8 @@
           A gate with no check never fails, so the VIP would not move on it.
       vars:
         skha_unknown_gates: >-
-          {{ skha.vip_gate_checks | difference(app_health_checks | map(attribute='name') | list) }}
-      when: skha.vip_gate_checks is defined and skha_unknown_gates | length > 0
+          {{ skha.vip_gate_checks | default(['traefik']) | difference(app_health_checks | map(attribute='name') | list) }}
+      when: skha_unknown_gates | length > 0
 
     # Upper bound for the per-node wait after a keepalived restart: the
     # slowest check's time to pass `rise` times, plus margin. The handler
@@ -95,7 +95,7 @@
           {%- for c in app_health_checks -%}
           {%- set _ = w.append((c.interval | default(5) | int) * (c.rise | default(2) | int) + (c.timeout | default(5) | int)) -%}
           {%- endfor -%}
-          {{ skha.restart_settle_seconds | default((w | max) + 15) | int }}
+          {{ [skha.restart_settle_seconds | default((w | max) + 15) | int, 1] | max }}
 
   tasks:
     - name: Deploying {{ app }}
@@ -329,15 +329,28 @@
     # node is FAULT and cannot take the VIP. Restarting every manager at once
     # leaves no node holding the VIP for several seconds. A node still not
     # ready after skha_restart_wait seconds fails the handler, so a node that
-    # cannot carry the VIP is reported instead of silently skipped.
+    # cannot carry the VIP is reported instead of silently skipped, and
+    # any_errors_fatal stops the rollout there: restarting the next manager
+    # (perhaps the VIP holder) would leave no node able to take the VIP.
+    # Only a state written after the stop counts (newer than the marker),
+    # so a notify from the old daemon cannot end the wait early.
     - name: restart keepalived
       ansible.builtin.shell: |
+        systemctl stop keepalived
         rm -f /run/skha.state
-        systemctl restart keepalived
+        sleep 1
+        marker=$(mktemp)
+        trap 'rm -f "$marker"' EXIT
+        if ! systemctl start keepalived; then
+          journalctl -u keepalived -n 20 --no-pager >&2
+          exit 1
+        fi
         for _ in $(seq {{ skha_restart_wait }}); do
-          case "$(cat /run/skha.state 2>/dev/null)" in
-            master|backup) systemctl is-active keepalived; exit 0 ;;
-          esac
+          if [ /run/skha.state -nt "$marker" ]; then
+            case "$(cat /run/skha.state)" in
+              master|backup) systemctl is-active keepalived; exit 0 ;;
+            esac
+          fi
           sleep 1
         done
         echo "keepalived not MASTER/BACKUP after {{ skha_restart_wait }} s (state: $(cat /run/skha.state 2>/dev/null || echo none))" >&2
@@ -345,3 +358,4 @@
       args:
         executable: /bin/bash
       throttle: 1
+      any_errors_fatal: true

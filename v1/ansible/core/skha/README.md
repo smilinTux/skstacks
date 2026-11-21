@@ -53,12 +53,14 @@ VIP back (`nopreempt`), so the VIP does not flap.
   `/run/skha.state`) before the next node restarts, so the managers never all
   drop out together. Restarting the node that holds the VIP still moves it, a
   hand-off of about a second. A node that is not ready within
-  `skha.restart_settle_seconds` fails the handler (for example, a manager with
-  no Traefik worker stays FAULT). The default wait is the slowest check's
+  `skha.restart_settle_seconds` fails the handler and stops the rollout there
+  (for example, a manager with no Traefik worker stays FAULT), so the next
+  manager is not restarted while no node can take the VIP. The check runs
+  only when the config changes. The default wait is the slowest check's
   `interval * rise + timeout` plus 15 s (30 s for the default check).
 - **Gate names are validated.** `vip_gate_checks` must be a list, and every
-  name in it must match a `health_checks` entry, or the deploy stops before
-  touching any node.
+  name in it (including the default `[traefik]`) must match a `health_checks`
+  entry, or the deploy stops before touching any node.
 - **A network partition** can still give two masters, as with any VRRP. When
   it heals, the higher-priority node keeps the VIP (VRRP master-to-master
   resolution, unaffected by `nopreempt`).
