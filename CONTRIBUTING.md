@@ -39,8 +39,11 @@ or deleting old lines is allowed.
 
 1. Open the PR and wait for its checks. Read every check, not only the required one: `scan` is
    required; the framework tests are advisory but a red one is not merged.
-2. Queue it: `gh pr merge <N> --squash` (or "Merge when ready" in the UI). Do not pass `--admin`;
-   that bypasses the queue.
+2. Queue it with "Merge when ready" in the UI, or from a shell:
+   `gh api graphql -f query='mutation{enqueuePullRequest(input:{pullRequestId:"<PR node id>"}){mergeQueueEntry{position}}}'`
+   (the node id is `gh pr view <N> --json id --jq .id`). `gh pr merge <N> --squash` only works
+   once the repository allows auto-merge, which it does not today: gh queues through auto-merge.
+   Do not pass `--admin`; that bypasses the queue.
 3. The queue builds a merge commit on top of `main` plus every PR ahead of it and runs `scan` and
    the framework tests on that commit (`merge_group` event). Green, it lands; red, the PR leaves
    the queue and the ones behind it are re-tested without it.
