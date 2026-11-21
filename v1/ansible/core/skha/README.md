@@ -48,9 +48,19 @@ VIP back (`nopreempt`), so the VIP does not flap.
 - **The gate is chosen by check NAME.** If your `skha.health_checks` calls
   the Traefik check something other than `traefik`, set `vip_gate_checks`
   to that name, or the VIP will never move on Traefik health.
-- **Redeploys restart keepalived one manager at a time** and wait
-  `skha.restart_settle_seconds` (default 20) on each, so the VIP is never
-  dropped by a config change.
+- **Redeploys restart keepalived one manager at a time.** Each restart waits
+  until that node reports MASTER or BACKUP (`skha_notify.sh` writes
+  `/run/skha.state`) before the next node restarts, so the managers never all
+  drop out together. Restarting the node that holds the VIP still moves it, a
+  hand-off of about a second. A node that is not ready within
+  `skha.restart_settle_seconds` fails the handler and stops the rollout there
+  (for example, a manager with no Traefik worker stays FAULT), so the next
+  manager is not restarted while no node can take the VIP. The check runs
+  only when the config changes. The default wait is the slowest check's
+  `interval * rise + timeout` plus 15 s (30 s for the default check).
+- **Gate names are validated.** `vip_gate_checks` must be a list, and every
+  name in it (including the default `[traefik]`) must match a `health_checks`
+  entry, or the deploy stops before touching any node.
 - **A network partition** can still give two masters, as with any VRRP. When
   it heals, the higher-priority node keeps the VIP (VRRP master-to-master
   resolution, unaffected by `nopreempt`).
@@ -119,7 +129,7 @@ skha:
   worker_base_priority: 80       # optional, default 80
   acme_master_priority: 150      # optional, default 150 (a preference, not a lock)
   vip_gate_checks: [traefik]     # optional, default shown: require + weight 0 + init_fail
-  restart_settle_seconds: 20     # optional, default 20: per-node wait after a keepalived restart
+  restart_settle_seconds: 30     # optional, default derived from the checks: max per-node wait for MASTER/BACKUP
   lock_vip_to_acme_master: false # optional, default false: true = old lock, no failover
   acme_master_label: traefik.acme.master   # optional, default shown
   health_checks: [...]           # optional, see above; default is a single

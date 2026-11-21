@@ -71,7 +71,31 @@
           example [traefik]; a bare string would match substrings.
       when: >-
         skha.vip_gate_checks is defined and
-        (skha.vip_gate_checks is string or skha.vip_gate_checks is not sequence)
+        (skha.vip_gate_checks is string or skha.vip_gate_checks is mapping or
+         skha.vip_gate_checks is not sequence)
+
+    - name: Verify every skha.vip_gate_checks name is a defined health check
+      fail:
+        msg: >-
+          skha.vip_gate_checks names {{ skha_unknown_gates }} match no entry in
+          the health check list ({{ app_health_checks | map(attribute='name') | list }}).
+          A gate with no check never fails, so the VIP would not move on it.
+      vars:
+        skha_unknown_gates: >-
+          {{ skha.vip_gate_checks | default(['traefik']) | difference(app_health_checks | map(attribute='name') | list) }}
+      when: skha_unknown_gates | length > 0
+
+    # Upper bound for the per-node wait after a keepalived restart: the
+    # slowest check's time to pass `rise` times, plus margin. The handler
+    # returns as soon as the node reports MASTER or BACKUP.
+    - name: Compute the keepalived restart wait
+      set_fact:
+        skha_restart_wait: >-
+          {%- set w = [10] -%}
+          {%- for c in app_health_checks -%}
+          {%- set _ = w.append((c.interval | default(5) | int) * (c.rise | default(2) | int) + (c.timeout | default(5) | int)) -%}
+          {%- endfor -%}
+          {{ [skha.restart_settle_seconds | default((w | max) + 15) | int, 1] | max }}
 
   tasks:
     - name: Deploying {{ app }}
@@ -279,6 +303,7 @@
         owner: root
         group: root
         mode: '0600'
+      register: skha_conf
       notify: restart keepalived
 
     - name: Enable and start keepalived
@@ -299,14 +324,19 @@
         msg: "{{ skha_status.stdout_lines | default(['Status check completed']) }}"
 
   handlers:
-    # One manager at a time, with a pause long enough for its gate checks to
-    # pass `rise` times (init_fail starts them failed). Restarting every
-    # manager at once leaves no node holding the VIP for several seconds.
-    # (ansible.builtin.pause runs once per play, not per host, so the settle
-    # time is part of the throttled restart itself.)
+    # One manager at a time, and the next one only after this one reports
+    # MASTER or BACKUP. Its gate checks start failed (init_fail), so until
+    # they pass `rise` times the node is FAULT and cannot take the VIP.
+    # Restarting every manager at once leaves no node holding the VIP for
+    # several seconds. A node still not ready after skha_restart_wait seconds
+    # stops the rollout there: restarting the next manager (perhaps the VIP
+    # holder) would leave no node able to take the VIP. The loop runs from
+    # one run_once task, so it really stops (see restart_keepalived.yml).
     - name: restart keepalived
-      ansible.builtin.shell: >-
-        systemctl restart keepalived &&
-        sleep {{ skha.restart_settle_seconds | default(20) | int }} &&
-        systemctl is-active keepalived
-      throttle: 1
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/src/keepalived/restart_keepalived.yml"
+      loop: >-
+        {{ ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars, ['skha_conf', 'changed']))
+           | selectattr(1) | map(attribute=0) | list }}
+      loop_control:
+        loop_var: skha_node
+      run_once: true

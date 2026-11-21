@@ -1,0 +1,38 @@
+---
+# One iteration of the `restart keepalived` handler: restart keepalived on
+# skha_node and wait until it reports MASTER or BACKUP (skha_notify.sh writes
+# the state file). The handler loops over the managers one at a time from a
+# single run_once task, so when a node fails, the run_once host fails and no
+# later node is restarted. (throttle: 1 with any_errors_fatal does not do
+# this: the linear strategy still runs the task on every host first.)
+# Only a state written after the stop counts (newer than the marker), so a
+# notify from the old daemon cannot end the wait early.
+- name: Restart keepalived on {{ skha_node }} and wait for MASTER or BACKUP
+  ansible.builtin.shell: |
+    systemctl stop keepalived
+    rm -f "$SKHA_STATE"
+    sleep 1
+    marker=$(mktemp)
+    trap 'rm -f "$marker"' EXIT
+    if ! systemctl start keepalived; then
+      journalctl -u keepalived -n 20 --no-pager >&2
+      echo "keepalived on $SKHA_NODE failed to start; remaining managers not restarted" >&2
+      exit 1
+    fi
+    for _ in $(seq "$SKHA_WAIT"); do
+      if [ "$SKHA_STATE" -nt "$marker" ]; then
+        case "$(cat "$SKHA_STATE")" in
+          master|backup) systemctl is-active keepalived; exit 0 ;;
+        esac
+      fi
+      sleep 1
+    done
+    echo "keepalived on $SKHA_NODE not MASTER/BACKUP after $SKHA_WAIT s (state: $(cat "$SKHA_STATE" 2>/dev/null || echo none)); remaining managers not restarted" >&2
+    exit 1
+  args:
+    executable: /bin/bash
+  environment:
+    SKHA_NODE: "{{ skha_node }}"
+    SKHA_STATE: "{{ hostvars[skha_node].skha_state_file | default('/run/skha.state') }}"
+    SKHA_WAIT: "{{ hostvars[skha_node].skha_restart_wait }}"
+  delegate_to: "{{ skha_node }}"
