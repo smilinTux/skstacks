@@ -33,7 +33,7 @@ run "apt_proxy_set_renders_both_keys" {
     error_message = "apt block must sit directly after ssh_pwauth"
   }
   assert {
-    condition     = strcontains(libvirt_cloudinit_disk.node["t06-mgr-1"].user_data, "\napt:\n  preserve_sources_list: true\n  http_proxy: \"http://apt-cache.example:3142\"\n  conf: |\n    Acquire::Retries \"5\";\npackage_update: true")
+    condition     = strcontains(libvirt_cloudinit_disk.node["t06-mgr-1"].user_data, "\napt:\n  preserve_sources_list: true\n  http_proxy: \"http://apt-cache.example:3142\"\n  conf: |\n    Acquire::Retries \"5\";\n    Acquire::https::Proxy \"DIRECT\";\npackage_update: true")
     error_message = "apt http_proxy key missing or malformed"
   }
   assert {
@@ -54,7 +54,7 @@ run "apt_proxy_with_write_files_stays_valid" {
     registry_mirrors     = ["https://mirror.example.test"]
   }
   assert {
-    condition     = strcontains(libvirt_cloudinit_disk.node["t06-mgr-1"].user_data, "Acquire::Retries \"5\";\nwrite_files:\n  - path: /etc/docker/daemon.json")
+    condition     = strcontains(libvirt_cloudinit_disk.node["t06-mgr-1"].user_data, "Acquire::Retries \"5\";\n    Acquire::https::Proxy \"DIRECT\";\nwrite_files:\n  - path: /etc/docker/daemon.json")
     error_message = "apt: block must not collide with write_files"
   }
 }

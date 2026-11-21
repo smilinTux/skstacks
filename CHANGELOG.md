@@ -14,6 +14,13 @@ recreates its own overlay network. The portal tile provisioner retries Authentik
 cache, with retries (opt-in). Instance action: redeploy skha (check `vip_gate_checks` first, see
 below); everything else is opt-in or needs nothing.
 
+### libvirt-cluster: `apt_proxy` no longer sends https through the cache
+
+- With `apt_proxy` set, cloud-init also writes `Acquire::https::Proxy "DIRECT"`. apt's https method falls
+  back to the http proxy when no https proxy is set; apt-cacher-ng answers that CONNECT with 403, so the
+  https Docker repo never loaded and Docker never installed. The README said https went direct; now it
+  does. Unset `apt_proxy` still renders byte-identical cloud-init. **Instance action**: none, opt-in.
+
 ### skreg: overlay network task no longer recreates an existing network
 
 - `deploy_skreg-{dev,staging,prod}.yml` stop passing `driver_options: {encrypted: "false"}`. An
