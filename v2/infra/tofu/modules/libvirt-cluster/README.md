@@ -25,7 +25,8 @@ a module without this variable. The value must be `http://host[:port]` (no
 credentials, no path, no https); anything else fails validation at plan time.
 
 What it renders: cloud-init's native `apt:` key with `http_proxy` set to your
-value and `preserve_sources_list: true` (no https proxy), applied before
+value, `Acquire::Retries "5"` (a cache filling for several VMs at once can
+answer one request 503) and `preserve_sources_list: true` (no https proxy), applied before
 the package install runs. The install path is unchanged; only where bytes come
 from changes.
 

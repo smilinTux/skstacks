@@ -6,6 +6,13 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased
 
+### libvirt-cluster: apt retries behind `apt_proxy`
+
+- With `apt_proxy` set, cloud-init also writes `Acquire::Retries "5"`. A test cluster's four VMs filling an
+  empty apt-cacher-ng at once got one 503 on a package and one 500 on the archive's `InRelease`, and the
+  HWE kernel install failed on that VM. Unset `apt_proxy` still renders byte-identical cloud-init.
+  **Instance action**: none, opt-in.
+
 ### Tests: Ansible's `difference` filter in the secret-file render env
 
 - `v1/tests/test_secret_files_not_world_readable.py` renders playbooks with plain Jinja, which has no
