@@ -126,7 +126,7 @@ FAKE_STDOUT = {
     "garage_node": "render-node-1",
     # sksso forward-auth preflight: a running server on a node, answering ok
     "sksso_fa_pf_node": "render-node-1",
-    "sksso_fa_pf": "preflight: ok (render stand-in)",
+    "sksso_fa_preflight": "preflight: ok (render stand-in)",
     "garage_replicas": "1/1",
     # skpayment: the controller-side app checkout (a fixture stand-in)
     "skpayment_app_src": str(FIXTURES / "skpayment-app" / "repo"),

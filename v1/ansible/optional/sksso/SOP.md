@@ -25,6 +25,7 @@ read-only check that the catch-all is in the state described here (`check-access
 - It never adds members to the admin group. A new estate's catch-all admits nobody until an admin account
   is added to `skadmin` (fail closed).
 - It never removes a binding, a provider, an Application or an outpost attachment. Opting out leaves them.
+- It never creates a second catch-all beside an existing one: the preflight refuses the deploy first.
 - It does not create per-app providers. An app that is not admin-only gets its own (design, section 4.7).
 
 ## 2. Architecture
@@ -50,7 +51,8 @@ outpost would detach every other provider on it.
 ## 3. Build
 
 Nothing to build. Files: `src/config/sksso/blueprints/forward-auth-catchall.yaml.j2` (the blueprint),
-`tasks/forward_auth_blueprint.yml` (settings, refusals, render, opt-out cleanup),
+`tasks/forward_auth_blueprint.yml` (settings, refusals, the preflight, render, opt-out cleanup),
+`src/sksso/forward_auth_preflight.py` (the read-only preflight),
 `tasks/forward_auth_attach.yml` and `src/sksso/forward_auth_attach.py` (the additive attach), and the
 `/blueprints/custom` mount in `src/config/sksso/sksso.yml.j2`.
 
@@ -62,7 +64,9 @@ python3 v1/tests/render/render_playbooks.py --service sksso      # real Ansible,
 ```
 
 The tests cover: on by default; opt-out renders nothing and removes a stale file; adoption names; the cookie
-domain derivation and override; the admin-group-only binding; the refusals; the attach script against a fake
+domain derivation and override; the admin-group-only binding; the refusals; the preflight script against a fake
+Authentik ORM (refuses a provider under another name, passes the configured name or none) and its ordering
+(before the render, skipped on opt-out); the attach script against a fake
 Authentik ORM (additive, idempotent, refuses a widened Application, a twin provider, a wrong outpost); and
 the C7 findings of `check-access.py`.
 
@@ -89,8 +93,13 @@ the C7 findings of `check-access.py`.
    but the admin group, and names what. Remove the stray bindings in Authentik, then deploy again. Run
    `check-access.py --who-passes <slug>` to see who passes before and after.
 
-Skipping step 2 on such an estate creates a second catch-all next to the hand-made one. The attach step
-refuses it (twin provider for one cookie domain) and fails the deploy; the hand-made one keeps serving.
+Skipping step 2 on such an estate no longer creates a second catch-all next to the hand-made one: before the
+blueprint is rendered, a read-only preflight (`ak shell` in the running server container, nothing edited)
+finds a `forward_domain` provider under another name whose cookie domain overlaps the configured one, and
+fails the deploy naming it and the settings to change (step 2). Nothing is rendered, so the worker has nothing
+to apply, and a blueprint rendered by an earlier run is removed. With no running server (a first install) the
+preflight is skipped. The hand-made one keeps serving throughout. The attach step keeps the same refusal as a
+second line of defence.
 
 ### Rollback
 
@@ -125,6 +134,9 @@ id while `SKGIT_OIDC_ENABLED` is on.
 - Authentik objects: `authentik_core.group`, `authentik_providers_proxy.proxyprovider`,
   `authentik_core.application`, `authentik_policies.policybinding` (identifiers: provider by name, application
   by slug, group by name, binding by target plus group plus order 0).
+- Preflight status lines (`forward_auth_preflight.py`, run before the render): `preflight: ok`,
+  `preflight: skipped` (no server container yet), `preflight: refused ...` (never retried, the deploy fails
+  before anything is rendered), `preflight: waiting ...` (no answer from `ak shell`, retried, then fails).
 - Attach status lines (`forward_auth_attach.py`, last line): `attach: ok` (attached, or already attached),
   `attach: waiting ...` (blueprint not applied yet, retried), `attach: refused ...` (never retried, the deploy
   fails and nothing is attached).
@@ -133,6 +145,12 @@ id while `SKGIT_OIDC_ENABLED` is on.
 
 ## 8. Troubleshooting
 
+- **Deploy fails at "Fail before rendering when the preflight did not pass".** Read the `preflight:` lines
+  above it. `refused (Authentik already has a domain-wide provider ...)`: the line names the existing provider
+  and its application slug; set `FORWARD_AUTH_PROVIDER_NAME` and `FORWARD_AUTH_APP_SLUG` to them (adopt), or
+  `FORWARD_AUTH_ENABLED: false`. No `preflight:` line, or `waiting`: the running Authentik server did not
+  answer `ak shell` (still starting, or unhealthy); deploy again once `docker service ps sksso-<env>_server`
+  shows it running. Nothing was rendered or changed in Authentik.
 - **Deploy fails at "Fail unless the forward-auth provider is on the embedded outpost".** Read the `attach:`
   lines above it. `refused (... bound to more than the admin group ...)`: remove those bindings in Authentik.
   `refused (another domain-wide provider ...)`: adopt it (set the two names) or opt out. `refused (no outpost

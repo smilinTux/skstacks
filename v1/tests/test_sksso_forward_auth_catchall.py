@@ -510,7 +510,7 @@ def test_the_preflight_reads_through_ak_shell_in_the_server_container_with_no_to
     body = run["shell"]
     assert "_server" in body and "ak shell" in body and "docker exec" in body
     assert run["args"]["stdin"].count("forward_auth_preflight.py") == 1
-    assert run["until"] == "'preflight: waiting' not in sksso_fa_pf.stdout"  # a refusal is never retried
+    assert run["until"] == "'preflight: waiting' not in sksso_fa_preflight.stdout"  # a refusal is never retried
     code = re.sub(r"(?m)^\s*#.*$", "", BP_TASKS.read_text() + PREFLIGHT.read_text())
     assert "api_token" not in code and "Bearer" not in code
 
@@ -539,7 +539,7 @@ def _blocked(host, stdout, on=True):
     env = jinja2.Environment()
     env.filters["bool"] = lambda v: str(v).lower() in ("true", "yes", "on", "1")
     expr = _bp_tasks()[_idx(_bp_tasks(), "Decide whether the preflight lets the blueprint through")]["set_fact"]["sksso_fa_pf_blocked"]
-    ctx = {"sksso_fa_on": on, "sksso_fa_pf": {"stdout": stdout} if stdout is not None else jinja2.Undefined()}
+    ctx = {"sksso_fa_on": on, "sksso_fa_preflight": {"stdout": stdout} if stdout is not None else jinja2.Undefined()}
     if host is not None:
         ctx["sksso_fa_pf_host"] = host
     return env.from_string(expr).render(**ctx).strip() == "True"

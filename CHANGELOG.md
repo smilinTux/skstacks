@@ -26,7 +26,9 @@ it redeploys sksso (see below); everything else needs nothing.
   (`tasks/forward_auth_attach.yml`, `src/sksso/forward_auth_attach.py`, `outpost.providers.add()` under
   `ak shell`, no API token needed). It is not a blueprint outpost entry on purpose: a blueprint saves an
   outpost's `providers` as a full replacement set and would detach every other provider on it. It waits for
-  the worker to apply the blueprint, and refuses (the deploy fails, nothing is attached, forward auth then
+  the worker to apply the blueprint (a read-only preflight, `src/sksso/forward_auth_preflight.py`, runs BEFORE
+  the blueprint is rendered and refuses the deploy when a `forward_domain` provider under another name already
+  covers the cookie domain, so the worker never creates a duplicate), and refuses (the deploy fails, nothing is attached, forward auth then
   denies) when the Application is bound to more than the admin group, when another `forward_domain` provider
   already serves the same cookie domain, or when the outpost is missing or not a proxy outpost.
 - Knobs, all optional and documented in the README and the new `SOP.md`: `FORWARD_AUTH_ENABLED` (default
@@ -53,8 +55,11 @@ it redeploys sksso (see below); everything else needs nothing.
   name and the application's slug, or set `FORWARD_AUTH_ENABLED: false`. Then confirm its binding: the
   adopted Application must be bound to `skadmin` alone (remove stray bindings such as `authentik Admins`,
   `skuser` or an any-account policy in Authentik; `check-access.py --who-passes <slug>` shows who passes).
-  Skipping this creates a second catch-all beside yours; the attach step refuses it and fails the deploy,
-  and yours keeps serving. New estates: add the admin accounts to `skadmin` after the first deploy.
+  Skipping this no longer creates a second catch-all beside yours: a read-only preflight (`ak shell` in the
+  running server container, run before the blueprint is rendered) finds a `forward_domain` provider under
+  another name on the same cookie domain and the deploy REFUSES, naming it and the settings to set; nothing is
+  rendered or changed in Authentik and yours keeps serving. A first install (no running server) skips the
+  preflight. New estates: add the admin accounts to `skadmin` after the first deploy.
 
 ## skstacks-v2.26.31 - 2026-11-21
 

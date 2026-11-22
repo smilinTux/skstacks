@@ -130,9 +130,10 @@
     stdin: "{{ lookup('file', playbook_dir ~ '/src/' ~ app ~ '/forward_auth_preflight.py') }}"
   environment:
     SKSSO_FORWARD_AUTH: "{{ {'provider': sksso_fa_provider_name, 'cookie_domain': sksso_fa_cookie_domain} | to_json }}"
-  register: sksso_fa_pf
+  # (the register name must not be a prefix of a name used in `when`: the render gate drops a `when` that reads its own register)
+  register: sksso_fa_preflight
   # the server may still be starting: wait a little, but stop at once on a refusal
-  until: "'preflight: waiting' not in sksso_fa_pf.stdout"
+  until: "'preflight: waiting' not in sksso_fa_preflight.stdout"
   retries: 6
   delay: 10
   changed_when: false
@@ -145,7 +146,7 @@
   # `preflight: skipped` (a refusal, a traceback, or no answer in time):
   # fail closed rather than risk a duplicate
   set_fact:
-    sksso_fa_pf_blocked: "{{ (sksso_fa_on | bool) and (sksso_fa_pf_host | default('') | length) > 0 and ('preflight: ok' not in (sksso_fa_pf.stdout | default(''))) and ('preflight: skipped' not in (sksso_fa_pf.stdout | default(''))) }}"
+    sksso_fa_pf_blocked: "{{ (sksso_fa_on | bool) and (sksso_fa_pf_host | default('') | length) > 0 and ('preflight: ok' not in (sksso_fa_preflight.stdout | default(''))) and ('preflight: skipped' not in (sksso_fa_preflight.stdout | default(''))) }}"
 
 - name: Take an earlier rendering of the blueprint away when the preflight refuses
   # Only this role's own file. The worker applies whatever sits in the mount.
@@ -156,7 +157,7 @@
 
 - name: Show the forward-auth preflight result
   debug:
-    msg: "{{ sksso_fa_pf.stdout_lines | default([]) }}"
+    msg: "{{ sksso_fa_preflight.stdout_lines | default([]) }}"
   when: sksso_fa_pf_blocked | bool
 
 - name: Fail before rendering when the preflight did not pass

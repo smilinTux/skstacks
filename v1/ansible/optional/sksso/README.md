@@ -524,7 +524,7 @@ slug or group:
 | Object | Value |
 |---|---|
 | Group | `FORWARD_AUTH_ADMIN_GROUP` (default `skadmin`), existence only: no attributes, so the membership and flags of an existing group are never touched |
-| Proxy Provider | named `FORWARD_AUTH_PROVIDER_NAME`, mode `forward_domain`, `external_host` `https://<sso host>`, `cookie_domain` the estate domain, authorization flow `default-provider-authorization-implicit-consent`, invalidation flow `default-provider-invalidation-flow` |
+| Proxy Provider | named `FORWARD_AUTH_PROVIDER_NAME`, mode `forward_domain`, `external_host` `https://<sso host>`, `cookie_domain` the estate domain, authorization flow `default-provider-authorization-implicit-consent`, invalidation flow `default-provider-invalidation-flow` (only on Authentik 2024.10 and later, where the field exists) |
 | Application | slug `FORWARD_AUTH_APP_SLUG`, name `FORWARD_AUTH_APP_NAME`, hidden from the user portal (infrastructure, not a tile), provider the one above |
 | Policy binding | the Application bound to the admin group **only**, enabled, not negated |
 
@@ -547,6 +547,17 @@ is bound to anything but the admin group; another `forward_domain` provider alre
 domain (two catch-alls for one domain are ambiguous); or the outpost does not exist or is not a proxy
 outpost. An unattached provider is the safe state: the outpost cannot match the request, so forward auth
 denies it.
+
+**A hand-made catch-all is refused, not duplicated.** The blueprint matches the provider by name, and the
+worker applies a rendered blueprint on its own, so an estate that already has a `forward_domain` provider
+under another name and redeploys without `FORWARD_AUTH_PROVIDER_NAME` / `FORWARD_AUTH_APP_SLUG` would get a
+second provider and application before the attach step could object. So a read-only preflight runs first,
+before the blueprint is rendered: `src/sksso/forward_auth_preflight.py` under `ak shell` in the running server
+container (no API token). When a `forward_domain` provider under another name covers the same cookie domain
+(or a parent or sub domain of it), the deploy fails naming that provider and its application slug and the
+settings to change (set the two names to adopt it, or `FORWARD_AUTH_ENABLED: false`); nothing is rendered,
+nothing is edited in Authentik, and a blueprint rendered by an earlier run is removed from the mount. With no
+running server container (a first install) the preflight is skipped.
 
 **Knobs** (all optional, all in the sksso vault; the deploy refuses unusable values):
 
