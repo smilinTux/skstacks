@@ -1,0 +1,110 @@
+# The domain-wide forward-auth catch-all, before the stack deploy: render the
+# Authentik blueprint that creates the `forward_domain` Proxy Provider behind
+# the `authentik@file` Traefik middleware, its Application, and the policy
+# binding that closes it to the admin group. The blueprint lives in
+# /var/data/config/sksso-<env>/blueprints (mounted at /blueprints/custom in
+# server and worker); the worker applies it. Attaching the provider to the
+# embedded outpost is the post-deploy step in tasks/forward_auth_attach.yml.
+# See the README section "Forward-auth catch-all (authentik@file)".
+#
+# ON by default for a new install. sksso.FORWARD_AUTH_ENABLED: false opts out
+# (an estate that manages the catch-all by hand); this file still runs then,
+# to refuse contradictory settings and to take a stale blueprint file away.
+# Nothing here is a secret.
+
+- name: Resolve the forward-auth catch-all settings
+  set_fact:
+    sksso_fa_base: "{{ sksso.DOMAIN if (sksso.CLOUDFLARED | default(false) | bool) else (sksso.CLUSTERNAME ~ '.' ~ sksso.DOMAIN) }}"
+    sksso_fa_enabled_raw: "{{ sksso.FORWARD_AUTH_ENABLED | default(true) | string | lower }}"
+    sksso_fa_overrides: >-
+      {% set ns = namespace(set=[]) -%}
+      {% for k in ['FORWARD_AUTH_PROVIDER_NAME', 'FORWARD_AUTH_APP_SLUG', 'FORWARD_AUTH_APP_NAME', 'FORWARD_AUTH_SSO_HOST', 'FORWARD_AUTH_COOKIE_DOMAIN', 'FORWARD_AUTH_ADMIN_GROUP', 'FORWARD_AUTH_OUTPOST'] -%}
+      {% if (sksso[k] | default('', true) | string | length) > 0 %}{% set ns.set = ns.set + [k] %}{% endif -%}
+      {% endfor -%}
+      {{ ns.set | join(', ') }}
+
+- name: Refuse an unreadable or contradictory FORWARD_AUTH_ENABLED
+  # `| bool` turns anything it does not know into false, which would silently
+  # opt an estate out of its own gate: only spell it true or false.
+  assert:
+    that:
+      - "sksso_fa_enabled_raw in ['true', 'false', 'yes', 'no', 'on', 'off', '1', '0']"
+      - "(sksso_fa_enabled_raw in ['true', 'yes', 'on', '1']) or (sksso_fa_overrides | trim | length == 0)"
+    fail_msg: >-
+      sksso.FORWARD_AUTH_ENABLED must be true or false (got
+      '{{ sksso.FORWARD_AUTH_ENABLED | default(true) }}'), and false (the
+      estate manages the catch-all by hand) contradicts the adopt/override
+      settings that are set: {{ sksso_fa_overrides | trim }}. Remove them or
+      set FORWARD_AUTH_ENABLED: true.
+    quiet: true
+
+- name: Resolve the forward-auth catch-all names, host and domain
+  set_fact:
+    sksso_fa_on: "{{ sksso_fa_enabled_raw in ['true', 'yes', 'on', '1'] }}"
+    sksso_fa_provider_name: "{{ sksso.FORWARD_AUTH_PROVIDER_NAME | default('SKStacks forward auth (domain)', true) }}"
+    sksso_fa_app_slug: "{{ sksso.FORWARD_AUTH_APP_SLUG | default('skstacks-forward-auth', true) }}"
+    sksso_fa_app_name: "{{ sksso.FORWARD_AUTH_APP_NAME | default('SKStacks forward auth (admin-only apps)', true) }}"
+    sksso_fa_admin_group: "{{ sksso.FORWARD_AUTH_ADMIN_GROUP | default('skadmin', true) }}"
+    sksso_fa_outpost: "{{ sksso.FORWARD_AUTH_OUTPOST | default('authentik Embedded Outpost', true) }}"
+    sksso_fa_host: "{{ sksso.FORWARD_AUTH_SSO_HOST | default(sksso.CAPAUTH_SSO_HOST | default('sso' ~ ('' if env == 'prod' else '-' ~ env) ~ '.' ~ sksso_fa_base, true), true) }}"
+    sksso_fa_cookie_domain: "{{ (sksso.FORWARD_AUTH_COOKIE_DOMAIN | default(sksso_fa_base, true)) | string | lower }}"
+
+- name: Resolve the forward-auth public URL
+  set_fact:
+    sksso_fa_external_host: "{{ 'https://' ~ sksso_fa_host }}"
+
+- name: Check the forward-auth catch-all settings
+  assert:
+    that:
+      - "sksso_fa_host is match('^[A-Za-z0-9][A-Za-z0-9.-]*$')"
+      - "sksso_fa_cookie_domain is match('^[a-z0-9][a-z0-9-]*(\\.[a-z0-9][a-z0-9-]*)+$')"
+      # a browser drops a cookie whose domain is not a parent of (or equal to)
+      # the host that sets it, so the sksso host must sit under the cookie domain
+      - "(sksso_fa_host | lower) == sksso_fa_cookie_domain or (sksso_fa_host | lower).endswith('.' ~ sksso_fa_cookie_domain)"
+      - "sksso_fa_app_slug is match('^[a-z0-9][a-z0-9-]*$')"
+      - "sksso_fa_provider_name is match('^[^\\x00-\\x1f\\s][^\\x00-\\x1f]{0,149}$')"
+      - "sksso_fa_app_name is match('^[^\\x00-\\x1f\\s][^\\x00-\\x1f]{0,149}$')"
+      - "sksso_fa_outpost is match('^[^\\x00-\\x1f\\s][^\\x00-\\x1f]{0,149}$')"
+      # the gate admits ONE group, an admin group. skuser is the every-user
+      # baseline group, so binding the catch-all to it would open every
+      # admin-only app to every user.
+      - "sksso_fa_admin_group is match('^[A-Za-z0-9][A-Za-z0-9 ._-]*$')"
+      - "sksso_fa_admin_group | lower != 'skuser'"
+      # one Application cannot be both this catch-all and the skgit sign-in
+      - "not (sksso.SKGIT_OIDC_ENABLED | default(false) | bool) or sksso_fa_app_slug != (sksso.SKGIT_OIDC_CLIENT_ID | default('skgit', true))"
+    fail_msg: >-
+      forward-auth catch-all settings are unusable. FORWARD_AUTH_SSO_HOST a
+      plain host name ({{ sksso_fa_host }}); FORWARD_AUTH_COOKIE_DOMAIN a
+      multi-label domain ({{ sksso_fa_cookie_domain }}) that the sksso host
+      sits under; FORWARD_AUTH_APP_SLUG a lowercase slug that is not the skgit
+      OIDC client id; FORWARD_AUTH_PROVIDER_NAME, FORWARD_AUTH_APP_NAME and
+      FORWARD_AUTH_OUTPOST names of 1 to 150 printable characters; FORWARD_AUTH_ADMIN_GROUP an admin
+      group name, never skuser.
+    quiet: true
+  when: sksso_fa_on | bool
+
+- name: Create the Authentik blueprints directory
+  file:
+    path: /var/data/config/{{ app }}-{{ env }}/blueprints
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: sksso_fa_on | bool
+
+- name: Render the forward-auth-catchall blueprint (no secret inside)
+  template:
+    src: "{{ playbook_dir }}/src/config/{{ app }}/blueprints/forward-auth-catchall.yaml.j2"
+    dest: /var/data/config/{{ app }}-{{ env }}/blueprints/forward-auth-catchall.yaml
+    owner: root
+    group: root
+    mode: '0644'
+  when: sksso_fa_on | bool
+
+- name: Take a stale forward-auth-catchall blueprint away after an opt-out
+  # Only this role's own file. Removing a blueprint file never deletes the
+  # Authentik objects it made; they stay until someone removes them by hand.
+  file:
+    path: /var/data/config/{{ app }}-{{ env }}/blueprints/forward-auth-catchall.yaml
+    state: absent
+  when: not (sksso_fa_on | bool)

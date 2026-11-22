@@ -190,6 +190,17 @@
         - templates
         - deploy
 
+    - name: Forward-auth catch-all blueprint (sksso.FORWARD_AUTH_ENABLED, on by default)
+      include_tasks:
+        file: tasks/forward_auth_blueprint.yml
+        apply:
+          tags:
+            - templates
+            - deploy
+      tags:
+        - templates
+        - deploy
+
     - name: skflow (Windmill) OAuth2 blueprint (sksso.SKFLOW_OIDC_CLIENT_SECRET)
       include_tasks:
         file: tasks/skflow_blueprint.yml
@@ -347,6 +358,16 @@
     - name: Print Authentik server status
       debug:
         msg: "Server service exists: {{ server_service.service.ID | default('Not found') }}"
+
+    - name: Attach the forward-auth catch-all provider to the embedded outpost (additive)
+      include_tasks:
+        file: tasks/forward_auth_attach.yml
+        apply:
+          tags:
+            - deploy
+      when: sksso_fa_on | bool
+      tags:
+        - deploy
 
     - name: SSO access conformance report, read-only and non-fatal (sksso.ACCESS_CHECK)
       include_tasks:

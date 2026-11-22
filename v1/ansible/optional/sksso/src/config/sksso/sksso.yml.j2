@@ -20,10 +20,12 @@ networks:
 {# The /blueprints/custom mount (server + worker) is needed when ANY app's
    own OAuth2/OIDC blueprint is rendered: skflow (Windmill), sksec-web
    (AUTH_MODE: oidc), skpatch-hosts (AUTH_MODE: oidc) or skaegis
-   (AUTH_MODE: oidc). A Jinja comment, so
-   unset knobs still render byte-identical to the v2.26.3 baseline. The
-   condition is inlined in each {% if %} guard, never a {% set %}, so this
-   0644 file is never treated as carrying a secret value. #}
+   (AUTH_MODE: oidc), or when the forward-auth catch-all blueprint is on
+   (sksso.FORWARD_AUTH_ENABLED, ON by default, so a default render now has
+   the mount; FORWARD_AUTH_ENABLED: false renders it byte-identical to the
+   v2.26.3 baseline again). A Jinja comment. The condition is inlined in each
+   {% if %} guard, never a {% set %}, so this 0644 file is never treated as
+   carrying a secret value. #}
 {# Postgres 18+ images moved PGDATA to /var/lib/postgresql/<major>/docker and declare VOLUME
    /var/lib/postgresql, so the data bind mount targets the PARENT for major 18 and up. A pinned
    older image keeps the old target. Mounting /var/lib/postgresql/data under an 18 image would
@@ -239,7 +241,7 @@ services:
       - /var/data/config/{{ app }}-{{ env }}/custom/user_settings.py:/data/user_settings.py:ro
 {% endif %}
       - /var/data/{{ app }}-{{ env }}/custom-templates:/templates
-{% if (sksso.SKFLOW_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKSEC_WEB_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKPATCH_HOSTS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKAEGIS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKGIT_OIDC_ENABLED | default(false)) %}
+{% if (sksso.SKFLOW_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKSEC_WEB_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKPATCH_HOSTS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKAEGIS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKGIT_OIDC_ENABLED | default(false)) or (sksso.FORWARD_AUTH_ENABLED | default(true) | bool) %}
       - /var/data/config/{{ app }}-{{ env }}/blueprints:/blueprints/custom:ro
 {% endif %}
       - /etc/localtime:/etc/localtime:ro
@@ -288,7 +290,7 @@ services:
       - /var/data/config/{{ app }}-{{ env }}/custom/user_settings.py:/data/user_settings.py:ro
 {% endif %}
       - /var/data/{{ app }}-{{ env }}/custom-templates:/templates
-{% if (sksso.SKFLOW_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKSEC_WEB_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKPATCH_HOSTS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKAEGIS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKGIT_OIDC_ENABLED | default(false)) %}
+{% if (sksso.SKFLOW_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKSEC_WEB_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKPATCH_HOSTS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKAEGIS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKGIT_OIDC_ENABLED | default(false)) or (sksso.FORWARD_AUTH_ENABLED | default(true) | bool) %}
       - /var/data/config/{{ app }}-{{ env }}/blueprints:/blueprints/custom:ro
 {% endif %}
       - /etc/localtime:/etc/localtime:ro
