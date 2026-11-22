@@ -4,20 +4,6 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
-## Unreleased (v2.26.32)
-
-### Portal tiles: bindings matched client-side, not by the list filter
-
-- `ensure_binding` and `ensure_group_binding` (`v1/ansible/shared/src/authentik_portal_tile.py`)
-  trusted the `/policies/bindings/?target=&group=` (or `&policy=`) filters. One Authentik release
-  answered with the app's binding to ANOTHER group, so the wanted binding (for example `skadmin`)
-  was reported "unchanged" and never created, and the postcondition then failed the deploy after
-  the stack was already up. The answer is now filtered on target and group (or policy) in the
-  script, across every page. Tests: `v1/tests/test_authentik_portal_tile.py` (a fake Authentik
-  that ignores the filters).
-- **Instance action**: none. An estate that added the missing admin bindings by hand keeps them;
-  the next tile run reports them unchanged.
-
 ## skstacks-v2.26.31 - 2026-11-21
 
 Patch on v2.26.30. skgit can sign users in through Authentik over OIDC, managed as code on both
@@ -25,7 +11,7 @@ ends (opt-in, off by default). skha keepalived restarts wait for each node to be
 fixed pause, and a `vip_gate_checks` entry that names no health check is rejected. skreg no longer
 recreates its own overlay network. The portal tile provisioner retries Authentik's "starting" 503.
 `main` merges through a merge queue. The libvirt-cluster module can route test VMs' apt through a
-cache, with retries (opt-in). The skpatch-hosts registrar no longer creates a duplicate system under a second address. skbom puts its web UI behind Authentik forward auth by default (`AUTH_MODE`), and skbom and skflow give a first Postgres init 300 s. Five Renovate image updates for gated apps. Instance action: redeploy skha (check `vip_gate_checks` first, see
+cache, with retries (opt-in). Portal tiles find an existing binding by checking it, not by trusting the Authentik list filter. The skpatch-hosts registrar no longer creates a duplicate system under a second address. skbom puts its web UI behind Authentik forward auth by default (`AUTH_MODE`), and skbom and skflow give a first Postgres init 300 s. Five Renovate image updates for gated apps. Instance action: redeploy skha (check `vip_gate_checks` first, see
 below); everything else is opt-in or needs nothing.
 
 ### skbom: web UI behind Authentik forward auth by default (`AUTH_MODE`)
@@ -46,6 +32,18 @@ below); everything else is opt-in or needs nothing.
   with `POSTGRES_HEALTH_START_PERIOD`. A first `initdb` on NFS outlived 30 s plus 6 retries, swarm
   killed it half-way, and the next task skipped init on the non-empty data dir (no `pg_hba` host
   line, no app role). **Instance action**: none; a redeploy picks it up.
+
+### Portal tiles: bindings matched client-side, not by the list filter
+
+- `ensure_binding` and `ensure_group_binding` (`v1/ansible/shared/src/authentik_portal_tile.py`)
+  trusted the `/policies/bindings/?target=&group=` (or `&policy=`) filters. One Authentik release
+  answered with the app's binding to ANOTHER group, so the wanted binding (for example `skadmin`)
+  was reported "unchanged" and never created, and the postcondition then failed the deploy after
+  the stack was already up. The answer is now filtered on target and group (or policy) in the
+  script, across every page. Tests: `v1/tests/test_authentik_portal_tile.py` (a fake Authentik
+  that ignores the filters).
+- **Instance action**: none. An estate that added the missing admin bindings by hand keeps them;
+  the next tile run reports them unchanged.
 
 ### skpatch-hosts: the registrar never registers a system twice (#503)
 
