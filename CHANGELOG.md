@@ -11,7 +11,7 @@ ends (opt-in, off by default). skha keepalived restarts wait for each node to be
 fixed pause, and a `vip_gate_checks` entry that names no health check is rejected. skreg no longer
 recreates its own overlay network. The portal tile provisioner retries Authentik's "starting" 503.
 `main` merges through a merge queue. The libvirt-cluster module can route test VMs' apt through a
-cache, with retries (opt-in). skreg gets back the deployable role an unrelated merge had reverted. The skpatch-hosts registrar no longer creates a duplicate system under a second address. skbom puts its web UI behind Authentik forward auth by default (`AUTH_MODE`), and skbom and skflow give a first Postgres init 300 s. Five Renovate image updates for gated apps. Instance action: redeploy skha (check `vip_gate_checks` first, see
+cache, with retries (opt-in). skreg gets back the deployable role an unrelated merge had reverted. skfenceha certs-watch tasks no longer share one temp file. The skpatch-hosts registrar no longer creates a duplicate system under a second address. skbom puts its web UI behind Authentik forward auth by default (`AUTH_MODE`), and skbom and skflow give a first Postgres init 300 s. Five Renovate image updates for gated apps. Instance action: redeploy skha (check `vip_gate_checks` first, see
 below); everything else is opt-in or needs nothing.
 
 ### skbom: web UI behind Authentik forward auth by default (`AUTH_MODE`)
@@ -46,6 +46,16 @@ below); everything else is opt-in or needs nothing.
   again.
 - **Instance action**: redeploy skreg. Needs `skreg.REGISTRY_HTTP_SECRET` in the vault (the play
   refuses without it; the legacy `vault_skreg_registry_http_secret` is accepted).
+
+### skfenceha: traefik-certs-watch tasks no longer share one temp file
+
+- `traefik-certs-watch` runs on every manager against the same shared `/dynamic-out`, and its temp
+  file was `certs-generated.yml.tmp.$$`, where `$$` is 1 in every container. One task's `mv` could
+  take another's temp file away mid-write, and that task exited 1 now and then
+  (`sha256sum: can't open .../certs-generated.yml.tmp.1`). The temp name now carries the container
+  hostname. Tests: `v1/tests/test_skfenceha_certs_watch.py`.
+- **Instance action**: none; the next skfenceha deploy picks it up. A leftover
+  `certs-generated.yml.tmp.1` in the dynamic dir can be deleted.
 
 ### skpatch-hosts: the registrar never registers a system twice (#503)
 
