@@ -69,11 +69,20 @@ def test_skreg_is_env_only_and_uses_nothing_registry_3_removed():
     """registry 3 dropped the oss and swift storage drivers and moved the image's
     default config to /etc/distribution/config.yml. The template mounts no config
     file and sets no storage driver, so the image default (filesystem driver on
-    /var/lib/registry) applies, and only REGISTRY_HTTP_* env is passed."""
+    /var/lib/registry) applies; skreg.env passes only REGISTRY_HTTP_* and
+    REGISTRY_STORAGE_DELETE_ENABLED (storage.delete.enabled exists in 3)."""
     text = (ANSIBLE / "skreg/src/config/skreg/skreg.yml.j2").read_text()
     for removed in ("REGISTRY_STORAGE_OSS", "REGISTRY_STORAGE_SWIFT", "/etc/docker/registry", "schema1"):
         assert removed not in text, removed
     svc = _render_plain("skreg", vault_skreg_registry_http_secret="x")["registry"]
-    for item in svc["environment"]:
-        assert item.startswith(("REGISTRY_HTTP_SECRET=", "REGISTRY_HTTP_ADDR=")), item
+    # settings come from the rendered skreg.env (0600), never inline
+    assert "environment" not in svc
+    assert svc["env_file"] == "/var/data/config/skreg-prod/skreg.env"
+    env = (ANSIBLE / "skreg/src/config/skreg/skreg.env.j2").read_text()
+    for removed in ("REGISTRY_STORAGE_OSS", "REGISTRY_STORAGE_SWIFT", "schema1"):
+        assert removed not in env, removed
+    for line in filter(None, (l.strip() for l in env.splitlines())):
+        if not line.startswith("#"):
+            assert line.startswith(("REGISTRY_HTTP_SECRET=", "REGISTRY_HTTP_ADDR=",
+                                    "REGISTRY_STORAGE_DELETE_ENABLED=")), line
     assert "/var/data/skreg-prod/data:/var/lib/registry" in svc["volumes"]
