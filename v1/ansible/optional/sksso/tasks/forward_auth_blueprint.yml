@@ -49,9 +49,20 @@
     sksso_fa_host: "{{ sksso.FORWARD_AUTH_SSO_HOST | default(sksso.CAPAUTH_SSO_HOST | default('sso' ~ ('' if env == 'prod' else '-' ~ env) ~ '.' ~ sksso_fa_base, true), true) }}"
     sksso_fa_cookie_domain: "{{ (sksso.FORWARD_AUTH_COOKIE_DOMAIN | default(sksso_fa_base, true)) | string | lower }}"
 
-- name: Resolve the forward-auth public URL
+- name: Resolve the forward-auth public URL and the Authentik version it targets
+  # invalidation_flow exists from Authentik 2024.8 (and is required from then
+  # on); a 2024.4 or 2024.6 image rejects the unknown field and the whole
+  # blueprint with it. The framework's own default image is 2024.4.2, so the
+  # field is left out for a tag older than 2024.8 and sent for anything else
+  # (newer, or a tag that is not a version, for example a digest pin).
   set_fact:
     sksso_fa_external_host: "{{ 'https://' ~ sksso_fa_host }}"
+    sksso_fa_authentik_version: >-
+      {{ ((sksso.IMAGE.split('@')[0].split(':')[-1]) if (sksso.IMAGE | default('', true) | string | length > 0)
+          else (sksso.authentik_version | default('2024.4.2', true) | string)) | regex_search('^[0-9]{4}[.][0-9]+([.][0-9]+)?') | default('', true) }}
+- name: Decide whether the provider carries an invalidation flow
+  set_fact:
+    sksso_fa_invalidation_flow: "{{ sksso_fa_authentik_version | length == 0 or sksso_fa_authentik_version is version('2024.8', '>=') }}"
 
 - name: Check the forward-auth catch-all settings
   assert:

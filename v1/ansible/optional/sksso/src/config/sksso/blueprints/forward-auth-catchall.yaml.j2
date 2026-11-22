@@ -26,6 +26,9 @@
 # an estate that made the catch-all by hand sets
 # FORWARD_AUTH_PROVIDER_NAME and FORWARD_AUTH_APP_SLUG to the existing names
 # and this blueprint updates that object instead of creating a duplicate.
+# invalidation_flow is sent from Authentik 2024.8 on (earlier images reject
+# the field); the framework's default image is older, see
+# tasks/forward_auth_blueprint.yml.
 # policy_engine_mode and every other attribute not listed below are left as
 # they are, so adoption never widens access. A stale binding to another group
 # on an adopted application is NOT removed (a blueprint cannot delete what it
@@ -58,7 +61,9 @@ entries:
       external_host: {{ sksso_fa_external_host | to_json }}
       cookie_domain: {{ sksso_fa_cookie_domain | to_json }}
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+{% if sksso_fa_invalidation_flow | bool %}
       invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+{% endif %}
 
   - model: authentik_core.application
     id: application
