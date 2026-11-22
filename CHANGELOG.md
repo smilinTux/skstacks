@@ -4,6 +4,20 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
+## Unreleased (v2.26.32)
+
+### Portal tiles: bindings matched client-side, not by the list filter
+
+- `ensure_binding` and `ensure_group_binding` (`v1/ansible/shared/src/authentik_portal_tile.py`)
+  trusted the `/policies/bindings/?target=&group=` (or `&policy=`) filters. One Authentik release
+  answered with the app's binding to ANOTHER group, so the wanted binding (for example `skadmin`)
+  was reported "unchanged" and never created, and the postcondition then failed the deploy after
+  the stack was already up. The answer is now filtered on target and group (or policy) in the
+  script, across every page. Tests: `v1/tests/test_authentik_portal_tile.py` (a fake Authentik
+  that ignores the filters).
+- **Instance action**: none. An estate that added the missing admin bindings by hand keeps them;
+  the next tile run reports them unchanged.
+
 ## skstacks-v2.26.31 - 2026-11-21
 
 Patch on v2.26.30. skgit can sign users in through Authentik over OIDC, managed as code on both

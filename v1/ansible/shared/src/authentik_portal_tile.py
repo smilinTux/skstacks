@@ -373,11 +373,20 @@ def _binding_body(app_pk, order, group=None, policy=None):
     }
 
 
+def _matching_bindings(results, app, **key):
+    """Keep only the bindings of THIS app to THIS group or policy. The list
+    query filters are not trusted: an Authentik release that ignores the
+    `group` filter answered with the app's binding to another group, so the
+    wanted binding was reported "unchanged" and never created."""
+    (field, value), = key.items()
+    return [b for b in results if b.get("target") == app["pk"] and b.get(field) == value]
+
+
 def ensure_binding(api, app, order, group=None, policy=None, label=""):
     """Additive: create the binding when no binding of this app to that group
     (or policy) exists. Never edits or removes an existing one."""
     key = {"group": group["pk"]} if group is not None else {"policy": policy["pk"]}
-    existing = api.get("/policies/bindings/", target=app["pk"], **key).get("results", [])
+    existing = _matching_bindings(api.get_all("/policies/bindings/", target=app["pk"], **key), app, **key)
     if existing:
         print(f"binding: unchanged {label}")
         return existing[0]
@@ -396,7 +405,9 @@ def ensure_group_binding(api, app, group_name):
     group = api.first("/core/groups/", name=group_name)
     if group is None:
         raise ApiError(f"group '{group_name}' not found in Authentik (this helper never creates groups)")
-    existing = api.get("/policies/bindings/", target=app["pk"], group=group["pk"]).get("results", [])
+    existing = _matching_bindings(
+        api.get_all("/policies/bindings/", target=app["pk"], group=group["pk"]), app, group=group["pk"]
+    )
     if existing:
         print("binding: unchanged")
         return
