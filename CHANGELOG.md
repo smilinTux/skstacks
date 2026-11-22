@@ -120,6 +120,10 @@ below); everything else is opt-in or needs nothing.
   on every host first.) That setting is now a
   maximum, not a fixed pause, and its default is derived from the health checks (30 s for the
   default Traefik check). A manager that cannot carry the VIP is reported instead of passed over.
+  A node that settles in FAULT counts as ready only while another manager answers on the VIP: with
+  Traefik on some managers only (plain skfence), the others are FAULT on their gate check by
+  design, and the cluster is healthy. With the VIP answering nowhere, the restart still fails and
+  the rollout stops.
 - `skha.vip_gate_checks` is rejected when it is a mapping, and when it names a check that is not
   in `skha.health_checks`, including the implicit default `[traefik]` (such a gate never fails,
   so the VIP would never move on it). **Instance action** if your Traefik check has another
