@@ -41,7 +41,7 @@ it redeploys sksso (see below); everything else needs nothing.
 - The `/blueprints/custom` mount in `server` and `worker` is now on by default (it was on only when another
   app's blueprint was enabled), and the playbooks create `/var/data/config/sksso-<env>/blueprints` up front.
   `FORWARD_AUTH_ENABLED: false` renders `sksso.yml` as before. The blueprint omits `invalidation_flow` for an
-  image tagged older than Authentik 2024.8 (the framework's default image is 2024.4.2), so it applies there too.
+  image tagged older than Authentik 2024.10 (the framework's default image is 2024.4.2), so it applies there too.
 - `check-access.py` reports the catch-all itself (C7, no declarations needed): missing (no `forward_domain`
   provider with an application), unbound, bound to anything but the admin group (another group, a user, a
   policy), or attached to no outpost. `authentik Admins` on the catch-all stays a C2 warning. Tests:

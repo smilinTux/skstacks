@@ -10,6 +10,8 @@
 # ON by default for a new install. sksso.FORWARD_AUTH_ENABLED: false opts out
 # (an estate that manages the catch-all by hand); this file still runs then,
 # to refuse contradictory settings and to take a stale blueprint file away.
+# Before the blueprint is rendered, a read-only preflight refuses to go on when
+# Authentik already holds a domain-wide provider under another name.
 # Nothing here is a secret.
 
 - name: Resolve the forward-auth catch-all settings
@@ -50,10 +52,10 @@
     sksso_fa_cookie_domain: "{{ (sksso.FORWARD_AUTH_COOKIE_DOMAIN | default(sksso_fa_base, true)) | string | lower }}"
 
 - name: Resolve the forward-auth public URL and the Authentik version it targets
-  # invalidation_flow exists from Authentik 2024.8 (and is required from then
-  # on); a 2024.4 or 2024.6 image rejects the unknown field and the whole
-  # blueprint with it. The framework's own default image is 2024.4.2, so the
-  # field is left out for a tag older than 2024.8 and sent for anything else
+  # invalidation_flow exists from Authentik 2024.10 (and is required from then
+  # on); a 2024.4, 2024.6 or 2024.8 image rejects the unknown field and the
+  # whole blueprint with it. The framework's own default image is 2024.4.2, so
+  # the field is left out for a tag older than 2024.10 and sent for anything else
   # (newer, or a tag that is not a version, for example a digest pin).
   set_fact:
     sksso_fa_external_host: "{{ 'https://' ~ sksso_fa_host }}"
@@ -62,7 +64,7 @@
           else (sksso.authentik_version | default('2024.4.2', true) | string)) | regex_search('^[0-9]{4}[.][0-9]+([.][0-9]+)?') | default('', true) }}
 - name: Decide whether the provider carries an invalidation flow
   set_fact:
-    sksso_fa_invalidation_flow: "{{ sksso_fa_authentik_version | length == 0 or sksso_fa_authentik_version is version('2024.8', '>=') }}"
+    sksso_fa_invalidation_flow: "{{ sksso_fa_authentik_version | length == 0 or sksso_fa_authentik_version is version('2024.10', '>=') }}"
 
 - name: Check the forward-auth catch-all settings
   assert:
@@ -93,6 +95,81 @@
       group name, never skuser.
     quiet: true
   when: sksso_fa_on | bool
+
+# Preflight, BEFORE anything reaches the /blueprints/custom mount: the worker
+# applies a discovered blueprint on its own, so an estate that already has a
+# hand-made forward_domain provider under another name would get a second
+# provider and application before the attach step could refuse. Read only,
+# via `ak shell` in the running server container (no API token). With no
+# running server (a first install) there is nothing to collide with and it is
+# skipped. A refusal (or an Authentik that does not answer) takes any earlier
+# rendering of the blueprint away and fails the play; nothing is edited in
+# Authentik. src/sksso/forward_auth_preflight.py has the rules.
+- name: Find the node running this stack's Authentik server (forward-auth preflight)
+  command:
+    argv: [docker, service, ps, --filter, desired-state=running, --format, "{{ '{{' }}.Node{{ '}}' }}", "{{ app }}-{{ env }}_server"]
+  register: sksso_fa_pf_node
+  changed_when: false
+  failed_when: false
+  when: sksso_fa_on | bool
+
+- name: Name the preflight node (empty: no running server yet, first install)
+  set_fact:
+    sksso_fa_pf_host: "{{ (sksso_fa_pf_node.stdout_lines | first) if (sksso_fa_pf_node.rc | default(1) == 0 and (sksso_fa_pf_node.stdout_lines | default([]) | length) > 0) else '' }}"
+  when: sksso_fa_on | bool
+
+- name: Refuse an existing domain-wide provider under another name (ak shell, read only)
+  shell: |
+    set -euo pipefail
+    c=$(docker ps -q --filter "name={{ app }}-{{ env }}_server" | head -n1)
+    [ -n "$c" ] || { echo "preflight: skipped (no {{ app }}-{{ env }}_server container on this node)"; exit 0; }
+    docker exec -i -e SKSSO_FORWARD_AUTH="$SKSSO_FORWARD_AUTH" "$c" ak shell 2>&1 \
+      | grep -E '^(preflight: |Traceback|[A-Za-z.]*(Error|Exit))' || echo "preflight: waiting (ak shell printed no status yet)"
+  args:
+    executable: /bin/bash
+    stdin: "{{ lookup('file', playbook_dir ~ '/src/' ~ app ~ '/forward_auth_preflight.py') }}"
+  environment:
+    SKSSO_FORWARD_AUTH: "{{ {'provider': sksso_fa_provider_name, 'cookie_domain': sksso_fa_cookie_domain} | to_json }}"
+  register: sksso_fa_pf
+  # the server may still be starting: wait a little, but stop at once on a refusal
+  until: "'preflight: waiting' not in sksso_fa_pf.stdout"
+  retries: 6
+  delay: 10
+  changed_when: false
+  failed_when: false
+  delegate_to: "{{ sksso_fa_pf_host | default(inventory_hostname, true) }}"
+  when: (sksso_fa_on | bool) and (sksso_fa_pf_host | default('') | length) > 0
+
+- name: Decide whether the preflight lets the blueprint through
+  # blocked = a server was running and did not answer `preflight: ok` or
+  # `preflight: skipped` (a refusal, a traceback, or no answer in time):
+  # fail closed rather than risk a duplicate
+  set_fact:
+    sksso_fa_pf_blocked: "{{ (sksso_fa_on | bool) and (sksso_fa_pf_host | default('') | length) > 0 and ('preflight: ok' not in (sksso_fa_pf.stdout | default(''))) and ('preflight: skipped' not in (sksso_fa_pf.stdout | default(''))) }}"
+
+- name: Take an earlier rendering of the blueprint away when the preflight refuses
+  # Only this role's own file. The worker applies whatever sits in the mount.
+  file:
+    path: /var/data/config/{{ app }}-{{ env }}/blueprints/forward-auth-catchall.yaml
+    state: absent
+  when: sksso_fa_pf_blocked | bool
+
+- name: Show the forward-auth preflight result
+  debug:
+    msg: "{{ sksso_fa_pf.stdout_lines | default([]) }}"
+  when: sksso_fa_pf_blocked | bool
+
+- name: Fail before rendering when the preflight did not pass
+  fail:
+    msg: >-
+      The forward-auth preflight did not pass (see the preflight lines above),
+      so the blueprint was NOT rendered and nothing was changed in Authentik.
+      A refusal names the existing domain-wide provider and the settings to
+      change: FORWARD_AUTH_PROVIDER_NAME and FORWARD_AUTH_APP_SLUG set to its
+      names adopt it, FORWARD_AUTH_ENABLED: false leaves the catch-all to you.
+      No status at all means the running Authentik server did not answer
+      `ak shell`: deploy again once it is healthy.
+  when: sksso_fa_pf_blocked | bool
 
 - name: Create the Authentik blueprints directory
   file:

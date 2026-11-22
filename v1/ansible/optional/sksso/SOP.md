@@ -148,8 +148,8 @@ id while `SKGIT_OIDC_ENABLED` is on.
 ## 9. Maturity-tier + Version reference
 
 Added in v2.26.32. Authentik compatibility: the blueprint works on the framework's default image (2024.4.2)
-and on current releases. `invalidation_flow` (Authentik 2024.8 and later, required there) is sent only when the
-resolved image tag is 2024.8 or newer, or is not a version (a digest pin); an older tag gets a provider
+and on current releases. `invalidation_flow` (Authentik 2024.10 and later, required there) is sent only when the
+resolved image tag is 2024.10 or newer, or is not a version (a digest pin); an older tag gets a provider
 without it, as that field does not exist there. `meta_hide` and the `authentik_policies.policybinding`
 identifier set are the same ones the skaegis blueprint uses. The attach script uses the Django ORM models
 `Outpost`, `ProxyProvider`, `Application` and `PolicyBinding` under `ak shell`.
