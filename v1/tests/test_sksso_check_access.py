@@ -96,6 +96,21 @@ def pbind(target, ppk, pname):
             "policy_obj": {"name": pname}, "enabled": True, "negate": False, "order": 10}
 
 
+def gate(**kw):
+    """FakeAuthentik kwargs for a conforming catch-all: a forward_domain provider with
+    an application bound to skadmin only, attached to the embedded outpost. Merge into a
+    fixture with with_gate(); a check that sees no catch-all reports C7."""
+    return {"apps": [app("gate", provider=99)], "proxy": [{"pk": 99, "mode": "forward_domain"}],
+            "outposts": [{"providers": [99]}], "bindings": [gbind("app-gate", "skadmin")], **kw}
+
+
+def with_gate(**kw):
+    base = gate()
+    for key, val in kw.items():
+        base[key] = list(val) + base.get(key, []) if key in base else val
+    return FakeAuthentik(**base)
+
+
 BASE_GROUPS = [group("skadmin", users=[1]), group("skuser", users=[2])]
 BASE_USERS = [user(1, "alice", ["g-skadmin"]), user(2, "bob", ["g-skuser"]), user(3, "carol")]
 
@@ -115,12 +130,12 @@ def _no_env_token(monkeypatch):
 
 
 def test_conforming_instance_exits_0(capsys):
-    fake = FakeAuthentik(apps=[app("skpulse")], groups=BASE_GROUPS, users=BASE_USERS,
-                         bindings=[gbind("app-skpulse", "skadmin")])
+    fake = with_gate(apps=[app("skpulse")], groups=BASE_GROUPS, users=BASE_USERS,
+                     bindings=[gbind("app-skpulse", "skadmin")])
     assert run(fake) == 0
     out = capsys.readouterr().out
     assert findings(out) == []
-    assert "# summary: 1 applications, 0 violations" in out
+    assert "# summary: 2 applications, 0 violations" in out
 
 
 def test_negative_control_unbound_app_exits_1(capsys):
@@ -164,8 +179,8 @@ def test_no_token_exits_2_and_token_never_printed(capsys):
 
 def test_token_from_env(monkeypatch, capsys):
     monkeypatch.setenv("AUTHENTIK_TOKEN", TOKEN)
-    fake = FakeAuthentik(apps=[app("skpulse")], groups=BASE_GROUPS, users=BASE_USERS,
-                         bindings=[gbind("app-skpulse", "skadmin")])
+    fake = with_gate(apps=[app("skpulse")], groups=BASE_GROUPS, users=BASE_USERS,
+                     bindings=[gbind("app-skpulse", "skadmin")])
     assert ca.main(["--url", "http://x"], stdin=io.StringIO(""), opener=fake) == 0
 
 
@@ -178,11 +193,11 @@ def test_pagination_followed_to_the_end(monkeypatch, capsys):
     monkeypatch.setattr(ca, "PAGE_SIZE", 2)
     apps = [app(f"a{i}") for i in range(5)]
     bindings = [gbind(f"app-a{i}", "skadmin") for i in range(4)]  # a4, on page 3, is unbound
-    fake = FakeAuthentik(apps=apps, groups=BASE_GROUPS, users=BASE_USERS, bindings=bindings)
+    fake = with_gate(apps=apps, groups=BASE_GROUPS, users=BASE_USERS, bindings=bindings)
     assert run(fake) == 1
     out = capsys.readouterr().out
     assert findings(out) == ["a4 C1 no policy bindings: Authentik admits every authenticated user"]
-    assert "5 applications" in out
+    assert "6 applications" in out
     assert sum("/core/applications/" in r for r in fake.requests) == 3
 
 
@@ -205,7 +220,7 @@ def test_api_client_refuses_non_get():
 def test_c2_is_a_warning_unless_strict(capsys):
     groups = BASE_GROUPS + [group("authentik Admins", users=[1])]
     bindings = [gbind("app-skpulse", "skadmin"), gbind("app-skpulse", "authentik Admins")]
-    fake = FakeAuthentik(apps=[app("skpulse")], groups=groups, users=BASE_USERS, bindings=bindings)
+    fake = with_gate(apps=[app("skpulse")], groups=groups, users=BASE_USERS, bindings=bindings)
     assert run(fake) == 0
     assert "skpulse C2 warning: bound to 'authentik Admins'" in capsys.readouterr().out
     assert run(fake, "--strict") == 1
@@ -282,7 +297,7 @@ def test_c6_app_group_parented_to_skuser(capsys):
 
 def test_empty_sk_managed_group_is_info_only(capsys):
     groups = BASE_GROUPS + [group("app-x-users", managed=True)]
-    fake = FakeAuthentik(apps=[app("x")], groups=groups, users=BASE_USERS, bindings=[gbind("app-x", "skadmin")])
+    fake = with_gate(apps=[app("x")], groups=groups, users=BASE_USERS, bindings=[gbind("app-x", "skadmin")])
     assert run(fake) == 0
     assert "group:app-x-users C9 info: sk-managed group has no members" in capsys.readouterr().out
 
