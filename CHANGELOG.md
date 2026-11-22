@@ -33,6 +33,16 @@ below); everything else is opt-in or needs nothing.
   killed it half-way, and the next task skipped init on the non-empty data dir (no `pg_hba` host
   line, no app role). **Instance action**: none; a redeploy picks it up.
 
+### skfenceha: traefik-certs-watch tasks no longer share one temp file
+
+- `traefik-certs-watch` runs on every manager against the same shared `/dynamic-out`, and its temp
+  file was `certs-generated.yml.tmp.$$`, where `$$` is 1 in every container. One task's `mv` could
+  take another's temp file away mid-write, and that task exited 1 now and then
+  (`sha256sum: can't open .../certs-generated.yml.tmp.1`). The temp name now carries the container
+  hostname. Tests: `v1/tests/test_skfenceha_certs_watch.py`.
+- **Instance action**: none; the next skfenceha deploy picks it up. A leftover
+  `certs-generated.yml.tmp.1` in the dynamic dir can be deleted.
+
 ### skpatch-hosts: the registrar never registers a system twice (#503)
 
 - Systems were matched only by `hostname:port`. A provisioning run without the estate's targets
