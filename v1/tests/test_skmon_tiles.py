@@ -99,6 +99,7 @@ class TileFake(FakeAuthentik):
     """The fake, plus the group filter the real bindings endpoint has and the client's `first`."""
     FILTERS = {**FakeAuthentik.FILTERS, "/policies/bindings/": {"target", "group"}}
     first = tile.Api.first
+    get_all = tile.Api.get_all
 
     def __init__(self):
         super().__init__()

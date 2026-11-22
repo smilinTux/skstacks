@@ -11,7 +11,7 @@ ends (opt-in, off by default). skha keepalived restarts wait for each node to be
 fixed pause, and a `vip_gate_checks` entry that names no health check is rejected. skreg no longer
 recreates its own overlay network. The portal tile provisioner retries Authentik's "starting" 503.
 `main` merges through a merge queue. The libvirt-cluster module can route test VMs' apt through a
-cache, with retries (opt-in). skreg gets back the deployable role an unrelated merge had reverted. skfenceha certs-watch tasks no longer share one temp file. The skpatch-hosts registrar no longer creates a duplicate system under a second address. skbom puts its web UI behind Authentik forward auth by default (`AUTH_MODE`), and skbom and skflow give a first Postgres init 300 s. Five Renovate image updates for gated apps. Instance action: redeploy skha (check `vip_gate_checks` first, see
+cache, with retries (opt-in). skreg gets back the deployable role an unrelated merge had reverted. skfenceha certs-watch tasks no longer share one temp file. Portal tiles find an existing binding by checking it, not by trusting the Authentik list filter. The skpatch-hosts registrar no longer creates a duplicate system under a second address. skbom puts its web UI behind Authentik forward auth by default (`AUTH_MODE`), and skbom and skflow give a first Postgres init 300 s. Five Renovate image updates for gated apps. Instance action: redeploy skha (check `vip_gate_checks` first, see
 below); everything else is opt-in or needs nothing.
 
 ### skbom: web UI behind Authentik forward auth by default (`AUTH_MODE`)
@@ -56,6 +56,18 @@ below); everything else is opt-in or needs nothing.
   hostname. Tests: `v1/tests/test_skfenceha_certs_watch.py`.
 - **Instance action**: none; the next skfenceha deploy picks it up. A leftover
   `certs-generated.yml.tmp.1` in the dynamic dir can be deleted.
+
+### Portal tiles: bindings matched client-side, not by the list filter
+
+- `ensure_binding` and `ensure_group_binding` (`v1/ansible/shared/src/authentik_portal_tile.py`)
+  trusted the `/policies/bindings/?target=&group=` (or `&policy=`) filters. One Authentik release
+  answered with the app's binding to ANOTHER group, so the wanted binding (for example `skadmin`)
+  was reported "unchanged" and never created, and the postcondition then failed the deploy after
+  the stack was already up. The answer is now filtered on target and group (or policy) in the
+  script, across every page. Tests: `v1/tests/test_authentik_portal_tile.py` (a fake Authentik
+  that ignores the filters).
+- **Instance action**: none. An estate that added the missing admin bindings by hand keeps them;
+  the next tile run reports them unchanged.
 
 ### skpatch-hosts: the registrar never registers a system twice (#503)
 
