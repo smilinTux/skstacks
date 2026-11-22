@@ -229,7 +229,7 @@ def test_pve_token_is_a_secret():
     assert p["secrets"][0]["mode"] == 0o400 and p["command"] == ["--config.file=/etc/prometheus/pve.yml"]
     assert re.fullmatch(r"skmon_prod_pve_config_[0-9a-f]{12}", doc["secrets"]["pve_config"]["name"])
     assert doc["secrets"]["pve_config"]["file"] == "/var/data/config/skmon-prod/secrets/pve_config"
-    assert p["image"].startswith("prompve/prometheus-pve-exporter:3.10.2@sha256:")
+    assert p["image"].startswith("prompve/prometheus-pve-exporter:3.11.0@sha256:")
 
 
 def test_pve_secret_rolls_the_exporter_on_change_and_is_always_rendered():
