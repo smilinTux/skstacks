@@ -113,7 +113,7 @@
   failed_when: false
   when: sksso_fa_on | bool
 
-- name: Name the preflight node (empty: no running server yet, first install)
+- name: Name the preflight node, empty when no server runs yet (first install)
   set_fact:
     sksso_fa_pf_host: "{{ (sksso_fa_pf_node.stdout_lines | first) if (sksso_fa_pf_node.rc | default(1) == 0 and (sksso_fa_pf_node.stdout_lines | default([]) | length) > 0) else '' }}"
   when: sksso_fa_on | bool

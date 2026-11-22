@@ -131,6 +131,17 @@ def test_names_with_quotes_stay_valid_yaml():
 def test_invalidation_flow_is_left_out_for_an_authentik_that_predates_it():
     _, bp = _blueprint(sksso_fa_invalidation_flow=False)
     assert "invalidation_flow" not in _by_model(bp)["authentik_providers_proxy.proxyprovider"][0]["attrs"]
+    _, bp = _blueprint(sksso_fa_invalidation_flow=True)
+    assert "invalidation_flow" in _by_model(bp)["authentik_providers_proxy.proxyprovider"][0]["attrs"]
+
+
+def test_the_invalidation_flow_gate_is_authentik_2024_10_not_2024_8():
+    # invalidation_flow first exists in Authentik 2024.10 (authentik/core/models.py at
+    # version/2024.8.0 has none, at version/2024.10.0 it does)
+    task = next(t for t in yaml.safe_load((SKSSO / "tasks/forward_auth_blueprint.yml").read_text())
+                if t.get("name") == "Decide whether the provider carries an invalidation flow")
+    expr = task["set_fact"]["sksso_fa_invalidation_flow"]
+    assert "version('2024.10', '>=')" in expr and "2024.8" not in expr
 
 
 def test_the_outpost_is_not_a_blueprint_entry_because_a_blueprint_replaces_its_providers():
@@ -338,10 +349,14 @@ def test_the_admin_group_is_skadmin_unless_a_vault_knob_says_otherwise(tmp_mod):
 
 @needs_ansible
 def test_invalidation_flow_follows_the_authentik_version_the_role_pins(tmp_mod):
-    # the role's default image is 2024.4.2, which has no invalidation_flow field
+    # the role's default image is 2024.4.2, which has no invalidation_flow field,
+    # and neither has any 2024.8.x (it first exists in 2024.10)
     assert "invalidation_flow" not in provider(ok(tmp_mod))["attrs"]
-    assert "invalidation_flow" not in provider(ok(tmp_mod, {"authentik_version": "2024.6.3"}))["attrs"]
-    for over in ({"authentik_version": "2024.8.0"}, {"authentik_version": "2025.10.1"},
+    for old in ("2024.6.3", "2024.8.0", "2024.8.4", "2024.9.1"):
+        assert "invalidation_flow" not in provider(ok(tmp_mod, {"authentik_version": old}))["attrs"], old
+    assert "invalidation_flow" not in provider(ok(tmp_mod, {"IMAGE": "registry.example.test/authentik/server:2024.8.2"}))["attrs"]
+    for over in ({"authentik_version": "2024.10.0"}, {"authentik_version": "2025.10.1"},
+                 {"IMAGE": "registry.example.test/authentik/server:2024.10.0"},
                  {"IMAGE": "registry.example.test/authentik/server:2026.2.1"},
                  {"IMAGE": "registry.example.test/authentik/server@sha256:" + "0" * 64}):
         assert "invalidation_flow" in provider(ok(tmp_mod, over))["attrs"], over
@@ -451,6 +466,112 @@ def test_the_attach_stops_waiting_on_a_refusal_and_fails_the_deploy_unless_ok():
     assert run["until"] == "'attach: waiting' not in sksso_fa_attach.stdout"
     fail = next(t for t in tasks if "fail" in t)
     assert fail["when"] == "'attach: ok' not in (sksso_fa_attach.stdout | default(''))"
+
+
+# ------------------------------------------------ the preflight: before anything is rendered
+
+BP_TASKS = SKSSO / "tasks/forward_auth_blueprint.yml"
+PREFLIGHT = SKSSO / "src/sksso/forward_auth_preflight.py"
+
+
+def _bp_tasks():
+    return yaml.safe_load(BP_TASKS.read_text())
+
+
+def _idx(tasks, prefix):
+    return next(i for i, t in enumerate(tasks) if t["name"].startswith(prefix))
+
+
+def test_the_preflight_runs_before_the_blueprint_directory_and_the_render():
+    tasks = _bp_tasks()
+    names = [t["name"] for t in tasks]
+    render_i = _idx(tasks, "Render the forward-auth-catchall blueprint")
+    mkdir_i = _idx(tasks, "Create the Authentik blueprints directory")
+    pf = [i for i, n in enumerate(names) if "preflight" in n.lower()]
+    assert len(pf) >= 5
+    # every preflight task, the stale-file removal and the fail sit ahead of the render
+    assert max(pf) < mkdir_i < render_i
+    # and after the settings were checked, so the provider name it reads is a valid one
+    assert _idx(tasks, "Check the forward-auth catch-all settings") < min(pf)
+
+
+def test_the_preflight_is_skipped_when_the_catch_all_is_off():
+    tasks = _bp_tasks()
+    for prefix in ("Find the node running this stack's Authentik server (forward-auth preflight)",
+                   "Name the preflight node", "Refuse an existing domain-wide provider"):
+        assert "sksso_fa_on | bool" in tasks[_idx(tasks, prefix)]["when"], prefix
+    decide = tasks[_idx(tasks, "Decide whether the preflight lets the blueprint through")]
+    assert decide["set_fact"]["sksso_fa_pf_blocked"].startswith("{{ (sksso_fa_on | bool) and")
+
+
+def test_the_preflight_reads_through_ak_shell_in_the_server_container_with_no_token():
+    tasks = _bp_tasks()
+    run = tasks[_idx(tasks, "Refuse an existing domain-wide provider")]
+    body = run["shell"]
+    assert "_server" in body and "ak shell" in body and "docker exec" in body
+    assert run["args"]["stdin"].count("forward_auth_preflight.py") == 1
+    assert run["until"] == "'preflight: waiting' not in sksso_fa_pf.stdout"  # a refusal is never retried
+    code = re.sub(r"(?m)^\s*#.*$", "", BP_TASKS.read_text() + PREFLIGHT.read_text())
+    assert "api_token" not in code and "Bearer" not in code
+
+
+def test_no_server_running_yet_skips_the_preflight_and_a_refusal_takes_the_stale_blueprint_away():
+    tasks = _bp_tasks()
+    # first install: the service does not exist (docker rc != 0) or has no running task: empty host,
+    # the run is skipped and nothing blocks
+    name = tasks[_idx(tasks, "Name the preflight node")]
+    assert "else ''" in name["set_fact"]["sksso_fa_pf_host"]
+    run = tasks[_idx(tasks, "Refuse an existing domain-wide provider")]
+    assert "length) > 0" in run["when"]
+    assert tasks[_idx(tasks, "Find the node running this stack's Authentik server (forward-auth preflight)")]["failed_when"] is False
+    # a refusal removes the rendered blueprint BEFORE it fails, so the worker cannot apply a stale one
+    rm = tasks[_idx(tasks, "Take an earlier rendering of the blueprint away when the preflight refuses")]
+    assert rm["file"]["state"] == "absent" and rm["file"]["path"].endswith("/blueprints/forward-auth-catchall.yaml")
+    assert rm["when"] == "sksso_fa_pf_blocked | bool"
+    fail = tasks[_idx(tasks, "Fail before rendering when the preflight did not pass")]
+    assert fail["when"] == "sksso_fa_pf_blocked | bool"
+    assert _idx(tasks, "Take an earlier rendering") < _idx(tasks, "Fail before rendering")
+
+
+def _blocked(host, stdout, on=True):
+    """Evaluate the `sksso_fa_pf_blocked` expression the way Ansible would (its `bool` filter)."""
+    import jinja2
+    env = jinja2.Environment()
+    env.filters["bool"] = lambda v: str(v).lower() in ("true", "yes", "on", "1")
+    expr = _bp_tasks()[_idx(_bp_tasks(), "Decide whether the preflight lets the blueprint through")]["set_fact"]["sksso_fa_pf_blocked"]
+    ctx = {"sksso_fa_on": on, "sksso_fa_pf": {"stdout": stdout} if stdout is not None else jinja2.Undefined()}
+    if host is not None:
+        ctx["sksso_fa_pf_host"] = host
+    return env.from_string(expr).render(**ctx).strip() == "True"
+
+
+@pytest.mark.parametrize("host,stdout,blocked", [
+    ("", None, False),                                   # first install: no server, skipped
+    ("node-1", "preflight: ok (no other domain-wide provider overlaps cookie domain 'x.test')", False),
+    ("node-1", "preflight: skipped (no sksso-prod_server container on this node)", False),
+    ("node-1", "preflight: refused (Authentik already has a domain-wide provider ...)", True),
+    ("node-1", "Traceback (most recent call last):\nValueError: boom", True),   # unreadable: fail closed
+    ("node-1", "preflight: waiting (ak shell printed no status yet)", True),    # never answered in time
+])
+def test_the_preflight_verdict(host, stdout, blocked):
+    assert _blocked(host, stdout) is blocked
+    assert _blocked(host, stdout, on=False) is False  # opted out: never blocks
+
+
+@needs_ansible
+def test_the_preflight_command_is_rendered_only_when_the_catch_all_is_on(tmp_mod):
+    # the render gate stands in a running server on a node (FAKE_STDOUT) that answers ok
+    def pf_shells(out):
+        return [p for p in (out / "_shell").glob("*.sh") if "preflight: " in p.read_text()] \
+            if (out / "_shell").exists() else []
+    on = ok(tmp_mod)
+    assert bp_path(on).exists()
+    (script,) = pf_shells(on) if len(pf_shells(on)) == 1 else (None,)
+    assert script is not None, "the preflight command was not rendered with the catch-all on"
+    text = script.read_text()
+    assert "sksso-prod_server" in text and "ak shell" in text
+    off = ok(tmp_mod, {"FORWARD_AUTH_ENABLED": False})
+    assert not bp_path(off).exists() and pf_shells(off) == []
 
 
 def test_every_knob_is_documented_in_the_readme_and_the_sop():
@@ -575,7 +696,7 @@ def make_world(*, provider_kw=None, bindings=None, twins=(), outpost_kw=None, wi
     }
 
 
-def run_attach(world, monkeypatch, capsys, **cfg):
+def _fake_authentik(world, monkeypatch):
     def module(name, **attrs):
         m = types.ModuleType(name)
         m.__dict__.update(attrs)
@@ -601,6 +722,10 @@ def run_attach(world, monkeypatch, capsys, **cfg):
     module("authentik.outposts.models", Outpost=OutpostM)
     module("authentik.policies.models", PolicyBinding=PolicyBinding)
     module("authentik.providers.proxy.models", ProxyProvider=ProxyProvider)
+
+
+def run_attach(world, monkeypatch, capsys, **cfg):
+    _fake_authentik(world, monkeypatch)
     conf = {"provider": "SKStacks forward auth (domain)", "outpost": "authentik Embedded Outpost",
             "admin_group": "skadmin", "cookie_domain": "example.test", **cfg}
     monkeypatch.setenv("SKSSO_FORWARD_AUTH", json.dumps(conf))
@@ -684,4 +809,87 @@ def test_attach_refuses_an_unknown_or_non_proxy_outpost(monkeypatch, capsys):
 
 def test_attach_reads_no_token_and_no_secret():
     code = re.sub(r"(?m)^\s*#.*$", "", ATTACH.read_text())
+    assert "api_token" not in code and "password" not in code.lower() and "Bearer" not in code
+
+
+# --------------------------------------------------------- the preflight script, fake ORM
+
+def run_preflight(world, monkeypatch, capsys, **cfg):
+    _fake_authentik(world, monkeypatch)
+    conf = {"provider": "SKStacks forward auth (domain)", "cookie_domain": "example.test", **cfg}
+    monkeypatch.setenv("SKSSO_FORWARD_AUTH", json.dumps(conf))
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(PREFLIGHT))
+    assert exc.value.code == 0
+    lines = [l for l in capsys.readouterr().out.splitlines() if l.startswith("preflight:")]
+    assert len(lines) == 1, lines
+    return lines[0]
+
+
+def _hand_made(world, name="hand made catch-all", cookie="example.test", slug="hand-made-gate", pk=30):
+    prov = Obj(pk=pk, name=name, mode="forward_domain", cookie_domain=cookie)
+    world["providers"].append(prov)
+    if slug:
+        world["apps"].append(Obj(pk=pk + 100, slug=slug, provider=prov))
+    return prov
+
+
+def test_preflight_refuses_an_existing_catch_all_under_another_name(monkeypatch, capsys):
+    w = make_world(with_provider=False)  # nothing under the configured name yet: the blueprint would create it
+    _hand_made(w)
+    line = run_preflight(w, monkeypatch, capsys)
+    assert line.startswith("preflight: refused")
+    assert "'hand made catch-all'" in line and "'hand-made-gate'" in line  # names the provider and its application
+    assert "FORWARD_AUTH_PROVIDER_NAME" in line and "FORWARD_AUTH_APP_SLUG" in line and "FORWARD_AUTH_ENABLED: false" in line
+    assert "'SKStacks forward auth (domain)'" in line  # the configured name that would have been created
+
+
+def test_preflight_passes_when_the_only_catch_all_is_the_configured_one(monkeypatch, capsys):
+    assert run_preflight(make_world(), monkeypatch, capsys).startswith("preflight: ok")
+    # adoption: the vault names the hand-made one, so it is the configured one
+    w = make_world(with_provider=False)
+    _hand_made(w)
+    assert run_preflight(w, monkeypatch, capsys, provider="hand made catch-all").startswith("preflight: ok")
+
+
+def test_preflight_passes_when_there_is_no_catch_all_at_all(monkeypatch, capsys):
+    w = make_world(with_provider=False)  # only a forward_single provider exists
+    assert run_preflight(w, monkeypatch, capsys).startswith("preflight: ok")
+
+
+def test_preflight_refuses_a_twin_beside_the_configured_provider_too(monkeypatch, capsys):
+    w = make_world()
+    _hand_made(w, cookie="Example.Test")
+    assert run_preflight(w, monkeypatch, capsys).startswith("preflight: refused")
+
+
+@pytest.mark.parametrize("cookie,refused", [
+    ("example.test", True), ("EXAMPLE.TEST", True),
+    ("test", True), ("sub.example.test", True),         # a parent or a subdomain of the configured domain overlaps
+    ("", True), (None, True),                            # unknown cookie domain: cannot be told from a duplicate
+    ("elsewhere.test", False), ("badexample.test", False),   # unrelated domains are not duplicates
+])
+def test_preflight_judges_the_cookie_domain_overlap(monkeypatch, capsys, cookie, refused):
+    w = make_world(with_provider=False)
+    _hand_made(w, cookie=cookie)
+    line = run_preflight(w, monkeypatch, capsys)
+    assert line.startswith("preflight: refused" if refused else "preflight: ok"), line
+
+
+def test_preflight_names_a_provider_without_an_application(monkeypatch, capsys):
+    w = make_world(with_provider=False)
+    _hand_made(w, slug=None)
+    assert "no application" in run_preflight(w, monkeypatch, capsys)
+
+
+def test_preflight_is_read_only(monkeypatch, capsys):
+    w = make_world(with_provider=False)
+    twin = _hand_made(w)
+    before = ([dict(o.__dict__) for o in w["providers"]], [dict(o.__dict__) for o in w["apps"]],
+              list(w["outpost"].provs), w["outpost"].saved)
+    run_preflight(w, monkeypatch, capsys)
+    assert before == ([dict(o.__dict__) for o in w["providers"]], [dict(o.__dict__) for o in w["apps"]],
+                      list(w["outpost"].provs), w["outpost"].saved) and twin in w["providers"]
+    code = re.sub(r"(?m)^\s*#.*$", "", PREFLIGHT.read_text())
+    assert not re.search(r"\.(save|delete|add|create|update|remove|set)\(|get_or_create|update_or_create", code)
     assert "api_token" not in code and "password" not in code.lower() and "Bearer" not in code
