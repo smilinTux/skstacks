@@ -11,7 +11,7 @@ ends (opt-in, off by default). skha keepalived restarts wait for each node to be
 fixed pause, and a `vip_gate_checks` entry that names no health check is rejected. skreg no longer
 recreates its own overlay network. The portal tile provisioner retries Authentik's "starting" 503.
 `main` merges through a merge queue. The libvirt-cluster module can route test VMs' apt through a
-cache, with retries (opt-in). skbom puts its web UI behind Authentik forward auth by default (`AUTH_MODE`), and skbom and skflow give a first Postgres init 300 s. Five Renovate image updates for gated apps. Instance action: redeploy skha (check `vip_gate_checks` first, see
+cache, with retries (opt-in). The skpatch-hosts registrar no longer creates a duplicate system under a second address. skbom puts its web UI behind Authentik forward auth by default (`AUTH_MODE`), and skbom and skflow give a first Postgres init 300 s. Five Renovate image updates for gated apps. Instance action: redeploy skha (check `vip_gate_checks` first, see
 below); everything else is opt-in or needs nothing.
 
 ### skbom: web UI behind Authentik forward auth by default (`AUTH_MODE`)
@@ -32,6 +32,18 @@ below); everything else is opt-in or needs nothing.
   with `POSTGRES_HEALTH_START_PERIOD`. A first `initdb` on NFS outlived 30 s plus 6 retries, swarm
   killed it half-way, and the next task skipped init on the non-empty data dir (no `pg_hba` host
   line, no app role). **Instance action**: none; a redeploy picks it up.
+
+### skpatch-hosts: the registrar never registers a system twice (#503)
+
+- Systems were matched only by `hostname:port`. A provisioning run without the estate's targets
+  inventory (the one with `ansible_host`) saw each host under its ssh alias and created a second
+  system with the same name, and schedules, which resolve systems by name, moved to the duplicate.
+  Now a target whose name is already registered at another address is left alone with a
+  `WARN <name>: already registered at ...` line, nothing is edited or deleted, and it is not reported
+  as an orphan. The README also says that a schedule is stopped with `enabled: false` (removing it
+  from the list leaves it as it was). Tests: `test_skpatch_hosts_register_systems_js.py`.
+- **Instance action**: none. If a run prints the WARN line, pass the targets inventory (or set
+  `skpatch_hosts_dashboard_address`); delete any duplicate an earlier run already made by hand.
 
 ### Dependency updates (Renovate, apps covered by the release gate)
 
