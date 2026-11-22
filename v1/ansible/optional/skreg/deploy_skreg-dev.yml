@@ -137,7 +137,7 @@
         dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
         owner: root
         group: root
-        mode: "0644"
+        mode: "0600"  # root only: docker stack deploy runs as root; the secret-mode check pins it
       tags:
         - templates
 
