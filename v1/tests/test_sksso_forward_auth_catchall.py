@@ -162,13 +162,16 @@ def render(tmp: Path, vault: dict, env: str = "prod") -> tuple[dict, Path]:
     run_dir = work / f"sksso-{env}-base"
     if run_dir.exists():
         shutil.rmtree(run_dir)
-    saved = rp.VARS
+    saved, saved_contract = rp.VARS, rp.contract_findings
     rp.VARS = vars_dir
+    # the README vault-key contract is the render gate's job (and is asserted for
+    # these knobs below); these vaults carry other roles' keys on purpose
+    rp.contract_findings = lambda *a, **k: []
     try:
         pb = work / "ansible" / "optional" / "sksso" / f"deploy_sksso-{env}.yml"
         res = rp.run_one(work, "optional", "sksso", env, pb, "base")
     finally:
-        rp.VARS = saved
+        rp.VARS, rp.contract_findings = saved, saved_contract
     res["log"] = (run_dir / "ansible.log").read_text() if (run_dir / "ansible.log").exists() else ""
     # keep the output after the next render reuses the run dir name
     keep = tmp / f"out{next(_n)}"
@@ -463,6 +466,11 @@ def test_every_knob_is_documented_in_the_readme_and_the_sop():
         assert knob in sop, f"{knob} not in the SOP"
 
 
+def test_the_render_gate_finds_every_knob_documented_in_the_readme_vault_block():
+    assert rp.contract_findings("sksso", "optional", {"sksso": {k: "x" for k in KNOBS}}) == []
+    assert rp.contract_findings("sksso", "optional", {"sksso": {"FORWARD_AUTH_NOT_A_KNOB": "x"}}) != []
+
+
 def test_the_set_pass_vault_exercises_the_knobs_the_readme_documents():
     set_vars = yaml.safe_load((rp.VARS / "sksso.set.yml").read_text())["sksso"]
     assert {k for k in set_vars if k.startswith("FORWARD_AUTH_")} >= {"FORWARD_AUTH_PROVIDER_NAME", "FORWARD_AUTH_COOKIE_DOMAIN"}
@@ -546,8 +554,8 @@ class Outpost(Obj):
 
 def make_world(*, provider_kw=None, bindings=None, twins=(), outpost_kw=None, with_app=True, with_provider=True):
     group = lambda n: Obj(name=n)
-    prov = Obj(pk=1, name="SKStacks forward auth (domain)", mode="forward_domain", cookie_domain="example.test",
-               **(provider_kw or {}))
+    prov = Obj(**{"pk": 1, "name": "SKStacks forward auth (domain)", "mode": "forward_domain",
+                  "cookie_domain": "example.test", **(provider_kw or {})})
     app = Obj(pk=10, slug="skstacks-forward-auth", provider=prov)
     admin = Obj(name="skadmin")
     default_bindings = [Obj(target=app, enabled=True, negate=False, group=admin, user=None, policy=None)]
@@ -557,7 +565,7 @@ def make_world(*, provider_kw=None, bindings=None, twins=(), outpost_kw=None, wi
                                 user=Obj(username=b["user"]) if b.get("user") else None,
                                 policy=Obj(name=b["policy"]) if b.get("policy") else None) for b in bindings]
     other = Obj(pk=2, name="skpages single", mode="forward_single", cookie_domain="")
-    outpost = Outpost(name="authentik Embedded Outpost", type="proxy", provs=[other], **(outpost_kw or {}))
+    outpost = Outpost(**{"name": "authentik Embedded Outpost", "type": "proxy", "provs": [other], **(outpost_kw or {})})
     return {
         "providers": ([prov] if with_provider else []) + [other] + list(twins),
         "apps": [app] if with_app else [],
