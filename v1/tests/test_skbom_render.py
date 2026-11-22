@@ -315,3 +315,12 @@ def test_postgres_18_pin_mounts_the_parent_dir(tmp_path):
     assert pg["image"] == pin18
     assert "/var/data/runtime/skbom-prod/postgres:/var/lib/postgresql" in pg["volumes"]
     assert not any(v.endswith(":/var/lib/postgresql/data") for v in pg["volumes"])
+
+
+def test_postgres_first_init_start_period(base_out, tmp_path):
+    # First-boot initdb on NFS /var/data took ~2.5 min on nor (2026-11-21); a 30s start
+    # period killed it half-way (exit 137), leaving a cluster without the pg_hba host line.
+    hc = compose(base_out)["services"]["postgres"]["healthcheck"]
+    assert hc["start_period"] == "300s", hc
+    out = ok(tmp_path, {**BASE, "POSTGRES_HEALTH_START_PERIOD": "600s"})
+    assert compose(out)["services"]["postgres"]["healthcheck"]["start_period"] == "600s"

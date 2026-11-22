@@ -111,7 +111,10 @@ and the stack never schedules.
   README's verification command.
 - `frontend`: `wget --spider` on `/` (nginx, Alpine base, ships both
   `curl` and `wget`).
-- `postgres`: `pg_isready`.
+- `postgres`: `pg_isready`, with a 300s start period
+  (`POSTGRES_HEALTH_START_PERIOD`): first-boot initdb over NFS `/var/data`
+  took about 2.5 minutes on nor, and a 30s window let Swarm kill it half-way,
+  leaving a cluster without its `pg_hba` host line or the app role.
 
 Neither image needed the Node-one-liner workaround
 [sksec-web](../sksec-web/) needed for a thin image with no HTTP client at
@@ -244,6 +247,7 @@ skbom:
   POSTGRES_CPUS: "1.00"
   POSTGRES_MEMORY_LIMIT: 1024M
   POSTGRES_MEMORY_RESERVATION: 256M
+  POSTGRES_HEALTH_START_PERIOD: 300s       # first-boot initdb on NFS can take minutes; 30s killed it on nor
   HEALTH_CHECK_INTERVAL: 30s
   HEALTH_CHECK_TIMEOUT: 10s
   HEALTH_CHECK_RETRIES: 3

@@ -273,7 +273,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
-      start_period: 30s
+      # first-boot initdb on NFS /var/data can take minutes; 30s killed skbom's init half-way on nor 2026-11-21
+      start_period: {{ skflow.POSTGRES_HEALTH_START_PERIOD | default('300s', true) }}
     deploy:
       mode: replicated
       # Exactly one: a single Postgres data directory.
