@@ -78,16 +78,19 @@ systemctl() {
   return 0
 }
 journalctl() { echo "journal tail"; }
-export -f systemctl journalctl
+ping() { [ "$VIP_UP" = 1 ]; }
+ip() { [ "$VIP_LOCAL" = 1 ] && echo "2: eth0    inet 192.0.2.50/24 scope global eth0"; return 0; }
+export -f systemctl journalctl ping ip
 """
 
 
-def run_handler(tmp_path, ready=1, start_ok=1, stale=0, wait=3):
+def run_handler(tmp_path, ready=1, start_ok=1, stale=0, wait=3, vip="", vip_up=0, vip_local=0):
     script = handler_script()
     st = str(tmp_path / "skha.state")
     env = {**os.environ, "ST": st, "SKHA_STATE": st, "SKHA_WAIT": str(wait), "SKHA_NODE": "n1",
            "READY": str(ready),
-           "START_OK": str(start_ok), "STALE": str(stale)}
+           "START_OK": str(start_ok), "STALE": str(stale),
+           "SKHA_VIP": vip, "VIP_UP": str(vip_up), "VIP_LOCAL": str(vip_local)}
     return subprocess.run(["bash", "-c", FAKE_SYSTEMCTL + script], env=env, capture_output=True, text=True, timeout=30)
 
 
@@ -113,3 +116,28 @@ def test_stale_state_from_old_daemon_does_not_end_the_wait(tmp_path):
     # nothing, so only the marker keeps that write from ending the wait.
     res = run_handler(tmp_path, ready=0, stale=1)
     assert res.returncode == 1
+
+
+def test_fault_is_accepted_while_another_manager_holds_the_vip(tmp_path):
+    # e.g. plain skfence: Traefik on one manager, the others FAULT by design
+    res = run_handler(tmp_path, ready=0, vip="192.0.2.50", vip_up=1)
+    assert res.returncode == 0, res.stderr
+    assert "held by another manager" in res.stderr
+
+
+def test_fault_fails_when_the_vip_answers_nowhere(tmp_path):
+    res = run_handler(tmp_path, ready=0, vip="192.0.2.50", vip_up=0)
+    assert res.returncode == 1
+    assert "state: fault" in res.stderr
+
+
+def test_fault_fails_when_the_vip_is_still_on_this_node(tmp_path):
+    # a FAULT node must not count its own address as "held elsewhere"
+    res = run_handler(tmp_path, ready=0, vip="192.0.2.50", vip_up=1, vip_local=1)
+    assert res.returncode == 1
+
+
+@pytest.mark.parametrize("path", PLAYBOOKS, ids=lambda p: p.name)
+def test_restart_task_gets_the_bare_vip_address(path):
+    t = yaml.safe_load(RESTART.read_text())[0]
+    assert ".split('/')[0]" in t["environment"]["SKHA_VIP"]
