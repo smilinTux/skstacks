@@ -4,6 +4,58 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
+## Unreleased (v2.26.32)
+
+sksso creates the domain-wide forward-auth catch-all behind `authentik@file` as code, closed to the admin group
+and on by default. Instance action: an estate that made its catch-all by hand must adopt it or opt out BEFORE
+it redeploys sksso (see below); everything else needs nothing.
+
+### sksso: the `authentik@file` catch-all, created as code and bound to `skadmin` only
+
+- `authentik@file` (the Traefik forwardAuth middleware `core/skfenceha` ships, attached by default by many
+  roles) gates nothing without an Authentik provider that matches the request host, and nothing in the repo
+  created one. A new estate had SSO-default apps that were unreachable, or open to every Authentik account
+  when someone hand-made the provider without a policy binding (a live audit found exactly that). sksso now
+  renders `blueprints/forward-auth-catchall.yaml`: ONE `forward_domain` Proxy Provider (`external_host` the
+  sksso public URL, `cookie_domain` the cluster domain, `DOMAIN` with `CLOUDFLARED`), ONE Application, and ONE
+  policy binding to the admin group (`skadmin`) and nothing else. There is no "any authenticated user" path:
+  `FORWARD_AUTH_ADMIN_GROUP: skuser` is refused, and the attach step refuses a catch-all whose Application has
+  any other enabled binding. The group `skadmin` is created if absent (existence only, membership untouched);
+  on a new estate it starts empty, so nobody passes the catch-all until admin accounts are added to it.
+- The provider is attached to `authentik Embedded Outpost` additively by a new post-deploy step
+  (`tasks/forward_auth_attach.yml`, `src/sksso/forward_auth_attach.py`, `outpost.providers.add()` under
+  `ak shell`, no API token needed). It is not a blueprint outpost entry on purpose: a blueprint saves an
+  outpost's `providers` as a full replacement set and would detach every other provider on it. It waits for
+  the worker to apply the blueprint, and refuses (the deploy fails, nothing is attached, forward auth then
+  denies) when the Application is bound to more than the admin group, when another `forward_domain` provider
+  already serves the same cookie domain, or when the outpost is missing or not a proxy outpost.
+- Knobs, all optional and documented in the README and the new `SOP.md`: `FORWARD_AUTH_ENABLED` (default
+  `true`; `false` opts out and removes a stale blueprint file this role wrote), `FORWARD_AUTH_PROVIDER_NAME`
+  and `FORWARD_AUTH_APP_SLUG` (the identifiers: set them to an existing hand-made provider and application to
+  ADOPT them instead of creating a duplicate), `FORWARD_AUTH_APP_NAME`, `FORWARD_AUTH_SSO_HOST` (default
+  `sso[-<env>].<base>`, `CAPAUTH_SSO_HOST` when set), `FORWARD_AUTH_COOKIE_DOMAIN` (default `<base>`),
+  `FORWARD_AUTH_ADMIN_GROUP` (default `skadmin`) and `FORWARD_AUTH_OUTPOST`. Contradictory settings fail the
+  play before anything is rendered: opting out while setting any other knob, an unreadable
+  `FORWARD_AUTH_ENABLED` (it is never read as "off" by accident), a cookie domain the sksso host is not under,
+  a malformed slug or host, the app slug equal to the skgit OIDC client id.
+- The `/blueprints/custom` mount in `server` and `worker` is now on by default (it was on only when another
+  app's blueprint was enabled), and the playbooks create `/var/data/config/sksso-<env>/blueprints` up front.
+  `FORWARD_AUTH_ENABLED: false` renders `sksso.yml` as before. The blueprint omits `invalidation_flow` for an
+  image tagged older than Authentik 2024.8 (the framework's default image is 2024.4.2), so it applies there too.
+- `check-access.py` reports the catch-all itself (C7, no declarations needed): missing (no `forward_domain`
+  provider with an application), unbound, bound to anything but the admin group (another group, a user, a
+  policy), or attached to no outpost. `authentik Admins` on the catch-all stays a C2 warning. Tests:
+  `v1/tests/test_sksso_forward_auth_catchall.py` (real Ansible render of the three playbooks, the attach
+  script against a fake Authentik ORM) and `v1/tests/test_sksso_check_access.py`.
+- **Instance action**: an estate with a hand-made catch-all must, BEFORE redeploying sksso, either set
+  `FORWARD_AUTH_PROVIDER_NAME` and `FORWARD_AUTH_APP_SLUG` (and `FORWARD_AUTH_SSO_HOST` /
+  `FORWARD_AUTH_COOKIE_DOMAIN` if its provider differs from the derived values) to the existing provider's
+  name and the application's slug, or set `FORWARD_AUTH_ENABLED: false`. Then confirm its binding: the
+  adopted Application must be bound to `skadmin` alone (remove stray bindings such as `authentik Admins`,
+  `skuser` or an any-account policy in Authentik; `check-access.py --who-passes <slug>` shows who passes).
+  Skipping this creates a second catch-all beside yours; the attach step refuses it and fails the deploy,
+  and yours keeps serving. New estates: add the admin accounts to `skadmin` after the first deploy.
+
 ## skstacks-v2.26.31 - 2026-11-21
 
 Patch on v2.26.30. skgit can sign users in through Authentik over OIDC, managed as code on both
