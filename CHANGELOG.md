@@ -11,7 +11,7 @@ ends (opt-in, off by default). skha keepalived restarts wait for each node to be
 fixed pause, and a `vip_gate_checks` entry that names no health check is rejected. skreg no longer
 recreates its own overlay network. The portal tile provisioner retries Authentik's "starting" 503.
 `main` merges through a merge queue. The libvirt-cluster module can route test VMs' apt through a
-cache, with retries (opt-in). The skpatch-hosts registrar no longer creates a duplicate system under a second address. skbom puts its web UI behind Authentik forward auth by default (`AUTH_MODE`), and skbom and skflow give a first Postgres init 300 s. Five Renovate image updates for gated apps. Instance action: redeploy skha (check `vip_gate_checks` first, see
+cache, with retries (opt-in). skreg gets back the deployable role an unrelated merge had reverted. The skpatch-hosts registrar no longer creates a duplicate system under a second address. skbom puts its web UI behind Authentik forward auth by default (`AUTH_MODE`), and skbom and skflow give a first Postgres init 300 s. Five Renovate image updates for gated apps. Instance action: redeploy skha (check `vip_gate_checks` first, see
 below); everything else is opt-in or needs nothing.
 
 ### skbom: web UI behind Authentik forward auth by default (`AUTH_MODE`)
@@ -32,6 +32,20 @@ below); everything else is opt-in or needs nothing.
   with `POSTGRES_HEALTH_START_PERIOD`. A first `initdb` on NFS outlived 30 s plus 6 retries, swarm
   killed it half-way, and the next task skipped init on the non-empty data dir (no `pg_hba` host
   line, no app role). **Instance action**: none; a redeploy picks it up.
+
+### skreg: the deployable role is back (#199, undone by #200)
+
+- #200 (skflow, 2026-10-16) was built on a pre-#199 copy of the skreg role and reverted it whole, so
+  since v2.26.16 the deploy script sourced a `skreg.sh.env` nothing rendered, ran
+  `docker service rm` on a service that does not exist, and deployed the stack twice in a row. The
+  playbook runs it with `/bin/bash`, so the errors were ignored and only the second deploy's exit
+  counted; the release gate caught it losing a race (`update out of sequence`). #199 is restored
+  (rendered `skreg.env` and `skreg.sh.env`, one `docker stack deploy --prune`, network checks, a
+  `/v2/` wait, the healthcheck, the README) with the later changes kept: #492's network task and the
+  pinned registry 3.1.2. `v1/tests/test_skreg_deploy_role.py` pins it so it cannot silently go
+  again.
+- **Instance action**: redeploy skreg. Needs `skreg.REGISTRY_HTTP_SECRET` in the vault (the play
+  refuses without it; the legacy `vault_skreg_registry_http_secret` is accepted).
 
 ### skpatch-hosts: the registrar never registers a system twice (#503)
 
