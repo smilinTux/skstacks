@@ -117,3 +117,11 @@ def test_certs_watch_script_defaults_match_the_compose_environment():
     text = SCRIPT.read_text()
     assert 'CERTS_DIR="${CERTS_DIR:-/certs}"' in text
     assert 'DEST_FILE="${DEST_FILE:-/dynamic-out/certs-generated.yml}"' in text
+
+
+def test_certs_watch_temp_file_is_unique_per_task():
+    """Global on every manager over one shared /dynamic-out: a temp name of
+    only $$ (1 in every container) raced across tasks."""
+    line = next(l for l in SCRIPT.read_text().splitlines() if l.startswith("TMP_FILE="))
+    assert "$(hostname)" in line, line
+    assert line.startswith('TMP_FILE="${DEST_FILE}.tmp.'), line  # same dir: mv stays atomic
