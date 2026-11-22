@@ -1,7 +1,7 @@
 ---
 # One iteration of the `restart keepalived` handler: restart keepalived on
 # skha_node and wait until it reports MASTER or BACKUP (skha_notify.sh writes
-# the state file). The handler loops over the managers one at a time from a
+# the state file), or FAULT while another manager answers on the VIP. The handler loops over the managers one at a time from a
 # single run_once task, so when a node fails, the run_once host fails and no
 # later node is restarted. (throttle: 1 with any_errors_fatal does not do
 # this: the linear strategy still runs the task on every host first.)
@@ -23,11 +23,20 @@
       if [ "$SKHA_STATE" -nt "$marker" ]; then
         case "$(cat "$SKHA_STATE")" in
           master|backup) systemctl is-active keepalived; exit 0 ;;
+          fault)
+            # FAULT means the gate check fails on this node (no healthy Traefik
+            # here, for example plain skfence on one manager). That is a
+            # healthy cluster as long as another manager holds the VIP:
+            # accept it then, never when the VIP is gone everywhere.
+            if [ -n "$SKHA_VIP" ] && ! ip -4 -o addr show | grep -qF " $SKHA_VIP/" && ping -c1 -W1 "$SKHA_VIP" >/dev/null 2>&1; then
+              echo "keepalived on $SKHA_NODE is FAULT (its gate check fails); the VIP $SKHA_VIP is held by another manager" >&2
+              systemctl is-active keepalived; exit 0
+            fi ;;
         esac
       fi
       sleep 1
     done
-    echo "keepalived on $SKHA_NODE not MASTER/BACKUP after $SKHA_WAIT s (state: $(cat "$SKHA_STATE" 2>/dev/null || echo none)); remaining managers not restarted" >&2
+    echo "keepalived on $SKHA_NODE not MASTER/BACKUP (nor FAULT with the VIP held elsewhere) after $SKHA_WAIT s (state: $(cat "$SKHA_STATE" 2>/dev/null || echo none)); remaining managers not restarted" >&2
     exit 1
   args:
     executable: /bin/bash
@@ -35,4 +44,5 @@
     SKHA_NODE: "{{ skha_node }}"
     SKHA_STATE: "{{ hostvars[skha_node].skha_state_file | default('/run/skha.state') }}"
     SKHA_WAIT: "{{ hostvars[skha_node].skha_restart_wait }}"
+    SKHA_VIP: "{{ ((skha | default({})).vip | default('') | string).split('/')[0] }}"
   delegate_to: "{{ skha_node }}"
