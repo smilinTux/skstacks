@@ -115,6 +115,7 @@
         - /var/data/{{ app }}-{{ env }}/custom-templates
         - /var/data/{{ app }}-{{ env }}/database-dump
         - /var/data/config/{{ app }}-{{ env }}/custom
+        - /var/data/config/{{ app }}-{{ env }}/blueprints
 
     - name: Create the {{ app }} database directories on shared storage
       # Only the paths that live under /var/data; a local path is created on

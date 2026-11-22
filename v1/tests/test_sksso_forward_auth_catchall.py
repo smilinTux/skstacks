@@ -260,13 +260,27 @@ def test_opt_out_renders_nothing_and_mounts_nothing(tmp_mod, flag):
     assert (out / "var/data/config/sksso-prod/sksso.env").exists()
 
 
-@needs_ansible
-def test_opt_out_keeps_the_blueprints_mount_for_another_roles_blueprint(tmp_mod):
-    out = ok(tmp_mod, {"FORWARD_AUTH_ENABLED": False, "SKGIT_OIDC_ENABLED": True, "SKGIT_OIDC_CLIENT_SECRET": "s" * 40})
-    assert not bp_path(out).exists()
-    assert (out / "var/data/config/sksso-prod/blueprints/skgit-oidc.yaml").exists()
-    for vols in server_volumes(out).values():
+def _compose_volumes(**sksso):
+    out = make_environment().from_string((SKSSO / "src/config/sksso/sksso.yml.j2").read_text()).render(
+        env="prod", app="sksso", sksso={"CLUSTERNAME": "c", "DOMAIN": "example.test", **sksso})
+    doc = yaml.safe_load(out)["services"]
+    return {svc: doc[svc]["volumes"] for svc in ("server", "worker")}
+
+
+def test_the_blueprints_mount_follows_the_flag_and_stays_for_another_roles_blueprint():
+    for vols in _compose_volumes().values():  # default: on
         assert MOUNT in vols
+    for vols in _compose_volumes(FORWARD_AUTH_ENABLED="no").values():
+        assert not any("/blueprints/" in v for v in vols)
+    for vols in _compose_volumes(FORWARD_AUTH_ENABLED=False, SKGIT_OIDC_ENABLED=True).values():
+        assert MOUNT in vols
+
+
+@needs_ansible
+def test_the_blueprints_directory_is_created_whatever_else_is_on(tmp_mod):
+    # the mount is on by default, so the playbook must create its source up front
+    for env in ENVS:
+        assert f"/var/data/config/{{{{ app }}}}-{{{{ env }}}}/blueprints" in (SKSSO / f"deploy_sksso-{env}.yml").read_text()
 
 
 @needs_ansible
