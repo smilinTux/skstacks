@@ -152,7 +152,7 @@ def test_default_router_split(base_out):
     assert fe_lab["traefik.http.services.skbom.loadbalancer.server.port"] == "8080"
     assert fe_lab["traefik.http.routers.skbom.priority"] == "5"
     assert api_lab["traefik.http.routers.skbom-api.middlewares"] == "default-no-error-pages@file"
-    assert fe_lab["traefik.http.routers.skbom.middlewares"] == "default-no-error-pages@file"
+    assert fe_lab["traefik.http.routers.skbom.middlewares"] == "default-no-error-pages@file,authentik@file"
 
 
 def test_env_files_are_root_only_and_never_logged():
@@ -219,11 +219,39 @@ def test_set_pass_data_node_pins_only_the_three_data_services(set_out):
 
 def test_set_pass_middlewares_and_no_tls_options(set_out):
     lab = labels(compose(set_out)["services"]["frontend"])
-    assert lab["traefik.http.routers.skbom.middlewares"] == "crowdsec-bouncer@file,default-no-error-pages@file"
+    assert lab["traefik.http.routers.skbom.middlewares"] == "crowdsec-bouncer@file,default-no-error-pages@file,authentik@file"
     assert not any(k.endswith(".tls.options") for k in lab)
 
 
+def test_auth_mode_local_drops_sso_from_the_frontend(tmp_path):
+    out = ok(tmp_path, BASE | {"AUTH_MODE": "local"})
+    svcs = compose(out)["services"]
+    assert labels(svcs["frontend"])["traefik.http.routers.skbom.middlewares"] == "default-no-error-pages@file"
+
+
+def test_custom_sso_middleware_and_api_never_forward_auth(tmp_path):
+    out = ok(tmp_path, BASE | {"SSO_MIDDLEWARE": "sso-chain@file"})
+    svcs = compose(out)["services"]
+    assert labels(svcs["frontend"])["traefik.http.routers.skbom.middlewares"] == "default-no-error-pages@file,sso-chain@file"
+    # CI uploads SBOMs with an X-Api-Key: forward auth on -api would break them.
+    assert labels(svcs["apiserver"])["traefik.http.routers.skbom-api.middlewares"] == "default-no-error-pages@file"
+
+
+def test_sso_middleware_already_in_the_chain_is_not_added_twice(tmp_path):
+    out = ok(tmp_path, BASE | {"TRAEFIK_MIDDLEWARES": "authentik@file,default-no-error-pages@file"})
+    lab = labels(compose(out)["services"]["frontend"])
+    assert lab["traefik.http.routers.skbom.middlewares"] == "authentik@file,default-no-error-pages@file"
+
+
 # --- refusals ----------------------------------------------------------------
+
+@pytest.mark.parametrize("vault", [
+    BASE | {"AUTH_MODE": "none"},
+    BASE | {"AUTH_MODE": "local", "SSO_MIDDLEWARE": "authentik@file"},
+], ids=["unknown-mode", "local-with-sso"])
+def test_bad_auth_mode_fails(tmp_path, vault):
+    fails(tmp_path, vault)
+
 
 @pytest.mark.parametrize("vault", [
     {k: v for k, v in BASE.items() if k != "DB_PASSWORD"},

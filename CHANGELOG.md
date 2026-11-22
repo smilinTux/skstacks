@@ -11,8 +11,27 @@ ends (opt-in, off by default). skha keepalived restarts wait for each node to be
 fixed pause, and a `vip_gate_checks` entry that names no health check is rejected. skreg no longer
 recreates its own overlay network. The portal tile provisioner retries Authentik's "starting" 503.
 `main` merges through a merge queue. The libvirt-cluster module can route test VMs' apt through a
-cache, with retries (opt-in). Five Renovate image updates for gated apps. Instance action: redeploy skha (check `vip_gate_checks` first, see
+cache, with retries (opt-in). skbom puts its web UI behind Authentik forward auth by default (`AUTH_MODE`), and skbom and skflow give a first Postgres init 300 s. Five Renovate image updates for gated apps. Instance action: redeploy skha (check `vip_gate_checks` first, see
 below); everything else is opt-in or needs nothing.
+
+### skbom: web UI behind Authentik forward auth by default (`AUTH_MODE`)
+
+- New `skbom.AUTH_MODE` (`sso` default, or `local`) and `skbom.SSO_MIDDLEWARE` (default
+  `authentik@file`), the same pattern as skpulse. Before this, the role assumed a domain-wide
+  forward-auth catch-all, so on an estate without one Dependency-Track's own login page was public.
+  Forward auth goes on the frontend (web UI) router only. The `-api` router keeps the plain chain:
+  CI uploads SBOMs with an `X-Api-Key`, and the API server refuses unauthenticated calls itself.
+  An unknown `AUTH_MODE`, or `SSO_MIDDLEWARE` with `local`, fails the play.
+- **Instance action**: none for an instance that already lists its forward-auth middleware in
+  `skbom.TRAEFIK_MIDDLEWARES` (it is not appended a second time). One that wants Dependency-Track's
+  own login only sets `AUTH_MODE: local`. Redeploy skbom to apply.
+
+### skbom and skflow: Postgres first-init start period 300 s (#501)
+
+- The Postgres healthcheck `start_period` defaults to 300 s (was 30 s) for skbom and skflow, tunable
+  with `POSTGRES_HEALTH_START_PERIOD`. A first `initdb` on NFS outlived 30 s plus 6 retries, swarm
+  killed it half-way, and the next task skipped init on the non-empty data dir (no `pg_hba` host
+  line, no app role). **Instance action**: none; a redeploy picks it up.
 
 ### Dependency updates (Renovate, apps covered by the release gate)
 
