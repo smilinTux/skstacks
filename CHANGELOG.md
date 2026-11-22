@@ -42,8 +42,8 @@ below); everything else is opt-in or needs nothing.
   counted; the release gate caught it losing a race (`update out of sequence`). #199 is restored
   (rendered `skreg.env` and `skreg.sh.env`, one `docker stack deploy --prune`, network checks, a
   `/v2/` wait, the healthcheck, the README) with the later changes kept: #492's network task and the
-  pinned registry 3.1.2. `v1/tests/test_skreg_deploy_role.py` pins it so it cannot silently go
-  again.
+  pinned registry 3.1.2. The compose file is rendered `0600` (root only), as the secret-file-mode
+  check expects. `v1/tests/test_skreg_deploy_role.py` pins it so it cannot silently go again.
 - **Instance action**: redeploy skreg. Needs `skreg.REGISTRY_HTTP_SECRET` in the vault (the play
   refuses without it; the legacy `vault_skreg_registry_http_secret` is accepted).
 

@@ -36,3 +36,11 @@ def test_compose_loads_the_rendered_env_file():
     assert "env_file: /var/data/config/skreg-{{ env }}/skreg.env" in compose
     assert (ROLE / "src" / "config" / "skreg" / "skreg.env.j2").exists()
     assert (ROLE / "src" / "config" / "skreg" / "skreg.sh.env.j2").exists()
+
+
+@pytest.mark.parametrize("env", ENVS)
+def test_compose_file_is_root_only(env):
+    # the release gate's secret-file-mode check pins skreg.yml at 600 0:0
+    pb = (ROLE / f"deploy_skreg-{env}.yml").read_text()
+    block = pb.split('dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"')[1].split("- name:")[0]
+    assert 'mode: "0600"' in block
