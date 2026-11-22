@@ -325,6 +325,15 @@ own configuration, so a redeploy or a fresh `dashboard.db` reproduces it:
 
 Matched by name: missing is created, different is updated, anything the
 input does not name is reported and left alone. Nothing is ever deleted.
+To stop a schedule, set `enabled: false` on it and rerun. Taking it out of
+the list does nothing, because an undeclared schedule stays as it was, enabled
+included (the run reports it as "not declared here, left as is"). A system is
+matched by address (`hostname:port`). A target whose name is already
+registered at a different address is not created a second time. The run
+prints a `WARN <name>: already registered at ...` line instead. It typically
+means the estate's targets inventory (with `ansible_host`) was not passed and
+the host was seen under its ssh alias. Fix the input, or set
+`skpatch_hosts_dashboard_address`.
 Notification channels are rewritten on every run (the API only returns their
 secrets masked, so they cannot be compared). A system whose package manager
 is not detected yet (registered this run, first check pending) gets its
