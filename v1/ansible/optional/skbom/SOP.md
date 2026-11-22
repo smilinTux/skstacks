@@ -174,6 +174,8 @@ skbom:
   POSTGRES_PATH: ""                         # default /var/data/runtime/skbom-<env>/postgres
   DUMP_PATH: ""                             # default /var/data/skbom-<env>/database-dump
   TRAEFIK_MIDDLEWARES: ""                   # default default-no-error-pages@file (both routers)
+  AUTH_MODE: "sso"                         # sso (default): SSO_MIDDLEWARE on the web UI router; local: Dependency-Track's own login only
+  SSO_MIDDLEWARE: ""                       # default authentik@file; only with AUTH_MODE sso; never on the -api router
   TLS_OPTIONS: ""                           # default "none" = no tls.options label (Traefik default options, skstacks #463)
   APISERVER_CPUS: "2.00"
   APISERVER_MEMORY_LIMIT: 4096M

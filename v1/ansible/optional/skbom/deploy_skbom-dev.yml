@@ -91,6 +91,34 @@
         skb_oidc_on: "{{ skbom.OIDC_ENABLED | default(false) | bool }}"
       tags: [config]
 
+    - name: Resolve the skbom sign-in settings
+      # AUTH_MODE sso (default): Authentik forward auth (SSO_MIDDLEWARE,
+      # default authentik@file) in front of the web UI (frontend router).
+      # AUTH_MODE local: Dependency-Track's own login only, for an estate
+      # that gates the host some other way (a domain-wide catch-all).
+      # Fail closed: an unset AUTH_MODE means sso, never an open login page.
+      # The -api router never gets forward auth: SBOM uploads from CI use
+      # an X-Api-Key, and the API refuses unauthenticated calls itself.
+      set_fact:
+        skb_auth_mode: "{{ skbom.AUTH_MODE | default('sso', true) | string | lower }}"
+        skb_sso_middleware: "{{ (skbom.SSO_MIDDLEWARE | default('', true) | string) if (skbom.AUTH_MODE | default('sso', true) | string | lower) != 'sso' else (skbom.SSO_MIDDLEWARE | default('authentik@file', true) | string) }}"
+      tags: [config, authmode]
+
+    - name: Fail loudly on an unknown AUTH_MODE, or SSO_MIDDLEWARE in local mode
+      assert:
+        that:
+          - skb_auth_mode in ['sso', 'local']
+          - skb_auth_mode == 'sso' or skb_sso_middleware == ''
+        fail_msg: "skbom.AUTH_MODE must be sso or local (got {{ skb_auth_mode }}); SSO_MIDDLEWARE is only valid with AUTH_MODE sso"
+      tags: [config, authmode]
+
+    - name: Build the frontend router middleware chain
+      # Not appended when TRAEFIK_MIDDLEWARES already names it (an instance
+      # that wired forward auth by hand before AUTH_MODE existed).
+      set_fact:
+        skb_frontend_middlewares: "{{ skb_middlewares }}{{ (',' + skb_sso_middleware) if (skb_sso_middleware and skb_sso_middleware not in skb_middlewares.split(',')) else '' }}"
+      tags: [config, authmode]
+
     - name: Resolve the public host
       set_fact:
         skb_host: "{{ skbom.HOSTNAME | default('skbom' + ('' if env == 'prod' else '-' + env) + '.' + skb_base_domain, true) }}"
@@ -308,10 +336,9 @@
 
     - name: Create or update the skbom portal tile in Authentik
       # On by default (AUTHENTIK_TILE: true); opt out per instance with
-      # AUTHENTIK_TILE: false. skbom sits behind the cluster's domain-wide
-      # Traefik ForwardAuth catch-all (or its own OIDC login, when
-      # OIDC_ENABLED) already; this just gives it a bookmark tile on the
-      # Authentik portal. See shared/tasks/authentik_portal_tile.yml.
+      # AUTHENTIK_TILE: false. The sign-in gate is AUTH_MODE above (forward
+      # auth on the web UI by default); this only gives it a bookmark tile
+      # on the Authentik portal. See shared/tasks/authentik_portal_tile.yml.
       include_tasks: ../../shared/tasks/authentik_portal_tile.yml
       vars:
         portal_tile:
