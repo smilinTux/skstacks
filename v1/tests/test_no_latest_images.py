@@ -66,6 +66,9 @@ def _is_pinned(image):
 INSTANCE_PINNED = {
     # skwrit's worker image is built per site (no public build).
     "skwrit": ("skwrit.SKWRIT_IMAGE", "v1/ansible/optional/skwrit/deploy_skwrit-prod.yml"),
+    # skpods' engine image is the official Nextcloud image plus the Solid app
+    # source the instance chooses, built per site (nextcloud and cron share it).
+    "skpods": ("skpods.NEXTCLOUD_IMAGE", "v1/ansible/optional/skpods/deploy_skpods-prod.yml"),
     # sksso.CAPAUTH_IMAGE left this list when a public, digest-pinned CapAuth
     # release existed (ghcr.io/smilintux/capauth:0.3.13): it has a default now.
 }
@@ -84,7 +87,8 @@ def test_instance_pinned_images_are_guarded_and_alone():
         tpl = REPO_ROOT / f"v1/ansible/optional/{svc}/src/config/{svc}/{svc}.yml.j2"
         bare = [ln.strip() for ln in tpl.read_text().splitlines()
                 if ln.strip().startswith("image:") and "{{" in ln and "default(" not in ln]
-        assert bare == [f'image: "{{{{ {key} }}}}"'], (svc, bare)
+        # One image key, possibly used by several services of the stack.
+        assert bare and set(bare) == {f'image: "{{{{ {key} }}}}"'}, (svc, bare)
 
 
 def test_every_remote_image_is_pinned():

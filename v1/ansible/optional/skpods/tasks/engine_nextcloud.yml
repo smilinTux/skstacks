@@ -1,0 +1,333 @@
+---
+# skpods engine: nextcloud. Included by deploy_skpods-<env>.yml when
+# skpods.ENGINE is `nextcloud` (the default). A future engine gets its own
+# tasks/engine_<name>.yml with the same contract: deploy the stack, serve
+# Solid at https://<skp_host>, and make tasks/seed_<name>.yml work.
+#
+# Order matters: the public host and protocol are set and CHECKED before the
+# Solid app is enabled, because each pod's root .acl records the owner's
+# absolute WebID on first use. See SOP.md "Hostname is permanent".
+
+- name: Ensure {{ app }}-{{ env }} directories exist
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - /var/data/{{ app }}-{{ env }}
+    - /var/data/config/{{ app }}-{{ env }}
+  tags:
+    - always
+
+- name: Ensure the Nextcloud data directories exist (www-data, 0750)
+  # Created on the node that will hold them: the manager for /var/data
+  # (shared storage), skpods.DATA_NODE for a local path.
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "33"
+    group: "33"
+    mode: '0750'
+  loop:
+    - "{{ skp_app_path }}/html"
+    - "{{ skp_app_path }}/config"
+    - "{{ skp_app_path }}/data"
+  delegate_to: "{{ skp_data_node if skp_data_node else inventory_hostname }}"
+  tags:
+    - always
+
+- name: Ensure the Postgres and Redis data directories exist (0700)
+  file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.owner }}"
+    mode: '0700'
+  loop:
+    - { path: "{{ skp_pg_path }}", owner: "70" }
+    - { path: "{{ skp_redis_path }}", owner: "999" }
+  delegate_to: "{{ skp_data_node if skp_data_node else inventory_hostname }}"
+  tags:
+    - always
+
+- name: Process {{ app }} environment templates (secrets, root-only)
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: '{{ item.mode | default("0600") }}'
+  loop:
+    - { src: "nextcloud.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/nextcloud.env", mode: "0600" }
+    - { src: "postgres.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/postgres.env", mode: "0600" }
+    - { src: "{{ app }}.sh.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env", mode: "0640" }
+  no_log: true
+  tags:
+    - templates
+
+- name: Process {{ app }} Docker Compose template
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
+    dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+    owner: root
+    group: root
+    mode: '0644'
+  tags:
+    - compose
+
+- name: Process {{ app }} deploy script template
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+    dest: "/var/data/{{ app }}-{{ env }}/deploy"
+    owner: root
+    group: root
+    mode: '0755'
+    force: yes
+  tags:
+    - templates
+    - deploy-script
+
+- name: Create {{ app }} control script symlink
+  file:
+    src: /var/data/{{ app }}-{{ env }}/deploy
+    dest: /var/data/deploy_{{ app }}-{{ env }}
+    force: yes
+    owner: root
+    group: root
+    mode: '0755'
+    state: link
+    follow: no
+
+- name: Create {{ app }} docker-compose.yml symlink
+  file:
+    src: /var/data/config/{{ app }}-{{ env }}/{{ app }}.yml
+    dest: /var/data/config/{{ app }}-{{ env }}/docker-compose.yml
+    force: yes
+    owner: root
+    group: root
+    mode: '0644'
+    state: link
+
+- name: Log in to the private image registry (skpods.REGISTRY_LOGIN)
+  # The engine image is usually private (it is built per instance). The
+  # stack deploy runs with --with-registry-auth, so the manager's login is
+  # handed to whichever node runs the task. Password via stdin only.
+  shell: |
+    set -euo pipefail
+    printf '%s' "$SKPODS_REGISTRY_PASSWORD" | docker login "{{ skpods.REGISTRY_LOGIN.registry }}" -u "{{ skpods.REGISTRY_LOGIN.username }}" --password-stdin >/dev/null
+    echo "logged in to {{ skpods.REGISTRY_LOGIN.registry }}"
+  args:
+    executable: /bin/bash
+  environment:
+    SKPODS_REGISTRY_PASSWORD: "{{ skpods.REGISTRY_LOGIN.password }}"
+  no_log: true
+  changed_when: false
+  when: skpods.REGISTRY_LOGIN is defined and skpods.REGISTRY_LOGIN is mapping
+  tags:
+    - deploy
+
+- name: Ensure overlay networks exist from app_networks variable
+  include_tasks: ../../shared/tasks/create_networks.yml
+  tags:
+    - networks
+
+- name: Deploy {{ app }} stack
+  shell: |
+    cd /var/data/{{ app }}-{{ env }}
+    ./deploy
+  register: deploy_output
+  tags:
+    - deploy
+
+- name: Show deploy output
+  debug: var=deploy_output.stdout_lines
+  tags:
+    - deploy
+
+- name: Wait for the swarm node running the Nextcloud task
+  shell: |
+    STATES=$(docker service ps "{{ skp_stack }}_nextcloud" --filter "desired-state=running" --format "{{ '{{.Node}} {{.CurrentState}}' }}")
+    NODE=$(printf '%s\n' "$STATES" | awk '$2 == "Running" {print $1; exit}')
+    if [ -z "$NODE" ]; then
+      echo "{{ skp_stack }}_nextcloud has no Running task yet; current: $(printf '%s' "${STATES:-no task scheduled}" | tr '\n' ';')" >&2
+      exit 1
+    fi
+    echo "$NODE"
+  register: skp_nc_node
+  until: skp_nc_node.rc == 0 and (skp_nc_node.stdout | trim | length > 0)
+  retries: "{{ (skp_first_install_wait | int + 4) // 5 }}"
+  delay: 5
+  changed_when: false
+  tags:
+    - always
+
+- name: Get the Nextcloud container ID
+  shell: |
+    CONTAINER_ID=$(docker ps -q --filter "status=running" --filter "label=com.docker.swarm.service.name={{ skp_stack }}_nextcloud" | head -1)
+    if [ -n "$CONTAINER_ID" ]; then
+      echo "$CONTAINER_ID"
+    else
+      echo "No Nextcloud container found" >&2
+      exit 1
+    fi
+  delegate_to: "{{ skp_nc_node.stdout | trim }}"
+  register: skp_nc_container
+  until: skp_nc_container.rc == 0
+  retries: 12
+  delay: 5
+  changed_when: false
+  tags:
+    - always
+
+- name: Wait for Nextcloud to finish its first-run install
+  shell: |
+    docker exec -u www-data "{{ skp_nc_container.stdout | trim }}" php occ status --output=json 2>/dev/null | grep -q '"installed":true' || { echo "Nextcloud first-run install not finished yet" >&2; exit 1; }
+  delegate_to: "{{ skp_nc_node.stdout | trim }}"
+  register: skp_nc_installed
+  until: skp_nc_installed.rc == 0
+  retries: "{{ (skp_first_install_wait | int + 9) // 10 }}"
+  delay: 10
+  changed_when: false
+  tags:
+    - always
+
+- name: Set the public host, protocol and proxy settings (before Solid is used)
+  # The image's env (OVERWRITEHOST, OVERWRITEPROTOCOL, OVERWRITECLIURL,
+  # TRUSTED_PROXIES) already applies these; writing them to config.php as
+  # well keeps occ, cron and background jobs on the same values.
+  shell: |
+    set -euo pipefail
+    C="{{ skp_nc_container.stdout | trim }}"
+    occ() { docker exec -u www-data "$C" php occ "$@"; }
+    occ config:system:set overwriteprotocol --value=https
+    occ config:system:set overwritehost --value="{{ skp_host }}"
+    occ config:system:set overwrite.cli.url --value="https://{{ skp_host }}"
+    occ config:system:set trusted_domains 0 --value="{{ skp_host }}"
+    {% for p in skp_trusted_proxies.split() %}
+    occ config:system:set trusted_proxies {{ loop.index0 }} --value="{{ p }}"
+    {% endfor %}
+    occ config:system:set default_phone_region --value="{{ skpods.DEFAULT_PHONE_REGION | default('US', true) }}"
+    occ config:system:set maintenance_window_start --type=integer --value={{ skpods.MAINTENANCE_WINDOW_START | default(1, true) | int }}
+  args:
+    executable: /bin/bash
+  delegate_to: "{{ skp_nc_node.stdout | trim }}"
+  changed_when: false
+  tags:
+    - config
+
+- name: Check the public host and protocol before enabling Solid
+  shell: |
+    set -euo pipefail
+    C="{{ skp_nc_container.stdout | trim }}"
+    got_url=$(docker exec -u www-data "$C" php occ config:system:get overwrite.cli.url)
+    got_proto=$(docker exec -u www-data "$C" php occ config:system:get overwriteprotocol)
+    got_host=$(docker exec -u www-data "$C" php occ config:system:get overwritehost)
+    if [ "$got_url" != "https://{{ skp_host }}" ] || [ "$got_proto" != "https" ] || [ "$got_host" != "{{ skp_host }}" ]; then
+      echo "refusing to enable Solid: overwrite.cli.url=$got_url overwriteprotocol=$got_proto overwritehost=$got_host" >&2
+      exit 1
+    fi
+    echo "public base is https://{{ skp_host }}"
+  args:
+    executable: /bin/bash
+  delegate_to: "{{ skp_nc_node.stdout | trim }}"
+  changed_when: false
+  tags:
+    - config
+
+- name: Disable the default apps this server does not need
+  # Best effort: an app that is always enabled, or not shipped by this
+  # Nextcloud version, is skipped. Override the list with
+  # skpods.DISABLE_APPS (README "Slim app set").
+  shell: |
+    set -uo pipefail
+    C="{{ skp_nc_container.stdout | trim }}"
+    enabled=$(docker exec -u www-data "$C" php occ app:list --enabled --output=json | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["enabled"]))' 2>/dev/null || docker exec -u www-data "$C" php occ app:list --enabled | sed -n 's/^  - \([a-z0-9_]*\):.*/\1/p' | tr '\n' ' ')
+    for a in {{ (skpods.DISABLE_APPS | default(skp_default_disable_apps, true)) | join(' ') }}; do
+      case " $enabled " in
+        *" $a "*) docker exec -u www-data "$C" php occ app:disable "$a" >/dev/null 2>&1 && echo "disabled $a" || echo "could not disable $a (always enabled?)" ;;
+      esac
+    done
+  args:
+    executable: /bin/bash
+  vars:
+    skp_default_disable_apps:
+      - activity
+      - app_api
+      - circles
+      - comments
+      - contactsinteraction
+      - dashboard
+      - federation
+      - files_downloadlimit
+      - files_pdfviewer
+      - files_reminders
+      - files_sharing_raw
+      - files_trashbin
+      - files_versions
+      - firstrunwizard
+      - nextcloud_announcements
+      - notifications
+      - password_policy
+      - photos
+      - privacy
+      - recommendations
+      - related_resources
+      - serverinfo
+      - sharebymail
+      - support
+      - survey_client
+      - suspicious_login
+      - systemtags
+      - text
+      - twofactor_totp
+      - updatenotification
+      - user_status
+      - weather_status
+      - webhook_listeners
+  delegate_to: "{{ skp_nc_node.stdout | trim }}"
+  register: skp_disable_apps
+  changed_when: "'disabled ' in skp_disable_apps.stdout"
+  tags:
+    - config
+
+- name: Enable the Solid app (shipped in the engine image)
+  shell: |
+    set -euo pipefail
+    C="{{ skp_nc_container.stdout | trim }}"
+    if ! docker exec "$C" test -f /var/www/html/custom_apps/solid/appinfo/info.xml; then
+      echo "custom_apps/solid is missing: skpods.NEXTCLOUD_IMAGE must be an skpods engine image (README 'Engine image')" >&2
+      exit 1
+    fi
+    if docker exec -u www-data "$C" php occ app:list --enabled | grep -q '^  - solid:'; then
+      echo "solid already enabled"
+    else
+      docker exec -u www-data "$C" php occ app:enable solid
+    fi
+    docker exec -u www-data "$C" php occ app:list --enabled | grep '^  - solid:'
+  args:
+    executable: /bin/bash
+  delegate_to: "{{ skp_nc_node.stdout | trim }}"
+  register: skp_solid_enable
+  changed_when: "'solid enabled' in skp_solid_enable.stdout"
+  tags:
+    - config
+
+- name: Check Solid discovery on the public URL
+  # From the manager, through the real ingress: the issuer must be the
+  # https public base. A failure here is reported, not fatal (DNS or the
+  # certificate may still be settling on a first deploy).
+  shell: |
+    curl -fsS --max-time 20 "https://{{ skp_host }}/.well-known/openid-configuration" | python3 -c 'import json,sys; print("issuer", json.load(sys.stdin).get("issuer"))'
+  register: skp_discovery
+  failed_when: false
+  changed_when: false
+  tags:
+    - config
+
+- name: Show Solid discovery result
+  debug:
+    msg: "{{ skp_discovery.stdout | default('') }} {{ skp_discovery.stderr | default('') }}"
+  tags:
+    - config

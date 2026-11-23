@@ -1,0 +1,188 @@
+version: '3.8'
+
+# skpods ({{ env }}), engine nextcloud: a slim, standalone Nextcloud whose
+# only added app is Solid (shipped inside skpods.NEXTCLOUD_IMAGE and copied
+# into custom_apps on each start), plus Postgres, Redis and the Nextcloud
+# cron. No Talk, Office, notify_push or other extras. See README.md.
+{% set app_constraints = skpods.PLACEMENT_CONSTRAINTS | default([], true) %}
+{% set data_constraints = app_constraints + (['node.hostname == ' + skp_data_node] if skp_data_node else []) %}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "{{ skpods.LOG_MAX_SIZE | default('10m', true) }}"
+    max-file: "{{ skpods.LOG_MAX_FILES | default('3', true) }}"
+
+networks:
+  {{ skp_ingress_network }}:
+    external: true
+  skpods-{{ env }}:
+    external: true
+
+services:
+  nextcloud:
+    image: "{{ skpods.NEXTCLOUD_IMAGE }}"
+    env_file: /var/data/config/skpods-{{ env }}/nextcloud.env
+    volumes:
+      - {{ skp_app_path }}/html:/var/www/html
+      - {{ skp_app_path }}/config:/var/www/html/config
+      - {{ skp_app_path }}/data:/var/www/html/data
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - skpods-{{ env }}
+      - {{ skp_ingress_network }}
+    logging: *logging
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf --max-time 30 http://localhost/status.php || exit 1"]
+      interval: 60s
+      timeout: 40s
+      retries: 3
+      # Covers the first install (copy of the code tree + database install).
+      start_period: {{ skp_first_install_wait }}s
+    deploy:
+      mode: replicated
+      # One Nextcloud: the code tree and the app's state are not built for
+      # concurrent first starts.
+      replicas: 1
+      placement:
+        constraints: {{ data_constraints | tojson }}
+      resources:
+        limits:
+          memory: {{ skpods.NEXTCLOUD_MEMORY_LIMIT | default('1536M', true) }}
+        reservations:
+          memory: {{ skpods.NEXTCLOUD_MEMORY_RESERVATION | default('256M', true) }}
+      update_config:
+        order: stop-first
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skpods"
+        - "com.skt.env={{ env }}"
+        - "traefik.enable=true"
+        - "traefik.swarm.network={{ skp_ingress_network }}"
+        - "traefik.http.routers.{{ skp_router }}.rule=Host(`{{ skp_host }}`)"
+        - "traefik.http.routers.{{ skp_router }}.entrypoints=websecure"
+        - "traefik.http.routers.{{ skp_router }}.tls=true"
+        - "traefik.http.routers.{{ skp_router }}.tls.certresolver=main"
+{% if skpods.TLS_OPTIONS | default('', true) %}
+        - "traefik.http.routers.{{ skp_router }}.tls.options={{ skpods.TLS_OPTIONS }}"
+{% endif %}
+        # 5: above the edge's per-domain catch-alls (priority 1).
+        - "traefik.http.routers.{{ skp_router }}.priority=5"
+        - "traefik.http.routers.{{ skp_router }}.middlewares={{ skp_middlewares }}"
+        - "traefik.http.routers.{{ skp_router }}.service={{ skp_router }}"
+        - "traefik.http.services.{{ skp_router }}.loadbalancer.server.port=80"
+        # The role's own headers middleware: transport security only. It
+        # sets NO Access-Control-* header (the Solid app answers CORS and
+        # OPTIONS itself on /apps/solid/* and /.well-known/*), and Traefik
+        # passes Authorization and DPoP through untouched by default.
+        - "traefik.http.middlewares.{{ skp_router }}-headers.headers.stsSeconds=31536000"
+        - "traefik.http.middlewares.{{ skp_router }}-headers.headers.stsIncludeSubdomains=true"
+        - "traefik.http.middlewares.{{ skp_router }}-headers.headers.forceSTSHeader=true"
+        - "traefik.http.middlewares.{{ skp_router }}-headers.headers.contentTypeNosniff=true"
+        - "traefik.http.middlewares.{{ skp_router }}-headers.headers.sslProxyHeaders.X-Forwarded-Proto=https"
+
+  cron:
+    image: "{{ skpods.NEXTCLOUD_IMAGE }}"
+    entrypoint: /cron.sh
+    env_file: /var/data/config/skpods-{{ env }}/nextcloud.env
+    volumes:
+      - {{ skp_app_path }}/html:/var/www/html
+      - {{ skp_app_path }}/config:/var/www/html/config
+      - {{ skp_app_path }}/data:/var/www/html/data
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - skpods-{{ env }}
+    logging: *logging
+    # PID 1 is busybox crond; probe it, not log freshness.
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q crond /proc/1/cmdline"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: {{ data_constraints | tojson }}
+      resources:
+        limits:
+          memory: {{ skpods.CRON_MEMORY_LIMIT | default('512M', true) }}
+        reservations:
+          memory: 64M
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skpods"
+        - "com.skt.env={{ env }}"
+
+  postgres:
+    image: {{ skpods.POSTGRES_IMAGE | default('postgres:17.7-alpine@sha256:bb377b7239d2774ac8cc76f481596ce96c5a6b5e9d141f6d0a0ee371a6e7c0f2', true) }}
+    env_file: /var/data/config/skpods-{{ env }}/postgres.env
+    environment:
+      - PGTEMP=/var/lib/postgresql/data/tmp
+    volumes:
+      - {{ skp_pg_path }}:/var/lib/postgresql/data
+    networks:
+      - skpods-{{ env }}
+    logging: *logging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U {{ skpods.DB_USER | default('nextcloud', true) }} -d {{ skpods.DB_NAME | default('nextcloud', true) }}"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    deploy:
+      mode: replicated
+      # Exactly one: a single Postgres data directory.
+      replicas: 1
+      placement:
+        constraints: {{ data_constraints | tojson }}
+      resources:
+        limits:
+          memory: {{ skpods.POSTGRES_MEMORY_LIMIT | default('512M', true) }}
+        reservations:
+          memory: 128M
+      # stop-first: two Postgres on one data directory corrupt it.
+      update_config:
+        order: stop-first
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skpods"
+        - "com.skt.env={{ env }}"
+
+  redis:
+    image: {{ skpods.REDIS_IMAGE | default('redis:8.10.3-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80', true) }}
+    # notify-keyspace-events Ex: Nextcloud file locking.
+    command: redis-server --notify-keyspace-events Ex --appendonly yes --timeout 0 --tcp-keepalive 300
+    volumes:
+      - {{ skp_redis_path }}:/data
+    networks:
+      - skpods-{{ env }}
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: {{ data_constraints | tojson }}
+      resources:
+        limits:
+          memory: {{ skpods.REDIS_MEMORY_LIMIT | default('128M', true) }}
+        reservations:
+          memory: 32M
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skpods"
+        - "com.skt.env={{ env }}"

@@ -63,6 +63,7 @@ tag yet.
 | [skpdf](#skpdf) | optional | Stirling-PDF toolkit | Stirling-PDF `3.5.0` | sksso (forward auth by default, `SSO_MIDDLEWARE: none` opts out) | `skpdf[-env].<cluster>.<domain>` | `skpdf-<env>/{trainingData,customFiles}` | `CLUSTERNAME`, `DOMAIN`; `SECURITY_INITIAL_PASSWORD` if login on | `SECURITY_ENABLELOGIN` (false) | v2.13.0 |
 | [skpeek](#skpeek) | optional | SearXNG metasearch engine | SearXNG (digest-pinned) + Valkey `8-alpine` | sksso (forward auth by default, `SSO_MIDDLEWARE: none` opts out) | `skpeek[-env].<cluster>.<domain>` | `skpeek-<env>/etc` | `SECRET_KEY` | none notable | v2.16.0 |
 | [skport](#skport) | optional | Portainer CE (Swarm web UI) | Portainer CE `2.45.4` | skfence or skfenceha (socket-proxy) | `skport[-env].<cluster>.<domain>` | `skport-<env>/data` | `CLUSTERNAME`, `DOMAIN` | none (no baked admin password) | v2.19.0 |
+| [skpods](#skpods) | optional | Solid pod hosting (WebID + storage per user); engine `nextcloud`: a slim standalone Nextcloud with only the Solid app | instance-built engine image (official Nextcloud + Solid app, digest-pinned), Postgres `17.7`, Redis `8.10.3` | skfence or skfenceha | `pods[-env].<cluster>.<domain>` | `skpods-<env>/{html,config,data}`, `runtime/skpods-<env>/{postgres,redis}` | `NEXTCLOUD_IMAGE`, `ADMIN_PASSWORD`, `DB_PASSWORD` | `ENGINE` (nextcloud), `INGRESS_NETWORK`, `REGISTRY_LOGIN`, `SEED_USERS`, `DATA_NODE` (floating) | pending |
 | [skpulse](#skpulse) | optional | Uptime Kuma status monitoring | Uptime Kuma `2.5.5` | sksso (Authentik forward auth, `AUTH_MODE: sso`, the default) | `skpulse[-env].<cluster>.<domain>` | `skpulse-<env>/uptime-kuma` | `CLUSTERNAME`, `DOMAIN` | `AUTH_MODE` (sso/local), `SSO_MIDDLEWARE`, `METRICS_BYPASS_SSO`, manual `discover-traefik-frontends.sh` helper | v2.16.0 (AUTH_MODE: v2.26.11) |
 | [skreg](#skreg) | optional | Docker Registry v2 | `registry:2` (floating) | none | `:5000` (no Traefik/TLS) | `skreg-<env>/data` | `vault_skreg_registry_http_secret` | none | v2.14.0 |
 | [skseek](#skseek) | optional | Perplexica AI search UI | Perplexica (digest-pinned) | **skpeek** (must be deployed first, same env); sksso (forward auth by default, `SSO_MIDDLEWARE: none` opts out) | `skseek[-env].<cluster>.<domain>` | `skseek-<env>/data` | none framework-required (model keys all opt-in) | model provider keys (all off) | v2.19.0 |
@@ -1107,6 +1108,40 @@ skport:
 setup wizard is interactive and times out after 5 minutes, so complete it
 promptly after first deploy. `target_manager_group` has no default in this
 playbook; it must always be passed explicitly.
+
+### skpods
+
+Solid pod hosting: every user gets a WebID and pod storage, served over
+Solid-OIDC with DPoP. One engine setting (`ENGINE`); today `nextcloud`, a
+standalone Nextcloud whose only added app is Solid. See the role
+[README](../v1/ansible/optional/skpods/README.md) and
+[SOP](../v1/ansible/optional/skpods/SOP.md).
+
+**Prerequisites**: an engine image the cluster can pull (official Nextcloud
+plus the Solid app, built by the instance and pinned by digest).
+
+**Minimal vault snippet**:
+
+```yaml
+skpods:
+  CLUSTERNAME: "<cluster>"
+  DOMAIN: "example.com"
+  NEXTCLOUD_IMAGE: "registry.example.com/skpods/skpods-nextcloud:35.0.3-solid-<sha>@sha256:<digest>"
+  ADMIN_PASSWORD: "<16+ characters>"
+  DB_PASSWORD: "<16+ characters>"
+```
+
+**Deploy**: `deploy_skpods-<env>.yml`, standard invocation. Seed or reset
+test users: `--tags seed [-e skpods_reset=true]`.
+
+**Health check**: the play prints the issuer from
+`https://pods[-env].<cluster>.<domain>/.well-known/openid-configuration`.
+
+**Gotchas**: the hostname is permanent once pods exist (each pod's root ACL
+stores the absolute WebID). The router carries only the role's own headers
+middleware: no CORS, error pages or forward auth, which would break Solid
+clients. A dev stack on a cluster whose Traefik only joins
+`cloud-public-prod` sets `INGRESS_NETWORK`.
 
 ### skpulse
 
