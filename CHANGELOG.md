@@ -33,6 +33,33 @@ unless you want it: set `skcorpus.API_TOKEN` (same value as `skai.CORPUS_TOKEN`)
 `QDRANT_API_KEY`, `FALKORDB_PASSWORD` and `CORPORA`; check each corpus's `embed_model` against its
 collections; deploy after skembed.
 
+### skai: answer engine with web search and corpus knowledge base (new role)
+
+New optional role `v1/ansible/optional/skai`: Open WebUI (`v0.13.4`, pinned by index digest), no
+Ollama and no LocalAI, configured from env only (`ENABLE_PERSISTENT_CONFIG=false`). Models from the
+OpenAI-compatible gateway (`GATEWAY_URL`, `GATEWAY_API_KEY`, `DEFAULT_MODEL`, `TASK_MODEL`); SearXNG
+web search (skpeek of the same env by default) with query generation; RAG embeddings through skembed
+with hybrid search and an optional external reranker; its own pgvector Postgres (bookworm) with a
+dump sidecar. Sign-in through Authentik OIDC with group based admin (`ADMIN_GROUP`, `USER_GROUPS`);
+in oidc mode the password sign-in endpoint is refused from outside. skcorpus is registered as a tool
+server (`TOOL_SERVER_CONNECTIONS`) and every entry in `CORPORA` becomes a model preset, created or
+updated after the deploy through Open WebUI's own API, with a layered prompt (graph for connections,
+vectors for substance, quotes only when asked, always cite title, file_path and chunk_index).
+Optional voice (speaches: Whisper and Piper, pinned) behind `VOICE: false`. Portal tile with an icon.
+Subnets `172.16.120-122.0/24`. The README carries the full-gate stage plan. Tests:
+`v1/tests/test_skai_render.py`, `v1/tests/test_skai_provision.py`. **Instance action:** none unless
+you want it: fill the `skai` vault (secrets, gateway, `PROVISIONER_*`, `CORPUS_TOKEN`, `CORPORA`),
+enable the sksso client (below), deploy skembed, skcorpus, then skai.
+
+### sksso: optional OIDC client for skai
+
+`SKAI_OIDC_ENABLED` (default false) installs a blueprint with a confidential OIDC provider and the
+`skai` Application (the portal tile) with two strict redirect URIs, the client secret through `!Env`
+from `SKAI_OIDC_CLIENT_SECRET`. Tests: `v1/tests/test_skai_oidc_sksso.py`. **Instance action:** none
+unless you deploy skai: set `sksso.SKAI_OIDC_ENABLED: true` and
+`SKAI_OIDC_CLIENT_SECRET` (same value as `skai.OIDC_CLIENT_SECRET`), `SKAI_HOST` only when skai is not on its default host;
+redeploy sksso before skai.
+
 ## Unreleased (v2.26.32)
 
 ### skfenceha: the ACME master label stays where it is
