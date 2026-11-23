@@ -23,7 +23,7 @@ ROLE = rp.ANSIBLE / "optional" / "skhome"
 BASE = yaml.safe_load((rp.VARS / "skhome.example.yml").read_text())["skhome"]
 SET = yaml.safe_load((rp.VARS / "skhome.set.yml").read_text())["skhome"]
 IMAGE = ("ghcr.io/yatzin/homecenter:3.3.0@sha256:"
-         "45bc4d6a0fed858ac8c89bd0631c69ab732093d5dd626e14a96678058e588bc4")
+         "ddff09f855c5c040716e72a4f58da11fe346e2d4ef8f8e95eb27e9b4f700b092")
 
 
 def render(tmp: Path, vault, env: str = "prod") -> tuple[dict, Path]:

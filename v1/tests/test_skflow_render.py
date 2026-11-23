@@ -22,7 +22,7 @@ ROLE = rp.ANSIBLE / "optional" / "skflow"
 BASE = yaml.safe_load((rp.VARS / "skflow.example.yml").read_text())["skflow"]
 SET = yaml.safe_load((rp.VARS / "skflow.set.yml").read_text())["skflow"]
 IMAGE = ("ghcr.io/windmill-labs/windmill:1.882.0@sha256:"
-         "67ab003cfe395d7634d7fc0eada917fc894859bbc21fea487eee76760319d86f")
+         "c5d60c73d12ed2839a8598edfcbe29f13eb1062b8e2e7e8112b985b0fb24ebc8")
 PG_IMAGE = ("postgres:17.12-alpine@sha256:"
             "f9cf3e1f0066f0eb0c48707d864f0ac5941e9ff454a072077d97a4d278d07d73")
 PG_BACKUP_IMAGE = ("postgres:17.12-bookworm@sha256:"

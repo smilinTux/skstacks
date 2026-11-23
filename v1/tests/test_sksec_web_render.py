@@ -25,7 +25,7 @@ ROLE = rp.ANSIBLE / "optional" / "sksec-web"
 BASE = yaml.safe_load((rp.VARS / "sksec-web.example.yml").read_text())["sksec_web"]
 SET = yaml.safe_load((rp.VARS / "sksec-web.set.yml").read_text())["sksec_web"]
 IMAGE = ("ghcr.io/theduffman85/crowdsec-web-ui:2026.11.12@sha256:"
-         "f57568d27b2c7798155a638b9cb76302777a9dcf43d8026f344c17767589d694")
+         "5bc8a0bdb6350101bce07f1db55df9784b27f6f2ff49cc1316bd67988628558e")
 
 
 def render(tmp: Path, vault, env: str = "prod") -> tuple[dict, Path]:

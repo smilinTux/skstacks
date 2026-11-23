@@ -26,9 +26,9 @@ ROLE = rp.ANSIBLE / "optional" / "skgym"
 BASE = yaml.safe_load((rp.VARS / "skgym.example.yml").read_text())["skgym"]
 SET = yaml.safe_load((rp.VARS / "skgym.set.yml").read_text())["skgym"]
 API_IMAGE = ("ghcr.io/duartesantos8/opengym-api:1.4.5@sha256:"
-             "4bc07fe7d1f05a57c0fa25da3563d54dfe27223506637d67fc64088a2a2f140b")
+             "397c83e9ac33a413bc8f21e66b2e55038100fc7f9da900d80be28b30fbb12ea8")
 WEB_IMAGE = ("ghcr.io/duartesantos8/opengym-web:1.4.5@sha256:"
-             "e32cae9d2f4aad0c5e1b7888c9bfc712b2306ddfe3c65bc4cfefd4b0002e86d3")
+             "e621677554302a0e1745e3b8c90acddc7d7149e118c4d683d51c13aa88f47d27")
 
 
 def db_json(users: int | None = None, raw: bytes | None = None) -> str:
