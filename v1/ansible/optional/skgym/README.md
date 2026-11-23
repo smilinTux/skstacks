@@ -20,7 +20,7 @@ instance that never runs `deploy_skgym-<env>.yml`.
   AGPL section 13 (the app links to its upstream source). If an instance
   ever patches the code, it must offer its modified source to its users.
 - **Images.** `ghcr.io/duartesantos8/opengym-api` and
-  `ghcr.io/duartesantos8/opengym-web`, release `1.4.1`, multi-arch
+  `ghcr.io/duartesantos8/opengym-web`, release `1.4.5`, multi-arch
   (amd64, arm64), pinned by digest; the play refuses an image without
   `@sha256:`. The api image is the upstream `default` target (no AI runtime
   inside; the opt-in `coach` target is not used).
@@ -302,8 +302,8 @@ skgym:
   BACKUP_START_DELAY: 60                    # seconds before the first archive
 ```
 
-Default images: `ghcr.io/duartesantos8/opengym-api:1.4.1@sha256:4bc07fe7...`
-and `ghcr.io/duartesantos8/opengym-web:1.4.1@sha256:e32cae9d...` (full
+Default images: `ghcr.io/duartesantos8/opengym-api:1.4.5@sha256:397c83e9...`
+and `ghcr.io/duartesantos8/opengym-web:1.4.5@sha256:e6216775...` (full
 digests in the playbooks). Networks: override with the flat per-env
 `skgym_<env>_networks` list.
 

@@ -22,7 +22,7 @@ networks:
 services:
   app:
     # Default = skh_default_image in the playbook (a test keeps them equal).
-    image: {{ skhome.HOMECENTER_IMAGE | default('ghcr.io/yatzin/homecenter:2.3.1@sha256:45bc4d6a0fed858ac8c89bd0631c69ab732093d5dd626e14a96678058e588bc4', true) }}
+    image: {{ skhome.HOMECENTER_IMAGE | default('ghcr.io/yatzin/homecenter:3.3.0@sha256:ddff09f855c5c040716e72a4f58da11fe346e2d4ef8f8e95eb27e9b4f700b092', true) }}
     env_file:
       - /var/data/config/skhome-{{ env }}/skhome.env
     volumes:
@@ -89,7 +89,7 @@ services:
     # Same digest as app, no extra pull. A different entrypoint: it must
     # NEVER run the image's normal start-up (restore-apply / migrate deploy
     # / seed) concurrently with the app service against the same database.
-    image: {{ skhome.HOMECENTER_IMAGE | default('ghcr.io/yatzin/homecenter:2.3.1@sha256:45bc4d6a0fed858ac8c89bd0631c69ab732093d5dd626e14a96678058e588bc4', true) }}
+    image: {{ skhome.HOMECENTER_IMAGE | default('ghcr.io/yatzin/homecenter:3.3.0@sha256:ddff09f855c5c040716e72a4f58da11fe346e2d4ef8f8e95eb27e9b4f700b092', true) }}
     entrypoint: ["/bin/bash", "/usr/local/bin/skhome-backup"]
     # Runs as root (the image's own default user; only its normal entrypoint
     # drops to nextjs via gosu, which this entrypoint override skips): avoids

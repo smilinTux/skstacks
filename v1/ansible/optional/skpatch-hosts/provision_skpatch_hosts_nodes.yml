@@ -523,9 +523,10 @@
     - name: Refuse the old API-token registration settings
       fail:
         msg: >-
-          skpatch_hosts.API_TOKEN is set, but the pinned dashboard (linux-update-dashboard
-          2026.10.9) refuses every API-token request that creates a system (403 "API tokens
-          cannot configure SSH connections"), so token registration can never work. Remove
+          skpatch_hosts.API_TOKEN is set, but this role registers systems through REGISTER_AS, not a
+          token (linux-update-dashboard up to 2026.10.9 refused every API-token request that
+          creates a system with 403 "API tokens cannot configure SSH connections"; later
+          releases use granular token permissions this role does not manage). Remove
           API_TOKEN and set REGISTER_AS to a dashboard admin's username instead (README.md
           "Automatic host registration"); API_CREDENTIAL_ID keeps working as CREDENTIAL_ID.
       when: skpatch_state == 'present' and skpatch_hosts.API_TOKEN | default('', true) | string | length > 0

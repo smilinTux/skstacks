@@ -15,7 +15,7 @@ with `-web` appended: `sksec-web`, stack `sksec-web-<env>`.
 
 - **License.** AGPL-3.0 ([TheDuffman85/crowdsec-web-ui](https://github.com/TheDuffman85/crowdsec-web-ui)).
   This role **references the upstream image and vendors nothing**.
-- **Image.** `ghcr.io/theduffman85/crowdsec-web-ui`, release `2026.10.10`,
+- **Image.** `ghcr.io/theduffman85/crowdsec-web-ui`, release `2026.11.12`,
   pinned by the manifest-list digest; the play refuses an image without
   `@sha256:`.
 - **Its own, separate login.** The web UI has its own account system
@@ -244,7 +244,7 @@ sksec_web:
   # LAPI_USERNAME: sksec-web
   # LAPI_URL: http://sksec-<env>_crowdsec:8080
   # CROWDSEC_SERVICE: sksec-<env>_crowdsec
-  # CROWDSEC_WEB_UI_IMAGE: ghcr.io/theduffman85/crowdsec-web-ui:2026.10.10@sha256:f57568d27b2c7798155a638b9cb76302777a9dcf43d8026f344c17767589d694
+  # CROWDSEC_WEB_UI_IMAGE: ghcr.io/theduffman85/crowdsec-web-ui:2026.11.12@sha256:5bc8a0bdb6350101bce07f1db55df9784b27f6f2ff49cc1316bd67988628558e
   # READ_ONLY: true
   # SESSION_SECRET: "..."
   # SYNC_LOOKBACK: "168h"

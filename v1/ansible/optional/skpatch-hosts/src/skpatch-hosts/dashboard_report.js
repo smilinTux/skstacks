@@ -28,7 +28,7 @@
 // once the host is fixed.
 // security_updates is the pending update list the dashboard flags as
 // security (the same visible, not-hidden list securityCount counts), from
-// GET /systems/:id, sorted by package. The pinned app (2026.10.9) stores no
+// GET /systems/:id, sorted by package. The app (as of 2026.10.9) stores no
 // CVE ids: apt marks an update as security by its repository (a "-security"
 // pocket), the other managers never do (server/ssh/parsers/*.ts).
 "use strict";

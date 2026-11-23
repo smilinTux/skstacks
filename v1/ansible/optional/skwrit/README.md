@@ -85,7 +85,7 @@ skwrit:
 
   # optional Nextcloud MCP service
   NEXTCLOUD_MCP_ENABLED: false
-  NEXTCLOUD_MCP_IMAGE: ""           # default nextcloud-mcp-server 0.199.4 by digest
+  NEXTCLOUD_MCP_IMAGE: ""           # default nextcloud-mcp-server 0.218.0 by digest
   NEXTCLOUD_MCP_USERNAME: svc-skwrit
   MCP_DATA_VOLUME: <STACK_NAME>_mcp_data
   MCP_MEMORY_LIMIT: 2G

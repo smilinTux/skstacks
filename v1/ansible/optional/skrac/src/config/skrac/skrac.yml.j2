@@ -29,7 +29,7 @@ networks:
 services:
   server:
     # Default = skr_default_image in the playbook (a test keeps them equal).
-    image: {{ skrac.MESHCENTRAL_IMAGE | default('ghcr.io/ylianst/meshcentral:1.2.6@sha256:09c5abfcf0758f2a7ab9b43fa8acb838b92bba1498c1447fc8c09bb1d296b73e', true) }}
+    image: {{ skrac.MESHCENTRAL_IMAGE | default('ghcr.io/ylianst/meshcentral:1.3.1@sha256:266b01942545829f11d53e6cecd5c2e48033d9edb48bbd3a9a569482ff1d050d', true) }}
     volumes:
       - {{ skr_data_path }}:/opt/meshcentral/meshcentral-data
       - {{ skr_files_path }}:/opt/meshcentral/meshcentral-files
@@ -139,7 +139,7 @@ services:
 
 {% if skrac.BACKUP_ENABLED | default(true) | bool %}
   backup:
-    image: {{ skrac.MESHCENTRAL_IMAGE | default('ghcr.io/ylianst/meshcentral:1.2.6@sha256:09c5abfcf0758f2a7ab9b43fa8acb838b92bba1498c1447fc8c09bb1d296b73e', true) }}
+    image: {{ skrac.MESHCENTRAL_IMAGE | default('ghcr.io/ylianst/meshcentral:1.3.1@sha256:266b01942545829f11d53e6cecd5c2e48033d9edb48bbd3a9a569482ff1d050d', true) }}
     entrypoint: ["/bin/sh", "/usr/local/bin/skrac-backup"]
     command: ["loop"]
     environment:
