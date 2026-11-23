@@ -55,8 +55,8 @@ sequenceDiagram
     N->>N: before-starting hook: sync custom_apps/solid from the image
     P->>N: occ config:system:set overwriteprotocol/overwritehost/overwrite.cli.url/trusted_*
     P->>N: check the values (refuse to continue if wrong)
-    P->>N: occ app:disable (slim app set)
-    P->>N: occ app:enable solid
+    P->>N: appstoreenabled=false, occ app:disable (slim app set)
+    P->>N: wait until custom_apps/solid == image copy, occ app:enable solid, check again
     P->>N: seed users, mint client credentials (optional)
 ```
 
@@ -179,7 +179,8 @@ curl -si -X OPTIONS -H 'Origin: https://app.example.org' \
 | Symptom | Cause / fix |
 |---|---|
 | Play stops at "Check the public host and protocol before enabling Solid" | config.php disagrees with the vault host. Fix the vault or config.php; do not enable Solid until it matches. |
-| "custom_apps/solid is missing" | `NEXTCLOUD_IMAGE` is a plain Nextcloud image, not an engine image. |
+| "the image has no /usr/src/skpods-apps/solid" | `NEXTCLOUD_IMAGE` is a plain Nextcloud image, not an engine image. |
+| "custom_apps/solid differs from the engine image's copy" | Something else wrote the app (an app-store download, a manual copy). `docker service update --force skpods-<env>_nextcloud` resyncs it from the image; rerun the deploy. |
 | Image pull fails (`no basic auth credentials`, `denied`) | Private image: set `REGISTRY_LOGIN`; the deploy passes `--with-registry-auth`. |
 | WebID or storage IRIs start with `http://` | `overwriteprotocol` missing; rerun the deploy (it sets it). Pods first used while it was wrong need their root `.acl` fixed. |
 | Owner gets `403` on their own pod after a hostname change | See "Hostname is permanent": reset the user (dev) or rewrite the root `.acl`. |

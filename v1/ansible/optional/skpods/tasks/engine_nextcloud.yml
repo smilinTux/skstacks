@@ -201,6 +201,10 @@
     set -euo pipefail
     C="{{ skp_nc_container.stdout | trim }}"
     occ() { docker exec -u www-data "$C" php occ "$@"; }
+    # No app store: an `app:enable` of an app that is not on disk yet would
+    # otherwise download the store build (the Solid app must be the one in
+    # the engine image).
+    occ config:system:set appstoreenabled --type=boolean --value=false
     occ config:system:set overwriteprotocol --value=https
     occ config:system:set overwritehost --value="{{ skp_host }}"
     occ config:system:set overwrite.cli.url --value="https://{{ skp_host }}"
@@ -298,8 +302,16 @@
   shell: |
     set -euo pipefail
     C="{{ skp_nc_container.stdout | trim }}"
-    if ! docker exec "$C" test -f /var/www/html/custom_apps/solid/appinfo/info.xml; then
-      echo "custom_apps/solid is missing: skpods.NEXTCLOUD_IMAGE must be an skpods engine image (README 'Engine image')" >&2
+    if ! docker exec "$C" test -d /usr/src/skpods-apps/solid; then
+      echo "the image has no /usr/src/skpods-apps/solid: skpods.NEXTCLOUD_IMAGE must be an skpods engine image (README 'Engine image')" >&2
+      exit 1
+    fi
+    # custom_apps/solid must be exactly the image's copy (the start hook
+    # syncs it; on a first start the play can get here before the hook).
+    same() { docker exec "$C" diff -rq /usr/src/skpods-apps/solid/ /var/www/html/custom_apps/solid/ >/dev/null 2>&1; }
+    for _ in $(seq 1 30); do same && break; sleep 5; done
+    if ! same; then
+      echo "custom_apps/solid differs from the engine image's copy; refusing to enable it (restart the nextcloud service to resync)" >&2
       exit 1
     fi
     enabled=$(docker exec -u www-data "$C" php occ app:list --enabled)
@@ -308,6 +320,7 @@
     else
       docker exec -u www-data "$C" php occ app:enable solid
     fi
+    same || { echo "custom_apps/solid changed during app:enable (not the engine image's build)" >&2; exit 1; }
     docker exec -u www-data "$C" php occ app:list --enabled | grep '^  - solid:'
   args:
     executable: /bin/bash

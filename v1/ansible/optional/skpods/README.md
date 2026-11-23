@@ -56,8 +56,14 @@ own app code, and finishes an app upgrade (`occ upgrade`) if one is pending.
 
 The role only pins that image by digest (`NEXTCLOUD_IMAGE`). Where the image
 is built and which Solid app revision it carries is the instance's choice.
-Rollback is pinning the previous digest and redeploying. The deploy fails if
-the running image has no `custom_apps/solid`.
+Rollback is pinning the previous digest and redeploying. The deploy turns
+the Nextcloud app store off (`appstoreenabled=false`) before it enables
+anything, because `occ app:enable` of an app that is not on disk yet
+downloads the store build. It waits until `custom_apps/solid` is exactly the
+image's copy, enables it, and checks again; it fails closed otherwise (and
+when the image has no `/usr/src/skpods-apps/solid`). An engine image should
+also ship `appstoreenabled => false` in a config snippet, so the store is off
+from the very first start.
 
 ## Configuration (vault)
 
