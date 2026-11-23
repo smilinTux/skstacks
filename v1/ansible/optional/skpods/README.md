@@ -97,6 +97,7 @@ from the very first start.
 | `SEED_USERS` | `[]` | Test or demo users; see [Seed and reset](#seed-and-reset). |
 | `CREDENTIALS_OUT` | unset | Controller path for minted client credentials (JSON, 0600). |
 | `AUTHENTIK_TILE`, `AUTHENTIK_TILE_*` | `true` | Portal tile (a bookmark only; it never puts Authentik in front of the service). |
+| `SSO_ACCESS`, `SSO_*` | `admin-only` | Who sees the tile in the portal (shared `sso_access_resolve.yml`; `app-groups` uses `app-<slug>-admins`/`-users`). It never gates the pod server itself. |
 
 ## Traefik
 

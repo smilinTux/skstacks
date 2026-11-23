@@ -160,6 +160,18 @@
       tags:
         - seed
 
+    - name: Resolve the portal tile access (who sees the tile)
+      # The tile is a bookmark only: this decides who sees it in the portal,
+      # never who can reach the pod server. Default mode admin-only (skadmin).
+      include_tasks: ../../shared/tasks/sso_access_resolve.yml
+      vars:
+        sso_access_slug: "{{ skpods.AUTHENTIK_TILE_SLUG | default(skp_router, true) }}"
+        sso_access_cfg: "{{ skpods }}"
+        sso_access_legacy_groups: "{{ [skpods.AUTHENTIK_TILE_GROUP | default('', true)] }}"
+      tags:
+        - config
+        - authentik
+
     - name: Create or update the skpods portal tile in Authentik
       # On by default (AUTHENTIK_TILE: true); opt out per instance with
       # AUTHENTIK_TILE: false. A bookmark to the pod server's login page:
@@ -172,7 +184,7 @@
           slug: "{{ skpods.AUTHENTIK_TILE_SLUG | default(skp_router, true) }}"
           name: "{{ skpods.AUTHENTIK_TILE_NAME | default('SKPods' + ('' if env == 'prod' else ' (' + env + ')'), true) }}"
           launch_url: "https://{{ skp_host }}"
-          group: "{{ skpods.AUTHENTIK_TILE_GROUP | default('authentik Admins', true) }}"
+          access: "{{ sso_access }}"
           icon: "{{ skpods.AUTHENTIK_TILE_ICON | default('fa://fa-database', true) }}"
           open_in_new_tab: "{{ skpods.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
           description: "{{ skpods.AUTHENTIK_TILE_DESCRIPTION | default('Solid pods', true) }}"
