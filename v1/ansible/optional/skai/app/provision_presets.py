@@ -119,7 +119,7 @@ def provision(presets: list[dict], token: str, opener=urllib.request.urlopen) ->
                 continue
             status, _ = call("POST", "/api/v1/models/model/update", token, wanted, opener=opener)
             verb = "UPDATED"
-        elif status in (200, 401, 404) and not (isinstance(current, dict) and current.get("id")):
+        elif status == 404:  # v0.13: 404 = no such model; 401 = it exists but we may not read it
             status, _ = call("POST", "/api/v1/models/create", token, wanted, opener=opener)
             verb = "CREATED"
         else:
