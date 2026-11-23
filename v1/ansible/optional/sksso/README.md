@@ -564,6 +564,43 @@ it created stay in Authentik (same limitation as the blueprints above); delete t
 hand when retiring the sign-in.
 
 
+## skai (Open WebUI) OIDC login
+
+`sksso.SKAI_OIDC_ENABLED: true` plus `sksso.SKAI_OIDC_CLIENT_SECRET` (32+ chars,
+`openssl rand -hex 32`) give `skai` (Open WebUI) its sign-in through Authentik as code. skai
+defaults to `AUTH_MODE: oidc`, so this is what an estate running skai turns on (see
+`optional/skai/README.md` "Sign-in (Authentik OIDC)"). The mechanism is the skgit one above:
+off by default, and with the flag unset every rendered file is byte-identical to a release
+without it; on, the deploy renders `/var/data/config/sksso-<env>/blueprints/skai-oidc.yaml`
+(no secret inside), mounts the blueprints directory at `/blueprints/custom` in `server` and
+`worker`, and puts the secret in `sksso.env` (0600) as `SKAI_OIDC_CLIENT_SECRET`, read with
+`!Env`.
+
+**Which vault holds the secret.** `sksso.SKAI_OIDC_CLIENT_SECRET` in the sksso vault and
+`skai.OIDC_CLIENT_SECRET` in the skai vault, the same value.
+
+| Object | Value |
+|---|---|
+| OAuth2 provider `skai` | confidential, client id `skai` (`SKAI_OIDC_CLIENT_ID` overrides, same value as `skai.OIDC_CLIENT_ID`), strict redirects `https://<skai host>/oauth/oidc/login/callback` and the legacy `/oauth/oidc/callback`, the same flows, signing key, subject and issuer modes and grant types as skgit, scopes openid, email, profile (profile carries the `groups` claim skai maps to admin) |
+| Application `skai` | name `SKAI_APP_NAME` (default `SKAI`), launch URL `https://<skai host>/` |
+
+**No policy binding here.** The Application slug is skai's portal tile slug, so the tile task
+(run from skai's deploy) keeps this provider and owns the group binding: who may sign in is
+`skai.AUTHENTIK_TILE_GROUP`; who becomes an Open WebUI admin is `skai.ADMIN_GROUP`, matched
+against the `groups` claim on every login.
+
+```yaml
+sksso:
+  SKAI_OIDC_ENABLED: true                        # a YAML boolean, default false
+  SKAI_OIDC_CLIENT_SECRET: "..."                 # same value as skai.OIDC_CLIENT_SECRET
+  SKAI_HOST: ai.example.org                      # default skai[-<env>].<base>; same as skai.HOSTNAME
+  SKAI_OIDC_CLIENT_ID: skai                      # default skai (the portal tile slug)
+  SKAI_APP_NAME: "SKAI"
+  SKAI_OIDC_AUTHENTICATION_FLOW: ""              # or capauth-authentication
+```
+
+Run order: deploy (or redeploy) `sksso` with the flag and secret set, THEN deploy `skai`.
+
 ## skaegis (OIDC) login
 
 `sksso.SKAEGIS_OIDC_CLIENT_SECRET` (32+ chars, `openssl rand -hex 32`) gives
