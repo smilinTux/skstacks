@@ -25,10 +25,10 @@ images:
     source: https://github.com/VictoriaMetrics/VictoriaMetrics/releases/tag/v1.155.0
   alertmanager:
     repo: prom/alertmanager
-    tag: v0.34.2
-    digest: sha256:39d8bb3966c694a124428a3a88fbcffd40bd069129ecd47c059f8a3f17c55f3b
-    released: "2026-10-29"
-    source: https://github.com/prometheus/alertmanager/releases/tag/v0.34.2
+    tag: v0.35.0
+    digest: sha256:e638797febd034838eca8b98cdbd46f951e9bf7f178777aa8669167406a9946c
+    released: "2026-11-09"
+    source: https://github.com/prometheus/alertmanager/releases/tag/v0.35.0
   alloy:
     repo: grafana/alloy
     tag: v1.21.3
@@ -74,10 +74,10 @@ images:
   # CI validator only (validate_configs.sh parses every dashboard PromQL expression with it); never deployed.
   promtool:
     repo: prom/prometheus
-    tag: v3.15.1
-    digest: sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
-    released: "2026-10-21"
-    source: https://github.com/prometheus/prometheus/releases/tag/v3.15.1
+    tag: v3.16.0
+    digest: sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06
+    released: "2026-11-05"
+    source: https://github.com/prometheus/prometheus/releases/tag/v3.16.0
   socket_proxy:
     repo: tecnativa/docker-socket-proxy
     tag: v0.5.0

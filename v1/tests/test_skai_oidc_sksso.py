@@ -109,11 +109,12 @@ def _env_file(**sksso):
 
 def test_off_renders_nothing_about_skai():
     for svc in ("server", "worker"):
-        assert not any("/blueprints/" in v for v in _compose()[svc]["volumes"])
+        assert not any("/blueprints/" in v for v in _compose(FORWARD_AUTH_ENABLED=False)[svc]["volumes"])
     assert "SKAI" not in _env_file()
     assert _env_file(SKAI_OIDC_CLIENT_SECRET=SECRET) == _env_file()
     assert _env_file(SKAI_OIDC_ENABLED=False, SKAI_OIDC_CLIENT_SECRET=SECRET) == _env_file()
-    assert _compose(SKAI_OIDC_ENABLED=False, SKAI_OIDC_CLIENT_SECRET=SECRET) == _compose()
+    assert _compose(FORWARD_AUTH_ENABLED=False, SKAI_OIDC_ENABLED=False, SKAI_OIDC_CLIENT_SECRET=SECRET) \
+        == _compose(FORWARD_AUTH_ENABLED=False)
 
 
 def test_on_mounts_blueprints_and_writes_the_secret_to_the_env_file_only():

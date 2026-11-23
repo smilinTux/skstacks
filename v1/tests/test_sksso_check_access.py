@@ -96,6 +96,21 @@ def pbind(target, ppk, pname):
             "policy_obj": {"name": pname}, "enabled": True, "negate": False, "order": 10}
 
 
+def gate(**kw):
+    """FakeAuthentik kwargs for a conforming catch-all: a forward_domain provider with
+    an application bound to skadmin only, attached to the embedded outpost. Merge into a
+    fixture with with_gate(); a check that sees no catch-all reports C7."""
+    return {"apps": [app("gate", provider=99)], "proxy": [{"pk": 99, "mode": "forward_domain"}],
+            "outposts": [{"providers": [99]}], "bindings": [gbind("app-gate", "skadmin")], **kw}
+
+
+def with_gate(**kw):
+    base = gate()
+    for key, val in kw.items():
+        base[key] = list(val) + base.get(key, []) if key in base else val
+    return FakeAuthentik(**base)
+
+
 BASE_GROUPS = [group("skadmin", users=[1]), group("skuser", users=[2])]
 BASE_USERS = [user(1, "alice", ["g-skadmin"]), user(2, "bob", ["g-skuser"]), user(3, "carol")]
 
@@ -115,12 +130,12 @@ def _no_env_token(monkeypatch):
 
 
 def test_conforming_instance_exits_0(capsys):
-    fake = FakeAuthentik(apps=[app("skpulse")], groups=BASE_GROUPS, users=BASE_USERS,
-                         bindings=[gbind("app-skpulse", "skadmin")])
+    fake = with_gate(apps=[app("skpulse")], groups=BASE_GROUPS, users=BASE_USERS,
+                     bindings=[gbind("app-skpulse", "skadmin")])
     assert run(fake) == 0
     out = capsys.readouterr().out
     assert findings(out) == []
-    assert "# summary: 1 applications, 0 violations" in out
+    assert "# summary: 2 applications, 0 violations" in out
 
 
 def test_negative_control_unbound_app_exits_1(capsys):
@@ -164,8 +179,8 @@ def test_no_token_exits_2_and_token_never_printed(capsys):
 
 def test_token_from_env(monkeypatch, capsys):
     monkeypatch.setenv("AUTHENTIK_TOKEN", TOKEN)
-    fake = FakeAuthentik(apps=[app("skpulse")], groups=BASE_GROUPS, users=BASE_USERS,
-                         bindings=[gbind("app-skpulse", "skadmin")])
+    fake = with_gate(apps=[app("skpulse")], groups=BASE_GROUPS, users=BASE_USERS,
+                     bindings=[gbind("app-skpulse", "skadmin")])
     assert ca.main(["--url", "http://x"], stdin=io.StringIO(""), opener=fake) == 0
 
 
@@ -178,11 +193,11 @@ def test_pagination_followed_to_the_end(monkeypatch, capsys):
     monkeypatch.setattr(ca, "PAGE_SIZE", 2)
     apps = [app(f"a{i}") for i in range(5)]
     bindings = [gbind(f"app-a{i}", "skadmin") for i in range(4)]  # a4, on page 3, is unbound
-    fake = FakeAuthentik(apps=apps, groups=BASE_GROUPS, users=BASE_USERS, bindings=bindings)
+    fake = with_gate(apps=apps, groups=BASE_GROUPS, users=BASE_USERS, bindings=bindings)
     assert run(fake) == 1
     out = capsys.readouterr().out
     assert findings(out) == ["a4 C1 no policy bindings: Authentik admits every authenticated user"]
-    assert "5 applications" in out
+    assert "6 applications" in out
     assert sum("/core/applications/" in r for r in fake.requests) == 3
 
 
@@ -205,7 +220,7 @@ def test_api_client_refuses_non_get():
 def test_c2_is_a_warning_unless_strict(capsys):
     groups = BASE_GROUPS + [group("authentik Admins", users=[1])]
     bindings = [gbind("app-skpulse", "skadmin"), gbind("app-skpulse", "authentik Admins")]
-    fake = FakeAuthentik(apps=[app("skpulse")], groups=groups, users=BASE_USERS, bindings=bindings)
+    fake = with_gate(apps=[app("skpulse")], groups=groups, users=BASE_USERS, bindings=bindings)
     assert run(fake) == 0
     assert "skpulse C2 warning: bound to 'authentik Admins'" in capsys.readouterr().out
     assert run(fake, "--strict") == 1
@@ -282,7 +297,7 @@ def test_c6_app_group_parented_to_skuser(capsys):
 
 def test_empty_sk_managed_group_is_info_only(capsys):
     groups = BASE_GROUPS + [group("app-x-users", managed=True)]
-    fake = FakeAuthentik(apps=[app("x")], groups=groups, users=BASE_USERS, bindings=[gbind("app-x", "skadmin")])
+    fake = with_gate(apps=[app("x")], groups=groups, users=BASE_USERS, bindings=[gbind("app-x", "skadmin")])
     assert run(fake) == 0
     assert "group:app-x-users C9 info: sk-managed group has no members" in capsys.readouterr().out
 
@@ -424,3 +439,132 @@ def test_who_passes_unknown_policy_is_undetermined(capsys):
 def test_who_passes_unknown_slug_exits_2(capsys):
     fake = FakeAuthentik(apps=[app("x")], groups=BASE_GROUPS, users=BASE_USERS)
     assert run(fake, "--who-passes", "nope") == 2
+
+
+# ---- the forward-auth catch-all itself (C7, no declarations needed) ----------------
+
+def catchall_only(bindings, users=BASE_USERS, groups=None, policies=(), proxy_pk=7, outposts=None):
+    """A fixture whose only application is the catch-all, with the given bindings."""
+    return FakeAuthentik(
+        apps=[app("gate", provider=proxy_pk)], groups=groups or (BASE_GROUPS + [group("community")]), users=users,
+        bindings=bindings, policies=list(policies),
+        proxy=[{"pk": proxy_pk, "mode": "forward_domain"}],
+        outposts=[{"providers": [proxy_pk]}] if outposts is None else outposts)
+
+
+def c7(capsys):
+    return [ln for ln in findings(capsys.readouterr().out) if " C7 " in ln]
+
+
+def test_conforming_catchall_is_clean(capsys):
+    assert run(catchall_only([gbind("app-gate", "skadmin")])) == 0
+    assert findings(capsys.readouterr().out) == []
+
+
+def test_missing_catchall_is_c7_and_exit_1(capsys):
+    fake = FakeAuthentik(apps=[app("skpulse")], groups=BASE_GROUPS, users=BASE_USERS,
+                         bindings=[gbind("app-skpulse", "skadmin")])
+    assert run(fake) == 1
+    assert c7(capsys) == ["catch-all C7 no domain-wide forward-auth catch-all application exists "
+                          "(a forward_domain proxy provider with an application)"]
+
+
+def test_a_forward_domain_provider_with_no_application_counts_as_missing(capsys):
+    fake = FakeAuthentik(apps=[app("skpulse")], groups=BASE_GROUPS, users=BASE_USERS,
+                         bindings=[gbind("app-skpulse", "skadmin")],
+                         proxy=[{"pk": 7, "name": "hand made", "mode": "forward_domain"}], outposts=[{"providers": [7]}])
+    assert run(fake) == 1
+    (line,) = c7(capsys)
+    assert "no domain-wide forward-auth catch-all" in line and "provider(s) with no application: hand made" in line
+
+
+def test_a_forward_single_provider_is_not_a_catchall(capsys):
+    fake = FakeAuthentik(apps=[app("skpulse", provider=5)], groups=BASE_GROUPS, users=BASE_USERS,
+                         bindings=[gbind("app-skpulse", "skadmin")],
+                         proxy=[{"pk": 5, "mode": "forward_single"}], outposts=[{"providers": [5]}])
+    assert run(fake) == 1
+    assert c7(capsys)[0].startswith("catch-all C7 no domain-wide forward-auth catch-all")
+
+
+def test_unbound_catchall_is_c7_as_well_as_c1(capsys):
+    assert run(catchall_only([])) == 1
+    out = findings(capsys.readouterr().out)
+    assert any(ln.startswith("gate C1 no policy bindings") for ln in out)
+    assert any(ln.startswith("gate C7 catch-all application is unbound (no enabled binding): Authentik admits every "
+                             "authenticated user; bind it to 'skadmin' only") for ln in out)
+
+
+def test_catchall_with_only_disabled_bindings_is_unbound(capsys):
+    assert run(catchall_only([gbind("app-gate", "skadmin", enabled=False)])) == 1
+    assert any("gate C7 catch-all application is unbound" in ln for ln in findings(capsys.readouterr().out))
+
+
+def test_catchall_bound_to_another_group_only_is_c7(capsys):
+    assert run(catchall_only([gbind("app-gate", "community")])) == 1
+    lines = c7(capsys)
+    assert "gate C7 catch-all application admits more than the global admin group: community" in lines
+    assert "gate C7 catch-all application is not bound to the global admin group 'skadmin'" in lines
+
+
+def test_catchall_bound_to_skuser_as_well_is_c7(capsys):
+    assert run(catchall_only([gbind("app-gate", "skadmin"), gbind("app-gate", "skuser")])) == 1
+    assert c7(capsys) == ["gate C7 catch-all application admits more than the global admin group: skuser"]
+
+
+def test_catchall_bound_to_a_single_user_is_c7_and_c3(capsys):
+    b = {"pk": "b-user", "target": "app-gate", "group": None, "user": 1, "policy": None, "enabled": True,
+         "negate": False, "order": 10}
+    assert run(catchall_only([gbind("app-gate", "skadmin"), b])) == 1
+    out = findings(capsys.readouterr().out)
+    assert "gate C7 catch-all application admits more than the global admin group: user alice" in out
+    assert any(ln.startswith("gate C3 bound to a single user (alice)") for ln in out)
+
+
+def test_catchall_bound_to_a_user_only_is_not_bound_to_the_admin_group(capsys):
+    b = {"pk": "b-user", "target": "app-gate", "group": None, "user": 1, "policy": None, "enabled": True,
+         "negate": False, "order": 10}
+    assert run(catchall_only([b])) == 1
+    lines = c7(capsys)
+    assert "gate C7 catch-all application admits more than the global admin group: user alice" in lines
+    assert "gate C7 catch-all application is not bound to the global admin group 'skadmin'" in lines
+
+
+def test_catchall_with_an_any_account_policy_is_c7(capsys):
+    fake = catchall_only([gbind("app-gate", "skadmin"), pbind("app-gate", "p1", "sso-allow-any-account")])
+    assert run(fake) == 1
+    assert "gate C7 catch-all application admits more than the global admin group: policy sso-allow-any-account" in c7(capsys)
+
+
+def test_catchall_with_only_the_any_account_policy_is_c7(capsys):
+    fake = catchall_only([pbind("app-gate", "p1", "sso-allow-any-account")])
+    assert run(fake) == 1
+    lines = c7(capsys)
+    assert any("admits more than the global admin group: policy sso-allow-any-account" in ln for ln in lines)
+    assert "gate C7 catch-all application is not bound to the global admin group 'skadmin'" in lines
+
+
+def test_a_disabled_extra_binding_does_not_count_against_the_catchall(capsys):
+    assert run(catchall_only([gbind("app-gate", "skadmin"), gbind("app-gate", "community", enabled=False)])) == 0
+
+
+def test_legacy_authentik_admins_on_the_catchall_stays_a_warning(capsys):
+    fake = catchall_only([gbind("app-gate", "skadmin"), gbind("app-gate", "authentik Admins")],
+                         groups=BASE_GROUPS + [group("authentik Admins", users=[1])])
+    assert run(fake) == 0
+    assert "gate C2 warning: bound to 'authentik Admins'" in capsys.readouterr().out
+    assert run(fake, "--strict") == 1
+
+
+def test_catchall_on_no_outpost_is_c7(capsys):
+    assert run(catchall_only([gbind("app-gate", "skadmin")], outposts=[])) == 1
+    (line,) = c7(capsys)
+    assert line.startswith("gate C7 catch-all provider is attached to no outpost")
+    assert run(catchall_only([gbind("app-gate", "skadmin")], outposts=[{"providers": [99]}])) == 1
+
+
+def test_declared_catchall_slug_that_does_not_exist_is_reported_once(tmp_path, capsys):
+    decls = write_decls(tmp_path, {"pulse": {"mode": "admin-only"}}, catchall_slug="gone")
+    fake = FakeAuthentik(apps=[app("pulse")], groups=BASE_GROUPS + per_app_groups("pulse"), users=BASE_USERS,
+                         bindings=[gbind("app-pulse", "skadmin")])
+    assert run(fake, "--declarations", decls) == 1
+    assert c7(capsys) == ["gone C7 declared catch-all application does not exist"]

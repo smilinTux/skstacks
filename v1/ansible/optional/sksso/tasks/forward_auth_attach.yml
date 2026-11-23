@@ -1,0 +1,68 @@
+# After the stack deploy, when the forward-auth catch-all is on
+# (sksso.FORWARD_AUTH_ENABLED, the default): attach its Proxy Provider to the
+# embedded outpost WITHOUT dropping the providers already on it. A blueprint
+# cannot do that (it replaces an outpost's provider list), so this runs
+# src/sksso/forward_auth_attach.py under `ak shell` in a running worker
+# container, on whichever node swarm placed it (inventory hostnames are swarm
+# node names, the same assumption the CapAuth user linker makes). No API token
+# is needed, so it works on a brand-new cluster; nothing here is a secret.
+#
+# The script waits for the worker to apply the blueprint (retries below) and
+# attaches only a catch-all that is gated by the admin group alone. A refusal
+# fails the play loudly; the provider then stays unattached, which is the safe
+# state (a forward-auth request the outpost cannot match is denied).
+
+- name: Find the node running this stack's Authentik worker (forward-auth attach)
+  command:
+    argv: [docker, service, ps, --filter, desired-state=running, --format, "{{ '{{' }}.Node{{ '}}' }}", "{{ app }}-{{ env }}_worker"]
+  register: sksso_fa_worker_node
+  changed_when: false
+  until: sksso_fa_worker_node.rc == 0 and (sksso_fa_worker_node.stdout_lines | length) > 0
+  retries: 30
+  delay: 10
+
+- name: Stage the forward-auth attach script on the worker's node
+  copy:
+    src: "{{ playbook_dir }}/src/{{ app }}/forward_auth_attach.py"
+    dest: "/var/data/config/{{ app }}-{{ env }}/forward_auth_attach.py"
+    owner: root
+    group: root
+    mode: '0644'
+  delegate_to: "{{ sksso_fa_worker_node.stdout_lines | first }}"
+
+- name: Attach the forward-auth provider to the embedded outpost (ak shell, additive)
+  shell: |
+    set -euo pipefail
+    c=$(docker ps -q --filter "name={{ app }}-{{ env }}_worker" | head -n1)
+    [ -n "$c" ] || { echo "attach: waiting (no {{ app }}-{{ env }}_worker container on this node yet)"; exit 0; }
+    docker exec -i -e SKSSO_FORWARD_AUTH="$SKSSO_FORWARD_AUTH" "$c" ak shell \
+      < /var/data/config/{{ app }}-{{ env }}/forward_auth_attach.py 2>&1 \
+      | grep -E '^(attach: |Traceback|[A-Za-z.]*(Error|Exit))' || echo "attach: waiting (ak shell printed no status yet)"
+  args:
+    executable: /bin/bash
+  environment:
+    SKSSO_FORWARD_AUTH: "{{ {'provider': sksso_fa_provider_name, 'outpost': sksso_fa_outpost, 'admin_group': sksso_fa_admin_group, 'cookie_domain': sksso_fa_cookie_domain} | to_json }}"
+  register: sksso_fa_attach
+  # the worker applies the blueprint a little after the stack is up: wait for
+  # it, but stop at once on a refusal (retrying cannot fix one)
+  until: "'attach: waiting' not in sksso_fa_attach.stdout"
+  retries: 30
+  delay: 10
+  changed_when: "'attach: ok (attached' in sksso_fa_attach.stdout"
+  failed_when: false
+  delegate_to: "{{ sksso_fa_worker_node.stdout_lines | first }}"
+
+- name: Show the forward-auth attach result
+  debug:
+    msg: "{{ sksso_fa_attach.stdout_lines | default([]) }}"
+
+- name: Fail unless the forward-auth provider is on the embedded outpost
+  fail:
+    msg: >-
+      The forward-auth catch-all is NOT attached to the outpost (see the
+      attach lines above). The provider stays unattached, so requests behind
+      authentik@file are denied until this is fixed. A refusal names the
+      cause (an extra binding on the application, a second domain-wide
+      provider, a wrong outpost name): fix it in Authentik or with the
+      FORWARD_AUTH_* settings, then deploy again.
+  when: "'attach: ok' not in (sksso_fa_attach.stdout | default(''))"

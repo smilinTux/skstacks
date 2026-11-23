@@ -76,7 +76,88 @@ unless you deploy skai: set `sksso.SKAI_OIDC_ENABLED: true`, `SKAI_USERS` and
 `SKAI_OIDC_CLIENT_SECRET` (same value as `skai.OIDC_CLIENT_SECRET`), `SKAI_HOST` only when skai is not on its default host;
 redeploy sksso before skai.
 
-## Unreleased (v2.26.32)
+## skstacks-v2.26.32 - 2026-11-23
+
+### skpayment: its own minimal runtime image
+
+skpayment ran its gateway inside a general-purpose web UI image only because
+that image happened to ship fastapi, uvicorn and httpx. The default is now
+`smilintux/skpayment-runtime:py3.11-20261123`, built from the new
+`image/Dockerfile`: Debian 12 slim Python 3.11 pinned by digest, Debian security
+updates applied, exact package pins (the same versions as before except
+starlette 1.3.1, anyio 4.14.2 and certifi 2026.10.18, the first releases that fix
+open CVEs), no build tools. Trivy (HIGH and CRITICAL, fixed only): 11 critical
+and 165 high before, none after. The gateway answers identically on both images
+(`/health`, the unconfigured webhook and checkout paths). **Instance action:**
+none, unless the instance overrides `skpayment.IMAGE`.
+
+### skmem-pg: image rebuilt on a pinned Debian 12 base
+
+`smilintux/skmem-pg` is rebuilt from `image/Dockerfile` on
+`pgvector/pgvector:0.8.7-pg17-bookworm` pinned by digest, with the Debian
+security updates applied, and the stack pins the dated tag
+`pg17-bm25-age-20261123` by digest instead of the moving `pg17-bm25-age`. Trivy
+(HIGH and CRITICAL, fixed only): 16 critical and 67 high before, 1 critical and
+25 high after, all in the upstream `gosu` binary. The base stays on Debian 12
+and PostgreSQL 17 so the existing data directory, its collation and the
+pgvector, pg_search and AGE indexes are untouched (checked: a data directory
+written by the old image starts under the new one and all three still answer).
+**Instance action:** none; the next skmem-pg deploy rolls the new image.
+
+sksso creates the domain-wide forward-auth catch-all behind `authentik@file` as code, closed to the admin group
+and on by default. Instance action: an estate that made its catch-all by hand must adopt it or opt out BEFORE
+it redeploys sksso (see below); everything else needs nothing.
+
+### sksso: the `authentik@file` catch-all, created as code and bound to `skadmin` only
+
+- `authentik@file` (the Traefik forwardAuth middleware `core/skfenceha` ships, attached by default by many
+  roles) gates nothing without an Authentik provider that matches the request host, and nothing in the repo
+  created one. A new estate had SSO-default apps that were unreachable, or open to every Authentik account
+  when someone hand-made the provider without a policy binding (a live audit found exactly that). sksso now
+  renders `blueprints/forward-auth-catchall.yaml`: ONE `forward_domain` Proxy Provider (`external_host` the
+  sksso public URL, `cookie_domain` the cluster domain, `DOMAIN` with `CLOUDFLARED`), ONE Application, and ONE
+  policy binding to the admin group (`skadmin`) and nothing else. There is no "any authenticated user" path:
+  `FORWARD_AUTH_ADMIN_GROUP: skuser` is refused, and the attach step refuses a catch-all whose Application has
+  any other enabled binding. The group `skadmin` is created if absent (existence only, membership untouched);
+  on a new estate it starts empty, so nobody passes the catch-all until admin accounts are added to it.
+- The provider is attached to `authentik Embedded Outpost` additively by a new post-deploy step
+  (`tasks/forward_auth_attach.yml`, `src/sksso/forward_auth_attach.py`, `outpost.providers.add()` under
+  `ak shell`, no API token needed). It is not a blueprint outpost entry on purpose: a blueprint saves an
+  outpost's `providers` as a full replacement set and would detach every other provider on it. It waits for
+  the worker to apply the blueprint (a read-only preflight, `src/sksso/forward_auth_preflight.py`, runs BEFORE
+  the blueprint is rendered and refuses the deploy when a `forward_domain` provider under another name already
+  covers the cookie domain, so the worker never creates a duplicate), and refuses (the deploy fails, nothing is attached, forward auth then
+  denies) when the Application is bound to more than the admin group, when another `forward_domain` provider
+  already serves the same cookie domain, or when the outpost is missing or not a proxy outpost.
+- Knobs, all optional and documented in the README and the new `SOP.md`: `FORWARD_AUTH_ENABLED` (default
+  `true`; `false` opts out and removes a stale blueprint file this role wrote), `FORWARD_AUTH_PROVIDER_NAME`
+  and `FORWARD_AUTH_APP_SLUG` (the identifiers: set them to an existing hand-made provider and application to
+  ADOPT them instead of creating a duplicate), `FORWARD_AUTH_APP_NAME`, `FORWARD_AUTH_SSO_HOST` (default
+  `sso[-<env>].<base>`, `CAPAUTH_SSO_HOST` when set), `FORWARD_AUTH_COOKIE_DOMAIN` (default `<base>`),
+  `FORWARD_AUTH_ADMIN_GROUP` (default `skadmin`) and `FORWARD_AUTH_OUTPOST`. Contradictory settings fail the
+  play before anything is rendered: opting out while setting any other knob, an unreadable
+  `FORWARD_AUTH_ENABLED` (it is never read as "off" by accident), a cookie domain the sksso host is not under,
+  a malformed slug or host, the app slug equal to the skgit OIDC client id.
+- The `/blueprints/custom` mount in `server` and `worker` is now on by default (it was on only when another
+  app's blueprint was enabled), and the playbooks create `/var/data/config/sksso-<env>/blueprints` up front.
+  `FORWARD_AUTH_ENABLED: false` renders `sksso.yml` as before. The blueprint omits `invalidation_flow` for an
+  image tagged older than Authentik 2024.10 (the framework's default image is 2024.4.2), so it applies there too.
+- `check-access.py` reports the catch-all itself (C7, no declarations needed): missing (no `forward_domain`
+  provider with an application), unbound, bound to anything but the admin group (another group, a user, a
+  policy), or attached to no outpost. `authentik Admins` on the catch-all stays a C2 warning. Tests:
+  `v1/tests/test_sksso_forward_auth_catchall.py` (real Ansible render of the three playbooks, the attach
+  script against a fake Authentik ORM) and `v1/tests/test_sksso_check_access.py`.
+- **Instance action**: an estate with a hand-made catch-all must, BEFORE redeploying sksso, either set
+  `FORWARD_AUTH_PROVIDER_NAME` and `FORWARD_AUTH_APP_SLUG` (and `FORWARD_AUTH_SSO_HOST` /
+  `FORWARD_AUTH_COOKIE_DOMAIN` if its provider differs from the derived values) to the existing provider's
+  name and the application's slug, or set `FORWARD_AUTH_ENABLED: false`. Then confirm its binding: the
+  adopted Application must be bound to `skadmin` alone (remove stray bindings such as `authentik Admins`,
+  `skuser` or an any-account policy in Authentik; `check-access.py --who-passes <slug>` shows who passes).
+  Skipping this no longer creates a second catch-all beside yours: a read-only preflight (`ak shell` in the
+  running server container, run before the blueprint is rendered) finds a `forward_domain` provider under
+  another name on the same cookie domain and the deploy REFUSES, naming it and the settings to set; nothing is
+  rendered or changed in Authentik and yours keeps serving. A first install (no running server) skips the
+  preflight. New estates: add the admin accounts to `skadmin` after the first deploy.
 
 ### skfenceha: the ACME master label stays where it is
 
@@ -88,6 +169,61 @@ and Active holder keeps it; it moves only when no manager has it, several do, or
 or drained. New `skfenceha.ACME_MASTER_NODE` pins it to a named manager. **Instance action:** none
 required. Check that the label and skha agree (README, "Which manager is the ACME master"); if they
 do not, run the skha deploy once.
+
+### Image bumps for open CVEs
+
+Default image pins move to releases that clear findings from a Trivy scan. Every pin stays
+`tag@sha256:<multi-arch index digest>`, read from the registry. Same major everywhere, no major
+bumps.
+
+- **Postgres, three cases.** (1) Alpine server images move within alpine: skbom and skflow
+  `17.7-alpine` to `17.12-alpine`, skmesh `18.6-alpine` to `18.7-alpine`. (2) Images that only run
+  a dump sidecar (`POSTGRES_BACKUP_IMAGE`) move to the `-bookworm` variant of the same major:
+  skbom and skflow `17.7` to `17.12-bookworm`, skgit, skmesh and sksso `18.6` to `18.7-bookworm`.
+  `-bookworm` is the same Debian base the old pins already used, so there is no glibc or
+  collation change; the bare `17.12` and `18.7` tags moved to a newer Debian with a newer glibc
+  and more unfixed HIGH findings. (3) Debian images that run a database server (skgit and sksso
+  `postgres:18.6`, skmem-pg `postgres:17.11`) are **not changed**: a base OS change under an
+  existing data directory can change text collation and corrupt indexes, and these pins scan as
+  well or better than the replacements. Dump sidecars hold no data directory, so they are safe to
+  move.
+- skbom: Dependency-Track apiserver and frontend `4.14.6` to `4.14.7`.
+- skgit: Forgejo `17.0.1` to `17.0.2` (tag only, as before).
+- skpdf: Stirling-PDF `3.3.0` to `3.5.0`. Upstream removed the PostScript vector conversion
+  endpoints (3.4.0), the PDF to .doc output and the .wpd, .wps, .lwp, .abw, .hwp and .xps inputs
+  (3.5.0), and replaced LibreOffice with its own Office Convert engine in the image.
+- skrac: MeshCentral `1.2.6` to `1.3.1` (a security release). Upstream no longer ships the default
+  agent binaries inside the image: the server downloads and verifies them from pinned GitHub
+  releases into `meshcentral-data/agentbuilds/` at startup (`settings.agentDownloads`), so the
+  first start needs GitHub egress, or the files placed there by hand.
+- skhub: Talk recording image `20260929_105435` to `20261119_161514`.
+- skmon: Alertmanager `v0.34.2` to `v0.35.0`, and the CI-only promtool pin `v3.15.1` to `v3.16.0`.
+  Loki `3.7.10` and Grafana `13.3.1` are not taken yet: the skmon pin table requires a release to
+  be 14 days old, and they are younger.
+- skhome: HomeCenter `2.3.1` to `3.3.0` (major). No env, entrypoint or backup interface change;
+  the app applies its database migrations at start, and two of them drop columns, so a rollback
+  means restoring a backup, not just redeploying the old image. Take a backup first.
+- skgym: openGym api and web `1.4.1` to `1.4.5`.
+- skpatch-hosts: linux-update-dashboard `2026.10.9` to `2026.11.6`. API tokens now carry granular
+  permissions; the role still registers systems through its own short-lived session.
+- sksec-web: crowdsec-web-ui `2026.10.10` to `2026.11.12`. Settings that `config.yaml` or
+  `CONFIG_*` set now override and lock the matching UI settings; OIDC auto-login and back-channel
+  logout are off by default.
+- skorch: n8n `2.49.1` to `2.49.3`.
+- skmesh: NetBird management, signal and relay `0.83.1` to `0.83.2`, dashboard `v2.97.0` to
+  `v2.98.0`.
+- skpages: Caddy `2.11.8-alpine` to `2.11.9-alpine`, now pinned by digest.
+- skport: Portainer `2.45.4` now pinned by digest (same version).
+- skflow: Windmill `1.847.0` to `1.882.0`; its database migrations run at start.
+- skwrit: nextcloud-mcp-server `0.199.4` to `0.218.0`. The command and environment the role uses
+  are unchanged; upstream now rejects tool calls with unknown arguments and renamed its client
+  loggers (`nextcloud_client.*`).
+- skstream: Kometa pinned to `kometateam/kometa:v2.5.5` by digest (was a digest with no tag).
+- Left as is: skgraph FalkorDB (default is still v4.x) and skvector Qdrant (default is below
+  1.19), which are not part of this bump.
+
+**Instance action:** instances that override these images in their vault or vars keep their old
+pin until they change it. Redeploy the affected roles to pick up the new defaults.
 
 ## skstacks-v2.26.31 - 2026-11-21
 

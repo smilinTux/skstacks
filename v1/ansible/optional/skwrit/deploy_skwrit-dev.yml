@@ -66,7 +66,7 @@
         sw_stack: "{{ skwrit.STACK_NAME | default('skwrit-' + env, true) }}"
         sw_service: "{{ skwrit.WORKER_SERVICE | default('worker', true) }}"
         sw_mcp_enabled: "{{ skwrit.NEXTCLOUD_MCP_ENABLED | default(false, true) | bool }}"
-        sw_mcp_image: "{{ skwrit.NEXTCLOUD_MCP_IMAGE | default('ghcr.io/cbcoutinho/nextcloud-mcp-server:0.199.4@sha256:4db27920ca54f13965f8a509bcaf8491c2d06a476cc1b77062868ae901c2f0f1', true) }}"
+        sw_mcp_image: "{{ skwrit.NEXTCLOUD_MCP_IMAGE | default('ghcr.io/cbcoutinho/nextcloud-mcp-server:0.218.0@sha256:e9650d14dbdcf796ce1ef4de48f4505de89c84670bbf4722b3eeace00f57656c', true) }}"
         sw_constraints: "{{ skwrit.PLACEMENT_CONSTRAINTS | default(['node.role == worker'], true) }}"
         sw_extra_hosts: "{{ skwrit.EXTRA_HOSTS | default([], true) }}"
       tags: [config]

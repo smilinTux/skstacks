@@ -1,5 +1,5 @@
 """Live-parity check: prod runs Forgejo on the floating codeberg.org/forgejo:12
-tag while the framework pins 17.0.1. skgit.FORGEJO_VERSION already exists as
+tag while the framework pins 17.0.2. skgit.FORGEJO_VERSION already exists as
 an instance-settable var (f69f146) - this locks in that an instance can pin
 its own tag (or digest) without a framework change, so the parity vault PR
 only needs to set the var, not patch the template."""
@@ -18,7 +18,7 @@ def render(**skgit):
 
 
 def test_forgejo_version_defaults_to_pinned_release():
-    assert render() == "code.forgejo.org/forgejo/forgejo:17.0.1"
+    assert render() == "code.forgejo.org/forgejo/forgejo:17.0.2"
 
 
 def test_instance_can_pin_the_live_floating_major_as_an_exact_tag():
@@ -32,8 +32,8 @@ def test_default_registry_is_forgejos_own_not_codeberg():
 
 
 def test_instance_can_override_the_image_repository():
-    assert render(FORGEJO_IMAGE="registry.example.com/forgejo/forgejo") == "registry.example.com/forgejo/forgejo:17.0.1"
+    assert render(FORGEJO_IMAGE="registry.example.com/forgejo/forgejo") == "registry.example.com/forgejo/forgejo:17.0.2"
 
 
 def test_override_composes_with_a_version_pin():
-    assert render(FORGEJO_IMAGE="codeberg.org/forgejo/forgejo", FORGEJO_VERSION="17.0.1") == "codeberg.org/forgejo/forgejo:17.0.1"
+    assert render(FORGEJO_IMAGE="codeberg.org/forgejo/forgejo", FORGEJO_VERSION="17.0.2") == "codeberg.org/forgejo/forgejo:17.0.2"

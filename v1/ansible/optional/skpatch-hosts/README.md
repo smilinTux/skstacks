@@ -267,9 +267,10 @@ skpatch_hosts:
   CREDENTIAL_ID: 0        # or: an sshKey credential already in the dashboard (takes precedence)
 ```
 
-**How it signs in.** The pinned dashboard (2026.10.9) refuses every
+**How it signs in.** Dashboard releases up to 2026.10.9 refused every
 API-token request that creates a system or a credential (403 "API tokens
-cannot configure SSH connections"), password login is off in `AUTH_MODE:
+cannot configure SSH connections"); from 2026.11.2 tokens carry granular
+permissions instead, which this role does not manage. Password login is off in `AUTH_MODE:
 oidc`, and Authentik forward auth fronts it in `sso` mode. So the
 registrar (`src/skpatch-hosts/register_systems.js`) runs **inside the
 dashboard's own container**, on whichever node swarm placed it, and talks to
@@ -339,7 +340,7 @@ secrets masked, so they cannot be compared). A system whose package manager
 is not detected yet (registered this run, first check pending) gets its
 upgrade mode on the next run.
 
-**What the pinned app (2026.10.9) actually does, which the schedule design
+**What the app (read from the 2026.10.9 sources; not re-audited for 2026.11.6) actually does, which the schedule design
 has to respect** (read from `server/services/scheduler.ts`):
 
 - An **update** schedule refreshes its systems in parallel, then runs
@@ -631,7 +632,7 @@ What each line means:
 | `Image vulnerabilities: scan failed: ...` | The scan could not list the swarm's services at all (ssh, docker), or there is no summary file yet. |
 | `... and N more lines (cut to fit one Talk message)` | Talk refuses a message over 32000 characters; both messages are cut at a whole line under `--max-message-chars` (30000). The full data is the summary JSON on the controller. |
 
-**CVE ids for host packages:** the pinned dashboard (2026.10.9) does not
+**CVE ids for host packages:** the dashboard (as of 2026.10.9) does not
 store any. It marks an update as security when its apt repository is a
 `-security` pocket (`server/ssh/parsers/apt.ts`); the other package managers
 never set it. So host lines are package names and versions; CVE ids are

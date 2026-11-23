@@ -123,11 +123,11 @@ def test_blueprint_never_carries_the_secret_only_an_env_reference(name):
 
 def test_compose_mounts_blueprints_when_either_app_is_enabled():
     for svc in ("server", "worker"):
-        off = _compose()[svc]["volumes"]
+        off = _compose(FORWARD_AUTH_ENABLED=False)[svc]["volumes"]
         assert not any("/blueprints/" in v for v in off)
-        on_sksw = _compose(SKSEC_WEB_OIDC_CLIENT_SECRET=SKSW_SECRET)[svc]["volumes"]
+        on_sksw = _compose(FORWARD_AUTH_ENABLED=False, SKSEC_WEB_OIDC_CLIENT_SECRET=SKSW_SECRET)[svc]["volumes"]
         assert "/var/data/config/sksso-prod/blueprints:/blueprints/custom:ro" in on_sksw
-        on_skp = _compose(SKPATCH_HOSTS_OIDC_CLIENT_SECRET=SKPATCH_HOSTS_SECRET)[svc]["volumes"]
+        on_skp = _compose(FORWARD_AUTH_ENABLED=False, SKPATCH_HOSTS_OIDC_CLIENT_SECRET=SKPATCH_HOSTS_SECRET)[svc]["volumes"]
         assert "/var/data/config/sksso-prod/blueprints:/blueprints/custom:ro" in on_skp
 
 

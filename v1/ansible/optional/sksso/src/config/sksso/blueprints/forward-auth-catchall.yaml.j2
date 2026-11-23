@@ -1,0 +1,86 @@
+# Authentik blueprint: the domain-wide forward-auth catch-all behind the
+# `authentik@file` Traefik middleware (core/skfenceha ships the middleware,
+# most roles attach it by default). Rendered by tasks/forward_auth_blueprint.yml
+# into /var/data/config/sksso-<env>/blueprints/ and mounted at
+# /blueprints/custom; the Authentik worker discovers and applies it
+# (idempotent, re-applied on change and periodically). Opt out with
+# sksso.FORWARD_AUTH_ENABLED: false. No secret is involved.
+#
+# What it creates:
+#   1. the global admin group (default skadmin), existence only: no attrs, so
+#      membership and flags of an existing group are never touched;
+#   2. ONE Proxy Provider, mode forward_domain, external_host = the sksso
+#      public URL, cookie_domain = the estate domain;
+#   3. ONE Application for it;
+#   4. ONE policy binding: the application is bound to the admin group ONLY.
+#      There is no "any authenticated user" path. An application with no
+#      binding admits every account, so this binding is what makes the
+#      catch-all fail closed.
+#
+# Admin-only apps are served by this catch-all; an app that needs wider
+# access gets a provider of its own (docs/design/sso-app-access-provisioning.md
+# section 4.7).
+#
+# Adoption: every entry is matched by its identifier (provider by name,
+# application by slug, group by name, binding by target + group + order), so
+# an estate that made the catch-all by hand sets
+# FORWARD_AUTH_PROVIDER_NAME and FORWARD_AUTH_APP_SLUG to the existing names
+# and this blueprint updates that object instead of creating a duplicate.
+# invalidation_flow is sent from Authentik 2024.10 on (earlier images reject
+# the field); the framework's default image is older, see
+# tasks/forward_auth_blueprint.yml.
+# policy_engine_mode and every other attribute not listed below are left as
+# they are, so adoption never widens access. A stale binding to another group
+# on an adopted application is NOT removed (a blueprint cannot delete what it
+# does not name): check it with the access check (check-access.py, C7).
+#
+# The embedded outpost is NOT in this file on purpose. An outpost's
+# `providers` is a many-to-many field that the blueprint importer saves as a
+# full replacement set, so an outpost entry listing this provider would detach
+# every other provider already on the outpost (per-app forward_single
+# providers, for example). The provider is attached additively instead, by
+# tasks/forward_auth_attach.yml (src/sksso/forward_auth_attach.py, ORM
+# outpost.providers.add under `ak shell`).
+version: 1
+metadata:
+  name: forward-auth-catchall (managed by skstacks sksso)
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+  - model: authentik_core.group
+    id: admin-group
+    identifiers:
+      name: {{ sksso_fa_admin_group | to_json }}
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: provider
+    identifiers:
+      name: {{ sksso_fa_provider_name | to_json }}
+    attrs:
+      mode: forward_domain
+      external_host: {{ sksso_fa_external_host | to_json }}
+      cookie_domain: {{ sksso_fa_cookie_domain | to_json }}
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+{% if sksso_fa_invalidation_flow | bool %}
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+{% endif %}
+
+  - model: authentik_core.application
+    id: application
+    identifiers:
+      slug: {{ sksso_fa_app_slug | to_json }}
+    attrs:
+      name: {{ sksso_fa_app_name | to_json }}
+      provider: !KeyOf provider
+      # infrastructure, not a tile: apps have their own tiles
+      meta_hide: true
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf application
+      group: !KeyOf admin-group
+      order: 0
+    attrs:
+      enabled: true
+      negate: false
+      timeout: 30

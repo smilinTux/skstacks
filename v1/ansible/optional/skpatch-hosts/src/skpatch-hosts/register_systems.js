@@ -4,7 +4,7 @@
 // session it signs itself.
 //
 // Why a self-signed session and not an API token or a password:
-// - linux-update-dashboard 2026.10.9 refuses every API-token request that
+// - linux-update-dashboard up to 2026.10.9 refused every API-token request that
 //   creates or edits a system or a credential (systems.post("/") and
 //   systems.put("/:id") answer 403 "API tokens cannot configure SSH
 //   connections"; /api/credentials is a session-only management path).

@@ -47,7 +47,7 @@ services:
    image default below (test_postgres18_guard.py). #}
 {% set _pg_data_mount = '/var/lib/postgresql' if ((skmesh.POSTGRES_IMAGE | default('postgres:18-alpine')).split('@')[0].split('/')[-1].split(':')[-1].lstrip('pg').split('.')[0].split('-')[0] | int(0)) >= 18 else '/var/lib/postgresql/data' %}
   postgres:
-    image: {{ skmesh.POSTGRES_IMAGE | default('postgres:18.6-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395') }}
+    image: {{ skmesh.POSTGRES_IMAGE | default('postgres:18.7-alpine@sha256:0115267ab5a509022df9319c77be365cef335adb71556c75f60f5360ee247e71') }}
     env_file: /var/data/config/skmesh-{{ env }}/postgres.env
     environment:
       - PGTEMP=/var/lib/postgresql/data/tmp
@@ -76,7 +76,7 @@ services:
       start_period: 30s
 
   postgres-db-backup:
-    image: {{ skmesh.POSTGRES_BACKUP_IMAGE | default('postgres:18.6@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42') }}
+    image: {{ skmesh.POSTGRES_BACKUP_IMAGE | default('postgres:18.7-bookworm@sha256:194e55feb2597b1465dbee81cc9fd8d204566cd2eb42c8d22fd6c931a38781b1') }}
     env_file: /var/data/config/skmesh-{{ env }}/postgres-backup.env
     environment:
       - PGTEMP=/dump/tmp
@@ -125,7 +125,7 @@ services:
     logging: *logging
 
   management:
-    image: {{ skmesh.MANAGEMENT_IMAGE | default('netbirdio/management:0.83.1@sha256:77c74f342e4d36251ad4b920c2f21a9f13e62c69d8ae51a2ec5060052cd485d8') }}
+    image: {{ skmesh.MANAGEMENT_IMAGE | default('netbirdio/management:0.83.2@sha256:e9336e426dbdcd8fc8c65cde3183ffaf4007ed9f128d868e9e4f4f8b923bec84') }}
     container_name: skmesh-management
     env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
 {% if _mode == 'authentik' %}
@@ -196,7 +196,7 @@ services:
       - postgres
 
   signal:
-    image: {{ skmesh.SIGNAL_IMAGE | default('netbirdio/signal:0.83.1@sha256:9ceb99a656b3b35b573afcce91507db8c39e0f9412a7634be0a620f4e74c5b58') }}
+    image: {{ skmesh.SIGNAL_IMAGE | default('netbirdio/signal:0.83.2@sha256:075086a1b38cca814ec0699ec9aa509b6a0f078453f19ebac52934593fd5d6de') }}
     container_name: skmesh-signal
     env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
     networks:
@@ -226,7 +226,7 @@ services:
       - management
 
   relay:
-    image: {{ skmesh.RELAY_IMAGE | default('netbirdio/relay:0.83.1@sha256:7b52c1077c964ea01535c311a5e57d7c1c9b7ff4c974ff42995772e4c3546d1a') }}
+    image: {{ skmesh.RELAY_IMAGE | default('netbirdio/relay:0.83.2@sha256:1b27bbadef5ae7632c46c086c91a872dad7a024aaeb2e0ee7a99faeba23c859f') }}
     env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
     # Peers dial wss://<NB_EXPOSED_ADDRESS host>/relay; Traefik terminates
     # TLS on :443 and forwards the WebSocket here in plain HTTP.
@@ -262,7 +262,7 @@ services:
     # depends on (that image is not published here - see README). Default:
     # the upstream dashboard release paired with the management version
     # (dashboard v2.96.0 for NetBird 0.82), tag plus digest.
-    image: {{ skmesh.DASHBOARD_IMAGE | default('netbirdio/dashboard:v2.97.0@sha256:203b2dc90dc20d3fd45729caac7c922deb399586a68202e0a35be099720bac7d') }}
+    image: {{ skmesh.DASHBOARD_IMAGE | default('netbirdio/dashboard:v2.98.0@sha256:3e8a714e2966f96201b817657cf5b6e4304b947b88341fe99639214fb440ea9c') }}
     container_name: skmesh-dashboard
     env_file: /var/data/config/skmesh-{{ env }}/skmesh.env
     networks:

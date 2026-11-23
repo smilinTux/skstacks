@@ -11,7 +11,7 @@ an instance that never runs `deploy_skhome-<env>.yml`.
 - **License.** MIT (`github.com/yatzin/home-center`, website
   `https://home-center.dazzos.com`). This role **references the upstream
   image and vendors nothing**.
-- **Image.** `ghcr.io/yatzin/homecenter`, release `2.3.1`, multi-arch
+- **Image.** `ghcr.io/yatzin/homecenter`, release `3.3.0`, multi-arch
   (amd64, arm64), pinned by the manifest-list digest; the play refuses an
   image without `@sha256:`.
 - **No phone-home from the server.** HomeCenter makes no network call by
@@ -307,7 +307,7 @@ skhome:
   BACKUP_START_DELAY: 60                    # seconds before the first backup (ignored if backup_time is set)
 ```
 
-Default image: `ghcr.io/yatzin/homecenter:2.3.1@sha256:45bc4d6a0fed858ac...`
+Default image: `ghcr.io/yatzin/homecenter:3.3.0@sha256:ddff09f855c5c040...`
 (full digest in the playbooks). Networks: override with the flat per-env
 `skhome_<env>_networks` list.
 

@@ -25,10 +25,14 @@ gate.
 - Backend port: 9000 (Authentik's own HTTP listener; Traefik does the TLS).
 - Sticky session cookie: `authentik-session`.
 - **Forward-auth**: for services with no native SSO support, add
-  `authentik@file` (defined wherever your Traefik middleware config lives) to
-  that service's router middlewares. Point the middleware's address at
-  `http://sksso-<env>_server:9000/outpost.goauthentik.io/auth/traefik` and
-  configure an Authentik Proxy Outpost of type "Traefik" to match.
+  `authentik@file` (shipped by `core/skfenceha`, in
+  `dynamic-middlewares.yml.j2`) to that service's router middlewares. Point
+  the middleware's address at
+  `http://sksso-<env>_server:9000/outpost.goauthentik.io/auth/traefik`. The
+  Authentik side, the domain-wide `forward_domain` Proxy Provider, its
+  Application (bound to `skadmin` only) and its attachment to the embedded
+  outpost, is created by this role as code; see "Forward-auth catch-all
+  (authentik@file)" below.
   A service that needs its own login policy (not the domain-wide
   catch-all) gets its own forward_single Proxy Provider; see
   `optional/skpages/README.md` (Deploy step 3) for a worked example,
@@ -72,6 +76,17 @@ sksso:
   REDIS_DATA_PATH: /var/data/runtime/sksso-<env>/redis         # default
   colocate_with_data_node: false   # also pin server + worker to DATA_NODE
                                     # (see "Local database on a pinned node")
+
+  # forward-auth catch-all behind authentik@file (see "Forward-auth catch-all
+  # (authentik@file)"); ON by default, every knob below is optional
+  FORWARD_AUTH_ENABLED: true                      # false: you manage the catch-all by hand
+  FORWARD_AUTH_PROVIDER_NAME: "SKStacks forward auth (domain)"   # set to an existing provider's name to ADOPT it
+  FORWARD_AUTH_APP_SLUG: skstacks-forward-auth    # set to an existing application's slug to ADOPT it
+  FORWARD_AUTH_APP_NAME: "SKStacks forward auth (admin-only apps)"
+  FORWARD_AUTH_SSO_HOST: sso.example.org          # default sso[-<env>].<base> (CAPAUTH_SSO_HOST, when set, before that)
+  FORWARD_AUTH_COOKIE_DOMAIN: example.org         # default <base>: the cluster domain (DOMAIN with CLOUDFLARED)
+  FORWARD_AUTH_ADMIN_GROUP: skadmin               # default skadmin; the ONLY group bound
+  FORWARD_AUTH_OUTPOST: "authentik Embedded Outpost"   # default shown
 
   # replicas (all default to 1)
   server_replicas: 1
@@ -492,6 +507,96 @@ blueprint above); clean it up by hand if the app is being retired, not just
 switched back to forward auth.
 
 
+## Forward-auth catch-all (authentik@file)
+
+`core/skfenceha` ships the `authentik@file` Traefik middleware and most roles attach it by default, but
+a middleware alone gates nothing: the outpost needs a provider that matches the request host. This role
+creates it as code, so a fresh estate has a working, closed SSO gate on the first deploy instead of apps
+that are unreachable (no provider) or open to every Authentik account (a hand-made provider without a
+policy binding, which Authentik treats as "admit everyone").
+
+**On by default.** Every sksso deploy renders
+`/var/data/config/sksso-<env>/blueprints/forward-auth-catchall.yaml` (no secret inside), mounts the
+blueprints directory at `/blueprints/custom` (read only) in `server` and `worker`, and after the stack
+deploy attaches the provider to the embedded outpost. The blueprint creates or adopts, matched by name,
+slug or group:
+
+| Object | Value |
+|---|---|
+| Group | `FORWARD_AUTH_ADMIN_GROUP` (default `skadmin`), existence only: no attributes, so the membership and flags of an existing group are never touched |
+| Proxy Provider | named `FORWARD_AUTH_PROVIDER_NAME`, mode `forward_domain`, `external_host` `https://<sso host>`, `cookie_domain` the estate domain, authorization flow `default-provider-authorization-implicit-consent`, invalidation flow `default-provider-invalidation-flow` (only on Authentik 2024.10 and later, where the field exists) |
+| Application | slug `FORWARD_AUTH_APP_SLUG`, name `FORWARD_AUTH_APP_NAME`, hidden from the user portal (infrastructure, not a tile), provider the one above |
+| Policy binding | the Application bound to the admin group **only**, enabled, not negated |
+
+**Closed by construction.** The only binding the role ever writes is to the admin group. There is no
+setting that binds "any authenticated user": the deploy refuses `FORWARD_AUTH_ADMIN_GROUP: skuser` (the
+every-user baseline group), and the attach step refuses to attach a catch-all whose Application has any
+other enabled binding. The catch-all serves `admin-only` apps; an app that needs wider access gets its own
+provider (design, section 4.7). On a new estate `skadmin` starts with no members, so nobody passes the
+catch-all until you add the admin accounts to it: that is the fail-closed state, not a fault.
+
+**The outpost attach is additive and is not in the blueprint.** An Authentik outpost's `providers` is a
+many-to-many field that the blueprint importer saves as a full replacement set (and blueprints have no
+merge mode for it), so an outpost entry listing this provider would silently detach every provider already
+on the outpost, per-app `forward_single` providers included. Instead `tasks/forward_auth_attach.yml` runs
+`src/sksso/forward_auth_attach.py` under `ak shell` in a running worker container (the way the CapAuth user
+linker does, no API token needed, works on a brand-new cluster) and calls `outpost.providers.add()`, which
+keeps what is there and does nothing when the provider is already attached. It waits (up to 5 minutes) for
+the worker to apply the blueprint. It refuses, fails the deploy and attaches nothing when: the Application
+is bound to anything but the admin group; another `forward_domain` provider already serves the same cookie
+domain (two catch-alls for one domain are ambiguous); or the outpost does not exist or is not a proxy
+outpost. An unattached provider is the safe state: the outpost cannot match the request, so forward auth
+denies it.
+
+**A hand-made catch-all is refused, not duplicated.** The blueprint matches the provider by name, and the
+worker applies a rendered blueprint on its own, so an estate that already has a `forward_domain` provider
+under another name and redeploys without `FORWARD_AUTH_PROVIDER_NAME` / `FORWARD_AUTH_APP_SLUG` would get a
+second provider and application before the attach step could object. So a read-only preflight runs first,
+before the blueprint is rendered: `src/sksso/forward_auth_preflight.py` under `ak shell` in the running server
+container (no API token). When a `forward_domain` provider under another name covers the same cookie domain
+(or a parent or sub domain of it), the deploy fails naming that provider and its application slug and the
+settings to change (set the two names to adopt it, or `FORWARD_AUTH_ENABLED: false`); nothing is rendered,
+nothing is edited in Authentik, and a blueprint rendered by an earlier run is removed from the mount. With no
+running server container (a first install) the preflight is skipped.
+
+**Knobs** (all optional, all in the sksso vault; the deploy refuses unusable values):
+
+| Knob | Default | Meaning |
+|---|---|---|
+| `FORWARD_AUTH_ENABLED` | `true` | `false` opts out entirely: nothing is rendered or attached, a stale blueprint file this role wrote is removed, and nothing already in Authentik is deleted. Anything but a true/false spelling is refused (an unknown value would otherwise silently opt out). |
+| `FORWARD_AUTH_PROVIDER_NAME` | `SKStacks forward auth (domain)` | The Proxy Provider's name, its identifier. Set it to an existing provider's name to adopt it. |
+| `FORWARD_AUTH_APP_SLUG` | `skstacks-forward-auth` | The Application's slug, its identifier. Set it to an existing application's slug to adopt it. Not the skgit OIDC client id. |
+| `FORWARD_AUTH_APP_NAME` | `SKStacks forward auth (admin-only apps)` | The Application's display name. |
+| `FORWARD_AUTH_SSO_HOST` | `sso[-<env>].<base>` (`CAPAUTH_SSO_HOST` when set) | The host users reach Authentik on; the provider's `external_host` is `https://<it>`. |
+| `FORWARD_AUTH_COOKIE_DOMAIN` | `<base>`: `<CLUSTERNAME>.<DOMAIN>`, or `<DOMAIN>` with `CLOUDFLARED` | The provider's cookie domain. Must be a multi-label domain that the SSO host sits under (a browser drops any other cookie), and must cover the hosts of every app behind `authentik@file`. Widen it (for example to `<DOMAIN>`) when apps live outside the cluster domain. |
+| `FORWARD_AUTH_ADMIN_GROUP` | `skadmin` | The one group the Application is bound to. Never `skuser`. |
+| `FORWARD_AUTH_OUTPOST` | `authentik Embedded Outpost` | The outpost the provider is attached to. |
+
+**Contradictory settings fail the play** before anything is rendered: `FORWARD_AUTH_ENABLED: false` with any
+other `FORWARD_AUTH_*` knob set (you cannot adopt what you opted out of), an unreadable
+`FORWARD_AUTH_ENABLED`, a cookie domain the SSO host is not under, `FORWARD_AUTH_ADMIN_GROUP: skuser`, a
+malformed slug or host, or `FORWARD_AUTH_APP_SLUG` equal to the skgit OIDC client id while
+`SKGIT_OIDC_ENABLED` is on.
+
+**Existing estates with a hand-made catch-all: adopt or opt out BEFORE redeploying sksso.** Look up the
+provider's name and the application's slug in the Authentik admin UI, set `FORWARD_AUTH_PROVIDER_NAME` and
+`FORWARD_AUTH_APP_SLUG` to them (and `FORWARD_AUTH_SSO_HOST`, `FORWARD_AUTH_COOKIE_DOMAIN` if the object
+differs from the derived values: adoption sets mode, `external_host` and `cookie_domain` to the resolved
+values), or set `FORWARD_AUTH_ENABLED: false`. Without either, the deploy creates a second catch-all next to
+yours; the attach step refuses it (twin provider) and fails the deploy, and yours keeps serving, but the
+play ends in error. Adoption never changes the Application's policy engine mode and never removes a
+binding: after the first deploy, confirm the adopted Application is bound to the admin group alone
+(`--who-passes <app slug>` below lists who passes it; the attach step refuses to attach otherwise, and the
+check below reports C7 for it).
+
+**Verify.** `check-access.py` (below) reports the catch-all missing, unbound, bound to anything but the admin
+group, or attached to no outpost, all as C7. Run it after the first deploy of an estate.
+
+**Rollback / opt out.** Set `FORWARD_AUTH_ENABLED: false` and redeploy: the blueprint file is removed and
+nothing is attached again. The provider, application and binding already in Authentik stay (blueprint
+removal never deletes objects); delete them by hand if you also want them gone, and detach the provider
+from the outpost first, or requests behind `authentik@file` keep being gated by it.
+
 ## skgit (Forgejo) OIDC login
 
 `sksso.SKGIT_OIDC_ENABLED: true` plus `sksso.SKGIT_OIDC_CLIENT_SECRET` (32+ chars,
@@ -665,7 +770,8 @@ Read this section for what is true today, and the design for where it is going.
   existing tile off `authentik Admins`; it adds the new binding next to the old one.
 - A provider-less tile is a bookmark. It controls portal visibility only. Access to a forward-auth
   service is decided by the application behind the matched provider, which for most services is the
-  domain-wide catch-all. That catch-all is hand-made on each instance; no code here creates or binds it.
+  domain-wide catch-all. That catch-all is created and bound to `skadmin` by this role (see "Forward-auth
+  catch-all (authentik@file)"); an estate that opted out or adopted a hand-made one is responsible for its binding.
 - Authentik admits every authenticated user to an application that has NO policy bindings. An unbound
   catch-all therefore lets any user of the instance (including accounts that exist for other services)
   through forward auth. `skrac` and `skmesh` write no binding for their applications either. Run the
@@ -718,7 +824,10 @@ violation), then `#` summary lines. Exit 0 conforms, 1 at least one violation, 2
 of a warning. `--declarations <file.json>` adds the checks that need each app's declared mode; without it
 those are listed on a `# skipped:` line, not reported clean. `--who-passes <slug>` prints the usernames (no
 emails) that the app's current bindings admit, the pre-flight review before binding the catch-all to
-`skadmin`. `sksso.ACCESS_CHECK: true` also runs it after every sksso deploy as a report that never fails the
+`skadmin`. The catch-all itself is checked without any declarations (C7): the check reports it missing (no
+`forward_domain` provider at all), unbound, bound to anything other than the admin group (a group, a user,
+a policy, a negated binding), or attached to no outpost, so a hand-made or adopted catch-all is held to the
+same rule as the one this role creates. `sksso.ACCESS_CHECK: true` also runs it after every sksso deploy as a report that never fails the
 deploy (`tasks/access_check.yml`, tag `access-check`).
 
 ## SSO for skhub and skflow
@@ -784,7 +893,7 @@ status of the instance before promising self-service reset to anyone.
 
 ## Upgrading Postgres to 18
 
-Framework default: `postgres:18.6` (pinned `tag@sha256:digest`) for the server and the dump sidecar. Earlier releases ran Postgres 16.
+Framework default: `postgres:18.6` for the server and `postgres:18.7-bookworm` for the dump sidecar (both pinned `tag@sha256:digest`). Earlier releases ran Postgres 16.
 **Postgres 18 cannot open a Postgres 16 data directory, and an upgrade is never automatic.**
 
 What the framework does for you:

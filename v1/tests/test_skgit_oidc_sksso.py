@@ -155,12 +155,13 @@ def _env_file(**sksso):
 
 def test_sksso_off_renders_nothing_about_skgit():
     for svc in ("server", "worker"):
-        assert not any("/blueprints/" in v for v in _compose()[svc]["volumes"])
+        assert not any("/blueprints/" in v for v in _compose(FORWARD_AUTH_ENABLED=False)[svc]["volumes"])
     assert "SKGIT" not in _env_file()
     # a secret alone, or the flag off, changes nothing either
     assert _env_file(SKGIT_OIDC_CLIENT_SECRET=SECRET) == _env_file()
     assert _env_file(SKGIT_OIDC_ENABLED=False, SKGIT_OIDC_CLIENT_SECRET=SECRET) == _env_file()
-    assert _compose(SKGIT_OIDC_ENABLED=False, SKGIT_OIDC_CLIENT_SECRET=SECRET) == _compose()
+    assert _compose(FORWARD_AUTH_ENABLED=False, SKGIT_OIDC_ENABLED=False, SKGIT_OIDC_CLIENT_SECRET=SECRET) \
+        == _compose(FORWARD_AUTH_ENABLED=False)
 
 
 def test_sksso_on_mounts_the_blueprints_and_writes_the_secret_to_the_env_file_only():

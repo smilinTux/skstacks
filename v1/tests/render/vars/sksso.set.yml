@@ -37,3 +37,11 @@ sksso:
   SKAI_OIDC_AUTHENTICATION_FLOW: capauth-authentication
   SKAI_USERS_GROUP: example-ai-users
   SKAI_USERS: [example-user-a, example-user-b]
+  # forward-auth catch-all: adopt a hand-made one by name, widen nothing
+  FORWARD_AUTH_PROVIDER_NAME: Example domain forward auth
+  FORWARD_AUTH_APP_SLUG: example-forward-auth
+  FORWARD_AUTH_APP_NAME: Example forward auth
+  FORWARD_AUTH_SSO_HOST: sso.example.test
+  FORWARD_AUTH_COOKIE_DOMAIN: example.test
+  FORWARD_AUTH_ADMIN_GROUP: skadmin
+  FORWARD_AUTH_OUTPOST: authentik Embedded Outpost
