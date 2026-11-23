@@ -124,6 +124,9 @@ FAKE_STDOUT = {
     # inventory name must be a Swarm hostname).
     "skmon_node_ls": "node-1.render.example.test\nlocalhost",
     "garage_node": "render-node-1",
+    # sksso forward-auth preflight: a running server on a node, answering ok
+    "sksso_fa_pf_node": "render-node-1",
+    "sksso_fa_preflight": "preflight: ok (render stand-in)",
     "garage_replicas": "1/1",
     # skpayment: the controller-side app checkout (a fixture stand-in)
     "skpayment_app_src": str(FIXTURES / "skpayment-app" / "repo"),
@@ -134,6 +137,9 @@ FAKE_STDOUT = {
     "sksw_crowdsec_container": "render-container",
     "sksw_lapi_machines": "[]",
     "sksw_lapi_machines_after": "[]",
+    # sksso: the worker node, and the forward-auth attach's success line
+    "sksso_fa_worker_node": "render-node-1",
+    "sksso_fa_attach": "attach: ok (attached to outpost 'authentik Embedded Outpost', which now has 1 provider(s))",
     # skstream: the converge prints booleans only
     "skstream_converge": '{"dumb_changed": false, "cli_changed": false}',
 }

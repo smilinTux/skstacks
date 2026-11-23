@@ -110,9 +110,9 @@ def test_blueprint_follows_the_vault_overrides():
 
 def test_compose_mounts_blueprints_only_when_enabled():
     for svc in ("server", "worker"):
-        off = _compose()[svc]["volumes"]
+        off = _compose(FORWARD_AUTH_ENABLED=False)[svc]["volumes"]
         assert not any("/blueprints/" in v for v in off)
-        on = _compose(SKFLOW_OIDC_CLIENT_SECRET=SECRET)[svc]["volumes"]
+        on = _compose(FORWARD_AUTH_ENABLED=False, SKFLOW_OIDC_CLIENT_SECRET=SECRET)[svc]["volumes"]
         assert "/var/data/config/sksso-prod/blueprints:/blueprints/custom:ro" in on
 
 
