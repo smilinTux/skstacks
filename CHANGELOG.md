@@ -26,12 +26,19 @@ Python runtime with only fastapi, uvicorn and httpx; `image/` builds it). Tools 
 score), `corpus_get` (neighbouring chunks of a hit), `graph_entity` and `graph_neighbors` (FalkorDB).
 Read-only by construction: Qdrant search and scroll only (path allowlist), FalkorDB `GRAPH.RO_QUERY`
 only, Cypher constant with user input only as encoded parameters, corpora and collections from config
-only, hard limits, bearer token. Joins `skembed-<env>`, `skvector-<env>` and `skgraph-<env>`;
-subnets `172.16.123-125.0/24`. CI now installs fastapi and httpx for its app tests. Tests:
+only, hard limits, bearer token. Each corpus is also served alone at `/c/<name>/` with its own
+OpenAPI spec and no corpus argument (what skai registers); the all-corpora routes need
+`GLOBAL_ROUTES: true`. Collections may be Qdrant aliases. A corpus may name its own `embed_url`;
+with `EMBED_URL` set skembed is not needed. Coherence self-check: at startup and every
+`COHERENCE_INTERVAL_SECONDS` it samples points, re-embeds their text and reports the fraction
+with cosine above 0.99 on `/health` and `/metrics`; a corpus below its threshold (default 0.9)
+is degraded and its tool results carry a `warning`, but it keeps serving. Joins `skvector-<env>`,
+`skgraph-<env>` and (without `EMBED_URL`) `skembed-<env>`; subnets `172.16.123-125.0/24`. CI now installs fastapi and httpx for its app tests. Tests:
 `v1/tests/test_skcorpus_app.py`, `v1/tests/test_skcorpus_render.py`. **Instance action:** none
 unless you want it: set `skcorpus.API_TOKEN` (same value as `skai.CORPUS_TOKEN`), a read-only
-`QDRANT_API_KEY`, `FALKORDB_PASSWORD` and `CORPORA`; check each corpus's `embed_model` against its
-collections; deploy after skembed.
+`QDRANT_API_KEY`, `FALKORDB_PASSWORD` and `CORPORA` (aliases where collections are rebuilt);
+check each corpus's `embed_model` against its collections and watch the first coherence result on
+`/health`; deploy after skembed, or set `EMBED_URL` to an existing endpoint instead.
 
 ### skai: answer engine with web search and corpus knowledge base (new role)
 
@@ -41,22 +48,31 @@ OpenAI-compatible gateway (`GATEWAY_URL`, `GATEWAY_API_KEY`, `DEFAULT_MODEL`, `T
 web search (skpeek of the same env by default) with query generation; RAG embeddings through skembed
 with hybrid search and an optional external reranker; its own pgvector Postgres (bookworm) with a
 dump sidecar. Sign-in through Authentik OIDC with group based admin (`ADMIN_GROUP`, `USER_GROUPS`);
-in oidc mode the password sign-in endpoint is refused from outside. skcorpus is registered as a tool
-server (`TOOL_SERVER_CONNECTIONS`) and every entry in `CORPORA` becomes a model preset, created or
-updated after the deploy through Open WebUI's own API, with a layered prompt (graph for connections,
-vectors for substance, quotes only when asked, always cite title, file_path and chunk_index).
+in oidc mode the password sign-in endpoint is refused from outside. Every entry in `CORPORA` gets
+its own skcorpus tool server (`/c/<name>`, `TOOL_SERVER_CONNECTIONS`, admin only in the env) and
+its own model preset with a layered prompt (graph for connections, vectors for substance, quotes
+only when asked, always cite title, file_path and chunk_index). Per-corpus `allowed_groups`
+(default `[skai-users]`): a provision service in the stack creates the Open WebUI groups (filled
+from the OIDC groups claim) and grants each corpus's tool server and preset to its groups only,
+re-applying the grants after a restart. Sign-in is limited to the `USERS_GROUP` (default
+`skai-users`) and the admin groups (portal tile access mode app-groups). With `EMBED_URL` set,
+skembed is not needed.
 Optional voice (speaches: Whisper and Piper, pinned) behind `VOICE: false`. Portal tile with an icon.
 Subnets `172.16.120-122.0/24`. The README carries the full-gate stage plan. Tests:
 `v1/tests/test_skai_render.py`, `v1/tests/test_skai_provision.py`. **Instance action:** none unless
-you want it: fill the `skai` vault (secrets, gateway, `PROVISIONER_*`, `CORPUS_TOKEN`, `CORPORA`),
-enable the sksso client (below), deploy skembed, skcorpus, then skai.
+you want it: fill the `skai` vault (secrets, gateway, `PROVISIONER_*`, `CORPUS_TOKEN`, `CORPORA`
+with one entry per corpus and its `allowed_groups`), enable the sksso client and list the members
+(below), deploy skembed (or set `EMBED_URL`), skcorpus, then skai.
 
 ### sksso: optional OIDC client for skai
 
 `SKAI_OIDC_ENABLED` (default false) installs a blueprint with a confidential OIDC provider and the
 `skai` Application (the portal tile) with two strict redirect URIs, the client secret through `!Env`
-from `SKAI_OIDC_CLIENT_SECRET`. Tests: `v1/tests/test_skai_oidc_sksso.py`. **Instance action:** none
-unless you deploy skai: set `sksso.SKAI_OIDC_ENABLED: true` and
+from `SKAI_OIDC_CLIENT_SECRET`, plus the group `skai-users` (`SKAI_USERS_GROUP`) with its members
+from `SKAI_USERS` (instance vars; the list is the membership) and bindings of the Application to
+the admin group and that group, so only members can sign in. Tests:
+`v1/tests/test_skai_oidc_sksso.py`. **Instance action:** none
+unless you deploy skai: set `sksso.SKAI_OIDC_ENABLED: true`, `SKAI_USERS` and
 `SKAI_OIDC_CLIENT_SECRET` (same value as `skai.OIDC_CLIENT_SECRET`), `SKAI_HOST` only when skai is not on its default host;
 redeploy sksso before skai.
 
