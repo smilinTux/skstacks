@@ -36,7 +36,9 @@ bumps.
   move.
 - skbom: Dependency-Track apiserver and frontend `4.14.6` to `4.14.7`.
 - skgit: Forgejo `17.0.1` to `17.0.2` (tag only, as before).
-- skpdf: Stirling-PDF `3.3.0` to `3.5.0`.
+- skpdf: Stirling-PDF `3.3.0` to `3.5.0`. Upstream removed the PostScript vector conversion
+  endpoints (3.4.0), the PDF to .doc output and the .wpd, .wps, .lwp, .abw, .hwp and .xps inputs
+  (3.5.0), and replaced LibreOffice with its own Office Convert engine in the image.
 - skrac: MeshCentral `1.2.6` to `1.3.1` (a security release). Upstream no longer ships the default
   agent binaries inside the image: the server downloads and verifies them from pinned GitHub
   releases into `meshcentral-data/agentbuilds/` at startup (`settings.agentDownloads`), so the
