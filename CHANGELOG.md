@@ -6,6 +6,19 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased (v2.26.32)
 
+### skpayment: its own minimal runtime image
+
+skpayment ran its gateway inside a general-purpose web UI image only because
+that image happened to ship fastapi, uvicorn and httpx. The default is now
+`smilintux/skpayment-runtime:py3.11-20261123`, built from the new
+`image/Dockerfile`: Debian 12 slim Python 3.11 pinned by digest, Debian security
+updates applied, exact package pins (the same versions as before except
+starlette 1.3.1, anyio 4.14.2 and certifi 2026.10.18, the first releases that fix
+open CVEs), no build tools. Trivy (HIGH and CRITICAL, fixed only): 11 critical
+and 165 high before, none after. The gateway answers identically on both images
+(`/health`, the unconfigured webhook and checkout paths). **Instance action:**
+none, unless the instance overrides `skpayment.IMAGE`.
+
 ### skfenceha: the ACME master label stays where it is
 
 Every skfenceha deploy used to remove `traefik.acme.master` from all managers and put it on

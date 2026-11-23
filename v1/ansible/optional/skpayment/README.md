@@ -74,7 +74,7 @@ skpayment:
 
 | Key | Default | Notes |
 |---|---|---|
-| `IMAGE` | `ghcr.io/open-webui/open-webui:main@sha256:74093dad...` | Used only as a Python base with fastapi/uvicorn/httpx, the same image digest the hand-deployed gateway ran. Any digest-pinned image with Python 3.10+ and those three packages works; a small dedicated image would pull far less (about 1.7 GB compressed for this one). The deploy refuses an image without `@sha256:`. The image's own HEALTHCHECK probes :8080, which nothing serves here, so the service sets its own on `:8000/health`. |
+| `IMAGE` | `smilintux/skpayment-runtime:py3.11-20261123@sha256:79bd0222...` | Python plus fastapi, uvicorn and httpx and nothing else, built from [`image/`](./image/) (Debian 12 slim, pinned base, exact package pins). Until v2.26.32 the default was a general-purpose web UI image used only because it shipped those packages; it carried hundreds of unused packages and their CVEs onto the service Stripe reaches from the internet. Any digest-pinned image with Python 3.10+ and those packages still works. |
 | `APP_REF` / `APP_SHA256` | the app repo's `v1.1.0` commit and its file hash | Both are required in effect: the ref says where, the hash proves what. Before v2.26.6 the default was the first release (`17b0080`), which accepted unsigned webhooks when `STRIPE_WEBHOOK_SECRET` was empty. |
 | `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | none | Both set, or both empty ("Stripe not configured", below). One without the other is refused. |
 | `DATA_PATH` / `DATA_NODE` | shared storage, floating | SQLite over NFS works for this write volume (a few rows per subscription event). For local disk set both; the play stops on a local `DATA_PATH` without `DATA_NODE`, same rule as skgraph/skvector. |

@@ -14,7 +14,7 @@ services:
   skpayment:
     # Default = skp_default_image in the playbook (a test keeps them equal);
     # written out here so v1/scripts/list_images.py can see the pin.
-    image: {{ skpayment.IMAGE | default('ghcr.io/open-webui/open-webui:main@sha256:74093dadc9c6aabc23987a74fd8c2fb8d995b1a5b22e83b0036fb9d6af590e8c', true) }}
+    image: {{ skpayment.IMAGE | default('smilintux/skpayment-runtime:py3.11-20261123@sha256:79bd0222923e77f67c6dd4925ef51fc5623eaa5c58e5a4c9c9cbb90fae6731f5', true) }}
     entrypoint: []
     command: ["uvicorn", "skpayment:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]
     working_dir: /
@@ -24,8 +24,8 @@ services:
       - /var/data/skpayment-{{ env }}/app/skpayment.py:/skpayment.py:ro
       - /var/data/config/skpayment-{{ env }}/apps.json:/config/apps.json:ro
       - {{ skp_data_path }}:/data
-    # The image's own HEALTHCHECK probes its default app on :8080, which
-    # this service does not run: replace it with the gateway's /health.
+    # Probe the gateway's own /health (an IMAGE override may carry its own
+    # HEALTHCHECK for some other app; this one always wins).
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
       interval: 30s

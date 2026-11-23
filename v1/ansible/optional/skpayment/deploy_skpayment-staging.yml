@@ -41,7 +41,7 @@
     env: staging
     service_name: skpayment
     service_type: optional
-    skp_default_image: "ghcr.io/open-webui/open-webui:main@sha256:74093dadc9c6aabc23987a74fd8c2fb8d995b1a5b22e83b0036fb9d6af590e8c"
+    skp_default_image: "smilintux/skpayment-runtime:py3.11-20261123@sha256:79bd0222923e77f67c6dd4925ef51fc5623eaa5c58e5a4c9c9cbb90fae6731f5"
     skp_default_repo: "https://github.com/smilinTux/skpayments.git"
     # smilinTux/skpayments v1.1.0: "Stripe not configured" mode, unverified
     # webhooks rejected (the first release, 17b0080, accepted them).
