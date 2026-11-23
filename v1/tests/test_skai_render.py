@@ -191,7 +191,7 @@ def test_local_mode_has_no_signin_block_and_shows_the_form(tmp_path):
 def test_set_pass_voice_rerank_and_knobs(tmp_path):
     out = rs.ok(tmp_path, "skai", {**BASE, **SET})
     doc = compose(out)
-    assert set(doc["services"]) == {"skai", "db", "db-backup", "voice"}
+    assert set(doc["services"]) == {"skai", "db", "db-backup", "voice", "provision"}
     assert doc["services"]["voice"]["image"] == SET["VOICE_IMAGE"]
     assert rs.env_file(cfg(out) / "voice.env")["API_KEY"] == SET["VOICE_API_KEY"]
     e = rs.env_file(cfg(out) / "skai.env")
