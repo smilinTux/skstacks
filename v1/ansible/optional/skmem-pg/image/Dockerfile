@@ -1,5 +1,11 @@
-FROM pgvector/pgvector:pg17
+# Base pinned by digest, on Debian 12 (bookworm) and PG 17 like every image
+# before it: never let a rebuild move the OS (glibc collation) or the PG
+# major under an existing data directory. Bump the tag and digest together.
+FROM pgvector/pgvector:0.8.7-pg17-bookworm@sha256:b513c48566e4777cd3370451400000c78eda6a08131d68f4c31d4a76f27bd8fd
 USER root
+# Debian security updates published since the base image was built (Trivy
+# found fixed-but-not-installed CRITICALs in libgnutls30, perl and libbrotli1).
+RUN apt-get update && apt-get -y upgrade && rm -rf /var/lib/apt/lists/*
 # --- ParadeDB pg_search (real BM25, @@@ operator) — PG17 bookworm deb ---
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
  && curl -fL -o /tmp/pg_search.deb https://github.com/paradedb/paradedb/releases/download/v0.24.0/postgresql-17-pg-search_0.24.0-1PARADEDB-bookworm_amd64.deb \
