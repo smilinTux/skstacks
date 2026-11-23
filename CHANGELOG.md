@@ -61,6 +61,17 @@ it redeploys sksso (see below); everything else needs nothing.
   rendered or changed in Authentik and yours keeps serving. A first install (no running server) skips the
   preflight. New estates: add the admin accounts to `skadmin` after the first deploy.
 
+### skfenceha: the ACME master label stays where it is
+
+Every skfenceha deploy used to remove `traefik.acme.master` from all managers and put it on
+whichever manager that run selected (the first one that answered). A deploy that selected another
+manager moved traefik-acme with it, and skha, which renders its keepalived priorities from the same
+label, kept preferring the old node until its next deploy. The label is now sticky: a single Ready
+and Active holder keeps it; it moves only when no manager has it, several do, or the holder is down
+or drained. New `skfenceha.ACME_MASTER_NODE` pins it to a named manager. **Instance action:** none
+required. Check that the label and skha agree (README, "Which manager is the ACME master"); if they
+do not, run the skha deploy once.
+
 ## skstacks-v2.26.31 - 2026-11-21
 
 Patch on v2.26.30. skgit can sign users in through Authentik over OIDC, managed as code on both
