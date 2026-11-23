@@ -4,6 +4,19 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
+## Unreleased (v2.26.33)
+
+### skembed: CPU embedding service with an OpenAI-compatible API (new role)
+
+New optional role `v1/ansible/optional/skembed`: Hugging Face text-embeddings-inference
+(`cpu-1.9.4`, pinned by index digest) serving one embedding model on CPU as a swarm service, with
+`POST /v1/embeddings` on the `skembed-<env>` overlay. The model comes from a local directory
+(`MODEL_PATH`, preferred, no network) or a Hugging Face repo id (`MODEL_ID`, `HF_TOKEN` from the
+vault). Healthcheck on `/health`, CPU and memory limits, placement constraints, an optional bearer
+`API_KEY` and an optional published port. Subnets `172.16.126-128.0/24`. Tests:
+`v1/tests/test_skembed_render.py`. **Instance action:** none unless you want it: pick the model, set
+`skembed.MODEL_PATH` (or `MODEL_ID` and `HF_TOKEN`) and `MODEL_NAME`, deploy before skcorpus and skai.
+
 ## Unreleased (v2.26.32)
 
 ### skfenceha: the ACME master label stays where it is
