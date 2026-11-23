@@ -77,6 +77,14 @@
         skc_coherence_interval: "{{ skcorpus.COHERENCE_INTERVAL_SECONDS | default(3600) | string }}"
         skc_coherence_min_cosine: "{{ skcorpus.COHERENCE_MIN_COSINE | default(0.99, true) | string }}"
         skc_coherence_threshold: "{{ skcorpus.COHERENCE_THRESHOLD | default(0.9, true) | string }}"
+        skc_pg_statement_timeout_ms: "{{ skcorpus.PG_STATEMENT_TIMEOUT_MS | default(5000, true) | string }}"
+        skc_pg_networks: "{{ skcorpus.PG_NETWORKS | default([], true) }}"
+      tags: [config]
+
+    - name: Split the corpora by backend (qdrant is the default, pgvector opt-in)
+      set_fact:
+        skc_pg_corpora: "{{ skc_corpora | selectattr('backend', 'defined') | selectattr('backend', 'equalto', 'pgvector') | list }}"
+        skc_qdrant_corpora: "{{ (skc_corpora | rejectattr('backend', 'defined') | list) + (skc_corpora | selectattr('backend', 'defined') | rejectattr('backend', 'equalto', 'pgvector') | list) }}"
       tags: [config]
 
     - name: Validate the image pin
@@ -101,18 +109,21 @@
           - skc_coherence_sample is match('^[0-9]+$') and skc_coherence_interval is match('^[0-9]+$')
           - skc_coherence_min_cosine is match('^(0(\.[0-9]+)?|1(\.0+)?)$')
           - skc_coherence_threshold is match('^(0(\.[0-9]+)?|1(\.0+)?)$')
+          - skc_pg_statement_timeout_ms is match('^[0-9]+$')
         fail_msg: >-
           ERROR: skcorpus needs API_TOKEN (32+ chars, openssl rand -hex 32, the
           same value as skai.CORPUS_TOKEN), QDRANT_URL and EMBED_URL http(s)
           URLs, FALKORDB_HOST a host name, FALKORDB_PORT and the MAX_* limits
           integers, COHERENCE_SAMPLE and COHERENCE_INTERVAL_SECONDS integers,
-          COHERENCE_MIN_COSINE and COHERENCE_THRESHOLD numbers from 0 to 1.
+          COHERENCE_MIN_COSINE and COHERENCE_THRESHOLD numbers from 0 to 1,
+          PG_STATEMENT_TIMEOUT_MS an integer.
         quiet: true
       tags: [config]
 
     - name: Validate the corpora (a list; empty is allowed)
       # Each corpus: name, collections (non-empty list of collection or alias
-      # names), embed_model, and optional title, graph, description, embed_url,
+      # names; not for backend pgvector, see the next check), embed_model, and
+      # optional backend, title, graph, description, embed_url,
       # query_prefix, document_prefix, name_property, vector_name,
       # allowed_groups (used by skai) and coherence_threshold.
       # The app validates the same rules again at start.
@@ -122,10 +133,11 @@
           - skc_corpora | rejectattr('name', 'defined') | list | length == 0
           - skc_corpora | map(attribute='name') | map('string') | reject('match', '^[A-Za-z0-9][A-Za-z0-9._-]*$') | list | length == 0
           - skc_corpora | map(attribute='name') | list | unique | length == skc_corpora | length
-          - skc_corpora | rejectattr('collections', 'defined') | list | length == 0
+          - skc_corpora | selectattr('backend', 'defined') | map(attribute='backend') | reject('in', ['qdrant', 'pgvector']) | list | length == 0
+          - skc_qdrant_corpora | rejectattr('collections', 'defined') | list | length == 0
           - skc_corpora | rejectattr('embed_model', 'defined') | list | length == 0
-          - skc_corpora | map(attribute='collections') | map('length') | select('equalto', 0) | list | length == 0
-          - skc_corpora | map(attribute='collections') | flatten | map('string') | reject('match', '^[A-Za-z0-9][A-Za-z0-9._-]*$') | list | length == 0
+          - skc_qdrant_corpora | map(attribute='collections') | map('length') | select('equalto', 0) | list | length == 0
+          - skc_qdrant_corpora | map(attribute='collections') | flatten | map('string') | reject('match', '^[A-Za-z0-9][A-Za-z0-9._-]*$') | list | length == 0
           - skc_corpora | selectattr('embed_url', 'defined') | map(attribute='embed_url') | select | map('string') | reject('match', '^https?://[A-Za-z0-9._-]+(:[0-9]+)?(/.*)?$') | list | length == 0
           - skc_corpora | selectattr('allowed_groups', 'defined') | map(attribute='allowed_groups') | reject('sequence') | list | length == 0
           - skc_corpora | selectattr('allowed_groups', 'defined') | map(attribute='allowed_groups') | select('string') | list | length == 0
@@ -133,7 +145,41 @@
           ERROR: skcorpus.CORPORA must be a list of mappings, each with a unique
           name (a plain token), collections (a non-empty list of plain
           collection or alias names) and embed_model; embed_url, when set, an
-          http(s) URL; allowed_groups, when set, a list.
+          http(s) URL; allowed_groups, when set, a list; backend, when set,
+          qdrant or pgvector.
+        quiet: true
+      tags: [config]
+
+    - name: Validate the pgvector corpora and their DSNs
+      # backend pgvector: pg_dsn_env names a key of skcorpus.PG_DSNS (vault;
+      # the DSN itself never goes in corpora.json), pg_filter_values is a
+      # non-empty list, no graph and no collections. The app checks the
+      # identifiers (pg_relation, pg_search_fn, pg_filter_column) again.
+      # The default image has no psycopg: build image/ and set IMAGE.
+      assert:
+        that:
+          - skcorpus.PG_DSNS | default({}, true) is mapping
+          - skcorpus.PG_DSNS | default({}, true) | dict2items | map(attribute='key') | map('string') | reject('match', '^[A-Z][A-Z0-9_]{0,59}_DSN$') | list | length == 0
+          - skcorpus.PG_DSNS | default({}, true) | dict2items | map(attribute='value') | map('string') | select('match', '^\\s*$') | list | length == 0
+          - skcorpus.PG_DSNS | default({}, true) | dict2items | map(attribute='value') | map('string') | select('search', '[\\r\\n]') | list | length == 0
+          - skc_pg_corpora | rejectattr('pg_dsn_env', 'defined') | list | length == 0
+          - skc_pg_corpora | map(attribute='pg_dsn_env') | map('string') | reject('in', skcorpus.PG_DSNS | default({}, true) | list) | list | length == 0
+          - skc_pg_corpora | rejectattr('pg_filter_values', 'defined') | list | length == 0
+          - skc_pg_corpora | map(attribute='pg_filter_values') | reject('sequence') | list | length == 0
+          - skc_pg_corpora | map(attribute='pg_filter_values') | select('string') | list | length == 0
+          - skc_pg_corpora | map(attribute='pg_filter_values') | map('length') | select('equalto', 0) | list | length == 0
+          - skc_pg_corpora | selectattr('graph', 'defined') | map(attribute='graph') | select | list | length == 0
+          - skc_pg_corpora | selectattr('collections', 'defined') | map(attribute='collections') | select | list | length == 0
+          - skc_pg_networks is sequence and skc_pg_networks is not string
+          - skc_pg_networks | map('string') | reject('match', '^[A-Za-z0-9][A-Za-z0-9._-]*$') | list | length == 0
+          - skc_pg_corpora | length == 0 or skc_image != skc_default_image
+        fail_msg: >-
+          ERROR: each backend pgvector corpus needs pg_dsn_env (a key of
+          skcorpus.PG_DSNS, upper case ending in _DSN, its value a one-line
+          DSN) and a non-empty pg_filter_values list, and takes no graph and
+          no collections; PG_NETWORKS is a list of existing network names.
+          pgvector needs psycopg, which the default image lacks: build image/
+          and set skcorpus.IMAGE to it.
         quiet: true
       tags: [config]
 

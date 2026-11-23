@@ -40,6 +40,20 @@ unless you want it: set `skcorpus.API_TOKEN` (same value as `skai.CORPUS_TOKEN`)
 check each corpus's `embed_model` against its collections and watch the first coherence result on
 `/health`; deploy after skembed, or set `EMBED_URL` to an existing endpoint instead.
 
+### skcorpus: read-only pgvector backend
+
+A corpus may set `backend: pgvector` and live in a Postgres table or view (`pg_relation`, default
+`docs_public`) instead of Qdrant: hybrid search through `pg_search_fn` (default
+`hybrid_search_docs_public`, vector plus BM25 with RRF), over-fetched and filtered to the corpus's
+`pg_filter_values` (on `pg_filter_column`, default `corpus`), or vector distance only with
+`pg_search_fn: ""`; `corpus_get` windows and the coherence check work the same; no graph. Every
+session is read-only (`SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY`, checked) with a
+`statement_timeout` (`PG_STATEMENT_TIMEOUT_MS`, 5000), and only fixed SELECT templates with bound
+values exist. The DSN is in the vault (`PG_DSNS`, keyed by the corpus's `pg_dsn_env`) and only in
+the 0600 env file; `PG_NETWORKS` adds the database's overlay. `image/` now pins psycopg 3.3.9.
+**Instance action:** none unless you want it: build `image/` and set `skcorpus.IMAGE` (the default
+image has no psycopg, the play refuses pgvector corpora on it), use a read-only role.
+
 ### skai: answer engine with web search and corpus knowledge base (new role)
 
 New optional role `v1/ansible/optional/skai`: Open WebUI (`v0.13.4`, pinned by index digest), no

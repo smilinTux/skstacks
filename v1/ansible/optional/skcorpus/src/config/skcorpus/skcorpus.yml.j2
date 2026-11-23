@@ -5,7 +5,7 @@ version: '3.8'
 # app/skcorpus.py from this role, checked against its pinned sha256 and
 # bind-mounted read-only (README.md). Internal only (no Traefik router).
 
-{% set skc_nets = ['skcorpus-' ~ env] + (skcorpus.CONNECT_NETWORKS | default(([] if (skcorpus.EMBED_URL | default('', true) | string | length) > 0 else ['skembed-' ~ env]) + ['skvector-' ~ env, 'skgraph-' ~ env], true)) %}
+{% set skc_nets = ['skcorpus-' ~ env] + (skcorpus.CONNECT_NETWORKS | default(([] if (skcorpus.EMBED_URL | default('', true) | string | length) > 0 else ['skembed-' ~ env]) + ['skvector-' ~ env, 'skgraph-' ~ env], true)) + (skcorpus.PG_NETWORKS | default([], true)) %}
 networks:
 {% for n in skc_nets | unique %}
   {{ n }}:

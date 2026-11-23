@@ -17,6 +17,15 @@ skcorpus:
       collections: [example-notes-v1]
       embed_model: example-embed
       vector_name: dense
+    - name: example-wiki
+      backend: pgvector
+      pg_dsn_env: EXAMPLE_WIKI_DSN
+      pg_relation: docs_public
+      pg_search_fn: hybrid_search_docs_public
+      pg_filter_column: corpus
+      pg_filter_values: [wiki, wiki-raw]
+      embed_model: example-embed
+      allowed_groups: [example-ai-users]
   QDRANT_URL: "http://qdrant.example.test:6333"
   QDRANT_API_KEY: "example-qdrant-ro-key-not-a-secret"
   FALKORDB_HOST: graph.example.test
@@ -25,6 +34,10 @@ skcorpus:
   FALKORDB_PASSWORD: "example-graph-password-not-a-secret"
   EMBED_URL: "http://embed.example.test:8080/v1"
   EMBED_API_KEY: "example-embed-key-not-a-secret"
+  PG_DSNS:
+    EXAMPLE_WIKI_DSN: "postgresql://reader:example-pg-password-not-a-secret@db.example.test:5432/examplewiki"
+  PG_NETWORKS: [example-db-net]
+  PG_STATEMENT_TIMEOUT_MS: 3000
   IMAGE: "registry.example.test/python-fastapi:3.12@sha256:0000000000000000000000000000000000000000000000000000000000000000"
   MAX_K: 10
   MAX_WINDOW: 2
