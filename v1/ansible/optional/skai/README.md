@@ -172,7 +172,7 @@ service); with corpora configured, waits for the provision service's
 
 ```yaml
 skai:
-  CLUSTERNAME: skstack01            # default: inventory cluster_name
+  CLUSTERNAME: example-cluster      # default: inventory cluster_name
   DOMAIN: example.com               # default: inventory domain
   CLOUDFLARED: false                # true: default host is under DOMAIN, not CLUSTERNAME.DOMAIN
   HOSTNAME: ""                      # default skai[-dev|-staging].<base domain>
