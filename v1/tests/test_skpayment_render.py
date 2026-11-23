@@ -22,8 +22,8 @@ pytestmark = pytest.mark.skipif(shutil.which("ansible-playbook") is None, reason
 
 BASE = yaml.safe_load((rp.VARS / "skpayment.example.yml").read_text())["skpayment"]
 SET = yaml.safe_load((rp.VARS / "skpayment.set.yml").read_text())["skpayment"]
-DEFAULT_IMAGE = ("ghcr.io/open-webui/open-webui:main@sha256:"
-                 "74093dadc9c6aabc23987a74fd8c2fb8d995b1a5b22e83b0036fb9d6af590e8c")
+DEFAULT_IMAGE = ("smilintux/skpayment-runtime:py3.11-20261123@sha256:"
+                 "79bd0222923e77f67c6dd4925ef51fc5623eaa5c58e5a4c9c9cbb90fae6731f5")
 
 
 def render(tmp: Path, vault: dict, env: str = "prod") -> tuple[dict, Path]:
