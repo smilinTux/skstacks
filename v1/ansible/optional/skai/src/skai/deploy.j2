@@ -1,0 +1,66 @@
+#!/bin/bash
+set -e
+
+# Never force-restart a service on its FIRST install (first-boot init must
+# finish); a redeploy restarts it when the play changed a bind-mounted file
+# or the env file, which the stack spec cannot see.
+PREEXISTING_SERVICES=" "
+record_preexisting() {
+    local svc
+    for svc in "$@"; do
+        if docker service inspect "$svc" >/dev/null 2>&1; then
+            PREEXISTING_SERVICES+="$svc "
+        fi
+    done
+}
+preexisted() {
+    case "$PREEXISTING_SERVICES" in *" $1 "*) return 0 ;; esac
+    echo "First install of $1: skipping forced restart (first-boot init must finish)"
+    return 1
+}
+
+# SKAI Deploy Script
+# Environment: {{ env }}
+APPNAME=skai
+STACK_NAME=skai-{{ env }}
+CONFIG_DIR="/var/data/config/${STACK_NAME}"
+COMPOSE_FILE="${CONFIG_DIR}/skai.yml"
+SERVICE="${STACK_NAME}_skai"
+
+if [ -f "${CONFIG_DIR}/${APPNAME}.sh.env" ]; then
+    source "${CONFIG_DIR}/${APPNAME}.sh.env"
+fi
+
+if [ ! -f "${COMPOSE_FILE}" ]; then
+    echo "Error: Compose file not found: ${COMPOSE_FILE}"
+    exit 1
+fi
+
+cd "${CONFIG_DIR}"
+
+record_preexisting "${SERVICE}"
+docker stack deploy \
+    -c "${COMPOSE_FILE}" \
+    --prune \
+    --with-registry-auth \
+    "${STACK_NAME}"
+
+if [ "${RESTART:-0}" = 1 ]; then
+    echo "The play changed the env of ${SERVICE}"
+    preexisted "${SERVICE}" && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=true "${SERVICE}" || true
+fi
+
+echo "Waiting for ${SERVICE} to converge..."
+REPLICAS="0/${SKAI_APP_REPLICAS:-1}"
+for _ in $(seq 1 ${SKAI_CONVERGE_TRIES:-120}); do
+    REPLICAS=$(docker service ls --filter "name=${SERVICE}" --format "{% raw %}{{.Replicas}}{% endraw %}" 2>/dev/null || echo "0/${SKAI_APP_REPLICAS:-1}")
+    [[ "$REPLICAS" == "${SKAI_APP_REPLICAS:-1}/${SKAI_APP_REPLICAS:-1}" ]] && break
+    sleep 5
+done
+if [[ "$REPLICAS" == "${SKAI_APP_REPLICAS:-1}/${SKAI_APP_REPLICAS:-1}" ]]; then
+    echo "${SERVICE} is running: https://${SKAI_HOST:-unknown}/"
+else
+    echo "${SERVICE} not converged: ${REPLICAS}"
+    docker service ps --no-trunc "${SERVICE}" | head -5 || true
+fi
+echo "Deployment complete!"

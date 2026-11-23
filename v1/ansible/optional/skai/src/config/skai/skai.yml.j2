@@ -1,0 +1,249 @@
+version: '3.8'
+
+# skai: Open WebUI (pinned release) + its own pgvector Postgres + a dump
+# sidecar (+ optional voice). All app configuration is skai.env (README.md).
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+{% set ska_nets = ['skai-' ~ env, 'cloud-public-' ~ env] + (skai.CONNECT_NETWORKS | default(['skpeek-' ~ env, 'skembed-' ~ env, 'skcorpus-' ~ env], true)) %}
+{% set ska_app_pl = skai.PLACEMENT_CONSTRAINTS | default(['node.role == worker'], true) %}
+{% set ska_db_pl = skai.DB_PLACEMENT_CONSTRAINTS | default(['node.role == worker'], true) %}
+networks:
+{% for n in ska_nets | unique %}
+  {{ n }}:
+    external: true
+{% endfor %}
+
+services:
+  skai:
+    # Default = ska_default_image in the playbook (a test keeps them equal);
+    # written out here so v1/scripts/list_images.py can see the pin.
+    image: {{ skai.IMAGE | default('ghcr.io/open-webui/open-webui:v0.13.4@sha256:d5168bfbc28609eff5bea1b438dd864cf64d185cf6582c02244865e18385b901', true) }}
+    env_file:
+      - /var/data/config/skai-{{ env }}/skai.env
+    volumes:
+      - {{ ska_data_path }}:/app/backend/data
+      - /var/data/skai-{{ env }}/provision:/provision:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      # First start: database migrations, and the local reranker model download.
+      start_period: {{ skai.HEALTH_START_PERIOD | default('600s', true) }}
+    networks:
+{% for n in ska_nets | unique %}
+      - {{ n }}
+{% endfor %}
+    logging: *logging
+    deploy:
+      mode: replicated
+      # One replica: Open WebUI keeps websocket and task state in-process
+      # without Redis.
+      replicas: 1
+      placement:
+        constraints: {{ ska_app_pl | tojson }}
+      resources:
+        limits:
+          cpus: '{{ skai.CPUS | default("2.0", true) }}'
+          memory: {{ skai.MEMORY_LIMIT | default("4G", true) }}
+        reservations:
+          memory: {{ skai.MEMORY_RESERVATION | default("1G", true) }}
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skai"
+        - "com.skt.env={{ env }}"
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        - "traefik.http.routers.{{ ska_router }}.rule=Host(`{{ ska_host }}`)"
+        - "traefik.http.routers.{{ ska_router }}.entrypoints=websecure"
+        - "traefik.http.routers.{{ ska_router }}.tls=true"
+        - "traefik.http.routers.{{ ska_router }}.tls.certresolver=main"
+{% if ska_tls_options != 'none' %}
+        - "traefik.http.routers.{{ ska_router }}.tls.options={{ ska_tls_options }}"
+{% endif %}
+        - "traefik.http.routers.{{ ska_router }}.middlewares={{ ska_middlewares }}"
+        - "traefik.http.routers.{{ ska_router }}.service={{ ska_router }}"
+{# === API ROUTER (raw upstream status codes) ===
+    The web UI reads JSON errors from /api/, /oauth/ and /ws/; a chain ending in error-pages@file would
+    swap every 4xx/5xx for an HTML page. This router sends those paths through the main chain with each
+    error-pages-bearing chain swapped for its no-error-pages form (skai-chain@file keeps its headers and
+    gzip). skai.API_MIDDLEWARES replaces the derived chain. #}
+{% set _api_swap = {'default@file': 'default-no-error-pages@file', 'default-no-crowdsec@file': 'default-no-error-pages@file', 'upload-chain@file': 'large-upload-buffering@file,default-security-headers@file', 'upload-chain-no-crowdsec@file': 'large-upload-buffering@file,default-security-headers@file', 'skai-chain@file': 'skai-headers@file,gzip@file', 'error-pages@file': '', 'error-pages-all@file': ''} %}
+{% set _api_mw = [] %}
+{% for _m in (ska_middlewares | default('', true)).split(',') %}
+{% set _s = _api_swap.get(_m | trim, _m | trim) %}
+{% if _s %}
+{% set _ = _api_mw.append(_s) %}
+{% endif %}
+{% endfor %}
+{% set _ska_api_default = _api_mw | unique | join(',') %}
+        - "traefik.http.routers.{{ ska_router }}-api.rule=Host(`{{ ska_host }}`) && (PathPrefix(`/api/`) || PathPrefix(`/oauth/`) || PathPrefix(`/ws/`) || Path(`/health`))"
+        - "traefik.http.routers.{{ ska_router }}-api.entrypoints=websecure"
+        - "traefik.http.routers.{{ ska_router }}-api.tls=true"
+        - "traefik.http.routers.{{ ska_router }}-api.tls.certresolver=main"
+{% if ska_tls_options != 'none' %}
+        - "traefik.http.routers.{{ ska_router }}-api.tls.options={{ ska_tls_options }}"
+{% endif %}
+        - "traefik.http.routers.{{ ska_router }}-api.priority=150"
+        - "traefik.http.routers.{{ ska_router }}-api.middlewares={{ skai.API_MIDDLEWARES | default(_ska_api_default, true) }}"
+        - "traefik.http.routers.{{ ska_router }}-api.service={{ ska_router }}"
+{% if ska_auth_mode == 'oidc' %}
+        # OIDC mode: password sign-in exists only for the deploy's provisioner,
+        # which calls it inside the container. From outside it answers 403.
+        - "traefik.http.routers.{{ ska_router }}-signin.rule=Host(`{{ ska_host }}`) && (Path(`/api/v1/auths/signin`) || Path(`/api/v1/auths/signup`))"
+        - "traefik.http.routers.{{ ska_router }}-signin.entrypoints=websecure"
+        - "traefik.http.routers.{{ ska_router }}-signin.tls=true"
+        - "traefik.http.routers.{{ ska_router }}-signin.tls.certresolver=main"
+{% if ska_tls_options != 'none' %}
+        - "traefik.http.routers.{{ ska_router }}-signin.tls.options={{ ska_tls_options }}"
+{% endif %}
+        - "traefik.http.routers.{{ ska_router }}-signin.priority=1000"
+        - "traefik.http.routers.{{ ska_router }}-signin.middlewares={{ ska_router }}-no-signin"
+        - "traefik.http.routers.{{ ska_router }}-signin.service={{ ska_router }}"
+        - "traefik.http.middlewares.{{ ska_router }}-no-signin.ipallowlist.sourcerange=127.0.0.1/32"
+{% endif %}
+        - "traefik.http.services.{{ ska_router }}.loadbalancer.server.port=8080"
+        - "traefik.http.services.{{ ska_router }}.loadbalancer.healthcheck.path=/health"
+        - "traefik.http.services.{{ ska_router }}.loadbalancer.healthcheck.interval=30s"
+        - "traefik.http.services.{{ ska_router }}.loadbalancer.healthcheck.timeout=10s"
+
+  db:
+    # pgvector on Debian bookworm. Default = ska_default_db_image in the playbook.
+    image: {{ skai.DB_IMAGE | default('pgvector/pgvector:0.8.7-pg17-bookworm@sha256:b513c48566e4777cd3370451400000c78eda6a08131d68f4c31d4a76f27bd8fd', true) }}
+    env_file: /var/data/config/skai-{{ env }}/postgres.env
+    volumes:
+      - {{ ska_db_path }}:/var/lib/postgresql/data
+    networks:
+      - skai-{{ env }}
+    logging: *logging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U skai -d skai"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      # first-boot initdb on NFS /var/data can take minutes
+      start_period: {{ skai.POSTGRES_HEALTH_START_PERIOD | default('300s', true) }}
+    deploy:
+      mode: replicated
+      # Exactly one: a single Postgres data directory.
+      replicas: 1
+      placement:
+        constraints: {{ ska_db_pl | tojson }}
+      resources:
+        limits:
+          cpus: '{{ skai.POSTGRES_CPUS | default("1.00", true) }}'
+          memory: {{ skai.POSTGRES_MEMORY_LIMIT | default("2048M", true) }}
+        reservations:
+          memory: {{ skai.POSTGRES_MEMORY_RESERVATION | default("256M", true) }}
+      # stop-first: two Postgres on one data directory corrupt it.
+      update_config:
+        order: stop-first
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skai"
+        - "com.skt.env={{ env }}"
+
+  db-backup:
+    # The same pgvector image (Debian: the dump loop needs bash).
+    image: {{ skai.DB_IMAGE | default('pgvector/pgvector:0.8.7-pg17-bookworm@sha256:b513c48566e4777cd3370451400000c78eda6a08131d68f4c31d4a76f27bd8fd', true) }}
+    env_file: /var/data/config/skai-{{ env }}/postgres-backup.env
+    environment:
+      - PGTEMP=/dump/tmp
+    volumes:
+      - {{ ska_dump_path }}:/dump
+    networks:
+      - skai-{{ env }}
+    # One shell runs this script (list form, no heredoc): each run gets its
+    # own name, dumps to a hidden temp file renamed only on success, and
+    # prunes dumps older than BACKUP_KEEP_DAYS only after a good dump (a run
+    # of failures never ages out the last one). Every $ is $$ so docker
+    # stack deploy does not interpolate it.
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -o pipefail
+        trap 'exit 0' HUP INT TERM
+        rm -f /dump/.dump_*.tmp
+        sleep 2m & wait $$!
+        while true; do
+          NAME=dump_$$(date +%d-%m-%Y_%H_%M_%S).sql.gz
+          TMP=/dump/.$${NAME}.tmp
+          if pg_dumpall -h db -U "$${PGUSER}" | gzip -c > "$${TMP}" && [ -s "$${TMP}" ]; then
+            mv -f "$${TMP}" "/dump/$${NAME}"
+            echo "[backup] OK /dump/$${NAME} ($$(stat -c %s "/dump/$${NAME}") bytes)"
+            DAYS=$${BACKUP_KEEP_DAYS:-7}
+            [ "$${DAYS}" -ge 1 ] 2>/dev/null || DAYS=1
+            find /dump -maxdepth 1 -type f -name 'dump_*.sql.gz' ! -name "$${NAME}" -mmin +$$((DAYS * 1440)) -print -delete
+          else
+            echo "[backup] FAIL: dump failed or empty, previous dumps kept" >&2
+            rm -f "$${TMP}"
+          fi
+          sleep "$${BACKUP_FREQUENCY:-86400}" & wait $$!
+        done
+    healthcheck:
+      disable: true
+    logging: *logging
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: {{ ska_db_pl | tojson }}
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+        reservations:
+          memory: 32M
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skai"
+        - "com.skt.env={{ env }}"
+{% if ska_voice | bool %}
+
+  voice:
+    # speaches: faster-whisper STT and Piper TTS behind an OpenAI-compatible
+    # API (/v1/audio/transcriptions, /v1/audio/speech) on port 8000.
+    # Default = ska_default_voice_image in the playbook.
+    image: {{ skai.VOICE_IMAGE | default('ghcr.io/speaches-ai/speaches:0.8.3-cpu@sha256:21e3df06d842fb7802ab470dd77c25f0e8c0d22950e8d8c6ae886e851af53ef8', true) }}
+    env_file: /var/data/config/skai-{{ env }}/voice.env
+    volumes:
+      - {{ ska_voice_path }}:/home/ubuntu/.cache/huggingface/hub
+    networks:
+      - skai-{{ env }}
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: {{ ska_app_pl | tojson }}
+      resources:
+        limits:
+          cpus: '{{ skai.VOICE_CPUS | default("2.0", true) }}'
+          memory: {{ skai.VOICE_MEMORY_LIMIT | default("3G", true) }}
+        reservations:
+          memory: {{ skai.VOICE_MEMORY_RESERVATION | default("512M", true) }}
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skai"
+        - "com.skt.env={{ env }}"
+{% endif %}

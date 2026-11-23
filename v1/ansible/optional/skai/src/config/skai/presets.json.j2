@@ -1,0 +1,24 @@
+{#- One Open WebUI model preset per corpus: the base model, the skcorpus tool
+    ("server:skcorpus") and the answer-from-the-corpus system prompt. Read by
+    app/provision_presets.py inside the skai container. No secrets here. -#}
+{%- set out = [] -%}
+{%- for c in ska_corpora -%}
+{%- set title = c.title | default(c.name, true) | string -%}
+{%- set _ = out.append({
+  'id': 'corpus-' ~ c.name,
+  'base_model_id': c.base_model | default(ska_default_model, true) | string,
+  'name': title,
+  'meta': {
+    'description': c.description | default('Answers from the ' ~ title ~ ' knowledge base, with citations.', true) | string,
+    'toolIds': ['server:skcorpus'],
+    'capabilities': {'citations': true},
+    'tags': [{'name': 'corpus'}]
+  },
+  'params': {
+    'system': (c.system_prompt | default(ska_default_corpus_prompt, true) | string) | replace('{corpus}', c.name) | replace('{title}', title),
+    'function_calling': 'native'
+  },
+  'access_grants': [{'principal_type': 'user', 'principal_id': '*', 'permission': 'read'}]
+}) -%}
+{%- endfor -%}
+{{ out | to_nice_json(indent=2) }}

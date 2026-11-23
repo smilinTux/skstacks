@@ -1,0 +1,67 @@
+# The "set" pass: every optional knob set, fake values only.
+skai:
+  CLOUDFLARED: true
+  HOSTNAME: ai.example.test
+  IMAGE: "registry.example.test/webui:1.0@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  DB_IMAGE: "registry.example.test/pgvector:1.0@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  VOICE: true
+  VOICE_IMAGE: "registry.example.test/voice:1.0@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  VOICE_API_KEY: "example-voice-key-not-a-secret"
+  VOICE_STT_MODEL: example-org/example-stt
+  VOICE_TTS_MODEL: example-org/example-tts
+  VOICE_TTS_VOICE: example
+  TASK_MODEL: example-fast
+  SEARXNG_URL: "http://search.example.test:8080/search?q=<query>"
+  WEB_SEARCH_RESULT_COUNT: 8
+  WEB_SEARCH_CONCURRENT_REQUESTS: 2
+  WEB_LOADER_CONCURRENT_REQUESTS: 4
+  EMBED_URL: "http://embed.example.test:8080/v1"
+  EMBED_API_KEY: "example-embed-key-not-a-secret"
+  RERANK_URL: "http://rerank.example.test:8080/v1/rerank"
+  RERANK_API_KEY: "example-rerank-key-not-a-secret"
+  RERANK_MODEL: example-org/example-reranker
+  RAG_TOP_K: 10
+  RAG_TOP_K_RERANKER: 4
+  CORPUS_URL: "http://corpus.example.test:8000"
+  CORPUS_TOKEN: "example-corpus-token-not-a-secret-0123456789"
+  CORPUS_TOOL_NAME: Example corpus search
+  CORPORA:
+    - name: example-legal
+      title: Example Legal
+      description: "Answers from the example legal corpus"
+    - name: example-notes
+      base_model: example-big
+      system_prompt: "Answer from corpus {corpus} ({title}) only, cite title, file_path and chunk_index."
+  ADMIN_GROUP: example-ai-admins
+  USER_GROUPS: [example-ai-users]
+  OIDC_CLIENT_ID: skai-example
+  OIDC_SSO_HOST: sso.example.test
+  OIDC_PROVIDER_NAME: Example SSO
+  PROVISIONER_EMAIL: provisioner@example.test
+  WEBUI_NAME: Example AI
+  DEFAULT_USER_ROLE: pending
+  MIDDLEWARES: "skai-chain@file"
+  API_MIDDLEWARES: "skai-headers@file"
+  TLS_OPTIONS: "modern@file"
+  DATA_PATH: /var/lib/skai-render/data
+  DB_PATH: /var/lib/skai-render/postgres
+  DUMP_PATH: /var/lib/skai-render/dump
+  VOICE_PATH: /var/lib/skai-render/voice
+  PLACEMENT_CONSTRAINTS: ["node.role == worker", "node.hostname == render-node-1"]
+  DB_PLACEMENT_CONSTRAINTS: ["node.role == worker", "node.hostname == render-node-1"]
+  CONNECT_NETWORKS: [skpeek-prod, skembed-prod]
+  CPUS: "1.5"
+  MEMORY_LIMIT: 3G
+  MEMORY_RESERVATION: 512M
+  POSTGRES_CPUS: "0.5"
+  POSTGRES_MEMORY_LIMIT: 1024M
+  POSTGRES_MEMORY_RESERVATION: 128M
+  POSTGRES_HEALTH_START_PERIOD: 600s
+  VOICE_CPUS: "1.0"
+  VOICE_MEMORY_LIMIT: 2G
+  VOICE_MEMORY_RESERVATION: 256M
+  HEALTH_START_PERIOD: 900s
+  FIRST_START_WAIT_SECONDS: 600
+  BACKUP_KEEP_DAYS: 14
+  BACKUP_FREQUENCY: 43200
+  AUTHENTIK_TILE_NAME: Example AI
