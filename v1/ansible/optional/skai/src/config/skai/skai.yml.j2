@@ -9,7 +9,7 @@ x-logging: &logging
     max-size: 10m
     max-file: "3"
 
-{% set ska_nets = ['skai-' ~ env, 'cloud-public-' ~ env] + (skai.CONNECT_NETWORKS | default(['skpeek-' ~ env, 'skembed-' ~ env, 'skcorpus-' ~ env], true)) %}
+{% set ska_nets = ['skai-' ~ env, 'cloud-public-' ~ env] + (skai.CONNECT_NETWORKS | default(['skpeek-' ~ env] + ([] if (skai.EMBED_URL | default('', true) | string | length) > 0 else ['skembed-' ~ env]) + ['skcorpus-' ~ env], true)) %}
 {% set ska_app_pl = skai.PLACEMENT_CONSTRAINTS | default(['node.role == worker'], true) %}
 {% set ska_db_pl = skai.DB_PLACEMENT_CONSTRAINTS | default(['node.role == worker'], true) %}
 networks:
@@ -210,6 +210,42 @@ services:
       labels:
         - "com.skt.app=skai"
         - "com.skt.env={{ env }}"
+{% if (skai.CORPORA | default([], true) | length) > 0 %}
+
+  provision:
+    # The corpus access reconciler (app/provision_presets.py, stdlib only) on
+    # the same Open WebUI image: every PROVISION_INTERVAL seconds it signs in
+    # as the env-created provisioner admin, ensures the corpus groups, grants
+    # each corpus's tool server and preset to its groups, and prints
+    # RECONCILED. Idempotent; it never deletes anything.
+    image: {{ skai.IMAGE | default('ghcr.io/open-webui/open-webui:v0.13.4@sha256:d5168bfbc28609eff5bea1b438dd864cf64d185cf6582c02244865e18385b901', true) }}
+    env_file: /var/data/config/skai-{{ env }}/provision.env
+    entrypoint: ["python3", "-I", "/provision/provision_presets.py", "--loop", "{{ skai.PROVISION_INTERVAL | default(300, true) }}", "/provision/presets.json"]
+    volumes:
+      - /var/data/skai-{{ env }}/provision:/provision:ro
+    networks:
+      - skai-{{ env }}
+    healthcheck:
+      disable: true
+    logging: *logging
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: {{ ska_app_pl | tojson }}
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+        reservations:
+          memory: 32M
+      restart_policy:
+        condition: any
+        delay: 30s
+      labels:
+        - "com.skt.app=skai"
+        - "com.skt.env={{ env }}"
+{% endif %}
 {% if ska_voice | bool %}
 
   voice:

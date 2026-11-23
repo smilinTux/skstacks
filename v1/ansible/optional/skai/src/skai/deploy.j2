@@ -50,6 +50,11 @@ if [ "${RESTART:-0}" = 1 ]; then
     preexisted "${SERVICE}" && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=true "${SERVICE}" || true
 fi
 
+if [ "${RESTART_PROVISION:-0}" = 1 ]; then
+    echo "The play changed the provision service's env"
+    preexisted "${STACK_NAME}_provision" && timeout "${SERVICE_UPDATE_TIMEOUT:-300}" docker service update --force --detach=true "${STACK_NAME}_provision" || true
+fi
+
 echo "Waiting for ${SERVICE} to converge..."
 REPLICAS="0/${SKAI_APP_REPLICAS:-1}"
 for _ in $(seq 1 ${SKAI_CONVERGE_TRIES:-120}); do

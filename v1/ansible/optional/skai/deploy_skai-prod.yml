@@ -51,13 +51,14 @@
     # (skai.CORPORA[].system_prompt replaces it per corpus). {corpus} is the
     # corpus name, {title} the preset's display name.
     ska_default_corpus_prompt: |-
-      You answer questions from the {title} knowledge base (corpus "{corpus}") using the corpus tools. Do not answer from memory when the corpus can answer.
+      You answer questions from the {title} knowledge base (corpus "{corpus}") using its corpus tools, which search this corpus only. Do not answer from memory when the corpus can answer.
       Work in layers:
-      1. Connections first: for who or what is connected to whom or what, call graph_entity and graph_neighbors (corpus "{corpus}").
-      2. Substance next: call corpus_search (corpus "{corpus}") with a focused query; search again with other words when the first results are thin.
+      1. Connections first: for who or what is connected to whom or what, call graph_entity and graph_neighbors (when this corpus has a graph).
+      2. Substance next: call corpus_search with a focused query; search again with other words when the first results are thin.
       3. Context when needed: call corpus_get on a hit for its neighbouring chunks.
       Quote chunk text word for word only when the user asks for a quote; otherwise summarize in your own words.
       Always cite every source you used as: title, file_path, chunk_index. If the corpus has nothing on the question, say so plainly instead of guessing.
+      If a result carries a warning, the corpus failed its coherence check: tell the user the answer may be incomplete.
   pre_tasks:
     - name: Select vault file based on domain and cluster
       import_tasks: ../../shared/tasks/select_vault_file.yml
@@ -88,7 +89,12 @@
         ska_corpus_enabled: "{{ skai.CORPUS_TOKEN | default('', true) | string | length > 0 }}"
         ska_corpora: "{{ skai.CORPORA | default([], true) }}"
         ska_admin_group: "{{ skai.ADMIN_GROUP | default('skadmin', true) | string }}"
-        ska_user_groups: "{{ skai.USER_GROUPS | default(['*'], true) }}"
+        # The Authentik group that may sign in (bound to the application by
+        # sksso's skai blueprint and the portal tile) and the default
+        # allowed_groups of every corpus.
+        ska_users_group: "{{ skai.USERS_GROUP | default('skai-users', true) | string }}"
+        ska_user_groups: "{{ skai.USER_GROUPS | default([skai.USERS_GROUP | default('skai-users', true) | string], true) }}"
+        ska_provision_interval: "{{ skai.PROVISION_INTERVAL | default(300, true) | string }}"
         ska_provisioner_email: "{{ skai.PROVISIONER_EMAIL | default('skai-provisioner@' ~ (skai.DOMAIN | default(domain)), true) | string }}"
         ska_data_path: "{{ skai.DATA_PATH | default('/var/data/' + app + '-' + env + '/data', true) }}"
         ska_db_path: "{{ skai.DB_PATH | default('/var/data/' + app + '-' + env + '/postgres', true) }}"
@@ -155,12 +161,18 @@
           - ska_corpora | map(attribute='name') | map('string') | reject('match', '^[A-Za-z0-9][A-Za-z0-9._-]*$') | list | length == 0
           - ska_corpora | map(attribute='name') | list | unique | length == ska_corpora | length
           - ska_corpora | length == 0 or ska_default_model | length > 0 or ska_corpora | rejectattr('base_model', 'defined') | list | length == 0
+          - ska_corpora | selectattr('allowed_groups', 'defined') | map(attribute='allowed_groups') | reject('sequence') | list | length == 0
+          - ska_corpora | selectattr('allowed_groups', 'defined') | map(attribute='allowed_groups') | select('string') | list | length == 0
+          - ska_corpora | selectattr('allowed_groups', 'defined') | map(attribute='allowed_groups') | flatten | map('string') | reject('match', '^([*]|[A-Za-z0-9][A-Za-z0-9 ._-]*)$') | list | length == 0
+          - ska_users_group is match('^[A-Za-z0-9][A-Za-z0-9 ._-]*$')
+          - ska_provision_interval is match('^[0-9]+$') and ska_provision_interval | int >= 30
         fail_msg: >-
           ERROR: with WEB_SEARCH, SEARXNG_URL must be an http(s) URL containing <query>.
           EMBED_URL must be an http(s) URL and EMBED_MODEL set (the skembed MODEL_NAME).
           CORPUS_TOKEN (when set) needs 32+ chars and equals skcorpus.API_TOKEN. CORPORA
-          needs CORPUS_TOKEN, unique plain-token names, and a base_model per corpus or a
-          DEFAULT_MODEL.
+          needs CORPUS_TOKEN, unique plain-token names, a base_model per corpus or a
+          DEFAULT_MODEL, and allowed_groups (when set) a list of group names or "*".
+          USERS_GROUP is a group name; PROVISION_INTERVAL an integer of 30 or more.
         quiet: true
       tags: [always]
 
@@ -207,36 +219,20 @@
         quiet: true
       tags: [always]
 
-    - name: Build the tool server connections (skcorpus, through config)
-      # Open WebUI v0.13 TOOL_SERVER_CONNECTIONS: one OpenAPI server, bearer key,
-      # enabled, readable by every signed-in user (access_grants), referenced
-      # by presets as tool id "server:<info.id>".
-      set_fact:
-        ska_tool_servers: >-
-          {{ [{
-            'url': ska_corpus_url,
-            'path': 'openapi.json',
-            'type': 'openapi',
-            'auth_type': 'bearer',
-            'key': skai.CORPUS_TOKEN | default('', true) | string,
-            'config': {'enable': true, 'access_grants': [{'principal_type': 'user', 'principal_id': '*', 'permission': 'read'}]},
-            'info': {'id': 'skcorpus', 'name': skai.CORPUS_TOOL_NAME | default('Corpus search', true), 'description': 'Read-only search over the configured knowledge corpora (vectors and graph).'}
-          }] if ska_corpus_enabled | bool else [] }}
-      no_log: true
-      tags: [always]
-
     - name: Define network variables from vault (idempotent network creation)
       # Subnets: skai-prod 172.16.120.0/24, -staging .121, -dev .122. The app
-      # also joins skpeek, skembed and skcorpus (their subnets must match those
-      # roles' own playbooks); cloud-public-<env> is shared.
+      # also joins skpeek, skcorpus and (unless EMBED_URL points at an existing
+      # endpoint) skembed; their subnets must match those roles' own
+      # playbooks. cloud-public-<env> is shared.
       set_fact:
         app_networks: "{{ skai.networks | default([
           { 'name': 'skai-prod', 'subnet': '172.16.120.0/24', 'driver': 'overlay', 'attachable': true },
           { 'name': 'cloud-public-prod', 'subnet': '172.16.200.0/24', 'driver': 'overlay', 'attachable': true },
           { 'name': 'skpeek-prod', 'subnet': '172.16.63.0/24', 'driver': 'overlay', 'attachable': true },
-          { 'name': 'skembed-prod', 'subnet': '172.16.126.0/24', 'driver': 'overlay', 'attachable': true },
           { 'name': 'skcorpus-prod', 'subnet': '172.16.123.0/24', 'driver': 'overlay', 'attachable': true }
-        ]) }}"
+        ] + ([] if (skai.EMBED_URL | default('', true) | string | length) > 0 else [
+          { 'name': 'skembed-prod', 'subnet': '172.16.126.0/24', 'driver': 'overlay', 'attachable': true }
+        ])) }}"
       tags: [networks, config]
 
   tasks:
@@ -328,6 +324,18 @@
       no_log: true
       tags: [templates]
 
+    - name: Process {{ app }} provision env (root only)
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/provision.env.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/provision.env"
+        owner: root
+        group: root
+        mode: '0600'
+      no_log: true
+      register: skai_provision_env
+      when: ska_corpora | length > 0
+      tags: [templates]
+
     - name: Process {{ app }} voice env (root only)
       template:
         src: "{{ playbook_dir }}/src/config/{{ app }}/voice.env.j2"
@@ -390,13 +398,18 @@
       include_tasks: ../../shared/tasks/create_networks.yml
       tags: [networks]
 
+    - name: Note when the deploy started (for the provision log)
+      set_fact:
+        skai_deploy_started: "{{ now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+      tags: [deploy, presets]
+
     - name: Deploy {{ app }} stack
       # The env file is env_file: a changed value alone does not change the
       # service spec, so the deploy script restarts an existing app service
       # when the play changed it.
       shell: |
         cd /var/data/{{ app }}-{{ env }}
-        RESTART={{ '1' if skai_env is changed else '0' }} ./deploy
+        RESTART={{ '1' if skai_env is changed else '0' }} RESTART_PROVISION={{ '1' if skai_provision_env is changed else '0' }} ./deploy
       register: deploy_output
       tags: [deploy]
 
@@ -404,52 +417,32 @@
       debug: var=deploy_output.stdout_lines
       tags: [deploy]
 
-    - name: Wait for the swarm node running the skai task
-      # Polls until a task reports Running; the preset provisioner below runs
-      # there (docker exec). Only needed when presets are configured.
-      shell: |
-        STATES=$(docker service ps "{{ app }}-{{ env }}_skai" --filter "desired-state=running" --format "{{ '{{.Node}} {{.CurrentState}}' }}")
-        NODE=$(printf '%s\n' "$STATES" | awk '$2 == "Running" {print $1; exit}')
-        if [ -z "$NODE" ]; then
-          echo "{{ app }}-{{ env }}_skai has no Running task yet; current: $(printf '%s' "${STATES:-no task scheduled}" | tr '\n' ';')" >&2
-          exit 1
-        fi
-        echo "$NODE"
-      register: skai_node
-      until: skai_node.rc == 0 and (skai_node.stdout | trim | length > 0)
-      retries: "{{ ((skai.FIRST_START_WAIT_SECONDS | default(900) | int) + 4) // 5 }}"
-      delay: 5
-      changed_when: false
-      when: ska_corpora | length > 0
-      tags: [deploy, presets]
-
-    - name: Create or update the corpus model presets (Open WebUI API, inside the container)
-      # The provisioner signs in as the env-created admin (its credentials are
-      # in the container env, never on a command line) and creates or updates
-      # each preset by id; it never deletes one. See app/provision_presets.py.
+    - name: Wait for the provision service to reconcile the corpus access
+      # The provision service (app/provision_presets.py --loop) ensures the
+      # corpus groups, the per-corpus tool grants and the presets, then logs
+      # RECONCILED; an error logs RECONCILE_ERROR and is retried. First start
+      # waits for Open WebUI's migrations, hence the long default.
       shell: |
         set -o pipefail
-        CID=""
-        for _ in $(seq 1 60); do
-          CID=$(docker ps -q -f "name={{ app }}-{{ env }}_skai." | head -n1)
-          [ -n "$CID" ] && break
-          sleep 5
-        done
-        if [ -z "$CID" ]; then
-          echo "no running {{ app }}-{{ env }}_skai container on this node" >&2
-          exit 1
+        LOG=$(docker service logs --raw --since "{{ skai_deploy_started }}" "{{ app }}-{{ env }}_provision" 2>&1 | tail -n 50)
+        if printf '%s\n' "$LOG" | grep -q '^RECONCILED$'; then
+          printf '%s\n' "$LOG" | grep -E '^(GROUP_CREATED|TOOLS_|PRESET_|RECONCILED)' | tail -n 20
+          exit 0
         fi
-        docker exec "$CID" python3 /provision/provision_presets.py /provision/presets.json
+        printf '%s\n' "$LOG" | grep '^RECONCILE_ERROR' | tail -n 1 >&2
+        exit 1
       args:
         executable: /bin/bash
-      delegate_to: "{{ skai_node.stdout | trim }}"
-      register: skai_presets_out
-      changed_when: "'PRESET_CREATED' in skai_presets_out.stdout or 'PRESET_UPDATED' in skai_presets_out.stdout"
+      register: skai_reconcile
+      until: skai_reconcile.rc == 0
+      retries: "{{ ((skai.FIRST_START_WAIT_SECONDS | default(900) | int) + 9) // 10 }}"
+      delay: 10
+      changed_when: "'GROUP_CREATED' in skai_reconcile.stdout or 'UPDATED' in skai_reconcile.stdout or 'PRESET_CREATED' in skai_reconcile.stdout"
       when: ska_corpora | length > 0
       tags: [deploy, presets]
 
-    - name: Show the preset provisioner output
-      debug: var=skai_presets_out.stdout_lines
+    - name: Show the provision output
+      debug: var=skai_reconcile.stdout_lines
       when: ska_corpora | length > 0
       tags: [deploy, presets]
 
@@ -467,6 +460,14 @@
           name: "{{ skai.AUTHENTIK_TILE_NAME | default('SKAI', true) }}"
           launch_url: "https://{{ ska_host }}"
           group: "{{ skai.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
+          # app-groups: the application is bound to the global admin group and
+          # to USERS_GROUP (default skai-users); only members get in. The
+          # same group and binding are in sksso's skai blueprint, which also
+          # holds the members (sksso.SKAI_USERS).
+          sso:
+            SSO_ACCESS: app-groups
+            SSO_PROVIDER: own
+            SSO_USERS_GROUP: "{{ ska_users_group }}"
           icon: "{{ skai.AUTHENTIK_TILE_ICON | default('fa://fa-robot', true) }}"
           open_in_new_tab: "{{ skai.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
           description: "{{ skai.AUTHENTIK_TILE_DESCRIPTION | default('Answer engine: chat, web search and the knowledge base', true) }}"
