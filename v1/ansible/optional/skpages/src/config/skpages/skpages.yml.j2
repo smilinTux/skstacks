@@ -11,7 +11,7 @@ networks:
 
 services:
   caddy:
-    image: {{ skpages.IMAGE | default('caddy:2.11.8-alpine', true) }}
+    image: {{ skpages.IMAGE | default('caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0', true) }}
     # www-data, the owner of the Nextcloud data tree. The docroot is read-only
     # either way; matching the uid means Caddy can read files Nextcloud wrote
     # with 0640 permissions.

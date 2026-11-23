@@ -41,7 +41,9 @@ Checks (standard ids):
       map; an app-* group parented to `skadmin` or `skuser`
   C7  an app that is not admin-only is gated by the catch-all (no provider of
       its own, or a domain forward-auth provider); also, without
-      declarations, a catch-all application bound to anything but `skadmin`
+      declarations, the catch-all itself: missing (no forward_domain provider
+      with an application), unbound, bound to anything but `skadmin` (another
+      group, a user, a policy), or attached to no outpost
   C8  a tile's groups differ from its gate's groups
   C9  app-* group has members while the app is admin-only; an application
       with no declared access block; info: an empty `sk-managed` group
@@ -320,10 +322,37 @@ def check_undeclared(state, app, admin_group, rep):
     if (groups or policies) and not (policies & OPT_OUT_POLICIES) and admin_group not in groups:
         rep.violation(slug, "C6", f"global admin group {admin_group!r} not bound")
     if state.provider_kind(app) == "catch-all":
-        extra = sorted(groups - {admin_group, AUTHENTIK_ADMINS})
-        if extra or policies:
-            rep.violation(slug, "C7", "catch-all application admits more than the global admin group: "
-                          + ", ".join(extra + sorted(f"policy {p}" for p in policies)))
+        check_catchall(state, app, admin_group, groups, policies, rep)
+
+
+def check_catchall(state, app, admin_group, groups, policies, rep):
+    """C7 for the domain-wide forward-auth catch-all application: it must be
+    gated by the global admin group and nothing else, and its provider must be
+    attached to an outpost. Needs no declarations.
+
+    An application with no enabled binding admits every authenticated user, so
+    an unbound catch-all is reported as such; so is one bound to a single
+    user, a policy or another group (it admits more, or other, than the admin
+    group), or whose provider is on no outpost (forward auth cannot match a
+    request, so every app behind authentik@file is denied)."""
+    slug = app["slug"]
+    users = sorted(
+        (state.user_by_pk.get(str(b["user"])) or {}).get("username", str(b["user"]))
+        for b in state.app_bindings(app)
+        if b.get("enabled", True) and not b.get("negate") and b.get("user"))
+    extra = sorted(groups - {admin_group, AUTHENTIK_ADMINS})
+    if not groups and not policies and not users:
+        rep.violation(slug, "C7", "catch-all application is unbound (no enabled binding): Authentik admits every "
+                      f"authenticated user; bind it to {admin_group!r} only")
+    elif extra or policies or users:
+        rep.violation(slug, "C7", "catch-all application admits more than the global admin group: "
+                      + ", ".join(extra + sorted(f"policy {p}" for p in policies)
+                                  + [f"user {u}" for u in users]))
+    if admin_group not in groups and (groups or policies or users):
+        rep.violation(slug, "C7", f"catch-all application is not bound to the global admin group {admin_group!r}")
+    if str(app.get("provider")) not in state.on_outpost:
+        rep.violation(slug, "C7", "catch-all provider is attached to no outpost: forward auth cannot match a request, "
+                      "so every app behind authentik@file is denied")
 
 
 def expected_for(decl, slug, admin_group, user_group):
@@ -443,6 +472,15 @@ def run_check(state, decls, strict):
             rep.violation(catchall_slug, "C7", "declared catch-all application does not exist")
     elif len(catchalls) == 1:
         cfg["catchall"] = catchalls[0]
+    if not catchalls and not (catchall_slug and cfg.get("catchall") is None):
+        # The catch-all is what authentik@file routers without a provider of
+        # their own are authorised against. None at all means those apps are
+        # unreachable (or someone is about to hand-make one with no binding).
+        orphan = [p["name"] for p in state.proxy
+                  if p.get("mode") == "forward_domain" and not any(str(a.get("provider")) == str(p["pk"]) for a in state.apps)]
+        rep.violation("catch-all", "C7", "no domain-wide forward-auth catch-all application exists "
+                      "(a forward_domain proxy provider with an application)"
+                      + (f"; provider(s) with no application: {', '.join(sorted(orphan))}" if orphan else ""))
     for app in sorted(state.apps, key=lambda a: a["slug"]):
         check_bindings(state, app, rep)
         check_undeclared(state, app, cfg["admin_group"], rep)

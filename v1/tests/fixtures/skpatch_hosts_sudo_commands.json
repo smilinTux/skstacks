@@ -1,5 +1,5 @@
 {
-  "image": "ghcr.io/theduffman85/linux-update-dashboard:2026.10.9@sha256:1fb855a4d4b5eacc0ef3a9816064184492e9d068fb4da353c62871faeeeb1543",
+  "image": "ghcr.io/theduffman85/linux-update-dashboard:2026.11.6@sha256:b42cf73e707dbd3b8e7ab7ffdb7d4b7ae3b18f25450cd20145dea5e7f66e2840",
   "generator": "v1/ansible/optional/skpatch-hosts/tools/extract_sudo_commands.py",
   "managers": {
     "apk": {

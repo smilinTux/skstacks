@@ -14,9 +14,9 @@ This is the ratified provider for the `skflow` capability (see
 
 - **License.** Windmill's community edition is AGPLv3. Nothing is
   vendored or rebuilt: the role runs the unmodified upstream image.
-- **Image.** `ghcr.io/windmill-labs/windmill`, release **`1.837.0`**,
+- **Image.** `ghcr.io/windmill-labs/windmill`, release **`1.882.0`**,
   multi-arch, pinned by the manifest-list digest. Postgres is
-  `postgres:17.7-alpine`, and the dump sidecar uses `postgres:17.7` (the
+  `postgres:17.12-alpine`, and the dump sidecar uses `postgres:17.12-bookworm` (the
   Debian variant, because its dump loop needs bash), both by digest. The
   play refuses any of them without `@sha256:`.
 - **Phone-home.** Not audited for this role. After the first login,
@@ -298,7 +298,7 @@ new data directory; never point a newer major at the old data directory
 
 ## Upgrading Postgres to 18
 
-Framework default: `postgres:17.7-alpine` for the server and `postgres:17.7` for the dump sidecar
+Framework default: `postgres:17.12-alpine` for the server and `postgres:17.12-bookworm` for the dump sidecar
 (both pinned `tag@sha256:digest`). The default stays on 17; moving to 18 is a deliberate, per-instance
 step. **Postgres 18 cannot open a 17 data directory, and an upgrade is never automatic.**
 
@@ -371,9 +371,9 @@ skflow:
   DOMAIN: example.com                       # default: inventory domain
   CLOUDFLARED: false                        # true: default host is under DOMAIN, not CLUSTERNAME.DOMAIN
   HOSTNAME: ""                              # public host; default skflow[-dev|-staging].<base domain>
-  WINDMILL_IMAGE: ""                        # default ghcr.io/windmill-labs/windmill:1.837.0@sha256:...; must carry @sha256:
-  POSTGRES_IMAGE: ""                        # default postgres:17.7-alpine@sha256:...; must carry @sha256:
-  POSTGRES_BACKUP_IMAGE: ""                 # dump sidecar, default postgres:17.7@sha256:... (Debian, needs bash); must carry @sha256:
+  WINDMILL_IMAGE: ""                        # default ghcr.io/windmill-labs/windmill:1.882.0@sha256:...; must carry @sha256:
+  POSTGRES_IMAGE: ""                        # default postgres:17.12-alpine@sha256:...; must carry @sha256:
+  POSTGRES_BACKUP_IMAGE: ""                 # dump sidecar, default postgres:17.12-bookworm@sha256:... (Debian, needs bash); must carry @sha256:
   DATABASE_URL: ""                          # external Postgres instead of the stack's own; then no postgres/backup services. Secret.
   SUPERADMIN_SECRET: ""                     # Windmill SUPERADMIN_SECRET bearer token, 32+ chars when set. Secret.
   COOKIE_DOMAIN: ""                         # Windmill COOKIE_DOMAIN; unset = the browser's origin

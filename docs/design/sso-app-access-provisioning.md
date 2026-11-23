@@ -132,6 +132,15 @@ Whichever router carries `authentik@file` and has no provider of its own is auth
 application's bindings. The skfetch README already warns that "a domain-level catch-all provider admits
 every Authentik user". With zero bindings this is what the audit found.
 
+**Update (v2.26.32):** sksso now creates the catch-all as code (the blueprint
+`forward-auth-catchall.yaml.j2`: one `forward_domain` provider, one application, one binding to `skadmin`
+only), attaches the provider to the embedded outpost additively, and `check-access.py` reports it missing,
+unbound, bound to more than `skadmin`, or on no outpost. An existing hand-made catch-all is adopted by name
+(`FORWARD_AUTH_PROVIDER_NAME`, `FORWARD_AUTH_APP_SLUG`) or opted out of (`FORWARD_AUTH_ENABLED: false`); see the
+sksso README, "Forward-auth catch-all (authentik@file)". This closes step 3 of section 4.7's list for the
+provider and application; `CATCHALL_APP_SLUG` and the separate ensure step there are superseded by the adopt
+names.
+
 ## 3. Gaps
 
 1. No per-app group model: one group per tile, no admin/user split, nothing creates the groups.

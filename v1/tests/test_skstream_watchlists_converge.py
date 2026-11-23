@@ -393,6 +393,20 @@ def test_default_filter_drops_3d_disc_images_and_the_rarbg_promo(title, hit):
 
 
 @pytest.mark.parametrize("title,hit", [
+    ("Stranger.Things.s01e01.2016.1080p.Rifftrax.6ch.2ch.AVC.mkv", True),
+    ("Twilight.2008.RiffTrax.720p", True),
+    ("RiffTrax Live Manos The Hands of Fate", True),
+    ("Riff-Trax.Plan.9.From.Outer.Space", True),
+    ("Stranger Things (2016) S01 Complete (1080p BluRay AV1 10bit English Opus 5.1) [SkyLake]", False),
+    ("Sheriff.Country.S01E01.1080p.WEB.h264-GRACE", False),
+    ("Riffraff.2019.1080p.BluRay", False),
+])
+def test_default_filter_drops_rifftrax(title, hit):
+    import re
+    assert bool(re.search(sc.DEFAULT_FILTER_OUT[2], title, re.IGNORECASE)) is hit
+
+
+@pytest.mark.parametrize("title,hit", [
     ("Heart.of.the.Beast.2026.MULTi.1080p.WEB.H265-YTO", True),
     ("Ava.2020.iTA-ENG.Bluray.1080p.x264-CYBER", True),
     ("John.Wick.2014.MULTi4.2160p.HDR.BluRay.AV1-Kleinmike", True),
