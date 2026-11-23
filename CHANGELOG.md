@@ -4,7 +4,7 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
-## Unreleased (v2.26.32)
+## skstacks-v2.26.32 - 2026-11-23
 
 ### skpayment: its own minimal runtime image
 
