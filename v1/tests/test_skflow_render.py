@@ -23,10 +23,10 @@ BASE = yaml.safe_load((rp.VARS / "skflow.example.yml").read_text())["skflow"]
 SET = yaml.safe_load((rp.VARS / "skflow.set.yml").read_text())["skflow"]
 IMAGE = ("ghcr.io/windmill-labs/windmill:1.847.0@sha256:"
          "67ab003cfe395d7634d7fc0eada917fc894859bbc21fea487eee76760319d86f")
-PG_IMAGE = ("postgres:17.7-alpine@sha256:"
-            "bb377b7239d2774ac8cc76f481596ce96c5a6b5e9d141f6d0a0ee371a6e7c0f2")
-PG_BACKUP_IMAGE = ("postgres:17.7@sha256:"
-                   "2006493727bd5277eece187319af1ef82b4cf82cf4fc1ed00da0775b646ac2a4")
+PG_IMAGE = ("postgres:17.12-alpine@sha256:"
+            "f9cf3e1f0066f0eb0c48707d864f0ac5941e9ff454a072077d97a4d278d07d73")
+PG_BACKUP_IMAGE = ("postgres:17.12-bookworm@sha256:"
+                   "837bed18782820fe967067cb5328b02b0d9992c1be9a37ee0c9c492cfc03af3b")
 
 
 def render(tmp: Path, vault, env: str = "prod") -> tuple[dict, Path]:

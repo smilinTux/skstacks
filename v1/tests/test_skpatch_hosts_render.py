@@ -23,7 +23,7 @@ pytestmark = pytest.mark.skipif(shutil.which("ansible-playbook") is None, reason
 ROLE = rp.ANSIBLE / "optional" / "skpatch-hosts"
 BASE = yaml.safe_load((rp.VARS / "skpatch-hosts.example.yml").read_text())["skpatch_hosts"]
 SET = yaml.safe_load((rp.VARS / "skpatch-hosts.set.yml").read_text())["skpatch_hosts"]
-IMAGE = ("ghcr.io/theduffman85/linux-update-dashboard:2026.10.9@sha256:"
+IMAGE = ("ghcr.io/theduffman85/linux-update-dashboard:2026.11.6@sha256:"
          "1fb855a4d4b5eacc0ef3a9816064184492e9d068fb4da353c62871faeeeb1543")
 
 

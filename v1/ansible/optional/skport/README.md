@@ -56,12 +56,12 @@ password/inventory) for the other environments.
 skport:
   CLUSTERNAME: "skstack01"
   DOMAIN: "example.com"
-  portainer_version: "2.45.1"   # exact Portainer CE LTS release; never a moving tag
+  portainer_version: "2.45.4"   # exact Portainer CE LTS release (may carry @sha256:...); never a moving tag
   TZ: "America/New_York"
   TRAEFIK_MIDDLEWARES: ""       # optional, router middleware chain (default default-no-crowdsec@file)
 ```
 
-`portainer_version` defaults to `2.45.1`, the Portainer CE long-term-support release the `lts` tag pointed at on 2026-09-26 (bump deliberately), the
+`portainer_version` defaults to `2.45.4@sha256:18616fff...` (Portainer CE, the tag pinned to its multi-arch index digest; bump deliberately), the
 tag, so a fresh deploy never pulls a moving `:latest` image.
 
 ## Networks

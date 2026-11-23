@@ -296,7 +296,7 @@ skpatch_hosts:
   TZ: UTC
   LUDASH_LOG_LEVEL: info
   extra_env: {}                             # any other upstream app variable, verbatim into skpatch-hosts.env
-  IMAGE: ""                                 # default ghcr.io/theduffman85/linux-update-dashboard:2026.10.9@sha256:1fb855a4d4b5eacc0ef3a9816064184492e9d068fb4da353c62871faeeeb1543; must carry @sha256:
+  IMAGE: ""                                 # default ghcr.io/theduffman85/linux-update-dashboard:2026.11.6@sha256:b42cf73e707dbd3b8e7ab7ffdb7d4b7ae3b18f25450cd20145dea5e7f66e2840; must carry @sha256:
   DATA_PATH: ""                             # default /var/data/skpatch-hosts-<env>/data
   DATA_NODE: ""                             # pin dashboard to this node (required with a local path)
   PLACEMENT_CONSTRAINTS: []                 # default ["node.role == worker"]
@@ -745,7 +745,7 @@ checks:
   - name: sudoers template exists (the real actions-gate enforcement point)
     run: test -f v1/ansible/optional/skpatch-hosts/src/skpatch-hosts/skpatch-hosts.sudoers.j2
   - name: documented default image matches the prod playbook pin
-    run: grep -q 'ghcr.io/theduffman85/linux-update-dashboard:2026.10.9@sha256:1fb855a4d4b5eacc0ef3a9816064184492e9d068fb4da353c62871faeeeb1543' v1/ansible/optional/skpatch-hosts/deploy_skpatch-hosts-prod.yml v1/ansible/optional/skpatch-hosts/SOP.md
+    run: grep -q 'ghcr.io/theduffman85/linux-update-dashboard:2026.11.6@sha256:b42cf73e707dbd3b8e7ab7ffdb7d4b7ae3b18f25450cd20145dea5e7f66e2840' v1/ansible/optional/skpatch-hosts/deploy_skpatch-hosts-prod.yml v1/ansible/optional/skpatch-hosts/SOP.md
   - name: sudoers template has no wildcard rule and no NOPASSWD ALL (README security model)
     run: ! grep -E '^[^#]*NOPASSWD:.*([*]|ALL$)' v1/ansible/optional/skpatch-hosts/src/skpatch-hosts/skpatch-hosts.sudoers.j2
   - name: report-only rules are exactly dpkg --audit and apt-get update -qq
