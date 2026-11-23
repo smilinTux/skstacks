@@ -79,7 +79,7 @@
       echo "created $U"
     else
       occ_pw user:resetpassword --password-from-env "$U" >/dev/null
-      occ user:setting "$U" settings display_name "{{ item.display_name | default(item.id, true) }}" >/dev/null 2>&1 || true
+      occ user:profile "$U" displayname "{{ item.display_name | default(item.id, true) }}" >/dev/null 2>&1 || true
       echo "kept $U"
     fi
     {% if item.admin | default(false) | bool %}
@@ -115,12 +115,14 @@
     set -euo pipefail
     C="{{ skp_nc_container.stdout | trim }}"
     U="{{ item.0.id }}"
-    APP_PW=$(docker exec -u www-data "$C" php occ user:auth-tokens:add --name "skpods seed client credentials" "$U" </dev/null | awk 'NF {last=$NF} END {print last}')
+    APP_PW=$(docker exec -u www-data -e OC_PASS "$C" php occ user:auth-tokens:add --password-from-env --name "skpods seed client credentials" "$U" </dev/null | awk 'NF {last=$NF} END {print last}')
     [ -n "$APP_PW" ] || { echo "no app password for $U" >&2; exit 1; }
     RESP=$(docker exec -e APP_PW="$APP_PW" "$C" sh -c 'curl -fsS --max-time 30 -u "$0:$APP_PW" -H "OCS-APIRequest: true" -H "Content-Type: application/json" -H "Host: {{ skp_host }}" -d "{\"name\": \"$0 agent\"}" http://localhost/apps/solid/client-credentials' "$U")
     APP_PW="$APP_PW" RESP="$RESP" python3 -c 'import json,os,sys; r=json.loads(os.environ["RESP"]); r["app_password"]=os.environ["APP_PW"]; r["user"]=sys.argv[1]; print(json.dumps(r))' "$U"
   args:
     executable: /bin/bash
+  environment:
+    OC_PASS: "{{ item.0.password }}"
   delegate_to: "{{ skp_nc_node.stdout | trim }}"
   loop: "{{ skpods.SEED_USERS | zip(skp_seed.results) | list }}"
   loop_control:

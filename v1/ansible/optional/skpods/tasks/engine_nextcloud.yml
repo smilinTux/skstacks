@@ -267,7 +267,9 @@
       - files_trashbin
       - files_versions
       - firstrunwizard
+      - logreader
       - nextcloud_announcements
+      - office
       - notifications
       - password_policy
       - photos
@@ -310,7 +312,7 @@
     executable: /bin/bash
   delegate_to: "{{ skp_nc_node.stdout | trim }}"
   register: skp_solid_enable
-  changed_when: "'solid enabled' in skp_solid_enable.stdout"
+  changed_when: "'already enabled' not in skp_solid_enable.stdout"
   tags:
     - config
 
