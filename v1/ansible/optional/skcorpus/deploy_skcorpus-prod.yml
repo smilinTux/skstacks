@@ -69,6 +69,14 @@
         skc_max_window: "{{ skcorpus.MAX_WINDOW | default(3, true) | string }}"
         skc_max_graph_rows: "{{ skcorpus.MAX_GRAPH_ROWS | default(50, true) | string }}"
         skc_max_text_chars: "{{ skcorpus.MAX_TEXT_CHARS | default(4000, true) | string }}"
+        # EMBED_URL set = an embeddings endpoint that already exists (skembed
+        # is then not needed and its overlay is not joined or created).
+        skc_embed_external: "{{ (skcorpus.EMBED_URL | default('', true) | string | length) > 0 }}"
+        skc_global_routes: "{{ skcorpus.GLOBAL_ROUTES | default(false) | bool }}"
+        skc_coherence_sample: "{{ skcorpus.COHERENCE_SAMPLE | default(32, true) | string }}"
+        skc_coherence_interval: "{{ skcorpus.COHERENCE_INTERVAL_SECONDS | default(3600) | string }}"
+        skc_coherence_min_cosine: "{{ skcorpus.COHERENCE_MIN_COSINE | default(0.99, true) | string }}"
+        skc_coherence_threshold: "{{ skcorpus.COHERENCE_THRESHOLD | default(0.9, true) | string }}"
       tags: [config]
 
     - name: Validate the image pin
@@ -90,17 +98,23 @@
           - skc_falkordb_port is match('^[0-9]+$')
           - skc_max_k is match('^[0-9]+$') and skc_max_window is match('^[0-9]+$')
           - skc_max_graph_rows is match('^[0-9]+$') and skc_max_text_chars is match('^[0-9]+$')
+          - skc_coherence_sample is match('^[0-9]+$') and skc_coherence_interval is match('^[0-9]+$')
+          - skc_coherence_min_cosine is match('^(0(\.[0-9]+)?|1(\.0+)?)$')
+          - skc_coherence_threshold is match('^(0(\.[0-9]+)?|1(\.0+)?)$')
         fail_msg: >-
           ERROR: skcorpus needs API_TOKEN (32+ chars, openssl rand -hex 32, the
           same value as skai.CORPUS_TOKEN), QDRANT_URL and EMBED_URL http(s)
           URLs, FALKORDB_HOST a host name, FALKORDB_PORT and the MAX_* limits
-          integers.
+          integers, COHERENCE_SAMPLE and COHERENCE_INTERVAL_SECONDS integers,
+          COHERENCE_MIN_COSINE and COHERENCE_THRESHOLD numbers from 0 to 1.
         quiet: true
       tags: [config]
 
     - name: Validate the corpora (a list; empty is allowed)
-      # Each corpus: name, collections (non-empty list), embed_model, and
-      # optional graph, description, query_prefix, name_property, vector_name.
+      # Each corpus: name, collections (non-empty list of collection or alias
+      # names), embed_model, and optional title, graph, description, embed_url,
+      # query_prefix, document_prefix, name_property, vector_name,
+      # allowed_groups (used by skai) and coherence_threshold.
       # The app validates the same rules again at start.
       assert:
         that:
@@ -112,10 +126,14 @@
           - skc_corpora | rejectattr('embed_model', 'defined') | list | length == 0
           - skc_corpora | map(attribute='collections') | map('length') | select('equalto', 0) | list | length == 0
           - skc_corpora | map(attribute='collections') | flatten | map('string') | reject('match', '^[A-Za-z0-9][A-Za-z0-9._-]*$') | list | length == 0
+          - skc_corpora | selectattr('embed_url', 'defined') | map(attribute='embed_url') | select | map('string') | reject('match', '^https?://[A-Za-z0-9._-]+(:[0-9]+)?(/.*)?$') | list | length == 0
+          - skc_corpora | selectattr('allowed_groups', 'defined') | map(attribute='allowed_groups') | reject('sequence') | list | length == 0
+          - skc_corpora | selectattr('allowed_groups', 'defined') | map(attribute='allowed_groups') | select('string') | list | length == 0
         fail_msg: >-
           ERROR: skcorpus.CORPORA must be a list of mappings, each with a unique
-          name (a plain token), collections (a non-empty list of plain names)
-          and embed_model.
+          name (a plain token), collections (a non-empty list of plain
+          collection or alias names) and embed_model; embed_url, when set, an
+          http(s) URL; allowed_groups, when set, a list.
         quiet: true
       tags: [config]
 
@@ -142,15 +160,17 @@
 
     - name: Define network variables from vault (idempotent network creation)
       # Subnets: skcorpus-prod 172.16.123.0/24, -staging .124, -dev .125. The
-      # service also joins skembed, skvector and skgraph (their subnets must
-      # match those roles' own playbooks).
+      # service also joins skvector, skgraph and (unless EMBED_URL points at an
+      # existing endpoint) skembed; their subnets must match those roles' own
+      # playbooks.
       set_fact:
         app_networks: "{{ skcorpus.networks | default([
           { 'name': 'skcorpus-prod', 'subnet': '172.16.123.0/24', 'driver': 'overlay', 'attachable': true },
-          { 'name': 'skembed-prod', 'subnet': '172.16.126.0/24', 'driver': 'overlay', 'attachable': true },
           { 'name': 'skvector-prod', 'subnet': '172.16.98.0/24', 'driver': 'overlay', 'attachable': true },
           { 'name': 'skgraph-prod', 'subnet': '172.16.101.0/24', 'driver': 'overlay', 'attachable': true }
-        ]) }}"
+        ] + ([] if skc_embed_external | bool else [
+          { 'name': 'skembed-prod', 'subnet': '172.16.126.0/24', 'driver': 'overlay', 'attachable': true }
+        ])) }}"
       tags: [networks, config]
 
   tasks:

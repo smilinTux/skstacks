@@ -59,6 +59,8 @@ def test_base_render(tmp_path, env):
     assert e["QDRANT_URL"] == f"http://skvector-{env}_qdrant:6333"
     assert e["FALKORDB_HOST"] == f"skgraph-{env}_falkordb"
     assert e["EMBED_URL"] == f"http://skembed-{env}_skembed:8080/v1"
+    assert e["GLOBAL_ROUTES"] == "false" and e["COHERENCE_THRESHOLD"] == "0.9"
+    assert e["COHERENCE_SAMPLE"] == "32" and e["COHERENCE_INTERVAL_SECONDS"] == "3600"
     assert BASE["API_TOKEN"] not in (out / f"var/data/config/skcorpus-{env}/skcorpus.yml").read_text()
 
 
@@ -75,6 +77,16 @@ def test_set_render_corpora_accepted_by_the_app(tmp_path):
     for key in ("QDRANT_API_KEY", "FALKORDB_PASSWORD", "EMBED_API_KEY"):
         assert e[key] == SET[key]
     assert set(compose(out)["networks"]) == {"skcorpus-prod", "skembed-prod", "skvector-prod"}
+    legal = mod.load_corpora(raw)["example-legal"]
+    assert legal["embed_url"] == "http://router.example.test:8090/v1" and legal["allowed_groups"] == ["example-ai-users"]
+    assert legal["coherence_threshold"] == 0.8 and legal["title"] == "Example Legal"
+    assert e["GLOBAL_ROUTES"] == "true" and e["COHERENCE_MIN_COSINE"] == "0.98"
+
+
+def test_existing_embed_endpoint_means_no_skembed_network(tmp_path):
+    out = rs.ok(tmp_path, "skcorpus", {**BASE, "EMBED_URL": "http://embed.example.test:8090/v1"})
+    assert set(compose(out)["networks"]) == {"skcorpus-prod", "skvector-prod", "skgraph-prod"}
+    assert rs.env_file(out / "var/data/config/skcorpus-prod/skcorpus.env")["EMBED_URL"] == "http://embed.example.test:8090/v1"
 
 
 @pytest.mark.parametrize("vault,needle", [
@@ -84,6 +96,9 @@ def test_set_render_corpora_accepted_by_the_app(tmp_path):
     ({"CORPORA": [{"name": "x", "collections": ["a"]}]}, "CORPORA must be a list"),
     ({"CORPORA": [{"name": "x", "collections": ["a"], "embed_model": "m"}] * 2}, "CORPORA must be a list"),
     ({"IMAGE": "python:3.12"}, "pinned by digest"),
+    ({"CORPORA": [{"name": "x", "collections": ["a"], "embed_model": "m", "embed_url": "ftp://x"}]}, "CORPORA must be a list"),
+    ({"CORPORA": [{"name": "x", "collections": ["a"], "embed_model": "m", "allowed_groups": "g"}]}, "CORPORA must be a list"),
+    ({"COHERENCE_THRESHOLD": 1.5}, "COHERENCE_THRESHOLD numbers"),
 ])
 def test_bad_vaults_fail_closed(tmp_path, vault, needle):
     assert needle in rs.fails(tmp_path, "skcorpus", {**BASE, **vault})

@@ -2,8 +2,13 @@
 skcorpus:
   CORPORA:
     - name: example-legal
+      title: "Example Legal"
       description: "Example legal corpus (fixture)"
-      collections: [example-chunks-v1, example-reference-v1]
+      collections: [example-chunks, example-reference-v1]
+      embed_url: "http://router.example.test:8090/v1"
+      document_prefix: ""
+      allowed_groups: [example-ai-users]
+      coherence_threshold: 0.8
       graph: example-graph
       embed_model: example-embed
       query_prefix: ""
@@ -25,6 +30,11 @@ skcorpus:
   MAX_WINDOW: 2
   MAX_GRAPH_ROWS: 25
   MAX_TEXT_CHARS: 2000
+  GLOBAL_ROUTES: true
+  COHERENCE_SAMPLE: 16
+  COHERENCE_INTERVAL_SECONDS: 1800
+  COHERENCE_MIN_COSINE: 0.98
+  COHERENCE_THRESHOLD: 0.85
   REPLICAS: 2
   CPUS: "0.5"
   MEMORY_LIMIT: 256M
