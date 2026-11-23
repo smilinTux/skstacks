@@ -42,7 +42,7 @@ networks:
 services:
   server:
     # Default = sf_default_image in the playbook (a test keeps them equal).
-    image: {{ skflow.WINDMILL_IMAGE | default('ghcr.io/windmill-labs/windmill:1.847.0@sha256:67ab003cfe395d7634d7fc0eada917fc894859bbc21fea487eee76760319d86f', true) }}
+    image: {{ skflow.WINDMILL_IMAGE | default('ghcr.io/windmill-labs/windmill:1.882.0@sha256:c5d60c73d12ed2839a8598edfcbe29f13eb1062b8e2e7e8112b985b0fb24ebc8', true) }}
     env_file: /var/data/config/skflow-{{ env }}/skflow.env
     environment:
       - MODE=server
@@ -149,7 +149,7 @@ services:
         - "traefik.http.services.{{ sf_router }}.loadbalancer.healthcheck.timeout=10s"
 
   worker:
-    image: {{ skflow.WINDMILL_IMAGE | default('ghcr.io/windmill-labs/windmill:1.847.0@sha256:67ab003cfe395d7634d7fc0eada917fc894859bbc21fea487eee76760319d86f', true) }}
+    image: {{ skflow.WINDMILL_IMAGE | default('ghcr.io/windmill-labs/windmill:1.882.0@sha256:c5d60c73d12ed2839a8598edfcbe29f13eb1062b8e2e7e8112b985b0fb24ebc8', true) }}
     env_file: /var/data/config/skflow-{{ env }}/skflow.env
     environment:
       - MODE=worker
@@ -184,7 +184,7 @@ services:
 {% if (skflow.NATIVE_WORKER_REPLICAS | default(0, true) | int) > 0 %}
 
   worker-native:
-    image: {{ skflow.WINDMILL_IMAGE | default('ghcr.io/windmill-labs/windmill:1.847.0@sha256:67ab003cfe395d7634d7fc0eada917fc894859bbc21fea487eee76760319d86f', true) }}
+    image: {{ skflow.WINDMILL_IMAGE | default('ghcr.io/windmill-labs/windmill:1.882.0@sha256:c5d60c73d12ed2839a8598edfcbe29f13eb1062b8e2e7e8112b985b0fb24ebc8', true) }}
     env_file: /var/data/config/skflow-{{ env }}/skflow.env
     environment:
       - MODE=worker
@@ -220,7 +220,7 @@ services:
 {% for tw in (skflow.TAGGED_WORKERS | default([], true)) %}
 
   worker-{{ tw.name }}:
-    image: {{ skflow.WINDMILL_IMAGE | default('ghcr.io/windmill-labs/windmill:1.847.0@sha256:67ab003cfe395d7634d7fc0eada917fc894859bbc21fea487eee76760319d86f', true) }}
+    image: {{ skflow.WINDMILL_IMAGE | default('ghcr.io/windmill-labs/windmill:1.882.0@sha256:c5d60c73d12ed2839a8598edfcbe29f13eb1062b8e2e7e8112b985b0fb24ebc8', true) }}
     env_file: /var/data/config/skflow-{{ env }}/skflow.env
     environment:
       - MODE=worker
@@ -259,7 +259,7 @@ services:
 
   postgres:
     # Default = sf_default_pg_image in the playbook (a test keeps them equal).
-    image: {{ skflow.POSTGRES_IMAGE | default('postgres:17.7-alpine@sha256:bb377b7239d2774ac8cc76f481596ce96c5a6b5e9d141f6d0a0ee371a6e7c0f2', true) }}
+    image: {{ skflow.POSTGRES_IMAGE | default('postgres:17.12-alpine@sha256:f9cf3e1f0066f0eb0c48707d864f0ac5941e9ff454a072077d97a4d278d07d73', true) }}
     env_file: /var/data/config/skflow-{{ env }}/postgres.env
     environment:
       - PGTEMP=/var/lib/postgresql/data/tmp
@@ -300,7 +300,7 @@ services:
   postgres-db-backup:
     # Debian variant: the dump loop needs bash, which alpine does not ship.
     # Default = sf_default_pg_backup_image in the playbook.
-    image: {{ skflow.POSTGRES_BACKUP_IMAGE | default('postgres:17.7@sha256:2006493727bd5277eece187319af1ef82b4cf82cf4fc1ed00da0775b646ac2a4', true) }}
+    image: {{ skflow.POSTGRES_BACKUP_IMAGE | default('postgres:17.12-bookworm@sha256:837bed18782820fe967067cb5328b02b0d9992c1be9a37ee0c9c492cfc03af3b', true) }}
     env_file: /var/data/config/skflow-{{ env }}/postgres-backup.env
     environment:
       - PGTEMP=/dump/tmp

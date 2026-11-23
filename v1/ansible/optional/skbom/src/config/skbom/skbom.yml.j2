@@ -42,7 +42,7 @@ services:
     # them equal). Runs as uid 1000 (no root entrypoint step), so the data
     # directory below is chowned to 1000:1000 by the deploy, not by the
     # container.
-    image: {{ skbom.APISERVER_IMAGE | default('dependencytrack/apiserver:4.14.6@sha256:3110dd66ee9d1b4b9a4dc6c51c68c23f14ba006b6e5a74d0b5204e169a1da09a', true) }}
+    image: {{ skbom.APISERVER_IMAGE | default('dependencytrack/apiserver:4.14.7@sha256:a936a5560df5647db11942775941d5f9e3d84eac5dab7848fd3f2b2165cf0e7e', true) }}
     env_file: /var/data/config/skbom-{{ env }}/apiserver.env
     volumes:
       - {{ skb_apiserver_data_path }}:/data
@@ -111,7 +111,7 @@ services:
   frontend:
     # Default = skb_default_frontend_image in the playbook. Stateless SPA:
     # no volume. Runs as uid 101 (nginx); ships curl and wget both.
-    image: {{ skbom.FRONTEND_IMAGE | default('dependencytrack/frontend:4.14.6@sha256:f298c3e6061096bf76575a1bbe994528089141856ec7b2ec63469cf3f2abeedf', true) }}
+    image: {{ skbom.FRONTEND_IMAGE | default('dependencytrack/frontend:4.14.7@sha256:3ca8ca16bce633525a12b535803cc046a0870dfb6ea0c78904e9b130534bf696', true) }}
     env_file: /var/data/config/skbom-{{ env }}/frontend.env
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/"]
@@ -167,7 +167,7 @@ services:
     # Default = skb_default_pg_image in the playbook: the EXACT same
     # literal skflow's own POSTGRES_IMAGE default uses, so the two roles
     # share a layer on any node that runs both.
-    image: {{ skbom.POSTGRES_IMAGE | default('postgres:17.7-alpine@sha256:bb377b7239d2774ac8cc76f481596ce96c5a6b5e9d141f6d0a0ee371a6e7c0f2', true) }}
+    image: {{ skbom.POSTGRES_IMAGE | default('postgres:17.12-alpine@sha256:f9cf3e1f0066f0eb0c48707d864f0ac5941e9ff454a072077d97a4d278d07d73', true) }}
     env_file: /var/data/config/skbom-{{ env }}/postgres.env
     environment:
       - PGTEMP=/var/lib/postgresql/data/tmp
@@ -209,7 +209,7 @@ services:
     # Debian variant: the dump loop needs bash, which alpine does not ship.
     # Default = skb_default_pg_backup_image in the playbook: the EXACT same
     # literal skflow's own POSTGRES_BACKUP_IMAGE default uses.
-    image: {{ skbom.POSTGRES_BACKUP_IMAGE | default('postgres:17.7@sha256:2006493727bd5277eece187319af1ef82b4cf82cf4fc1ed00da0775b646ac2a4', true) }}
+    image: {{ skbom.POSTGRES_BACKUP_IMAGE | default('postgres:17.12-bookworm@sha256:837bed18782820fe967067cb5328b02b0d9992c1be9a37ee0c9c492cfc03af3b', true) }}
     env_file: /var/data/config/skbom-{{ env }}/postgres-backup.env
     environment:
       - PGTEMP=/dump/tmp

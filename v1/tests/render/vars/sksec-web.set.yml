@@ -2,7 +2,7 @@
 sksec_web:
   CLOUDFLARED: true
   HOSTNAME: sksec-web.example.test
-  CROWDSEC_WEB_UI_IMAGE: "registry.example.test/crowdsec-web-ui:2026.10.10@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  CROWDSEC_WEB_UI_IMAGE: "registry.example.test/crowdsec-web-ui:2026.11.12@sha256:0000000000000000000000000000000000000000000000000000000000000000"
   LAPI_USERNAME: "sksec-web-render"
   LAPI_URL: "http://sksec-render-crowdsec.example.test:8080"
   CROWDSEC_SERVICE: "sksec-render-prod_crowdsec"

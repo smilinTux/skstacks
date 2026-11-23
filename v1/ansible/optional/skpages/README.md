@@ -12,7 +12,7 @@ and Tailscale deploys. This role is the Swarm deploy with Traefik labels.
 |---|---|
 | URL | `https://pages.<cluster>.<domain>/`; `pages-<env>.` for staging and dev; `pages.<domain>` with `CLOUDFLARED: true` |
 | Pages live in | a Nextcloud **group folder** (no single account owns it), mounted **read-only**; any `/var/data` directory works for a Nextcloud-free docroot |
-| Server | one `caddy` container (`caddy:2.11.8-alpine`), plain HTTP on `:8080` inside the overlay; TLS, SSO and CrowdSec stay at Traefik |
+| Server | one `caddy` container (`caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0`), plain HTTP on `:8080` inside the overlay; TLS, SSO and CrowdSec stay at Traefik |
 | Private area | everything except `/p/`, router middlewares `default@file,authentik@file` |
 | Public area | `/p/<token>/...`, a second router (priority 1000) with `default@file` only; `/p/` itself is never listable |
 
@@ -86,7 +86,7 @@ skpages:
   DOCROOT_CREATE: false              # true only for a docroot outside Nextcloud
   UID: 33                            # www-data, owner of the Nextcloud data tree
   GID: 33
-  IMAGE: caddy:2.11.8-alpine
+  IMAGE: caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
   CERTRESOLVER: main                 # "" = no certresolver label (edge wildcard cert)
   TRAEFIK_MIDDLEWARES: ""            # whole private-router chain; unset = see AUTH
   TRAEFIK_MIDDLEWARES_PUBLIC: ""     # whole /p/ router chain; unset = default@file
@@ -101,7 +101,7 @@ skpages:
 | `AUTH` | `true` | Authentik on the private router |
 | `DOCROOT_CREATE` | `false` | create `DOCROOT` and `DOCROOT/p` on disk |
 | `UID`, `GID` | `33` | user Caddy runs as; must be able to read the docroot |
-| `IMAGE` | `caddy:2.11.8-alpine` | pinned |
+| `IMAGE` | `caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0` | pinned |
 | `CERTRESOLVER` | `main` | empty string drops the label |
 | `TRAEFIK_MIDDLEWARES` | `default@file,authentik@file` | e.g. prepend `crowdsec-bouncer@file` |
 | `TRAEFIK_MIDDLEWARES_PUBLIC` | `default@file` | public router chain |

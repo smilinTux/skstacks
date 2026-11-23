@@ -4,7 +4,7 @@ Forgejo git hosting with a Postgres database, a dump sidecar and optional Action
 
 ## Upgrading Postgres to 18
 
-Framework default: `postgres:18.6` (pinned `tag@sha256:digest`) for the server and the dump sidecar. Earlier releases ran Postgres 16.
+Framework default: `postgres:18.6` for the server and `postgres:18.7-bookworm` for the dump sidecar (both pinned `tag@sha256:digest`). Earlier releases ran Postgres 16.
 **Postgres 18 cannot open a Postgres 16 data directory, and an upgrade is never automatic.**
 
 What the framework does for you:

@@ -147,10 +147,10 @@ skbom:
   DOMAIN: example.com                       # default: inventory domain
   CLOUDFLARED: false                        # true: default host is under DOMAIN, not CLUSTERNAME.DOMAIN
   HOSTNAME: ""                              # public host; default skbom[-dev|-staging].<base domain>
-  APISERVER_IMAGE: ""                       # default dependencytrack/apiserver:4.14.6@sha256:...; must carry @sha256:
-  FRONTEND_IMAGE: ""                        # default dependencytrack/frontend:4.14.6@sha256:...; must carry @sha256:
-  POSTGRES_IMAGE: ""                        # default postgres:17.7-alpine@sha256:...; must carry @sha256: (same literal as skflow's default)
-  POSTGRES_BACKUP_IMAGE: ""                 # dump sidecar, default postgres:17.7@sha256:...; must carry @sha256:
+  APISERVER_IMAGE: ""                       # default dependencytrack/apiserver:4.14.7@sha256:...; must carry @sha256:
+  FRONTEND_IMAGE: ""                        # default dependencytrack/frontend:4.14.7@sha256:...; must carry @sha256:
+  POSTGRES_IMAGE: ""                        # default postgres:17.12-alpine@sha256:...; must carry @sha256: (same literal as skflow's default)
+  POSTGRES_BACKUP_IMAGE: ""                 # dump sidecar, default postgres:17.12-bookworm@sha256:...; must carry @sha256:
   DB_USERNAME: dtrack                       # Postgres role name AND ALPINE_DATABASE_USERNAME
   DB_NAME: dtrack                           # Postgres database name
   EXTRA_JAVA_OPTIONS: "-Xmx3g"               # apiserver JVM heap; the target node has 8GB
@@ -264,9 +264,9 @@ checks:
   - name: compose template exists
     run: test -f v1/ansible/optional/skbom/src/config/skbom/skbom.yml.j2
   - name: documented apiserver default image matches the playbook's pin
-    run: grep -q 'dependencytrack/apiserver:4.14.6@sha256:3110dd66ee9d1b4b9a4dc6c51c68c23f14ba006b6e5a74d0b5204e169a1da09a' v1/ansible/optional/skbom/deploy_skbom-prod.yml
+    run: grep -q 'dependencytrack/apiserver:4.14.7@sha256:a936a5560df5647db11942775941d5f9e3d84eac5dab7848fd3f2b2165cf0e7e' v1/ansible/optional/skbom/deploy_skbom-prod.yml
   - name: documented frontend default image matches the playbook's pin
-    run: grep -q 'dependencytrack/frontend:4.14.6@sha256:f298c3e6061096bf76575a1bbe994528089141856ec7b2ec63469cf3f2abeedf' v1/ansible/optional/skbom/deploy_skbom-prod.yml
+    run: grep -q 'dependencytrack/frontend:4.14.7@sha256:3ca8ca16bce633525a12b535803cc046a0870dfb6ea0c78904e9b130534bf696' v1/ansible/optional/skbom/deploy_skbom-prod.yml
   - name: default placement constraint documented here matches the template's default
     run: grep -q "node.labels.skbom == true" v1/ansible/optional/skbom/src/config/skbom/skbom.yml.j2
 -->
