@@ -244,7 +244,7 @@
     - name: Show HA mode info
       debug:
         msg: |
-          {{ (acme_label_result.stdout_lines | default(['ACME master: (not changed in check mode)']))[0] }} (label traefik.acme.master=true)
+          {{ ((acme_label_result.stdout | default('', true)) or 'ACME master: (label task did not run)').splitlines()[0] }} (label traefik.acme.master=true)
           Managers in {{ target_manager_group }}: {{ (groups[target_manager_group] | default([])) | join(', ') }}
       tags:
         - labels
