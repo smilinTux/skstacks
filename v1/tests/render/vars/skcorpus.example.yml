@@ -1,0 +1,4 @@
+# Public, obviously fake example vault for the real-Ansible render gate
+# (v1/tests/render/render_playbooks.py). example.test only; no real secrets.
+skcorpus:
+  API_TOKEN: "example-corpus-token-not-a-secret-0123456789"

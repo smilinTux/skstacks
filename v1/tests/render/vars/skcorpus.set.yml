@@ -1,0 +1,33 @@
+# The "set" pass: every optional knob set, fake values only.
+skcorpus:
+  CORPORA:
+    - name: example-legal
+      description: "Example legal corpus (fixture)"
+      collections: [example-chunks-v1, example-reference-v1]
+      graph: example-graph
+      embed_model: example-embed
+      query_prefix: ""
+      name_property: name
+    - name: example-notes
+      collections: [example-notes-v1]
+      embed_model: example-embed
+      vector_name: dense
+  QDRANT_URL: "http://qdrant.example.test:6333"
+  QDRANT_API_KEY: "example-qdrant-ro-key-not-a-secret"
+  FALKORDB_HOST: graph.example.test
+  FALKORDB_PORT: 16379
+  FALKORDB_USERNAME: reader
+  FALKORDB_PASSWORD: "example-graph-password-not-a-secret"
+  EMBED_URL: "http://embed.example.test:8080/v1"
+  EMBED_API_KEY: "example-embed-key-not-a-secret"
+  IMAGE: "registry.example.test/python-fastapi:3.12@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  MAX_K: 10
+  MAX_WINDOW: 2
+  MAX_GRAPH_ROWS: 25
+  MAX_TEXT_CHARS: 2000
+  REPLICAS: 2
+  CPUS: "0.5"
+  MEMORY_LIMIT: 256M
+  MEMORY_RESERVATION: 32M
+  PLACEMENT_CONSTRAINTS: ["node.role == worker"]
+  CONNECT_NETWORKS: [skembed-prod, skvector-prod]

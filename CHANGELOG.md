@@ -17,6 +17,22 @@ vault). Healthcheck on `/health`, CPU and memory limits, placement constraints, 
 `v1/tests/test_skembed_render.py`. **Instance action:** none unless you want it: pick the model, set
 `skembed.MODEL_PATH` (or `MODEL_ID` and `HF_TOKEN`) and `MODEL_NAME`, deploy before skcorpus and skai.
 
+### skcorpus: read-only corpus search tool server (new role)
+
+New optional role `v1/ansible/optional/skcorpus`: our own FastAPI OpenAPI tool server
+(`app/skcorpus.py`, sha256-pinned in the playbook, bind-mounted read-only into a digest-pinned
+Python runtime with only fastapi, uvicorn and httpx; `image/` builds it). Tools `corpus_list`,
+`corpus_search` (embed the query through skembed, search each configured Qdrant collection, merge by
+score), `corpus_get` (neighbouring chunks of a hit), `graph_entity` and `graph_neighbors` (FalkorDB).
+Read-only by construction: Qdrant search and scroll only (path allowlist), FalkorDB `GRAPH.RO_QUERY`
+only, Cypher constant with user input only as encoded parameters, corpora and collections from config
+only, hard limits, bearer token. Joins `skembed-<env>`, `skvector-<env>` and `skgraph-<env>`;
+subnets `172.16.123-125.0/24`. CI now installs fastapi and httpx for its app tests. Tests:
+`v1/tests/test_skcorpus_app.py`, `v1/tests/test_skcorpus_render.py`. **Instance action:** none
+unless you want it: set `skcorpus.API_TOKEN` (same value as `skai.CORPUS_TOKEN`), a read-only
+`QDRANT_API_KEY`, `FALKORDB_PASSWORD` and `CORPORA`; check each corpus's `embed_model` against its
+collections; deploy after skembed.
+
 ## Unreleased (v2.26.32)
 
 ### skfenceha: the ACME master label stays where it is
