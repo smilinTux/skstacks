@@ -17,7 +17,9 @@
 version: "3.8"
 services:
   skmem-pg:
-    image: smilintux/skmem-pg:pg17-bm25-age
+    # Built from ../../../image/Dockerfile (Debian 12, PG 17, pinned base). Rebuild
+    # and repin here (dated tag + index digest) to pick up base security fixes.
+    image: smilintux/skmem-pg:pg17-bm25-age-20261123@sha256:766a9bdb31cfd60ce9678bf238b129990d097b361e014b4d40ee792b40642da9
     command: ["-c", "shared_preload_libraries=pg_search,age"]
     environment:
       POSTGRES_PASSWORD: "{{ skmem_pg_password }}"   # from SERVICE vault
