@@ -160,6 +160,7 @@ async function main() {
   const existing = (await call("GET", "/systems")).systems || [];
   const keyOf = (h, p) => `${h}:${Number(p || 22)}`;
   const byKey = new Map(existing.map((s) => [keyOf(s.hostname, s.port), s]));
+  const byName = new Map(existing.map((s) => [s.name, s]));
   const seen = new Set();
   for (const w of cfg.systems) {
     const k = keyOf(w.hostname, w.port);
@@ -167,6 +168,22 @@ async function main() {
     const cur = byKey.get(k);
     if (cur) {
       console.log(`${w.name}: unchanged (already registered as ${cur.name}, id ${cur.id})`);
+      continue;
+    }
+    // Same name, different address: this run sees the host under another
+    // address than the one it was registered with (typically an ssh alias
+    // because the estate's targets inventory, with ansible_host, was not
+    // passed). Creating it would add a duplicate system, and schedules that
+    // name the host would then resolve to the duplicate. Leave the existing
+    // registration alone and say how to fix the input.
+    const same = byName.get(w.name);
+    if (same) {
+      seen.add(keyOf(same.hostname, same.port));
+      console.log(
+        `WARN ${w.name}: already registered at ${same.hostname}:${Number(same.port || 22)} (id ${same.id}), ` +
+          `this run has it at ${w.hostname}:${Number(w.port || 22)}; not creating a duplicate. ` +
+          "Pass the estate's targets inventory (ansible_host) or set skpatch_hosts_dashboard_address.",
+      );
       continue;
     }
     const out = await call("POST", "/systems", {

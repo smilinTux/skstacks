@@ -121,6 +121,19 @@ Neither image needed the Node-one-liner workaround
 all; both ship a real one, confirmed by inspecting the actual images, not
 assumed from either role's own precedent.
 
+### Sign-in gate (`AUTH_MODE`, default `sso`)
+
+The web UI router (the frontend) gets Authentik forward auth by default:
+`AUTH_MODE: sso` appends `SSO_MIDDLEWARE` (default `authentik@file`) to
+its middleware chain, so an estate without a domain-wide forward-auth
+catch-all does not publish Dependency-Track's login page to the internet.
+`AUTH_MODE: local` drops it and leaves only Dependency-Track's own login,
+for an estate that already gates the host some other way; setting
+`SSO_MIDDLEWARE` with `local` fails the play, and so does any other
+`AUTH_MODE` value. The `-api` router never gets forward auth: CI uploads
+SBOMs with an `X-Api-Key` header, and the API server refuses an
+unauthenticated call on its own.
+
 ### OIDC login (optional, off by default)
 
 Dependency-Track has its own OIDC login (not a forward-auth proxy like
@@ -236,6 +249,8 @@ skbom:
   POSTGRES_PATH: ""                         # default /var/data/runtime/skbom-<env>/postgres
   DUMP_PATH: ""                             # default /var/data/skbom-<env>/database-dump
   TRAEFIK_MIDDLEWARES: ""                   # default default-no-error-pages@file (both routers)
+  AUTH_MODE: "sso"                         # sso (default): SSO_MIDDLEWARE on the web UI router; local: Dependency-Track's own login only
+  SSO_MIDDLEWARE: ""                       # default authentik@file; only with AUTH_MODE sso; never on the -api router
   TLS_OPTIONS: ""                           # default "none" = no tls.options label (Traefik default options, skstacks #463)
   APISERVER_CPUS: "2.00"
   APISERVER_MEMORY_LIMIT: 4096M

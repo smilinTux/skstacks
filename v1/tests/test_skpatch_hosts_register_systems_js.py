@@ -242,6 +242,21 @@ def test_never_edits_an_existing_system_and_only_reports_orphans(dash):
     assert [s["name"] for s in dash.systems] == ["renamed-by-hand", "retired", "mgr-1"]
 
 
+def test_same_name_at_another_address_is_not_registered_twice(dash):
+    # A run without the estate's targets inventory sees hosts under their ssh
+    # alias instead of ansible_host; that must not add a second system that
+    # schedules naming the host would then resolve to.
+    dash.credentials.append({"id": 1, "name": "skpatch-hosts skpatch-ro"})
+    dash.systems.append({"id": 1, "name": "wkr-1", "hostname": "10.0.0.21", "port": 22, "credentialId": 1})
+    out = _run(dash, _cfg(credential_id=1, systems=[{"name": "wkr-1", "hostname": "wkr-1", "port": 22}]))
+    assert out.returncode == 0, out.stderr
+    assert ("WARN wkr-1: already registered at 10.0.0.21:22 (id 1), this run has it at wkr-1:22; "
+            "not creating a duplicate.") in out.stdout
+    assert [s["name"] for s in dash.systems] == ["wkr-1"] and len(dash.systems) == 1
+    assert "not in this run's target list" not in out.stdout  # the existing one is not an orphan
+    assert not any(m in ("PUT", "DELETE") for m, _ in dash.calls)
+
+
 def test_oidc_account_gets_an_oidc_session(dash):
     out = _run(dash, _cfg(register_as="chef"))
     assert out.returncode == 0, out.stderr

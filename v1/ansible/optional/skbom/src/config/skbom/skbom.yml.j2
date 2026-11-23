@@ -156,7 +156,7 @@ services:
         # 5: below the api router's 50, above skfenceha's per-domain
         # catch-alls (priority 1), same convention as skflow.
         - "traefik.http.routers.{{ skb_router }}.priority=5"
-        - "traefik.http.routers.{{ skb_router }}.middlewares={{ skb_middlewares }}"
+        - "traefik.http.routers.{{ skb_router }}.middlewares={{ skb_frontend_middlewares }}"
         - "traefik.http.routers.{{ skb_router }}.service={{ skb_router }}"
         - "traefik.http.services.{{ skb_router }}.loadbalancer.server.port=8080"
         - "traefik.http.services.{{ skb_router }}.loadbalancer.healthcheck.path=/"

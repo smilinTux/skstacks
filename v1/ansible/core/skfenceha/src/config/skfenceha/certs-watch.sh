@@ -42,7 +42,12 @@ set -eu
 CERTS_DIR="${CERTS_DIR:-/certs}"
 DEST_FILE="${DEST_FILE:-/dynamic-out/certs-generated.yml}"
 INTERVAL="${INTERVAL:-15}"
-TMP_FILE="${DEST_FILE}.tmp.$$"
+# One temp file per task: every manager runs this (global service) against the
+# same shared /dynamic-out, and $$ is 1 in every container, so a fixed name let
+# one task's mv take another's temp file away mid-write ("sha256sum: can't
+# open ..."). The container hostname is unique per task; mv stays atomic
+# within the directory.
+TMP_FILE="${DEST_FILE}.tmp.$(hostname).$$"
 LAST_HASH=""
 
 echo "traefik-certs-watch: watching ${CERTS_DIR}, writing ${DEST_FILE} every ${INTERVAL}s" >&2

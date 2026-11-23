@@ -77,6 +77,9 @@ class FakeApi:
             return {"results": results}
         raise AssertionError(f"unexpected get: {path} {params}")
 
+    def get_all(self, path, **params):
+        return self.get(path, **params)["results"]
+
     def first(self, path, **params):
         res = self.get(path, **params).get("results", [])
         return res[0] if res else None
@@ -322,8 +325,11 @@ class FakeAuthentik(tile.Api):
     and policy bindings, with the list filters and pagination the script uses.
     Only `call` is replaced, so the real get/first/get_all run on top of it."""
 
-    def __init__(self, page_size=2, fail_on=None):
+    def __init__(self, page_size=2, fail_on=None, ignore_binding_filters=False):
         super().__init__("http://fake", "sso.example.com", "t" * 40)
+        # True = answer /policies/bindings/ like an Authentik that ignores the
+        # target, group and policy filters (every binding comes back).
+        self.ignore_binding_filters = ignore_binding_filters
         self.apps, self.groups, self.policies, self.bindings = {}, [], [], []
         self.calls = []
         self.page_size = page_size
@@ -399,6 +405,8 @@ class FakeAuthentik(tile.Api):
                 for key in ("group", "policy"):
                     if key in params:
                         res = [b for b in res if b.get(key) == params[key]]
+                if self.ignore_binding_filters:
+                    res = list(self.bindings)
                 return self._page(res, params)
             if method == "POST":
                 b = {**body, "pk": self.pk("b")}
@@ -516,6 +524,51 @@ def test_existing_groups_are_reused_not_duplicated():
 
 
 # --- additive: never removes ----------------------------------------------
+
+def test_ignored_binding_filters_still_create_the_admin_binding():
+    """Authentik 2026.8.6 ignored the bindings list `group` filter: an app bound
+    only to another group got "binding: unchanged", nothing was created and the
+    postcondition failed after the stack was up."""
+    api = FakeAuthentik(ignore_binding_filters=True)
+    old = api.add_group("authentik Admins")
+    other = api.add_group("unrelated")
+    tile.ensure_application(api, CFG)
+    app = api.apps["skpulse"]
+    api.bindings.append({"pk": "b-old", "target": app["pk"], "group": old["pk"], "policy": None,
+                         "enabled": True, "negate": False, "order": 0})
+    # another app's binding to skadmin's would-be pk must not count either
+    api.bindings.append({"pk": "b-x", "target": "other-app", "group": other["pk"], "policy": None,
+                         "enabled": True, "negate": False, "order": 0})
+    run_provision(api, access())
+    assert api.bound_group_names("skpulse") == ["authentik Admins", "skadmin"]
+    run_provision(api, access())  # idempotent: no second skadmin binding
+    assert api.bound_group_names("skpulse") == ["authentik Admins", "skadmin"]
+
+
+@pytest.mark.parametrize("acc,policy", [(access("any-account"), "sso-allow-any-account"),
+                                        (access("public"), "sso-allow-public")], ids=["any-account", "public"])
+def test_ignored_binding_filters_still_create_the_policy_binding(acc, policy):
+    api = FakeAuthentik(ignore_binding_filters=True)
+    old = api.add_group("authentik Admins")
+    tile.ensure_application(api, CFG)
+    app = api.apps["skpulse"]
+    api.bindings.append({"pk": "b-old", "target": app["pk"], "group": old["pk"], "policy": None,
+                         "enabled": True, "negate": False, "order": 0})
+    run_provision(api, acc)
+    run_provision(api, acc)
+    pks = [p["pk"] for p in api.policies if p["name"] == policy]
+    assert len(pks) == 1
+    assert len([b for b in api.bindings if b["target"] == app["pk"] and b.get("policy") == pks[0]]) == 1
+
+
+def test_ensure_group_binding_ignores_a_foreign_binding_from_an_unfiltered_answer():
+    group = {"pk": "group-pk", "name": "skadmin"}
+    foreign = {"target": "app-pk", "group": "other-pk"}
+    api = FakeApi(group=group, bindings=[foreign])
+    api.get = lambda path, **p: ({"results": [group]} if path == "/core/groups/" else {"results": list(api.bindings)})
+    tile.ensure_group_binding(api, {"pk": "app-pk"}, "skadmin")
+    assert [b for b in api.bindings if b.get("group") == "group-pk"]
+
 
 def test_existing_foreign_bindings_are_kept():
     api = FakeAuthentik()

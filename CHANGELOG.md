@@ -68,8 +68,75 @@ ends (opt-in, off by default). skha keepalived restarts wait for each node to be
 fixed pause, and a `vip_gate_checks` entry that names no health check is rejected. skreg no longer
 recreates its own overlay network. The portal tile provisioner retries Authentik's "starting" 503.
 `main` merges through a merge queue. The libvirt-cluster module can route test VMs' apt through a
-cache, with retries (opt-in). Five Renovate image updates for gated apps. Instance action: redeploy skha (check `vip_gate_checks` first, see
+cache, with retries (opt-in). skreg gets back the deployable role an unrelated merge had reverted. skfenceha certs-watch tasks no longer share one temp file. Portal tiles find an existing binding by checking it, not by trusting the Authentik list filter. The skpatch-hosts registrar no longer creates a duplicate system under a second address. skbom puts its web UI behind Authentik forward auth by default (`AUTH_MODE`), and skbom and skflow give a first Postgres init 300 s. Five Renovate image updates for gated apps. Instance action: redeploy skha (check `vip_gate_checks` first, see
 below); everything else is opt-in or needs nothing.
+
+### skbom: web UI behind Authentik forward auth by default (`AUTH_MODE`)
+
+- New `skbom.AUTH_MODE` (`sso` default, or `local`) and `skbom.SSO_MIDDLEWARE` (default
+  `authentik@file`), the same pattern as skpulse. Before this, the role assumed a domain-wide
+  forward-auth catch-all, so on an estate without one Dependency-Track's own login page was public.
+  Forward auth goes on the frontend (web UI) router only. The `-api` router keeps the plain chain:
+  CI uploads SBOMs with an `X-Api-Key`, and the API server refuses unauthenticated calls itself.
+  An unknown `AUTH_MODE`, or `SSO_MIDDLEWARE` with `local`, fails the play.
+- **Instance action**: none for an instance that already lists its forward-auth middleware in
+  `skbom.TRAEFIK_MIDDLEWARES` (it is not appended a second time). One that wants Dependency-Track's
+  own login only sets `AUTH_MODE: local`. Redeploy skbom to apply.
+
+### skbom and skflow: Postgres first-init start period 300 s (#501)
+
+- The Postgres healthcheck `start_period` defaults to 300 s (was 30 s) for skbom and skflow, tunable
+  with `POSTGRES_HEALTH_START_PERIOD`. A first `initdb` on NFS outlived 30 s plus 6 retries, swarm
+  killed it half-way, and the next task skipped init on the non-empty data dir (no `pg_hba` host
+  line, no app role). **Instance action**: none; a redeploy picks it up.
+
+### skreg: the deployable role is back (#199, undone by #200)
+
+- #200 (skflow, 2026-10-16) was built on a pre-#199 copy of the skreg role and reverted it whole, so
+  since v2.26.16 the deploy script sourced a `skreg.sh.env` nothing rendered, ran
+  `docker service rm` on a service that does not exist, and deployed the stack twice in a row. The
+  playbook runs it with `/bin/bash`, so the errors were ignored and only the second deploy's exit
+  counted; the release gate caught it losing a race (`update out of sequence`). #199 is restored
+  (rendered `skreg.env` and `skreg.sh.env`, one `docker stack deploy --prune`, network checks, a
+  `/v2/` wait, the healthcheck, the README) with the later changes kept: #492's network task and the
+  pinned registry 3.1.2. The compose file is rendered `0600` (root only), as the secret-file-mode
+  check expects. `v1/tests/test_skreg_deploy_role.py` pins it so it cannot silently go again.
+- **Instance action**: redeploy skreg. Needs `skreg.REGISTRY_HTTP_SECRET` in the vault (the play
+  refuses without it; the legacy `vault_skreg_registry_http_secret` is accepted).
+
+### skfenceha: traefik-certs-watch tasks no longer share one temp file
+
+- `traefik-certs-watch` runs on every manager against the same shared `/dynamic-out`, and its temp
+  file was `certs-generated.yml.tmp.$$`, where `$$` is 1 in every container. One task's `mv` could
+  take another's temp file away mid-write, and that task exited 1 now and then
+  (`sha256sum: can't open .../certs-generated.yml.tmp.1`). The temp name now carries the container
+  hostname. Tests: `v1/tests/test_skfenceha_certs_watch.py`.
+- **Instance action**: none; the next skfenceha deploy picks it up. A leftover
+  `certs-generated.yml.tmp.1` in the dynamic dir can be deleted.
+
+### Portal tiles: bindings matched client-side, not by the list filter
+
+- `ensure_binding` and `ensure_group_binding` (`v1/ansible/shared/src/authentik_portal_tile.py`)
+  trusted the `/policies/bindings/?target=&group=` (or `&policy=`) filters. One Authentik release
+  answered with the app's binding to ANOTHER group, so the wanted binding (for example `skadmin`)
+  was reported "unchanged" and never created, and the postcondition then failed the deploy after
+  the stack was already up. The answer is now filtered on target and group (or policy) in the
+  script, across every page. Tests: `v1/tests/test_authentik_portal_tile.py` (a fake Authentik
+  that ignores the filters).
+- **Instance action**: none. An estate that added the missing admin bindings by hand keeps them;
+  the next tile run reports them unchanged.
+
+### skpatch-hosts: the registrar never registers a system twice (#503)
+
+- Systems were matched only by `hostname:port`. A provisioning run without the estate's targets
+  inventory (the one with `ansible_host`) saw each host under its ssh alias and created a second
+  system with the same name, and schedules, which resolve systems by name, moved to the duplicate.
+  Now a target whose name is already registered at another address is left alone with a
+  `WARN <name>: already registered at ...` line, nothing is edited or deleted, and it is not reported
+  as an orphan. The README also says that a schedule is stopped with `enabled: false` (removing it
+  from the list leaves it as it was). Tests: `test_skpatch_hosts_register_systems_js.py`.
+- **Instance action**: none. If a run prints the WARN line, pass the targets inventory (or set
+  `skpatch_hosts_dashboard_address`); delete any duplicate an earlier run already made by hand.
 
 ### Dependency updates (Renovate, apps covered by the release gate)
 
@@ -146,6 +213,10 @@ below); everything else is opt-in or needs nothing.
   on every host first.) That setting is now a
   maximum, not a fixed pause, and its default is derived from the health checks (30 s for the
   default Traefik check). A manager that cannot carry the VIP is reported instead of passed over.
+  A node that settles in FAULT counts as ready only while another manager answers on the VIP: with
+  Traefik on some managers only (plain skfence), the others are FAULT on their gate check by
+  design, and the cluster is healthy. With the VIP answering nowhere, the restart still fails and
+  the rollout stops.
 - `skha.vip_gate_checks` is rejected when it is a mapping, and when it names a check that is not
   in `skha.health_checks`, including the implicit default `[traefik]` (such a gate never fails,
   so the VIP would never move on it). **Instance action** if your Traefik check has another
