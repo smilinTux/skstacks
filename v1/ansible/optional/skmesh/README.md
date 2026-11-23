@@ -339,7 +339,7 @@ them at `https://<skmesh-host>/team/users`. A Windmill job tells Talk when that 
 
 ## Upgrading Postgres to 18
 
-Framework default: `postgres:18.6` (pinned `tag@sha256:digest`) (`postgres:18.6-alpine` for the server, the Debian image for the dump sidecar). Earlier releases ran Postgres 16.
+Framework default (pinned `tag@sha256:digest`): `postgres:18.7-alpine` for the server, `postgres:18.7-bookworm` for the dump sidecar. Earlier releases ran Postgres 16.
 **Postgres 18 cannot open a Postgres 16 data directory, and an upgrade is never automatic.**
 
 What the framework does for you:

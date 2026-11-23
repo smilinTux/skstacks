@@ -22,17 +22,17 @@ in **[SOP.md](./SOP.md)**.
 - **License.** Dependency-Track itself is Apache-2.0: both images are
   vendored by reference only, nothing is rebuilt.
 - **Images.** `dependencytrack/apiserver` and `dependencytrack/frontend`,
-  release **`4.14.6`** (the latest release on the 4.x line; v5 is a
+  release **`4.14.7`** (the latest release on the 4.x line; v5 is a
   separate, incompatible major line upstream maintains in parallel, see
   "Why 4.x, not 5.x" below), both multi-arch and pinned by the
-  manifest-list digest. Postgres is `postgres:17.7-alpine`, the exact
+  manifest-list digest. Postgres is `postgres:17.12-alpine`, the exact
   same literal [skflow](../skflow/) defaults to, so the two roles share a
-  layer on any node that runs both; the dump sidecar uses `postgres:17.7`
+  layer on any node that runs both; the dump sidecar uses `postgres:17.12-bookworm`
   (the Debian variant, because its dump loop needs bash), also matching
   skflow. The play refuses any of the four without `@sha256:`.
 - **Why 4.x, not 5.x.** At the time this role was written, Dependency-
   Track 5.x had shipped (5.2.1) alongside 4.x still receiving stable
-  releases (4.14.6) and support through v4's documented end-of-life in
+  releases (4.14.7) and support through v4's documented end-of-life in
   December 2026. 4.x is the conservative choice for a first release of
   this role; a 5.x migration is a separate, deliberate change (new
   architecture, its own upgrade path), not a drive-by version bump.
@@ -160,7 +160,7 @@ stored integration credential unreadable, the same risk skpatch-hosts's own
 
 ## Upgrading Postgres to 18
 
-Framework default: `postgres:17.7-alpine` for the server and `postgres:17.7` for the dump sidecar
+Framework default: `postgres:17.12-alpine` for the server and `postgres:17.12-bookworm` for the dump sidecar
 (both pinned `tag@sha256:digest`). The default stays on 17; moving to 18 is a deliberate, per-instance
 step. **Postgres 18 cannot open a 17 data directory, and an upgrade is never automatic.**
 
@@ -222,10 +222,10 @@ skbom:
   DOMAIN: example.com                       # default: inventory domain
   CLOUDFLARED: false                        # true: default host is under DOMAIN, not CLUSTERNAME.DOMAIN
   HOSTNAME: ""                              # public host; default skbom[-dev|-staging].<base domain>
-  APISERVER_IMAGE: ""                       # default dependencytrack/apiserver:4.14.6@sha256:...; must carry @sha256:
-  FRONTEND_IMAGE: ""                        # default dependencytrack/frontend:4.14.6@sha256:...; must carry @sha256:
-  POSTGRES_IMAGE: ""                        # default postgres:17.7-alpine@sha256:...; must carry @sha256: (same literal as skflow's default)
-  POSTGRES_BACKUP_IMAGE: ""                 # dump sidecar, default postgres:17.7@sha256:...; must carry @sha256:
+  APISERVER_IMAGE: ""                       # default dependencytrack/apiserver:4.14.7@sha256:...; must carry @sha256:
+  FRONTEND_IMAGE: ""                        # default dependencytrack/frontend:4.14.7@sha256:...; must carry @sha256:
+  POSTGRES_IMAGE: ""                        # default postgres:17.12-alpine@sha256:...; must carry @sha256: (same literal as skflow's default)
+  POSTGRES_BACKUP_IMAGE: ""                 # dump sidecar, default postgres:17.12-bookworm@sha256:...; must carry @sha256:
   DB_USERNAME: dtrack                       # Postgres role name AND ALPINE_DATABASE_USERNAME
   DB_NAME: dtrack                           # Postgres database name
   EXTRA_JAVA_OPTIONS: "-Xmx3g"               # apiserver JVM heap; the target node has 8GB

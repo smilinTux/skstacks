@@ -9,8 +9,8 @@
 #
 # How: register_systems.js runs inside the dashboard's own container and
 # uses a five-minute session it signs with the app's own session key for
-# the REGISTER_AS admin. The pinned linux-update-dashboard (2026.10.9)
-# refuses API tokens for this (403 "API tokens cannot configure SSH
+# the REGISTER_AS admin. linux-update-dashboard up to 2026.10.9
+# refused API tokens for this (403 "API tokens cannot configure SSH
 # connections", the v2.26.17 gate), password login is off in AUTH_MODE
 # oidc, and forward auth sits in front in sso mode; inside the container
 # none of that is in the way, and anyone who can docker exec there can

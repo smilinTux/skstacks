@@ -210,7 +210,7 @@ def test_guard_behaviour(tmp_path, disk, image, ok):
 
 # ---- skflow and skbom: default stays on 17, guard and layout ready for an 18 pin ----------
 #
-# Both roles keep postgres:17.7-alpine as the default (a shared literal, so they share a layer).
+# Both roles keep postgres:17.12-alpine as the default (a shared literal, so they share a layer).
 # The template computes the mount target from the playbook's effective image (sf_pg_image /
 # skb_pg_image = POSTGRES_IMAGE or the role default), the same value the guard include checks.
 
@@ -218,7 +218,7 @@ import json  # noqa: E402
 
 import jinja2  # noqa: E402
 
-PG17 = "postgres:17.7-alpine@sha256:bb377b7239d2774ac8cc76f481596ce96c5a6b5e9d141f6d0a0ee371a6e7c0f2"
+PG17 = "postgres:17.12-alpine@sha256:f9cf3e1f0066f0eb0c48707d864f0ac5941e9ff454a072077d97a4d278d07d73"
 PIN18 = "postgres:18.6-alpine@sha256:" + "d" * 64
 # role -> (image fact, path fact, playbook default fact, vars needed to render)
 PG17_ROLES = {

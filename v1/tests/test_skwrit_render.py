@@ -19,8 +19,8 @@ pytestmark = pytest.mark.skipif(shutil.which("ansible-playbook") is None, reason
 ROLE = rp.ANSIBLE / "optional" / "skwrit"
 BASE = yaml.safe_load((rp.VARS / "skwrit.example.yml").read_text())["skwrit"]
 SET = yaml.safe_load((rp.VARS / "skwrit.set.yml").read_text())["skwrit"]
-MCP_IMAGE = ("ghcr.io/cbcoutinho/nextcloud-mcp-server:0.199.4@sha256:"
-             "4db27920ca54f13965f8a509bcaf8491c2d06a476cc1b77062868ae901c2f0f1")
+MCP_IMAGE = ("ghcr.io/cbcoutinho/nextcloud-mcp-server:0.218.0@sha256:"
+             "e9650d14dbdcf796ce1ef4de48f4505de89c84670bbf4722b3eeace00f57656c")
 
 
 def render(tmp: Path, vault, env: str = "prod") -> tuple[dict, Path]:

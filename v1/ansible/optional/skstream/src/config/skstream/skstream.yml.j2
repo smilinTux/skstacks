@@ -138,7 +138,7 @@ services:
 {% if kometa_on %}
 
   kometa:
-    image: {{ skstream.KOMETA_IMAGE | default('kometateam/kometa@sha256:93b0909d1a34d75985c2258f451aac4ece4216d02f0c4914a0a4fa4be39a88c0') }}
+    image: {{ skstream.KOMETA_IMAGE | default('kometateam/kometa:v2.5.5@sha256:864cec57d099c71a26a5a5ce2784d34d9b53874c91269c3a12df3949eab96562') }}
     env_file: /var/data/config/{{ app }}-{{ env }}/kometa.env
     environment:
       - TZ={{ skstream.TZ | default('UTC') }}

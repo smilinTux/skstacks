@@ -48,11 +48,11 @@
     env: dev
     service_name: sksec-web
     service_type: optional
-    # crowdsec-web-ui 2026.10.10 (upstream release image, pinned by the
+    # crowdsec-web-ui 2026.11.12 (upstream release image, pinned by the
     # manifest-list digest). The compose template writes the same literal
     # so v1/scripts/list_images.py sees the pin; test_sksec_web_render.py
     # keeps the two equal.
-    sksw_default_image: "ghcr.io/theduffman85/crowdsec-web-ui:2026.10.10@sha256:f57568d27b2c7798155a638b9cb76302777a9dcf43d8026f344c17767589d694"
+    sksw_default_image: "ghcr.io/theduffman85/crowdsec-web-ui:2026.11.12@sha256:5bc8a0bdb6350101bce07f1db55df9784b27f6f2ff49cc1316bd67988628558e"
   pre_tasks:
     - name: Select vault file based on domain and cluster
       import_tasks: ../../shared/tasks/select_vault_file.yml
