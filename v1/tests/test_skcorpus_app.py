@@ -1,5 +1,6 @@
 """skcorpus (v1/ansible/optional/skcorpus/app/skcorpus.py) against a fake
-Qdrant, a fake embeddings endpoint and a fake FalkorDB, no network:
+Qdrant, a fake embeddings endpoint, a fake FalkorDB and a fake Postgres
+connection (pgvector corpora), no network:
 
 * read-only guarantee: the only Qdrant calls are search and scroll, any
   other path raises before a request is sent; the only FalkorDB command is
@@ -522,3 +523,286 @@ def test_cosine():
     assert sk.cosine([1, 0], [1, 0]) == pytest.approx(1.0)
     assert sk.cosine([1, 0], [0, 1]) == pytest.approx(0.0)
     assert sk.cosine([1, 0], [1, 0, 0]) is None and sk.cosine([0, 0], [1, 0]) is None
+
+
+# --- pgvector backend (fake psycopg connection, no Postgres) ---------------
+
+PG_CORPUS = {"name": "example-wiki", "backend": "pgvector", "pg_dsn_env": "EXAMPLE_WIKI_DSN",
+             "pg_filter_values": ["wiki", "wiki-raw"], "embed_model": "example-embed",
+             "query_prefix": "query: ", "document_prefix": "doc: "}
+
+
+class FakeCursor:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def fetchall(self):
+        return self.rows
+
+
+class FakePgConn:
+    """Records every statement; answers by template shape. ``rows`` holds
+    (id, corpus, source, chunk_idx, content, meta, embedding)."""
+
+    def __init__(self, rows=None, hybrid=None, read_only="on"):
+        self.statements = []
+        self.rows = rows or []
+        self.hybrid = hybrid or []
+        self.read_only = read_only
+        self.closed = False
+        self.broken = False
+
+    def execute(self, sql, params=None):
+        self.statements.append((sql, params))
+        if sql == "SHOW transaction_read_only":
+            return FakeCursor([(self.read_only,)])
+        if sql.startswith("SET "):
+            return FakeCursor([])
+        if " FROM \"hybrid_search_docs_public\"(" in sql or "AS h" in sql:
+            return FakeCursor(self.hybrid[: params["k"]])
+        if "ANY(%(ids)s)" in sql:
+            return FakeCursor([r[:6] for r in self.rows if r[0] in params["ids"] and r[1] in params["vals"]])
+        if "ORDER BY random()" in sql:
+            return FakeCursor([(r[4], json.dumps(r[6])) for r in self.rows if r[1] == params["val"]][: params["n"]])
+        if "BETWEEN" in sql:
+            return FakeCursor(sorted([r[:6] for r in self.rows if r[1] == params["val"] and r[2] == params["source"]
+                                      and params["lo"] <= r[3] <= params["hi"]], key=lambda r: r[3])[: params["n"]])
+        if "<=>" in sql:
+            return FakeCursor([r[:6] + (0.5,) for r in self.rows if r[1] in params["vals"]][: params["k"]])
+        raise AssertionError(f"unexpected SQL {sql}")
+
+    def close(self):
+        self.closed = True
+
+
+def pgrow(i, corpus, source="docs/a.md", idx=0, emb=(0.1, 0.2, 0.3)):
+    return (i, corpus, source, idx, f"content {i}", {"title": f"title {i}", "category": "example"}, list(emb))
+
+
+def pg_make(conn, corpus=PG_CORPUS, embed=None):
+    embed = embed or FakeEmbed()
+    cfg = sk.load_corpora([corpus])
+    connects = []
+
+    def connect(dsn):
+        connects.append(dsn)
+        return conn
+
+    readers = {}
+
+    def pg_for(c):
+        if c["name"] not in readers:
+            readers[c["name"]] = sk.PgReader(c, "postgresql://example.invalid/db", connect=connect)
+        return readers[c["name"]]
+
+    c = sk.Corpus(cfg, None, None,
+                  sk.Embedder("http://embed.invalid/v1", transport=httpx.MockTransport(embed.handler)), pg_for=pg_for)
+    return TestClient(sk.create_app(c, token=TOKEN)), c, embed, connects
+
+
+def test_pgvector_config_defaults_and_collections_are_the_filter_values():
+    c = sk.load_corpora([PG_CORPUS])["example-wiki"]
+    assert c["backend"] == "pgvector" and c["collections"] == ["wiki", "wiki-raw"]
+    assert c["pg_relation"] == "docs_public" and c["pg_search_fn"] == "hybrid_search_docs_public"
+    assert c["pg_filter_column"] == "corpus" and c["graph"] == ""
+    assert sk.load_corpora([{**PG_CORPUS, "pg_search_fn": ""}])["example-wiki"]["pg_search_fn"] == ""
+    assert sk.load_corpora([{**PG_CORPUS, "pg_relation": "public.docs_v2"}])["example-wiki"]["pg_relation"] == "public.docs_v2"
+    assert sk.load_corpora([{"name": "q", "collections": ["a"], "embed_model": "m"}])["q"]["backend"] == "qdrant"
+
+
+@pytest.mark.parametrize("bad", [
+    {"backend": "chroma"},
+    {"pg_dsn_env": None},
+    {"pg_dsn_env": "API_TOKEN"},
+    {"pg_dsn_env": "wiki_dsn"},
+    {"pg_relation": 'docs"; DROP TABLE x; --'},
+    {"pg_relation": "Docs"},
+    {"pg_relation": "a.b.c"},
+    {"pg_search_fn": "fn()"},
+    {"pg_search_fn": 7},
+    {"pg_filter_column": "public.corpus"},
+    {"pg_filter_column": "corpus or 1=1"},
+    {"pg_filter_values": []},
+    {"pg_filter_values": None},
+    {"pg_filter_values": ["wiki", "x y"]},
+    {"pg_filter_values": "wiki"},
+    {"graph": "example-graph"},
+    {"collections": ["col-a"]},
+])
+def test_bad_pgvector_config_is_refused(bad):
+    with pytest.raises(sk.ConfigError):
+        sk.load_corpora([{**PG_CORPUS, **bad}])
+
+
+def test_qdrant_corpus_still_needs_collections():
+    with pytest.raises(sk.ConfigError):
+        sk.load_corpora([{"name": "q", "backend": "qdrant", "embed_model": "m"}])
+
+
+def test_pg_session_is_read_only_with_a_statement_timeout_before_any_query():
+    conn = FakePgConn(rows=[pgrow(1, "wiki")], hybrid=[(1, "wiki", 0.9)])
+    client, _, _, connects = pg_make(conn)
+    assert client.post("/c/example-wiki/search", headers=AUTH, json={"query": "x"}).status_code == 200
+    sqls = [s for s, _ in conn.statements]
+    assert sqls[:4] == ["SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY",
+                        "SET default_transaction_read_only = on",
+                        "SET statement_timeout = 5000",
+                        "SHOW transaction_read_only"]
+    assert all(s.startswith(("SET ", "SHOW ", "SELECT ")) for s in sqls)
+    # the connection is reused, set up once
+    client.post("/c/example-wiki/search", headers=AUTH, json={"query": "y"})
+    assert connects == ["postgresql://example.invalid/db"] and sqls.count("SHOW transaction_read_only") == 1
+
+
+def test_pg_session_that_is_not_read_only_is_refused_and_closed():
+    conn = FakePgConn(read_only="off")
+    reader = sk.PgReader(sk.load_corpora([PG_CORPUS])["example-wiki"], "postgresql://example.invalid/db",
+                         connect=lambda dsn: conn)
+    with pytest.raises(sk.ReadOnlyViolation):
+        reader.search("x", [0.1, 0.2], 3)
+    assert conn.closed and not any(s.startswith("SELECT") for s, _ in conn.statements)
+
+
+def test_pg_reader_refuses_sql_that_is_not_a_template():
+    conn = FakePgConn()
+    reader = sk.PgReader(sk.load_corpora([PG_CORPUS])["example-wiki"], "postgresql://example.invalid/db",
+                         connect=lambda dsn: conn)
+    for sql in ("DELETE FROM docs_public", "SELECT 1", "SET default_transaction_read_only = off"):
+        with pytest.raises(sk.ReadOnlyViolation):
+            reader._execute(conn, sql, {})
+    assert conn.statements == []
+    assert {n for n in dir(sk.PgReader) if not n.startswith("_")} == {"search", "window", "sample"}
+
+
+def test_pg_reader_without_a_dsn_fails_without_connecting():
+    reader = sk.PgReader(sk.load_corpora([PG_CORPUS])["example-wiki"], "",
+                         connect=lambda dsn: pytest.fail("must not connect"))
+    with pytest.raises(RuntimeError, match="DSN"):
+        reader.sample("wiki", 3)
+
+
+def test_pg_hybrid_search_over_fetches_filters_and_keeps_score_order():
+    hybrid = [(1, "other", 0.99), (2, "wiki", 0.9), (3, "wiki-raw", 0.95), (4, "other", 0.8), (5, "wiki", 0.7)]
+    rows = [pgrow(i, c) for i, c, _ in hybrid]
+    conn = FakePgConn(rows=rows, hybrid=hybrid)
+    client, _, embed, _ = pg_make(conn)
+    r = client.post("/c/example-wiki/search", headers=AUTH, json={"query": "what is x", "k": 2})
+    assert r.status_code == 200
+    hits = r.json()
+    assert [h["text"] for h in hits] == ["content 3", "content 2"]
+    assert [h["score"] for h in hits] == [0.95, 0.9]
+    assert hits[0] == {"text": "content 3", "title": "title 3", "file_path": "docs/a.md", "chunk_index": 0,
+                       "category": "example", "collection": "wiki-raw", "score": 0.95}
+    hy = next(p for s, p in conn.statements if "AS h" in s)
+    assert hy["k"] == 8 and hy["q_text"] == "what is x" and hy["q_vec"] == "[0.1,0.2,0.3]"
+    by_ids = next((s, p) for s, p in conn.statements if "ANY(%(ids)s)" in s)
+    assert by_ids[1] == {"ids": [3, 2], "vals": ["wiki", "wiki-raw"]}
+    assert '"docs_public"' in by_ids[0] and "what is x" not in by_ids[0]
+    assert embed.calls[0][1]["input"] == ["query: what is x"]
+
+
+def test_pg_over_fetch_is_capped():
+    conn = FakePgConn()
+    reader = sk.PgReader(sk.load_corpora([PG_CORPUS])["example-wiki"], "postgresql://example.invalid/db",
+                         connect=lambda dsn: conn)
+    assert reader.search("x", [0.1], 100) == []
+    assert next(p for s, p in conn.statements if "AS h" in s)["k"] == sk.PG_MAX_FETCH
+    assert not any("ANY(%(ids)s)" in s for s, _ in conn.statements)  # nothing kept, no second query
+
+
+def test_pg_pure_vector_fallback_when_the_search_function_is_empty():
+    conn = FakePgConn(rows=[pgrow(1, "wiki"), pgrow(2, "other"), pgrow(3, "wiki-raw")])
+    client, _, _, _ = pg_make(conn, {**PG_CORPUS, "pg_search_fn": "", "pg_relation": "public.docs_v2",
+                                     "pg_filter_column": "kind"})
+    hits = client.post("/c/example-wiki/search", headers=AUTH, json={"query": "x", "k": 5}).json()
+    assert [h["text"] for h in hits] == ["content 1", "content 3"] and hits[0]["score"] == 0.5
+    sql, params = next((s, p) for s, p in conn.statements if "<=>" in s)
+    assert '"public"."docs_v2"' in sql and 'r."kind" = ANY(%(vals)s)' in sql
+    assert params == {"q_vec": "[0.1,0.2,0.3]", "vals": ["wiki", "wiki-raw"], "k": 5}
+    assert not any("AS h" in s for s, _ in conn.statements)
+
+
+def test_pg_window_by_source_and_chunk_range_scoped_to_the_corpus():
+    rows = [pgrow(i, "wiki", "docs/a.md", i) for i in range(10)] + [pgrow(99, "wiki", "docs/b.md", 4)]
+    conn = FakePgConn(rows=rows)
+    client, _, _, _ = pg_make(conn)
+    r = client.post("/c/example-wiki/chunks", headers=AUTH,
+                    json={"collection": "wiki", "file_path": "docs/a.md", "chunk_index": 4, "window": 9})
+    assert [h["chunk_index"] for h in r.json()] == [1, 2, 3, 4, 5, 6, 7]
+    params = next(p for s, p in conn.statements if "BETWEEN" in s)
+    assert params == {"val": "wiki", "source": "docs/a.md", "lo": 1, "hi": 7, "n": 7}
+    r = client.post("/c/example-wiki/chunks", headers=AUTH,
+                    json={"collection": "other", "file_path": "docs/a.md", "chunk_index": 0})
+    assert r.status_code == 404
+
+
+def test_pg_corpus_has_no_graph_tools():
+    client, _, _, _ = pg_make(FakePgConn())
+    ops = {op["operationId"] for p in client.get("/c/example-wiki/openapi.json").json()["paths"].values()
+           for op in p.values()}
+    assert ops == {"corpus_list", "corpus_search", "corpus_get"}
+    desc = client.get("/c/example-wiki/corpora", headers=AUTH).json()[0]
+    assert desc["backend"] == "pgvector" and desc["collections"] == ["wiki", "wiki-raw"] and desc["has_graph"] is False
+
+
+def test_pg_coherence_samples_each_filter_value():
+    rows = [pgrow(1, "wiki", emb=(1.0, 0.0, 0.0)), pgrow(2, "wiki", emb=(0.0, 1.0, 0.0)),
+            pgrow(3, "wiki-raw", emb=(0.0, 1.0, 0.0))]
+    conn = FakePgConn(rows=rows)
+
+    class Embed(FakeEmbed):
+        def handler(self, request):
+            self.calls.append(json.loads(request.content)["input"][0])
+            return httpx.Response(200, json={"data": [{"embedding": [0.0, 1.0, 0.0]}]})
+
+    embed = Embed()
+    client, c, _, _ = pg_make(conn, embed=embed)
+    c.coherence.run_once()
+    st = c.coherence.status["example-wiki"]
+    assert st["sampled"] == 3 and st["coherent"] == 2 and st["healthy"] is False
+    assert st["collections"]["wiki"]["ratio"] == 0.5 and st["collections"]["wiki-raw"]["ratio"] == 1.0
+    assert embed.calls == ["doc: content 1", "doc: content 2", "doc: content 3"]
+    assert {p["val"] for s, p in conn.statements if "random()" in s} == {"wiki", "wiki-raw"}
+    assert client.get("/health").json()["status"] == "degraded"
+
+
+def test_pg_coherence_without_postgres_is_reported_not_raised():
+    cfg = sk.load_corpora([PG_CORPUS])
+    c = sk.Corpus(cfg, None, None, sk.Embedder("http://embed.invalid/v1", transport=httpx.MockTransport(FakeEmbed().handler)))
+    c.coherence.run_once()
+    st = c.coherence.status["example-wiki"]
+    assert st["healthy"] is False and "error" in st["collections"]["wiki"]
+
+
+def test_vector_literal_and_parse():
+    assert sk.vector_literal([1, 0.5]) == "[1.0,0.5]"
+    for bad in ([], [float("nan")], ["1"], [True]):
+        with pytest.raises(ValueError):
+            sk.vector_literal(bad)
+    assert sk._parse_vector("[0.5,1]") == [0.5, 1.0] and sk._parse_vector("nope") is None
+    assert sk._parse_vector(None) is None
+
+
+def test_env_factory_reads_the_dsn_from_the_named_variable(tmp_path, monkeypatch):
+    cfg = tmp_path / "corpora.json"
+    cfg.write_text(json.dumps([PG_CORPUS]))
+    monkeypatch.setenv("CORPORA_FILE", str(cfg))
+    monkeypatch.setenv("EMBED_URL", "http://embed.invalid/v1")
+    monkeypatch.setenv("EXAMPLE_WIKI_DSN", "postgresql://example.invalid/db")
+    monkeypatch.delenv("QDRANT_URL", raising=False)
+    monkeypatch.delenv("FALKORDB_HOST", raising=False)
+    built = []
+
+    class Recorder:
+        def __init__(self, c, dsn, **kw):
+            built.append((c["name"], dsn))
+
+        def search(self, query, vector, k):
+            return []
+
+    monkeypatch.setattr(sk, "PgReader", Recorder)
+    monkeypatch.setattr(sk.Embedder, "embed", lambda self, model, text: [0.1, 0.2])
+    client = TestClient(sk.create_app(token=TOKEN))
+    for _ in range(2):
+        assert client.post("/c/example-wiki/search", headers=AUTH, json={"query": "x"}).json() == []
+    assert built == [("example-wiki", "postgresql://example.invalid/db")]

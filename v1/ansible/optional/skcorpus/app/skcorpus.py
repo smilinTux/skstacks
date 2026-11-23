@@ -3,7 +3,9 @@
 Open WebUI (skai) registers this server as a tool server and calls its
 operations as tools. A corpus is configuration, never input: a name, the
 Qdrant collections that hold its chunks, an optional FalkorDB graph, and the
-embedding model the collections were built with.
+embedding model the collections were built with. A corpus with
+``backend: pgvector`` lives in a Postgres table or view instead (see
+``PgReader``): its "collections" are the values of its filter column.
 
 Read-only by construction:
 
@@ -18,6 +20,13 @@ Read-only by construction:
   ``GRAPH.RO_QUERY`` (FalkorDB refuses any write inside it). The Cypher texts
   are module constants; user input travels only as query parameters, written
   in the ``CYPHER name=value`` header with a strict literal encoder.
+* Postgres (pgvector corpora) is reached through ``PgReader``: every session
+  is set read-only (``SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY``,
+  ``default_transaction_read_only``, checked with ``SHOW``) with a
+  ``statement_timeout``, and the only SQL it can send is a fixed set of SELECT
+  templates built once from validated identifiers; every value is a bound
+  parameter. The DSN comes from the environment variable the corpus names in
+  ``pg_dsn_env``, never from corpora.json. Use a read-only role as well.
 * Collections and graphs come from the corpus config. A request names a
   corpus (and for ``corpus_get`` one of that corpus's collections); anything
   else is refused with 404.
@@ -50,6 +59,8 @@ Environment:
   EMBED_URL          OpenAI-compatible base URL, e.g. http://skembed:8080/v1 (a
                      corpus's own ``embed_url`` overrides it)
   EMBED_API_KEY      bearer key for the embeddings endpoints (optional)
+  <NAME>_DSN         a Postgres DSN, named by a pgvector corpus's ``pg_dsn_env``
+  PG_STATEMENT_TIMEOUT_MS  per-statement limit on Postgres (default 5000)
   GLOBAL_ROUTES      true to also serve the all-corpora routes (default false)
   COHERENCE_SAMPLE, COHERENCE_INTERVAL_SECONDS (0 = startup only),
   COHERENCE_MIN_COSINE, COHERENCE_THRESHOLD
@@ -78,6 +89,14 @@ PROP_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 QDRANT_ALLOWED = re.compile(r"^/collections/[A-Za-z0-9][A-Za-z0-9._-]{0,127}/points/(search|scroll|query)$")
 URL_RE = re.compile(r"^https?://[^\s/?#]+(/[^\s?#]*)?$")
 GROUP_RE = re.compile(r"^(\*|[^\s,][^,]{0,127})$")
+# Postgres identifiers: lowercase plain names (so quoting changes nothing),
+# optionally schema-qualified for a relation or function.
+PG_IDENT_RE = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
+PG_QUALIFIED_RE = re.compile(r"^[a-z_][a-z0-9_]{0,62}(\.[a-z_][a-z0-9_]{0,62})?$")
+# The env var that holds a DSN: upper case and ending in _DSN, so a corpus
+# can never point at API_TOKEN or another secret of this service.
+DSN_ENV_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,59}_DSN$")
+BACKENDS = ("qdrant", "pgvector")
 
 
 def _int_env(name: str, default: int, lo: int, hi: int) -> int:
@@ -107,6 +126,8 @@ COHERENCE_SAMPLE = _int_env("COHERENCE_SAMPLE", 32, 1, 1000)
 COHERENCE_INTERVAL = _int_env("COHERENCE_INTERVAL_SECONDS", 3600, 0, 7 * 86400)
 COHERENCE_MIN_COSINE = _float_env("COHERENCE_MIN_COSINE", 0.99, 0.0, 1.0)
 COHERENCE_THRESHOLD = _float_env("COHERENCE_THRESHOLD", 0.9, 0.0, 1.0)
+PG_STATEMENT_TIMEOUT_MS = _int_env("PG_STATEMENT_TIMEOUT_MS", 5000, 100, 60000)
+PG_MAX_FETCH = 200  # cap on the hybrid function over-fetch (k * 4)
 
 
 class ConfigError(ValueError):
@@ -136,12 +157,24 @@ def load_corpora(raw: Any) -> dict[str, dict]:
             raise ConfigError(f"corpus name {name!r} is not a plain token")
         if name in out:
             raise ConfigError(f"corpus {name} is defined twice")
-        cols = item.get("collections") or []
-        if not isinstance(cols, list) or not cols or not all(isinstance(c, str) and NAME_RE.match(c) for c in cols):
-            raise ConfigError(f"corpus {name}: collections must be a non-empty list of plain names")
+        backend = item.get("backend") or "qdrant"
+        if backend not in BACKENDS:
+            raise ConfigError(f"corpus {name}: backend must be one of {', '.join(BACKENDS)}")
         graph = item.get("graph") or ""
         if graph and (not isinstance(graph, str) or not NAME_RE.match(graph)):
             raise ConfigError(f"corpus {name}: graph must be a plain name")
+        pg: dict[str, Any] = {}
+        if backend == "pgvector":
+            pg = _load_pg(name, item)
+            if graph:
+                raise ConfigError(f"corpus {name}: graph is not supported with backend pgvector")
+            if item.get("collections"):
+                raise ConfigError(f"corpus {name}: a pgvector corpus takes pg_filter_values, not collections")
+            cols = pg["pg_filter_values"]
+        else:
+            cols = item.get("collections") or []
+            if not isinstance(cols, list) or not cols or not all(isinstance(c, str) and NAME_RE.match(c) for c in cols):
+                raise ConfigError(f"corpus {name}: collections must be a non-empty list of plain names")
         model = item.get("embed_model")
         if not isinstance(model, str) or not model.strip():
             raise ConfigError(f"corpus {name}: embed_model is required")
@@ -176,8 +209,32 @@ def load_corpora(raw: Any) -> dict[str, dict]:
             "query_prefix": str(item.get("query_prefix") or ""),
             "name_property": name_prop,
             "vector_name": vector_name,
+            "backend": backend,
+            **pg,
         }
     return out
+
+
+def _load_pg(name: str, item: dict) -> dict[str, Any]:
+    dsn_env = item.get("pg_dsn_env")
+    if not isinstance(dsn_env, str) or not DSN_ENV_RE.match(dsn_env):
+        raise ConfigError(f"corpus {name}: pg_dsn_env must name an environment variable like WIKI_DSN "
+                          "(upper case, ending in _DSN)")
+    relation = item.get("pg_relation") or "docs_public"
+    if not isinstance(relation, str) or not PG_QUALIFIED_RE.match(relation):
+        raise ConfigError(f"corpus {name}: pg_relation must be a plain lowercase identifier")
+    fn = item.get("pg_search_fn", "hybrid_search_docs_public")
+    fn = "" if fn is None else fn
+    if not isinstance(fn, str) or (fn and not PG_QUALIFIED_RE.match(fn)):
+        raise ConfigError(f"corpus {name}: pg_search_fn must be a plain lowercase identifier or empty")
+    column = item.get("pg_filter_column") or "corpus"
+    if not isinstance(column, str) or not PG_IDENT_RE.match(column):
+        raise ConfigError(f"corpus {name}: pg_filter_column must be a plain lowercase identifier")
+    values = item.get("pg_filter_values")
+    if not isinstance(values, list) or not values or not all(isinstance(v, str) and NAME_RE.match(v) for v in values):
+        raise ConfigError(f"corpus {name}: pg_filter_values must be a non-empty list of plain names")
+    return {"pg_dsn_env": dsn_env, "pg_relation": relation, "pg_search_fn": fn,
+            "pg_filter_column": column, "pg_filter_values": list(dict.fromkeys(values))}
 
 
 # ---------------------------------------------------------------------------
@@ -222,6 +279,177 @@ class QdrantReader:
         body = {"limit": limit, "with_payload": ["text"], "with_vector": with_vector}
         res = self._post(f"/collections/{collection}/points/scroll", body).get("result") or {}
         return res.get("points") or []
+
+
+# ---------------------------------------------------------------------------
+# Postgres + pgvector (read-only session, fixed SELECT templates only)
+# ---------------------------------------------------------------------------
+
+def _quote_ident(name: str) -> str:
+    """Quote a validated identifier (``PG_QUALIFIED_RE``). Validation comes
+    first: anything else is refused, never escaped."""
+    if not PG_QUALIFIED_RE.match(name):
+        raise ConfigError(f"bad Postgres identifier {name!r}")
+    return ".".join(f'"{part}"' for part in name.split("."))
+
+
+def vector_literal(vec: list[float]) -> str:
+    """A query vector as pgvector text input, sent as a bound parameter."""
+    if not vec or not all(isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) for x in vec):
+        raise ValueError("query vector must be a non-empty list of finite numbers")
+    return "[" + ",".join(repr(float(x)) for x in vec) + "]"
+
+
+def _parse_vector(value: Any) -> list[float] | None:
+    if isinstance(value, (list, tuple)):
+        v = list(value)
+    elif isinstance(value, str):
+        try:
+            v = json.loads(value)
+        except ValueError:
+            return None
+    else:
+        try:  # numpy arrays and the like
+            v = list(value)
+        except TypeError:
+            return None
+    return [float(x) for x in v] if isinstance(v, list) and v and all(
+        isinstance(x, (int, float)) and not isinstance(x, bool) for x in v) else None
+
+
+PG_SESSION_SETUP = (
+    "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY",
+    "SET default_transaction_read_only = on",
+    "SET statement_timeout = {timeout}",
+)
+PG_CHECK_READ_ONLY = "SHOW transaction_read_only"
+PG_HYBRID = "SELECT h.id, h.corpus, h.score FROM {fn}(%(q_text)s, %(q_vec)s::vector, %(k)s) AS h"
+PG_BY_IDS = ("SELECT r.id, r.{col}, r.source, r.chunk_idx, r.content, r.meta FROM {rel} AS r "
+             "WHERE r.id = ANY(%(ids)s) AND r.{col} = ANY(%(vals)s)")
+PG_VECTOR = ("SELECT r.id, r.{col}, r.source, r.chunk_idx, r.content, r.meta, "
+             "1 - (r.embedding <=> %(q_vec)s::vector) AS score FROM {rel} AS r "
+             "WHERE r.{col} = ANY(%(vals)s) ORDER BY r.embedding <=> %(q_vec)s::vector LIMIT %(k)s")
+PG_WINDOW = ("SELECT r.id, r.{col}, r.source, r.chunk_idx, r.content, r.meta FROM {rel} AS r "
+             "WHERE r.{col} = %(val)s AND r.source = %(source)s AND r.chunk_idx BETWEEN %(lo)s AND %(hi)s "
+             "ORDER BY r.chunk_idx LIMIT %(n)s")
+PG_SAMPLE = ("SELECT r.content, r.embedding::text FROM {rel} AS r WHERE r.{col} = %(val)s "
+             "ORDER BY random() LIMIT %(n)s")
+
+
+def _pg_connect(dsn: str) -> Any:
+    try:
+        import psycopg  # imported here: Qdrant-only deployments do not need it
+    except ImportError as e:
+        raise RuntimeError("psycopg is not installed in this image (build image/ for pgvector corpora)") from e
+    return psycopg.connect(dsn, autocommit=True, connect_timeout=int(TIMEOUT), application_name="skcorpus")
+
+
+class PgReader:
+    """One pgvector corpus: a lazy connection and the fixed SQL for it.
+
+    ``_execute`` refuses any statement that is not one of this reader's
+    templates (built once from the validated corpus config), and the session
+    is put in read-only mode and checked before the first query."""
+
+    def __init__(self, corpus: dict, dsn: str, connect: Any = _pg_connect,
+                 statement_timeout_ms: int = PG_STATEMENT_TIMEOUT_MS):
+        rel, col = _quote_ident(corpus["pg_relation"]), _quote_ident(corpus["pg_filter_column"])
+        fn = corpus["pg_search_fn"]
+        self._values = list(corpus["pg_filter_values"])
+        self._dsn, self._connect = dsn, connect
+        self._setup = tuple(q.format(timeout=int(statement_timeout_ms)) for q in PG_SESSION_SETUP)
+        self._sql = {
+            "hybrid": PG_HYBRID.format(fn=_quote_ident(fn)) if fn else None,
+            "by_ids": PG_BY_IDS.format(rel=rel, col=col),
+            "vector": PG_VECTOR.format(rel=rel, col=col),
+            "window": PG_WINDOW.format(rel=rel, col=col),
+            "sample": PG_SAMPLE.format(rel=rel, col=col),
+        }
+        self._allowed = frozenset(self._setup) | {PG_CHECK_READ_ONLY} | {q for q in self._sql.values() if q}
+        self._conn: Any = None
+        self._lock = threading.Lock()
+
+    def _execute(self, conn: Any, sql: str, params: dict | None = None) -> list:
+        if sql not in self._allowed:
+            raise ReadOnlyViolation("SQL is not one of the fixed read-only templates")
+        cur = conn.execute(sql, params) if params is not None else conn.execute(sql)
+        return list(cur.fetchall()) if params is not None or sql == PG_CHECK_READ_ONLY else []
+
+    def _session(self) -> Any:
+        if self._conn is not None and not getattr(self._conn, "closed", False) and not getattr(self._conn, "broken", False):
+            return self._conn
+        self._conn = None
+        if not self._dsn:
+            raise RuntimeError("the Postgres DSN for this corpus is not set")
+        conn = self._connect(self._dsn)
+        try:
+            for q in self._setup:
+                self._execute(conn, q)
+            rows = self._execute(conn, PG_CHECK_READ_ONLY)
+            if not rows or str(rows[0][0]).lower() != "on":
+                raise ReadOnlyViolation("the Postgres session did not become read-only")
+        except BaseException:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            raise
+        self._conn = conn
+        return conn
+
+    def _query(self, key: str, params: dict) -> list:
+        with self._lock:
+            conn = self._session()
+            try:
+                return self._execute(conn, self._sql[key], params)
+            except BaseException:
+                if getattr(conn, "closed", False) or getattr(conn, "broken", False):
+                    self._conn = None
+                raise
+
+    @staticmethod
+    def _row(row: Any, score: float | None) -> dict:
+        _id, corpus, source, chunk_idx, content, meta = row[:6]
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except ValueError:
+                meta = None
+        meta = meta if isinstance(meta, dict) else {}
+        return {"id": _id, "collection": corpus, "file_path": source, "chunk_index": chunk_idx,
+                "text": content, "title": meta.get("title"), "category": meta.get("category"), "score": score}
+
+    def search(self, query: str, vector: list[float], k: int) -> list[dict]:
+        """Hybrid (the search function, over-fetched and filtered to this
+        corpus's values, then full rows by id) or, without a function, pure
+        vector order on the relation."""
+        q_vec = vector_literal(vector)
+        if self._sql["hybrid"] is None:
+            rows = self._query("vector", {"q_vec": q_vec, "vals": self._values, "k": k})
+            return [self._row(r, None if r[6] is None else float(r[6])) for r in rows[:k]]
+        fetch = min(k * 4, PG_MAX_FETCH)
+        hits = self._query("hybrid", {"q_text": query, "q_vec": q_vec, "k": fetch})
+        allowed = set(self._values)
+        kept = [(h[0], float(h[2] or 0.0)) for h in hits if h[1] in allowed]
+        kept = sorted(enumerate(kept), key=lambda t: (-t[1][1], t[0]))
+        kept = [h for _, h in kept][:k]
+        if not kept:
+            return []
+        rows = {r[0]: r for r in self._query("by_ids", {"ids": [i for i, _ in kept], "vals": self._values})}
+        return [self._row(rows[i], score) for i, score in kept if i in rows]
+
+    def window(self, value: str, source: str, lo: int, hi: int) -> list[dict]:
+        if value not in self._values:
+            raise ValueError("not one of this corpus's filter values")
+        rows = self._query("window", {"val": value, "source": source, "lo": lo, "hi": hi, "n": hi - lo + 1})
+        return [self._row(r, None) for r in rows]
+
+    def sample(self, value: str, limit: int) -> list[dict]:
+        """Random rows of one filter value, shaped like Qdrant points."""
+        if value not in self._values:
+            raise ValueError("not one of this corpus's filter values")
+        return [{"payload": {"text": r[0]}, "vector": _parse_vector(r[1])}
+                for r in self._query("sample", {"val": value, "n": limit})]
 
 
 # ---------------------------------------------------------------------------
@@ -415,10 +643,14 @@ class Coherence:
         for col in c["collections"]:
             entry = {"sampled": 0, "coherent": 0, "ratio": None}
             try:
-                if self.corpus.qdrant is None:
-                    raise RuntimeError("vector search is not configured")
                 embedder = self.corpus.embedder_of(c)
-                for point in self.corpus.qdrant.sample(col, self.sample, c["vector_name"]):
+                if c["backend"] == "pgvector":
+                    points = self.corpus.pg_of(c).sample(col, self.sample)
+                elif self.corpus.qdrant is None:
+                    raise RuntimeError("vector search is not configured")
+                else:
+                    points = self.corpus.qdrant.sample(col, self.sample, c["vector_name"])
+                for point in points:
                     text = (point.get("payload") or {}).get("text")
                     stored = _stored_vector(point, c["vector_name"])
                     if not isinstance(text, str) or not text.strip() or stored is None:
@@ -564,12 +796,20 @@ class NeighborsIn(_Named, ScopedNeighborsIn):
 
 class Corpus:
     def __init__(self, corpora: dict[str, dict], qdrant: QdrantReader | None, falkor: FalkorReader | None,
-                 embedder: Embedder | None, embedder_for: Any = None):
+                 embedder: Embedder | None, embedder_for: Any = None, pg_for: Any = None):
         """``embedder`` serves corpora without their own ``embed_url``;
-        ``embedder_for(url)`` returns the Embedder for a corpus that has one."""
+        ``embedder_for(url)`` returns the Embedder for a corpus that has one;
+        ``pg_for(corpus)`` returns the PgReader of a pgvector corpus."""
         self.corpora, self.qdrant, self.falkor, self.embedder = corpora, qdrant, falkor, embedder
         self.embedder_for = embedder_for
+        self.pg_for = pg_for
         self.coherence = Coherence(self)
+
+    def pg_of(self, c: dict) -> PgReader:
+        reader = self.pg_for(c) if self.pg_for else None
+        if reader is None:
+            raise HTTPException(503, "Postgres is not configured for this corpus")
+        return reader
 
     def embedder_of(self, c: dict) -> Embedder:
         e = self.embedder_for(c["embed_url"]) if c["embed_url"] and self.embedder_for else (
@@ -594,7 +834,7 @@ class Corpus:
     def describe(self, c: dict) -> dict:
         st = self.coherence.status.get(c["name"])
         return {"name": c["name"], "title": c["title"], "description": c["description"],
-                "collections": c["collections"], "has_graph": bool(c["graph"]),
+                "collections": c["collections"], "has_graph": bool(c["graph"]), "backend": c["backend"],
                 "coherence": None if st is None else {"healthy": st["healthy"], "ratio": st["ratio"]},
                 "warning": self.coherence.warning(c["name"])}
 
@@ -603,6 +843,12 @@ class Corpus:
 
     def search(self, name: str, req: ScopedSearchIn) -> list[dict]:
         c = self.get(name)
+        if c["backend"] == "pgvector":
+            reader = self.pg_of(c)
+            k = min(req.k, MAX_K)
+            vector = self.embedder_of(c).embed(c["embed_model"], c["query_prefix"] + req.query)
+            hits = reader.search(req.query, vector, k)
+            return self._warn(name, [_hit(h["collection"], {"payload": h}, h["score"]) for h in hits])
         if self.qdrant is None:
             raise HTTPException(503, "vector search is not configured")
         embedder = self.embedder_of(c)
@@ -615,9 +861,12 @@ class Corpus:
         c = self.get(name)
         if req.collection not in c["collections"]:
             raise HTTPException(404, f"collection {req.collection!r} is not part of corpus {c['name']}")
+        w = min(req.window, MAX_WINDOW)
+        if c["backend"] == "pgvector":
+            rows = self.pg_of(c).window(req.collection, req.file_path, max(0, req.chunk_index - w), req.chunk_index + w)
+            return self._warn(name, [_hit(h["collection"], {"payload": h}, None) for h in rows])
         if self.qdrant is None:
             raise HTTPException(503, "vector search is not configured")
-        w = min(req.window, MAX_WINDOW)
         flt = {"must": [
             {"key": "file_path", "match": {"value": req.file_path}},
             {"key": "chunk_index", "range": {"gte": max(0, req.chunk_index - w), "lte": req.chunk_index + w}},
@@ -713,6 +962,15 @@ def create_app(corpus: Corpus | None = None, token: str | None = None, global_ro
                 embedders[url] = Embedder(url, e_key)
             return embedders[url]
 
+        readers: dict[str, PgReader] = {}
+        readers_lock = threading.Lock()
+
+        def pg_for(c: dict) -> PgReader:
+            with readers_lock:
+                if c["name"] not in readers:
+                    readers[c["name"]] = PgReader(c, os.environ.get(c["pg_dsn_env"], ""))
+                return readers[c["name"]]
+
         corpus = Corpus(
             corpora,
             QdrantReader(q_url, os.environ.get("QDRANT_API_KEY", "")) if q_url else None,
@@ -721,6 +979,7 @@ def create_app(corpus: Corpus | None = None, token: str | None = None, global_ro
                                         os.environ.get("FALKORDB_PASSWORD", ""))) if f_host else None,
             embedder_for(e_url) if e_url else None,
             embedder_for,
+            pg_for,
         )
 
     def auth(request: Request) -> None:

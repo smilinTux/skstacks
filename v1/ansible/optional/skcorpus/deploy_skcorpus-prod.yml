@@ -48,7 +48,7 @@
     skc_default_image: "smilintux/skpayment-runtime:py3.11-20261123@sha256:79bd0222923e77f67c6dd4925ef51fc5623eaa5c58e5a4c9c9cbb90fae6731f5"
     # sha256 of app/skcorpus.py; v1/tests/test_skcorpus_render.py keeps it
     # equal to the file. A changed app without a changed pin stops the deploy.
-    skc_app_sha256: "ddd771cfd2a2d65e4b8b2f8e983eb507c0591c408cc112415fce05c4eb284b8d"
+    skc_app_sha256: "cb738d27a3c04680a446e2ad8a81c24ed9db494ce13397f9e1fd1d0e8b7519a2"
   pre_tasks:
     - name: Select vault file based on domain and cluster
       import_tasks: ../../shared/tasks/select_vault_file.yml
