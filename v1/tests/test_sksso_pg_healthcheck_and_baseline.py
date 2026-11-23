@@ -37,8 +37,12 @@ def _env():
 
 
 def render(env="prod", **over):
+    # FORWARD_AUTH_ENABLED is ON by default since v2.26.32 and adds the
+    # /blueprints/custom mount, which the v2.26.3 baselines do not have. This
+    # suite pins what the LOCAL-DISK knobs do, so it opts out of the catch-all
+    # (the mount itself is covered in test_sksso_forward_auth_catchall.py).
     sksso = {"CLUSTERNAME": "demo", "DOMAIN": "example.test", "postgres_user": "postgres",
-             "postgres_password": "p", "authentik_secret_key": "k"}
+             "postgres_password": "p", "authentik_secret_key": "k", "FORWARD_AUTH_ENABLED": False}
     sksso.update(over)
     sksso = {k: v for k, v in sksso.items() if v is not None}
     return _env().from_string(T.read_text()).render(app="sksso", env=env, sksso=sksso)
