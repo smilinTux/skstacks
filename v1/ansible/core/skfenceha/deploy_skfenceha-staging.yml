@@ -193,27 +193,50 @@
         group: root
         mode: '0600'
 
-    # HA mode: exactly one manager holds the ACME-master role. Move the
-    # label to this run's selected_manager and remove it from every other
-    # manager in the target group, so a re-run after a manager change
-    # doesn't leave two nodes labeled (which would race on the ACME lock).
-    - name: Remove ACME master label from all manager nodes in this group
+    # HA mode: exactly one manager holds the ACME-master role. The label is
+    # STICKY: when exactly one manager in the group carries it and that node
+    # is Ready and Active, it stays there. It moves to this run's
+    # selected_manager only when no manager has it, more than one has it, or
+    # the holder is down or drained. skfenceha.ACME_MASTER_NODE pins it to a
+    # named manager. (It used to move to whichever manager this run selected,
+    # so a deploy that picked another manager moved traefik-acme too and left
+    # skha's keepalived priorities, rendered from this label, out of date
+    # until the next skha deploy.)
+    - name: Keep or place the ACME master label (sticky)
       shell: |
-        for node in {{ (groups[target_manager_group] | default([])) | join(' ') }}; do
-          docker node inspect "$node" --format '{{ '{{ .Spec.Labels }}' }}' | grep -q 'traefik.acme.master' && docker node update --label-rm traefik.acme.master "$node" || true
+        set -u
+        pin={{ (skfenceha.ACME_MASTER_NODE | default('', true)) | string | quote }}
+        sel={{ selected_manager | quote }}
+        managers="{{ (groups[target_manager_group] | default([])) | join(' ') }}"
+        has_label() {
+          [ "$(docker node inspect "$1" --format '{{ '{{ index .Spec.Labels "traefik.acme.master" }}' }}' 2>/dev/null)" = "true" ]
+        }
+        labeled=""
+        for n in $managers; do has_label "$n" && labeled="$labeled $n"; done
+        set -- $labeled
+        if [ -n "$pin" ]; then
+          case " $managers " in *" $pin "*) ;; *) echo "ACME_MASTER_NODE '$pin' is not a manager in this group: $managers"; exit 3;; esac
+          target=$pin; why=pinned
+        elif [ $# -eq 1 ] && [ "$(docker node inspect "$1" --format '{{ '{{ .Status.State }} {{ .Spec.Availability }}' }}' 2>/dev/null)" = "ready active" ]; then
+          target=$1; why=kept
+        else
+          target=$sel; why="moved (labeled:${labeled:- none})"
+        fi
+        changed=0
+        for n in $labeled; do
+          [ "$n" = "$target" ] && continue
+          docker node update --label-rm traefik.acme.master "$n" >/dev/null && changed=1
         done
-      register: acme_label_remove_result
-      changed_when: acme_label_remove_result.rc | default(1) == 0
-      failed_when: false
-      tags:
-        - labels
-        - ha
-
-    - name: Label the selected manager as ACME master
-      shell: docker node update --label-add traefik.acme.master=true {{ selected_manager }}
+        if ! has_label "$target"; then
+          docker node update --label-add traefik.acme.master=true "$target" >/dev/null || exit 4
+          changed=1
+        fi
+        echo "ACME master: $target ($why)"
+        [ $changed = 1 ] && echo CHANGED
+        exit 0
       register: acme_label_result
-      changed_when: "'Label added' in acme_label_result.stdout or acme_label_result.rc | default(1) == 0"
-      failed_when: false
+      changed_when: "'CHANGED' in acme_label_result.stdout"
+      failed_when: acme_label_result.rc | default(0) != 0
       tags:
         - labels
         - ha
@@ -221,7 +244,7 @@
     - name: Show HA mode info
       debug:
         msg: |
-          ACME master: {{ selected_manager }} (label traefik.acme.master=true)
+          {{ (acme_label_result.stdout_lines | default(['ACME master: (not changed in check mode)']))[0] }} (label traefik.acme.master=true)
           Managers in {{ target_manager_group }}: {{ (groups[target_manager_group] | default([])) | join(', ') }}
       tags:
         - labels

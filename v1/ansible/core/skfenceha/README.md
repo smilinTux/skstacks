@@ -6,6 +6,18 @@ worker tier that does all real routing, with the same error-pages and
 certs-dumper sidecars as skfence. **Do not run skfence and skfenceha on the
 same cluster.**
 
+## Which manager is the ACME master
+
+The deploy keeps the `traefik.acme.master` label where it is: when exactly one
+manager in the target group carries it and that node is Ready and Active, it
+stays there. It moves to the manager this run selected only when no manager has
+it, more than one has it, or the holder is down or drained. Set
+`skfenceha.ACME_MASTER_NODE: <manager>` in the vault to pin it (the deploy fails
+if that name is not in the target manager group). skha renders its keepalived
+priorities from the same label (ACME master 150), so after the label moves, run
+the skha deploy too. Check where it is with
+`docker node ls -q | xargs docker node inspect --format '{{.Description.Hostname}} {{index .Spec.Labels "traefik.acme.master"}}'`.
+
 Vault vars, TLS modes, the dashboard host override and access-log header
 redaction are documented in `v1/ansible/core/skfence/README.md`; the
 published-service catalog entry is in `docs/v1-service-catalog.md`.
