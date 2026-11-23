@@ -302,7 +302,8 @@
       echo "custom_apps/solid is missing: skpods.NEXTCLOUD_IMAGE must be an skpods engine image (README 'Engine image')" >&2
       exit 1
     fi
-    if docker exec -u www-data "$C" php occ app:list --enabled | grep -q '^  - solid:'; then
+    enabled=$(docker exec -u www-data "$C" php occ app:list --enabled)
+    if grep -q '^  - solid:' <<<"$enabled"; then
       echo "solid already enabled"
     else
       docker exec -u www-data "$C" php occ app:enable solid

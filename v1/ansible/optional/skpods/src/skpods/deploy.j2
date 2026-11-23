@@ -24,7 +24,7 @@ preexisted() {
 # SKPods deploy script (Solid pod server, engine: {{ skp_engine }})
 # Environment: {{ env }}
 APPNAME=skpods
-STACK_NAME={{ skp_stack }}
+STACK_NAME=skpods-{{ env }}
 
 CONFIG_DIR="/var/data/config/${STACK_NAME}"
 COMPOSE_FILE="${CONFIG_DIR}/skpods.yml"
