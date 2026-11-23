@@ -2,7 +2,9 @@
 a fake Open WebUI API on loopback (stdlib http.server, no external network):
 sign-in as the env admin, create a missing preset, update a changed one,
 leave an unchanged one alone, never delete, and fail on a non-admin or an
-API error."""
+API error; create the corpus groups, give each corpus's tool server and
+preset read grants for its groups only (and leave other connections alone),
+and the loop entry point."""
 import importlib.util
 import json
 import pathlib
@@ -30,6 +32,8 @@ def preset(pid="corpus-example-legal", system="Answer from the corpus."):
 class FakeWebUI:
     def __init__(self, role="admin"):
         self.models, self.calls, self.role = {}, [], role
+        self.groups = [{"id": "g-admins", "name": "example-admins"}]
+        self.tools = []
         self.fail_writes = False
         fake = self
 
@@ -53,6 +57,10 @@ class FakeWebUI:
                 fake.calls.append(("GET", u.path))
                 if u.path == "/health":
                     return self._send(200, {"status": True})
+                if u.path == "/api/v1/groups/" and self._auth():
+                    return self._send(200, fake.groups)
+                if u.path == "/api/v1/configs/tool_servers" and self._auth():
+                    return self._send(200, {"TOOL_SERVER_CONNECTIONS": json.loads(json.dumps(fake.tools))})
                 if u.path == "/api/v1/models/model" and self._auth():
                     m = fake.models.get(parse_qs(u.query)["id"][0])
                     if m and m.get("hidden"):
@@ -72,6 +80,13 @@ class FakeWebUI:
                     return self._send(401, {"detail": "unauthorized"})
                 if fake.fail_writes:
                     return self._send(500, {"detail": "boom"})
+                if u.path == "/api/v1/groups/create":
+                    g = {"id": f"g-{len(fake.groups)}", "name": body["name"]}
+                    fake.groups.append(g)
+                    return self._send(200, g)
+                if u.path == "/api/v1/configs/tool_servers":
+                    fake.tools = body["TOOL_SERVER_CONNECTIONS"]
+                    return self._send(200, body)
                 if u.path == "/api/v1/models/create":
                     if body["id"] in fake.models:
                         return self._send(400, {"detail": "exists"})
@@ -153,9 +168,10 @@ def test_main_end_to_end(tmp_path, webui, capsys):
     f = tmp_path / "presets.json"
     f.write_text(json.dumps([preset(), preset("corpus-example-notes")]))
     assert pp.main(["x", str(f)]) == 0
-    out = capsys.readouterr().out.split()
-    assert out == ["PRESET_CREATED", "corpus-example-legal", "PRESET_CREATED", "corpus-example-notes"]
-    assert PASSWORD not in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert out.split() == ["PRESET_CREATED", "corpus-example-legal", "PRESET_CREATED", "corpus-example-notes",
+                           "RECONCILED"]
+    assert PASSWORD not in out
 
 
 def test_a_preset_id_owned_by_someone_else_is_an_error_not_a_create(webui):
@@ -164,3 +180,81 @@ def test_a_preset_id_owned_by_someone_else_is_an_error_not_a_create(webui):
     with pytest.raises(pp.ApiError, match="reading preset"):
         pp.provision([preset()], tok)
     assert ("POST", "/api/v1/models/create") not in webui.calls
+
+
+# --- groups and per-corpus tool grants ---------------------------------------
+
+def conn(sid, grants=None):
+    return {"url": f"http://skcorpus:8000/c/{sid}", "path": "openapi.json", "type": "openapi",
+            "auth_type": "bearer", "key": "example-key", "config": {"enable": True, "access_grants": grants or []},
+            "info": {"id": sid, "name": sid}}
+
+
+def scoped(pid, groups):
+    p = preset(pid)
+    p.pop("access_grants")
+    p["allowed_groups"] = groups
+    return p
+
+
+def test_groups_tools_and_presets_are_scoped_per_corpus(webui):
+    webui.tools = [conn("skcorpus-example-legal"), conn("skcorpus-example-notes"), conn("someone-else", [
+        {"principal_type": "user", "principal_id": "*", "permission": "read"}])]
+    out = pp.reconcile([scoped("corpus-example-legal", ["example-users"]),
+                        scoped("corpus-example-notes", ["example-admins", "*"])],
+                       {"skcorpus-example-legal": ["example-users"], "skcorpus-example-notes": ["example-admins", "*"]})
+    assert out[0] == "GROUP_CREATED example-users"
+    assert out[1] == "TOOLS_UPDATED skcorpus-example-legal,skcorpus-example-notes"
+    gid = next(g["id"] for g in webui.groups if g["name"] == "example-users")
+    by_id = {c["info"]["id"]: c for c in webui.tools}
+    assert by_id["skcorpus-example-legal"]["config"]["access_grants"] == [
+        {"principal_type": "group", "principal_id": gid, "permission": "read"}]
+    assert by_id["skcorpus-example-notes"]["config"]["access_grants"] == [
+        {"principal_type": "group", "principal_id": "g-admins", "permission": "read"},
+        {"principal_type": "user", "principal_id": "*", "permission": "read"}]
+    assert by_id["someone-else"]["config"]["access_grants"][0]["principal_id"] == "*"  # untouched
+    assert by_id["skcorpus-example-legal"]["key"] == "example-key"  # the key survives the round trip
+    assert webui.models["corpus-example-legal"]["access_grants"] == [
+        {"principal_type": "group", "principal_id": gid, "permission": "read"}]
+    # second pass: nothing to do, no duplicate group
+    again = pp.reconcile([scoped("corpus-example-legal", ["example-users"])], {"skcorpus-example-legal": ["example-users"]})
+    assert again == ["TOOLS_UNCHANGED", "PRESET_UNCHANGED corpus-example-legal"]
+    assert [g["name"] for g in webui.groups].count("example-users") == 1
+
+
+def test_a_restart_that_dropped_the_grants_is_repaired(webui):
+    webui.tools = [conn("skcorpus-example-legal")]
+    tools = {"skcorpus-example-legal": ["example-admins"]}
+    pp.reconcile([], tools)
+    webui.tools = [conn("skcorpus-example-legal")]  # env value back after a restart: no grants
+    assert pp.reconcile([], tools) == ["TOOLS_UPDATED skcorpus-example-legal"]
+
+
+def test_a_tool_server_missing_from_the_env_is_an_error(webui):
+    webui.tools = []
+    with pytest.raises(pp.ApiError, match="not registered"):
+        pp.reconcile([], {"skcorpus-example-legal": ["example-users"]})
+
+
+def test_unknown_group_grants_nothing():
+    assert pp.grants(["nope"], {}) == []
+    assert pp.form(scoped("corpus-x", ["nope"]), {})["access_grants"] == []
+
+
+def test_loop_mode_retries_and_reports(tmp_path, webui, monkeypatch, capsys):
+    f = tmp_path / "presets.json"
+    f.write_text(json.dumps({"presets": [scoped("corpus-example-legal", ["example-users"])],
+                             "tool_servers": {"skcorpus-example-legal": ["example-users"]}}))
+    webui.tools = [conn("skcorpus-example-legal")]
+    sleeps = []
+
+    def fake_sleep(s):
+        sleeps.append(s)
+        if len(sleeps) == 2:
+            raise KeyboardInterrupt
+    monkeypatch.setattr(pp.time, "sleep", fake_sleep)
+    with pytest.raises(KeyboardInterrupt):
+        pp.main(["x", "--loop", "60", str(f)])
+    out = capsys.readouterr().out
+    assert out.count("RECONCILED") == 2 and sleeps == [60, 60]
+    assert pp.main(["x", "--loop", "abc", str(f)]) == 2
