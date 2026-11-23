@@ -180,7 +180,7 @@ curl -si -X OPTIONS -H 'Origin: https://app.example.org' \
 |---|---|
 | Play stops at "Check the public host and protocol before enabling Solid" | config.php disagrees with the vault host. Fix the vault or config.php; do not enable Solid until it matches. |
 | "the image has no /usr/src/skpods-apps/solid" | `NEXTCLOUD_IMAGE` is a plain Nextcloud image, not an engine image. |
-| "custom_apps/solid differs from the engine image's copy" | Something else wrote the app (an app-store download, a manual copy). `docker service update --force skpods-<env>_nextcloud` resyncs it from the image; rerun the deploy. |
+| "custom_apps/solid differs from the copy in the engine image" | Something else wrote the app (an app-store download, a manual copy). `docker service update --force skpods-<env>_nextcloud` resyncs it from the image; rerun the deploy. |
 | Image pull fails (`no basic auth credentials`, `denied`) | Private image: set `REGISTRY_LOGIN`; the deploy passes `--with-registry-auth`. |
 | WebID or storage IRIs start with `http://` | `overwriteprotocol` missing; rerun the deploy (it sets it). Pods first used while it was wrong need their root `.acl` fixed. |
 | Owner gets `403` on their own pod after a hostname change | See "Hostname is permanent": reset the user (dev) or rewrite the root `.acl`. |

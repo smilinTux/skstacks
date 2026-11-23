@@ -306,12 +306,12 @@
       echo "the image has no /usr/src/skpods-apps/solid: skpods.NEXTCLOUD_IMAGE must be an skpods engine image (README 'Engine image')" >&2
       exit 1
     fi
-    # custom_apps/solid must be exactly the image's copy (the start hook
+    # custom_apps/solid must be exactly the copy in the image (the start hook
     # syncs it; on a first start the play can get here before the hook).
     same() { docker exec "$C" diff -rq /usr/src/skpods-apps/solid/ /var/www/html/custom_apps/solid/ >/dev/null 2>&1; }
     for _ in $(seq 1 30); do same && break; sleep 5; done
     if ! same; then
-      echo "custom_apps/solid differs from the engine image's copy; refusing to enable it (restart the nextcloud service to resync)" >&2
+      echo "custom_apps/solid differs from the copy in the engine image; refusing to enable it (restart the nextcloud service to resync)" >&2
       exit 1
     fi
     enabled=$(docker exec -u www-data "$C" php occ app:list --enabled)
@@ -320,7 +320,7 @@
     else
       docker exec -u www-data "$C" php occ app:enable solid
     fi
-    same || { echo "custom_apps/solid changed during app:enable (not the engine image's build)" >&2; exit 1; }
+    same || { echo "custom_apps/solid changed during app:enable (not the build in the engine image)" >&2; exit 1; }
     docker exec -u www-data "$C" php occ app:list --enabled | grep '^  - solid:'
   args:
     executable: /bin/bash
