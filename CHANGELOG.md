@@ -6,6 +6,19 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased (v2.26.32)
 
+### skmem-pg: image rebuilt on a pinned Debian 12 base
+
+`smilintux/skmem-pg` is rebuilt from `image/Dockerfile` on
+`pgvector/pgvector:0.8.7-pg17-bookworm` pinned by digest, with the Debian
+security updates applied, and the stack pins the dated tag
+`pg17-bm25-age-20261123` by digest instead of the moving `pg17-bm25-age`. Trivy
+(HIGH and CRITICAL, fixed only): 16 critical and 67 high before, 1 critical and
+25 high after, all in the upstream `gosu` binary. The base stays on Debian 12
+and PostgreSQL 17 so the existing data directory, its collation and the
+pgvector, pg_search and AGE indexes are untouched (checked: a data directory
+written by the old image starts under the new one and all three still answer).
+**Instance action:** none; the next skmem-pg deploy rolls the new image.
+
 ### skfenceha: the ACME master label stays where it is
 
 Every skfenceha deploy used to remove `traefik.acme.master` from all managers and put it on
