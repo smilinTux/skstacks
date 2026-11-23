@@ -24,16 +24,18 @@ skai:
   RAG_TOP_K_RERANKER: 4
   CORPUS_URL: "http://corpus.example.test:8000"
   CORPUS_TOKEN: "example-corpus-token-not-a-secret-0123456789"
-  CORPUS_TOOL_NAME: Example corpus search
   CORPORA:
     - name: example-legal
       title: Example Legal
       description: "Answers from the example legal corpus"
     - name: example-notes
       base_model: example-big
+      allowed_groups: [example-ai-admins, "*"]
       system_prompt: "Answer from corpus {corpus} ({title}) only, cite title, file_path and chunk_index."
   ADMIN_GROUP: example-ai-admins
+  USERS_GROUP: example-ai-users
   USER_GROUPS: [example-ai-users]
+  PROVISION_INTERVAL: 600
   OIDC_CLIENT_ID: skai-example
   OIDC_SSO_HOST: sso.example.test
   OIDC_PROVIDER_NAME: Example SSO

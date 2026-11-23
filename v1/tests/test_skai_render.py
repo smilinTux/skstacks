@@ -93,7 +93,7 @@ def test_oidc_with_group_admin(base_out):
     assert e["OPENID_PROVIDER_URL"] == "https://sso.render.example.test/application/o/skai/.well-known/openid-configuration"
     assert e["OPENID_REDIRECT_URI"] == "https://skai.render.example.test/oauth/oidc/login/callback"
     assert e["ENABLE_OAUTH_ROLE_MANAGEMENT"] == "true" and e["OAUTH_ROLES_CLAIM"] == "groups"
-    assert e["OAUTH_ADMIN_ROLES"] == "skadmin" and e["OAUTH_ALLOWED_ROLES"] == "*,skadmin"
+    assert e["OAUTH_ADMIN_ROLES"] == "skadmin" and e["OAUTH_ALLOWED_ROLES"] == "skai-users,skadmin"
     assert e["OAUTH_MERGE_ACCOUNTS_BY_EMAIL"] == "false"
     assert e["ENABLE_LOGIN_FORM"] == "false" and e["ENABLE_SIGNUP"] == "false"
     assert e["WEBUI_ADMIN_EMAIL"] == "skai-provisioner@example.test"
@@ -108,40 +108,64 @@ def test_secrets_stay_out_of_the_compose_file(corpus_out):
     assert CORPUS["CORPUS_TOKEN"] not in presets and BASE["PROVISIONER_PASSWORD"] not in presets
 
 
-def test_tool_server_connection_json(corpus_out):
+def test_one_tool_server_per_corpus_admin_only_in_env(corpus_out):
     e = rs.env_file(cfg(corpus_out) / "skai.env")
     conns = json.loads(e["TOOL_SERVER_CONNECTIONS"])
     assert conns == [{
-        "url": "http://skcorpus-prod_skcorpus:8000", "path": "openapi.json", "type": "openapi",
+        "url": "http://skcorpus-prod_skcorpus:8000/c/example-legal", "path": "openapi.json", "type": "openapi",
         "auth_type": "bearer", "key": CORPUS["CORPUS_TOKEN"],
-        "config": {"enable": True, "access_grants": [{"principal_type": "user", "principal_id": "*", "permission": "read"}]},
-        "info": {"id": "skcorpus", "name": "Corpus search",
-                 "description": "Read-only search over the configured knowledge corpora (vectors and graph)."}}]
+        "config": {"enable": True, "access_grants": []},
+        "info": {"id": "skcorpus-example-legal", "name": "Example Legal search",
+                 "description": "Read-only search over the Example Legal corpus (vectors and graph)."}}]
     assert e["ENABLE_TOOL_SERVERS"] == "true"
 
 
-def test_corpus_preset(corpus_out):
-    presets = json.loads((corpus_out / "var/data/skai-prod/provision/presets.json").read_text())
+def test_corpus_preset_scoped_to_its_tool_and_groups(corpus_out):
+    data = json.loads((corpus_out / "var/data/skai-prod/provision/presets.json").read_text())
+    assert data["tool_servers"] == {"skcorpus-example-legal": ["skai-users"]}
+    presets = data["presets"]
     assert len(presets) == 1
     p = presets[0]
     assert p["id"] == "corpus-example-legal" and p["name"] == "Example Legal" and p["base_model_id"] == "example-chat"
-    assert p["meta"]["toolIds"] == ["server:skcorpus"]
+    assert p["meta"]["toolIds"] == ["server:skcorpus-example-legal"]
     assert p["params"]["function_calling"] == "native"
     s = p["params"]["system"]
     for needle in ('corpus "example-legal"', "graph_entity", "graph_neighbors", "corpus_search", "corpus_get",
-                   "title, file_path, chunk_index", "only when the user asks for a quote"):
+                   "title, file_path, chunk_index", "only when the user asks for a quote", "warning"):
         assert needle in s, needle
     assert "{corpus}" not in s and "{title}" not in s
-    assert p["access_grants"] == [{"principal_type": "user", "principal_id": "*", "permission": "read"}]
+    assert p["allowed_groups"] == ["skai-users"] and "access_grants" not in p
 
 
-def test_provisioner_runs_only_with_corpora(base_out, corpus_out):
-    def bodies(out):
-        return [p.read_text() for p in (out / "_shell").glob("*.sh")]
-    assert not any("provision_presets.py" in b for b in bodies(base_out))
-    run = [b for b in bodies(corpus_out) if "provision_presets.py" in b]
-    assert len(run) == 1 and 'docker exec "$CID" python3 /provision/provision_presets.py /provision/presets.json' in run[0]
-    assert BASE["PROVISIONER_PASSWORD"] not in run[0]
+def test_provision_service_only_with_corpora(base_out, corpus_out):
+    assert "provision" not in compose(base_out)["services"]
+    assert not (cfg(base_out) / "provision.env").exists()
+    svc = compose(corpus_out)["services"]["provision"]
+    assert svc["image"] == compose(corpus_out)["services"]["skai"]["image"]
+    assert svc["entrypoint"] == ["python3", "-I", "/provision/provision_presets.py", "--loop", "300",
+                                 "/provision/presets.json"]
+    assert svc["volumes"] == ["/var/data/skai-prod/provision:/provision:ro"]
+    assert svc["networks"] == ["skai-prod"]
+    pe = rs.env_file(cfg(corpus_out) / "provision.env")
+    assert pe == {"SKAI_PROVISION_URL": "http://skai:8080", "WEBUI_ADMIN_EMAIL": "skai-provisioner@example.test",
+                  "WEBUI_ADMIN_PASSWORD": BASE["PROVISIONER_PASSWORD"]}
+    bodies = [p.read_text() for p in (corpus_out / "_shell").glob("*.sh")]
+    wait = [b for b in bodies if "_provision" in b and "RECONCILED" in b]
+    assert len(wait) == 1 and "docker service logs --raw" in wait[0]
+    assert not any("docker exec" in b for b in bodies)
+    assert not any(BASE["PROVISIONER_PASSWORD"] in b for b in bodies)
+
+
+def test_oauth_group_management_and_users_group(base_out):
+    e = rs.env_file(cfg(base_out) / "skai.env")
+    assert e["ENABLE_OAUTH_GROUP_MANAGEMENT"] == "true" and e["ENABLE_OAUTH_GROUP_CREATION"] == "false"
+    assert e["OAUTH_GROUPS_CLAIM"] == "groups"
+
+
+def test_existing_embed_endpoint_means_no_skembed_network(tmp_path):
+    out = rs.ok(tmp_path, "skai", {**BASE, "EMBED_URL": "http://embed.example.test:8090/v1"})
+    assert f"skembed-prod" not in compose(out)["networks"]
+    assert rs.env_file(cfg(out) / "skai.env")["RAG_OPENAI_API_BASE_URL"] == "http://embed.example.test:8090/v1"
 
 
 def test_routers(base_out):
@@ -178,8 +202,12 @@ def test_set_pass_voice_rerank_and_knobs(tmp_path):
     lb = labels(doc)
     assert lb["traefik.http.routers.skai.rule"] == "Host(`ai.example.test`)"
     assert lb["traefik.http.routers.skai.tls.options"] == "modern@file"
-    presets = json.loads((out / "var/data/skai-prod/provision/presets.json").read_text())
+    data = json.loads((out / "var/data/skai-prod/provision/presets.json").read_text())
+    presets = data["presets"]
     assert [p["base_model_id"] for p in presets] == ["example-chat", "example-big"]
+    assert data["tool_servers"] == {"skcorpus-example-legal": ["example-ai-users"],
+                                    "skcorpus-example-notes": ["example-ai-admins", "*"]}
+    assert doc["services"]["provision"]["entrypoint"][4] == "600"
     assert presets[1]["params"]["system"] == "Answer from corpus example-notes (example-notes) only, cite title, file_path and chunk_index."
 
 
@@ -206,6 +234,9 @@ def test_db_and_backup(base_out):
     ({"VOICE": True}, "VOICE_API_KEY"),
     ({"DB_PATH": "/srv/skai/pg"}, "no node.hostname"),
     ({"SEARXNG_URL": "http://search.example.test/search"}, "<query>"),
+    ({**CORPUS, "CORPORA": [{"name": "x", "allowed_groups": "g"}]}, "allowed_groups (when set)"),
+    ({**CORPUS, "CORPORA": [{"name": "x", "allowed_groups": ["a,b"]}]}, "allowed_groups (when set)"),
+    ({"PROVISION_INTERVAL": 5}, "PROVISION_INTERVAL"),
 ])
 def test_bad_vaults_fail_closed(tmp_path, vault, needle):
     assert needle in rs.fails(tmp_path, "skai", {**BASE, **vault})

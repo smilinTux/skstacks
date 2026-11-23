@@ -52,41 +52,65 @@ release's `backend/open_webui/config.py` and `env.py` (v0.13.4).
 | Bootstrap | `WEBUI_ADMIN_EMAIL` / `WEBUI_ADMIN_PASSWORD` (the provisioner admin, created on the first start only), `WEBUI_SECRET_KEY`, `DATABASE_URL`, `WEBUI_URL` |
 | Voice | `AUDIO_STT_ENGINE=openai`, `AUDIO_STT_OPENAI_API_BASE_URL` / `_KEY`, `AUDIO_STT_MODEL`, `AUDIO_TTS_ENGINE=openai`, `AUDIO_TTS_OPENAI_API_BASE_URL` / `_KEY`, `AUDIO_TTS_MODEL`, `AUDIO_TTS_VOICE` |
 
-### The corpus tool server (`TOOL_SERVER_CONNECTIONS`)
+### Corpus tool servers (`TOOL_SERVER_CONNECTIONS`), one per corpus
 
-With `CORPUS_TOKEN` set, the env carries one OpenAPI tool server (the v0.13
-`ToolServerConnection` shape, `backend/open_webui/routers/configs.py`):
+With `CORPUS_TOKEN` set, the env carries one OpenAPI tool server per entry in
+`CORPORA` (the v0.13 `ToolServerConnection` shape,
+`backend/open_webui/routers/configs.py`), each on that corpus's own skcorpus
+prefix, whose operations take no corpus argument:
 
 ```json
-[{"url": "http://skcorpus-<env>_skcorpus:8000", "path": "openapi.json", "type": "openapi",
+[{"url": "http://skcorpus-<env>_skcorpus:8000/c/example-legal", "path": "openapi.json", "type": "openapi",
   "auth_type": "bearer", "key": "<CORPUS_TOKEN>",
-  "config": {"enable": true, "access_grants": [{"principal_type": "user", "principal_id": "*", "permission": "read"}]},
-  "info": {"id": "skcorpus", "name": "Corpus search", "description": "..."}}]
+  "config": {"enable": true, "access_grants": []},
+  "info": {"id": "skcorpus-example-legal", "name": "Example Legal search", "description": "..."}}]
 ```
 
-`access_grants` with the `*` user makes the tools usable by every signed-in
-user (without it a tool server is admin-only). Models reference it as tool id
-`server:skcorpus`.
+Tool id `server:skcorpus-<name>`. A model given one corpus's tools cannot
+reach another corpus. The env carries **no access grants**, so on its own a
+connection is admin-only (fail closed); see "Who may use which corpus".
 
 ### Corpus presets
 
-For each entry in `CORPORA` the deploy creates or updates one Open WebUI
-model preset, id `corpus-<name>`: the base model (`base_model`, default
-`DEFAULT_MODEL`), the `server:skcorpus` tool, native function calling, and a
-system prompt that answers from the corpus in layers: the graph
-(`graph_entity`, `graph_neighbors`) for who or what connects to what, vectors
+For each entry in `CORPORA` one Open WebUI model preset, id `corpus-<name>`:
+the base model (`base_model`, default `DEFAULT_MODEL`), that corpus's tool
+(`server:skcorpus-<name>`), native function calling, and a system prompt
+that answers from the corpus in layers: the graph (`graph_entity`,
+`graph_neighbors`) for who or what connects to what, vectors
 (`corpus_search`) for substance, `corpus_get` for context, chunk text quoted
-word for word only when asked, and every source cited as title, file_path and
-chunk_index. `system_prompt` replaces the default per corpus (`{corpus}` and
-`{title}` are filled in). The presets are readable by every user.
+word for word only when asked, every source cited as title, file_path and
+chunk_index, and a coherence `warning` on a result passed on to the user.
+`system_prompt` replaces the default per corpus (`{corpus}` and `{title}` are
+filled in). Separate corpora are separate presets: one entry per corpus, never
+one bucket.
 
-How: there is no env for model presets, so the deploy renders
-`presets.json` (no secrets) and runs `app/provision_presets.py` inside the
-skai container (`docker exec`, standard library Python). It signs in on
-`127.0.0.1:8080` as the provisioner admin (credentials from the container
-env, never on a command line) and uses the app's own API: create a missing
-preset, update a changed one, leave the rest alone. It never deletes a model;
-remove a retired preset in the admin UI.
+### Who may use which corpus (`allowed_groups`)
+
+Each corpus entry has `allowed_groups` (default `[USERS_GROUP]`, that is
+`[skai-users]`): Authentik group names, or `"*"` for every signed-in user.
+Open WebUI's access grants name group **ids**, which exist only at runtime,
+so the stack runs a small **provision service** (`app/provision_presets.py
+--loop`, standard library Python on the same Open WebUI image, credentials in
+its own 0600 `provision.env`). Every `PROVISION_INTERVAL` seconds (default
+300) it signs in as the provisioner admin and, through the app's own API:
+
+1. creates any missing Open WebUI group named in `allowed_groups` (empty; with
+   `ENABLE_OAUTH_GROUP_MANAGEMENT=true` Open WebUI fills it from the `groups`
+   claim at every login, so membership stays in Authentik);
+2. sets each corpus tool server's read grants to its groups (the env value
+   comes back on every restart because `ENABLE_PERSISTENT_CONFIG=false`; the
+   loop restores the grants within one interval, and until then only admins
+   can use the tools);
+3. creates or updates each preset with the same grants.
+
+It prints `GROUP_CREATED`, `TOOLS_UPDATED`/`TOOLS_UNCHANGED`,
+`PRESET_CREATED`/`UPDATED`/`UNCHANGED` and `RECONCILED` (or
+`RECONCILE_ERROR <reason>`, retried). It never deletes a group, a connection
+or a model, and never touches one that is not in its file; remove a retired
+preset in the admin UI. The deploy waits for a `RECONCILED` line after it
+(`FIRST_START_WAIT_SECONDS`, default 900) and fails if none comes.
+
+Open WebUI admins bypass these grants (they see every corpus).
 
 ## Sign-in (Authentik OIDC)
 
@@ -94,14 +118,22 @@ remove a retired preset in the admin UI.
 `sksso.SKAI_OIDC_ENABLED: true` and the same secret in both vaults (see
 `../sksso/README.md` "skai (Open WebUI) OIDC login"). Deploy sksso first.
 
-- **One Application.** The portal tile slug equals the OIDC client id
-  (`skai`), so the tile and the provider are one Authentik Application; who
-  may sign in is the tile's group binding, `AUTHENTIK_TILE_GROUP` (default
-  `skadmin`). Widen it for everyone who should use skai.
+- **One Application, members only.** The portal tile slug equals the OIDC
+  client id (`skai`), so the tile and the provider are one Authentik
+  Application. Access mode `app-groups` (APPLICATION_ACCESS_SSO_STANDARD): the
+  Application is bound to the global admin group, `ADMIN_GROUP` and
+  `USERS_GROUP` (default `skai-users`), so only their members can sign in at
+  all. sksso's
+  skai blueprint creates that group and binding as code and holds its
+  members (`sksso.SKAI_USERS`, instance vars, never framework defaults); the
+  portal tile task finds the same group and binding. The standard always
+  binds the global admin group too, so keep that group as small as the
+  estate needs.
 - **Admins by group.** `ADMIN_GROUP` (default `skadmin`) members are made
   Open WebUI admins on every login (the `groups` claim of the profile scope);
-  everyone else allowed in is a user. `USER_GROUPS` (default `["*"]`: anyone
-  Authentik lets through) narrows that further inside Open WebUI.
+  everyone else allowed in is a user. `USER_GROUPS` (default
+  `[USERS_GROUP]`) is checked again inside Open WebUI (`OAUTH_ALLOWED_ROLES`,
+  plus `ADMIN_GROUP`); `["*"]` leaves the gate to Authentik alone.
 - **Password sign-in.** The login form is hidden and sign-up is off. Password
   sign-in stays on in the app only for the provisioner, and Traefik answers
   403 to `/api/v1/auths/signin` and `/signup` from outside (an `ipAllowList`
@@ -110,7 +142,8 @@ remove a retired preset in the admin UI.
   first start). Because it exists, the first OIDC user is NOT made admin
   automatically: admin rights come only from `ADMIN_GROUP`. A database that
   already has users (an import) gets no provisioner account: create the
-  account by hand with that email and password, as admin, or presets fail.
+  account by hand with that email and password, as admin, or the provision
+  service fails.
 
 `AUTH_MODE: local` shows the password form and needs no sksso change (labs).
 
@@ -123,15 +156,17 @@ ansible-playbook -i envs/prod/inventory.ini \
   --vault-password-file ~/.vault_pass_env/.<instance>_prod_vault_pass
 ```
 
-Order on an estate: skpeek, skembed, skcorpus, sksso (with `SKAI_OIDC_ENABLED`), skai.
+Order on an estate: skpeek, skembed (only without `EMBED_URL`), skcorpus, sksso (with
+`SKAI_OIDC_ENABLED` and `SKAI_USERS`), skai.
 
 What the play does: validates pins, secrets and knobs (fails closed); renders
-`skai.env`, `postgres.env`, `postgres-backup.env` and `voice.env` (all 0600),
-`presets.json` and the compose file; ensures the overlays (`skai-<env>`,
-`cloud-public-<env>`, `skpeek-<env>`, `skembed-<env>`, `skcorpus-<env>`);
-deploys stack `skai-<env>` (a changed env restarts the app service); with
-corpora configured, waits for the running task and provisions the presets;
-creates or updates the portal tile.
+`skai.env`, `postgres.env`, `postgres-backup.env`, `provision.env` and
+`voice.env` (all 0600), `presets.json` and the compose file; ensures the
+overlays (`skai-<env>`, `cloud-public-<env>`, `skpeek-<env>`, `skcorpus-<env>`,
+and `skembed-<env>` unless `EMBED_URL` is set); deploys stack `skai-<env>` (a
+changed env restarts the app service, a changed `provision.env` the provision
+service); with corpora configured, waits for the provision service's
+`RECONCILED`; creates or updates the portal tile (access mode app-groups).
 
 ## Configuration (vault)
 
@@ -158,7 +193,7 @@ skai:
   WEB_SEARCH_CONCURRENT_REQUESTS: 4
   WEB_LOADER_CONCURRENT_REQUESTS: 6
   # retrieval
-  EMBED_URL: ""                     # default http://skembed-<env>_skembed:8080/v1
+  EMBED_URL: ""                     # default http://skembed-<env>_skembed:8080/v1; set = an existing endpoint, no skembed
   EMBED_MODEL: ""                   # required: skembed.MODEL_NAME
   EMBED_API_KEY: ""                 # skembed.API_KEY, if set
   RERANK_MODEL: ""                  # default BAAI/bge-reranker-v2-m3 (local, downloaded into DATA_PATH)
@@ -169,12 +204,14 @@ skai:
   # corpus tool server and presets
   CORPUS_URL: ""                    # default http://skcorpus-<env>_skcorpus:8000
   CORPUS_TOKEN: ""                  # 32+ chars, same value as skcorpus.API_TOKEN; empty = no tool server
-  CORPUS_TOOL_NAME: ""              # default "Corpus search"
-  CORPORA: []                       # presets: [{name, title, description, base_model, system_prompt}]
+  CORPORA: []                       # one preset and one tool server each: [{name, title, description,
+                                    #   base_model, system_prompt, allowed_groups}]
+  PROVISION_INTERVAL: 300           # seconds between provision service passes (30 or more)
   # sign-in
   AUTH_MODE: oidc                   # oidc (default) or local
   ADMIN_GROUP: skadmin              # Authentik group whose members are Open WebUI admins
-  USER_GROUPS: ["*"]                # groups allowed in by Open WebUI ("*": whoever Authentik lets through)
+  USERS_GROUP: skai-users           # Authentik group that may sign in; default allowed_groups of every corpus
+  USER_GROUPS: []                   # default [USERS_GROUP]; groups Open WebUI lets in ("*": leave it to Authentik)
   OIDC_CLIENT_ID: ""                # default AUTHENTIK_TILE_SLUG, else skai
   OIDC_SSO_HOST: ""                 # default sso[-<env>].<cluster>.<domain>
   OIDC_DISCOVERY_URL: ""            # full override
@@ -200,7 +237,7 @@ skai:
   BACKUP_FREQUENCY: 86400
   PLACEMENT_CONSTRAINTS: []         # app and voice; default ["node.role == worker"]
   DB_PLACEMENT_CONSTRAINTS: []      # db and db-backup; default ["node.role == worker"]
-  CONNECT_NETWORKS: []              # default [skpeek-<env>, skembed-<env>, skcorpus-<env>]
+  CONNECT_NETWORKS: []              # default [skpeek-<env>, skembed-<env> (unless EMBED_URL), skcorpus-<env>]
   CPUS: "2.0"
   MEMORY_LIMIT: 4G
   MEMORY_RESERVATION: 1G
@@ -237,7 +274,7 @@ spec's env.
 | Network | Subnet |
 |---|---|
 | `skai-prod` / `-staging` / `-dev` | `172.16.120.0/24` / `172.16.121.0/24` / `172.16.122.0/24` |
-| joins | `cloud-public-<env>`, `skpeek-<env>`, `skembed-<env>`, `skcorpus-<env>` |
+| joins | `cloud-public-<env>`, `skpeek-<env>`, `skcorpus-<env>`, and `skembed-<env>` unless `EMBED_URL` is set |
 
 ## Instance actions
 
@@ -245,10 +282,14 @@ spec's env.
    (`openssl rand -hex 32`); put the OIDC secret in the sksso vault too
    (`SKAI_OIDC_ENABLED: true`, `SKAI_OIDC_CLIENT_SECRET`) and redeploy sksso.
 2. Set `GATEWAY_URL`, `GATEWAY_API_KEY`, `DEFAULT_MODEL` and `TASK_MODEL`.
-3. Deploy skembed and set `EMBED_MODEL` to its `MODEL_NAME`.
+3. Embeddings: either deploy skembed and set `EMBED_MODEL` to its `MODEL_NAME`, or point
+   `EMBED_URL` (and `skcorpus.EMBED_URL` or a corpus's `embed_url`) at an existing
+   OpenAI-compatible endpoint and leave skembed out.
 4. For the knowledge base: deploy skcorpus, set `CORPUS_TOKEN` (= `skcorpus.API_TOKEN`) and
-   `CORPORA` (one entry per skcorpus corpus that should get a preset).
-5. Set `AUTHENTIK_TILE_GROUP` (who may sign in) and `ADMIN_GROUP` (who administers).
+   `CORPORA`: one entry per skcorpus corpus, same `name`, with its `title` and
+   `allowed_groups` (default `[skai-users]`).
+5. Who may sign in: list the members in `sksso.SKAI_USERS` (Authentik usernames) and
+   redeploy sksso; `ADMIN_GROUP` says who administers.
 6. Voice: `VOICE: true`, `VOICE_API_KEY`, then download the models once inside the voice
    container (`curl -X POST -H "Authorization: Bearer $KEY" localhost:8000/v1/models/<id>`
    for the STT and TTS model ids), and check the TTS voice name the model lists.
@@ -263,8 +304,9 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://<HOSTNAME>/api/v1/auths
 
 Tests: `v1/tests/test_skai_render.py` (the deploy through real Ansible:
 pins, fail-closed secrets and knobs, the env names, the tool server JSON, the
-presets, the routers), `v1/tests/test_skai_provision.py` (the preset
-provisioner against a fake Open WebUI API) and
+presets and their groups, the provision service, the routers),
+`v1/tests/test_skai_provision.py` (the provisioner against a fake Open WebUI
+API: groups, per-corpus tool grants, presets, the loop) and
 `v1/tests/test_skai_oidc_sksso.py` (the sksso blueprint and its byte-identity
 when off).
 
@@ -303,9 +345,16 @@ here is in the harness yet; this is the plan for it.
    `/api/config` shows the OIDC provider (`oauth.providers.oidc`); `POST
    /api/v1/auths/signin` from outside answers 403; inside the container, the
    provisioner admin's token reads `GET /api/v1/configs/tool_servers` with
-   one connection whose `info.id` is `skcorpus`, `GET /api/v1/models/model?id=corpus-lab-fixture`
-   returns the preset with `server:skcorpus` in `meta.toolIds`, and a second
-   deploy reports `PRESET_UNCHANGED corpus-lab-fixture`. The Authentik API
-   shows the `skai` Application with the OAuth2 provider, the group binding
-   and the icon.
+   one connection whose `info.id` is `skcorpus-lab-fixture` and whose read
+   grant names the Open WebUI group `skai-users`, `GET /api/v1/models/model?id=corpus-lab-fixture`
+   returns the preset with `server:skcorpus-lab-fixture` in `meta.toolIds`
+   and the same group grant, and the provision service logs
+   `PRESET_UNCHANGED corpus-lab-fixture` and `RECONCILED` on its next pass.
+   After `docker service update --force skai-<env>_skai` the grant is back
+   within one `PROVISION_INTERVAL`. The Authentik API shows the `skai`
+   Application with the OAuth2 provider, bindings to the admin group and
+   `skai-users`, the members from `SKAI_USERS`, and the icon. skcorpus's
+   `/health` reports `lab-fixture` healthy (its fixture was embedded by the
+   same model); a second fixture collection with one point stored under a
+   random vector reports degraded with a `warning` on its hits.
 4. **Teardown** removes the fixture collection and graph.

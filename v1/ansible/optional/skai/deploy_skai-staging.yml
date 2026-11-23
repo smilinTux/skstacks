@@ -398,9 +398,10 @@
       include_tasks: ../../shared/tasks/create_networks.yml
       tags: [networks]
 
-    - name: Note when the deploy started (for the provision log)
-      set_fact:
-        skai_deploy_started: "{{ now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+    - name: Note when the deploy started (manager clock, for the provision log)
+      command: date -u +%Y-%m-%dT%H:%M:%SZ
+      register: skai_deploy_started
+      changed_when: false
       tags: [deploy, presets]
 
     - name: Deploy {{ app }} stack
@@ -424,7 +425,7 @@
       # waits for Open WebUI's migrations, hence the long default.
       shell: |
         set -o pipefail
-        LOG=$(docker service logs --raw --since "{{ skai_deploy_started }}" "{{ app }}-{{ env }}_provision" 2>&1 | tail -n 50)
+        LOG=$(docker service logs --raw --since "{{ skai_deploy_started.stdout | default('10m', true) }}" "{{ app }}-{{ env }}_provision" 2>&1 | tail -n 50)
         if printf '%s\n' "$LOG" | grep -q '^RECONCILED$'; then
           printf '%s\n' "$LOG" | grep -E '^(GROUP_CREATED|TOOLS_|PRESET_|RECONCILED)' | tail -n 20
           exit 0
@@ -460,14 +461,15 @@
           name: "{{ skai.AUTHENTIK_TILE_NAME | default('SKAI', true) }}"
           launch_url: "https://{{ ska_host }}"
           group: "{{ skai.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
-          # app-groups: the application is bound to the global admin group and
-          # to USERS_GROUP (default skai-users); only members get in. The
+          # app-groups: the application is bound to the global admin group,
+          # ADMIN_GROUP and USERS_GROUP (default skai-users); only members get in. The
           # same group and binding are in sksso's skai blueprint, which also
           # holds the members (sksso.SKAI_USERS).
           sso:
             SSO_ACCESS: app-groups
             SSO_PROVIDER: own
             SSO_USERS_GROUP: "{{ ska_users_group }}"
+            SSO_ADMINS_GROUP: "{{ ska_admin_group }}"
           icon: "{{ skai.AUTHENTIK_TILE_ICON | default('fa://fa-robot', true) }}"
           open_in_new_tab: "{{ skai.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
           description: "{{ skai.AUTHENTIK_TILE_DESCRIPTION | default('Answer engine: chat, web search and the knowledge base', true) }}"
