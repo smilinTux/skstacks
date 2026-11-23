@@ -17,6 +17,59 @@ or drained. New `skfenceha.ACME_MASTER_NODE` pins it to a named manager. **Insta
 required. Check that the label and skha agree (README, "Which manager is the ACME master"); if they
 do not, run the skha deploy once.
 
+### Image bumps for open CVEs
+
+Default image pins move to releases that clear findings from a Trivy scan. Every pin stays
+`tag@sha256:<multi-arch index digest>`, read from the registry. Same major everywhere, no major
+bumps.
+
+- **Postgres, three cases.** (1) Alpine server images move within alpine: skbom and skflow
+  `17.7-alpine` to `17.12-alpine`, skmesh `18.6-alpine` to `18.7-alpine`. (2) Images that only run
+  a dump sidecar (`POSTGRES_BACKUP_IMAGE`) move to the `-bookworm` variant of the same major:
+  skbom and skflow `17.7` to `17.12-bookworm`, skgit, skmesh and sksso `18.6` to `18.7-bookworm`.
+  `-bookworm` is the same Debian base the old pins already used, so there is no glibc or
+  collation change; the bare `17.12` and `18.7` tags moved to a newer Debian with a newer glibc
+  and more unfixed HIGH findings. (3) Debian images that run a database server (skgit and sksso
+  `postgres:18.6`, skmem-pg `postgres:17.11`) are **not changed**: a base OS change under an
+  existing data directory can change text collation and corrupt indexes, and these pins scan as
+  well or better than the replacements. Dump sidecars hold no data directory, so they are safe to
+  move.
+- skbom: Dependency-Track apiserver and frontend `4.14.6` to `4.14.7`.
+- skgit: Forgejo `17.0.1` to `17.0.2` (tag only, as before).
+- skpdf: Stirling-PDF `3.3.0` to `3.5.0`.
+- skrac: MeshCentral `1.2.6` to `1.3.1` (a security release). Upstream no longer ships the default
+  agent binaries inside the image: the server downloads and verifies them from pinned GitHub
+  releases into `meshcentral-data/agentbuilds/` at startup (`settings.agentDownloads`), so the
+  first start needs GitHub egress, or the files placed there by hand.
+- skhub: Talk recording image `20260929_105435` to `20261119_161514`.
+- skmon: Alertmanager `v0.34.2` to `v0.35.0`, and the CI-only promtool pin `v3.15.1` to `v3.16.0`.
+  Loki `3.7.10` and Grafana `13.3.1` are not taken yet: the skmon pin table requires a release to
+  be 14 days old, and they are younger.
+- skhome: HomeCenter `2.3.1` to `3.3.0` (major). No env, entrypoint or backup interface change;
+  the app applies its database migrations at start, and two of them drop columns, so a rollback
+  means restoring a backup, not just redeploying the old image. Take a backup first.
+- skgym: openGym api and web `1.4.1` to `1.4.5`.
+- skpatch-hosts: linux-update-dashboard `2026.10.9` to `2026.11.6`. API tokens now carry granular
+  permissions; the role still registers systems through its own short-lived session.
+- sksec-web: crowdsec-web-ui `2026.10.10` to `2026.11.12`. Settings that `config.yaml` or
+  `CONFIG_*` set now override and lock the matching UI settings; OIDC auto-login and back-channel
+  logout are off by default.
+- skorch: n8n `2.49.1` to `2.49.3`.
+- skmesh: NetBird management, signal and relay `0.83.1` to `0.83.2`, dashboard `v2.97.0` to
+  `v2.98.0`.
+- skpages: Caddy `2.11.8-alpine` to `2.11.9-alpine`, now pinned by digest.
+- skport: Portainer `2.45.4` now pinned by digest (same version).
+- skflow: Windmill `1.847.0` to `1.882.0`; its database migrations run at start.
+- skwrit: nextcloud-mcp-server `0.199.4` to `0.218.0`. The command and environment the role uses
+  are unchanged; upstream now rejects tool calls with unknown arguments and renamed its client
+  loggers (`nextcloud_client.*`).
+- skstream: Kometa pinned to `kometateam/kometa:v2.5.5` by digest (was a digest with no tag).
+- Left as is: skgraph FalkorDB (default is still v4.x) and skvector Qdrant (default is below
+  1.19), which are not part of this bump.
+
+**Instance action:** instances that override these images in their vault or vars keep their old
+pin until they change it. Redeploy the affected roles to pick up the new defaults.
+
 ## skstacks-v2.26.31 - 2026-11-21
 
 Patch on v2.26.30. skgit can sign users in through Authentik over OIDC, managed as code on both
