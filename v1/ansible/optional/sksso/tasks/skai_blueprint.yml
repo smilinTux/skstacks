@@ -14,6 +14,9 @@
     sksso_skai_client_id: "{{ sksso.SKAI_OIDC_CLIENT_ID | default('skai', true) }}"
     sksso_skai_app_name: "{{ sksso.SKAI_APP_NAME | default('SKAI', true) }}"
     sksso_skai_authentication_flow: "{{ sksso.SKAI_OIDC_AUTHENTICATION_FLOW | default('', true) | string }}"
+    sksso_skai_admin_group: "{{ sksso.ADMIN_GROUP | default('skadmin', true) | string }}"
+    sksso_skai_users_group: "{{ sksso.SKAI_USERS_GROUP | default('skai-users', true) | string }}"
+    sksso_skai_users: "{{ sksso.SKAI_USERS | default([], true) }}"
   no_log: true
 
 - name: Resolve the skai public host
@@ -28,12 +31,17 @@
       - "sksso_skai_host is match('^[A-Za-z0-9][A-Za-z0-9.-]*$')"
       - "sksso_skai_client_id is match('^[a-z0-9][a-z0-9-]*$')"
       - "sksso_skai_authentication_flow == '' or sksso_skai_authentication_flow is match('^[a-z0-9][a-z0-9-]*$')"
+      - "sksso_skai_users_group is match('^[A-Za-z0-9][A-Za-z0-9 ._-]*$')"
+      - "sksso_skai_admin_group is match('^[A-Za-z0-9][A-Za-z0-9 ._-]*$')"
+      - "sksso_skai_users is sequence and sksso_skai_users is not string"
+      - "sksso_skai_users | map('string') | reject('match', '^[A-Za-z0-9][A-Za-z0-9@._+-]*$') | list | length == 0"
     fail_msg: >-
       sksso.SKAI_OIDC_CLIENT_SECRET needs 32+ characters (openssl rand -hex
       32, the same value as skai.OIDC_CLIENT_SECRET), SKAI_HOST a plain host
       name, SKAI_OIDC_CLIENT_ID a lowercase slug (the same value as
       skai.OIDC_CLIENT_ID), and SKAI_OIDC_AUTHENTICATION_FLOW empty or a
-      lowercase flow slug.
+      lowercase flow slug. SKAI_USERS_GROUP (default skai-users) is a group
+      name; SKAI_USERS a list of Authentik usernames (the group's members).
     quiet: true
 
 - name: Create the Authentik blueprints directory

@@ -1,7 +1,9 @@
 """skai (Open WebUI) sign-in through sksso (Authentik) over OIDC, as code:
 the sksso.SKAI_OIDC_ENABLED blueprint (same mechanism as skgit's), with the
 client secret only in the 0600 env file (read with !Env), off by default
-with nothing rendered, and the redirects matching what skai configures."""
+with nothing rendered, the redirects matching what skai configures, and the
+skai-users group with its members and the bindings that let only members
+(and the admin group) sign in."""
 import json
 import pathlib
 import re
@@ -36,7 +38,8 @@ def _jenv(strict=False):
 
 def _blueprint(**over):
     ctx = dict(sksso_skai_client_id="skai", sksso_skai_host="skai.example.com",
-               sksso_skai_app_name="SKAI", sksso_skai_authentication_flow="")
+               sksso_skai_app_name="SKAI", sksso_skai_authentication_flow="",
+               sksso_skai_admin_group="skadmin", sksso_skai_users_group="skai-users", sksso_skai_users=[])
     ctx.update(over)
     text = (SKSSO / "src/config/sksso/blueprints/skai-oidc.yaml.j2").read_text()
     return text, yaml.load(_jenv(True).from_string(text).render(**ctx), _Loader)
@@ -131,3 +134,37 @@ def test_every_sksso_playbook_includes_the_task_only_when_enabled(env):
     assert inc["include_tasks"]["file"] == "tasks/skai_blueprint.yml"
     assert inc["when"] == "sksso.SKAI_OIDC_ENABLED | default(false) | bool"
     assert set(inc["tags"]) == {"templates", "deploy"}
+
+
+def _all(bp, model):
+    return [e for e in bp["entries"] if e["model"] == model]
+
+
+def test_users_group_and_bindings_close_the_gate():
+    _, bp = _blueprint()
+    groups = _all(bp, "authentik_core.group")
+    assert [g["identifiers"] for g in groups] == [{"name": "skadmin"}, {"name": "skai-users"}]
+    assert "attrs" not in groups[1]  # no SKAI_USERS: membership left alone
+    app = _entries(bp)["authentik_core.application"]
+    assert app["attrs"]["policy_engine_mode"] == "any"
+    binds = _all(bp, "authentik_policies.policybinding")
+    assert [(b["identifiers"]["group"], b["identifiers"]["order"]) for b in binds] == [
+        (("!KeyOf", "admin-group"), 0), (("!KeyOf", "users-group"), 10)]
+    assert all(b["identifiers"]["target"] == ("!KeyOf", "application") and b["attrs"]["enabled"] is True
+               and b["attrs"]["negate"] is False for b in binds)
+    assert [g.get("id") for g in groups] == ["admin-group", "users-group"]
+
+
+def test_members_are_instance_vars():
+    _, bp = _blueprint(sksso_skai_users=["example-user-a", "example-user-b"], sksso_skai_users_group="example-ai-users")
+    g = _all(bp, "authentik_core.group")[1]
+    assert g["identifiers"] == {"name": "example-ai-users"}
+    assert g["attrs"]["users"] == [("!Find", ["authentik_core.user", ["username", "example-user-a"]]),
+                                   ("!Find", ["authentik_core.user", ["username", "example-user-b"]])]
+
+
+def test_framework_sets_no_members():
+    for env in ENVS:
+        text = (SKSSO / f"deploy_sksso-{env}.yml").read_text() + (SKSSO / "tasks/skai_blueprint.yml").read_text()
+        assert "sksso.SKAI_USERS | default([], true)" in (SKSSO / "tasks/skai_blueprint.yml").read_text()
+        assert "SKAI_USERS:" not in text.replace("SKAI_USERS_GROUP", "")

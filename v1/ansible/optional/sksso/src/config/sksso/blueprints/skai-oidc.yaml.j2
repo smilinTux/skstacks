@@ -9,9 +9,17 @@
 # deploy defaults its portal tile to (AUTHENTIK_TILE_SLUG, default "skai"):
 # shared/tasks/authentik_portal_tile.yml finds this exact Application by slug
 # and keeps this provider when it manages the tile, so there is ONE Authentik
-# Application, not two. Who may sign in is the portal tile's own group binding
-# (skai.AUTHENTIK_TILE_GROUP); who becomes an Open WebUI admin is the groups
-# claim (scope profile) matched against skai.ADMIN_GROUP.
+# Application, not two.
+#
+# Who may sign in (access mode app-groups): the application is bound here to
+# the global admin group (sksso.ADMIN_GROUP, default skadmin) and to the skai
+# users group (SKAI_USERS_GROUP, default skai-users), policy engine mode any,
+# so the gate is closed even with skai's portal tile switched off. The group
+# is created here; with SKAI_USERS set its membership IS that list (usernames,
+# instance vars; a list here replaces the members on every apply), without it
+# membership is left to the Authentik UI. skai's tile task binds the same
+# groups and finds these bindings. Who becomes an Open WebUI admin is the
+# groups claim (scope profile) matched against skai.ADMIN_GROUP.
 #
 # Open WebUI's callback is /oauth/oidc/login/callback (v0.13; the legacy
 # /oauth/oidc/callback is registered too).
@@ -21,6 +29,23 @@ metadata:
   labels:
     blueprints.goauthentik.io/instantiate: "true"
 entries:
+  - model: authentik_core.group
+    id: admin-group
+    identifiers:
+      name: {{ sksso_skai_admin_group | to_json }}
+
+  - model: authentik_core.group
+    id: users-group
+    identifiers:
+      name: {{ sksso_skai_users_group | to_json }}
+{% if sksso_skai_users | length > 0 %}
+    attrs:
+      users:
+{% for u in sksso_skai_users %}
+        - !Find [authentik_core.user, [username, {{ u | to_json }}]]
+{% endfor %}
+{% endif %}
+
   - model: authentik_providers_oauth2.oauth2provider
     id: provider
     identifiers:
@@ -60,3 +85,24 @@ entries:
       name: {{ sksso_skai_app_name | to_json }}
       provider: !KeyOf provider
       meta_launch_url: {{ ('https://' ~ sksso_skai_host ~ '/') | to_json }}
+      policy_engine_mode: any
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf application
+      group: !KeyOf admin-group
+      order: 0
+    attrs:
+      enabled: true
+      negate: false
+      timeout: 30
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf application
+      group: !KeyOf users-group
+      order: 10
+    attrs:
+      enabled: true
+      negate: false
+      timeout: 30

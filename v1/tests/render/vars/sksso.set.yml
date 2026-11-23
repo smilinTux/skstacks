@@ -35,3 +35,5 @@ sksso:
   SKAI_HOST: ai.example.test
   SKAI_APP_NAME: Example AI
   SKAI_OIDC_AUTHENTICATION_FLOW: capauth-authentication
+  SKAI_USERS_GROUP: example-ai-users
+  SKAI_USERS: [example-user-a, example-user-b]

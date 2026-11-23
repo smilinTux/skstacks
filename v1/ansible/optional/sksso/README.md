@@ -584,10 +584,16 @@ without it; on, the deploy renders `/var/data/config/sksso-<env>/blueprints/skai
 | OAuth2 provider `skai` | confidential, client id `skai` (`SKAI_OIDC_CLIENT_ID` overrides, same value as `skai.OIDC_CLIENT_ID`), strict redirects `https://<skai host>/oauth/oidc/login/callback` and the legacy `/oauth/oidc/callback`, the same flows, signing key, subject and issuer modes and grant types as skgit, scopes openid, email, profile (profile carries the `groups` claim skai maps to admin) |
 | Application `skai` | name `SKAI_APP_NAME` (default `SKAI`), launch URL `https://<skai host>/` |
 
-**No policy binding here.** The Application slug is skai's portal tile slug, so the tile task
-(run from skai's deploy) keeps this provider and owns the group binding: who may sign in is
-`skai.AUTHENTIK_TILE_GROUP`; who becomes an Open WebUI admin is `skai.ADMIN_GROUP`, matched
-against the `groups` claim on every login.
+| Group `skai-users` | `SKAI_USERS_GROUP` overrides (same value as `skai.USERS_GROUP`); members = `SKAI_USERS` when set (the list IS the membership, re-applied by the worker), otherwise left alone |
+| Bindings | the Application to the global admin group (`ADMIN_GROUP`, default `skadmin`, order 0) and to `skai-users` (order 10), policy engine mode `any` |
+
+**Members only.** Only members of the two bound groups can sign in to skai (access mode
+app-groups); the gate holds even with skai's portal tile off. skai's tile task (run from
+skai's deploy) uses the same slug and groups, keeps this provider and finds these bindings.
+Who becomes an Open WebUI admin is `skai.ADMIN_GROUP`, matched against the `groups` claim on
+every login. Members are instance vars: the framework sets no member. A username in
+`SKAI_USERS` that does not exist in Authentik makes the blueprint apply fail (shown in the
+Authentik admin UI under System, Blueprints); create the user first.
 
 ```yaml
 sksso:
@@ -597,6 +603,8 @@ sksso:
   SKAI_OIDC_CLIENT_ID: skai                      # default skai (the portal tile slug)
   SKAI_APP_NAME: "SKAI"
   SKAI_OIDC_AUTHENTICATION_FLOW: ""              # or capauth-authentication
+  SKAI_USERS_GROUP: skai-users                   # default skai-users; same as skai.USERS_GROUP
+  SKAI_USERS: []                                 # Authentik usernames; set = the whole membership
 ```
 
 Run order: deploy (or redeploy) `sksso` with the flag and secret set, THEN deploy `skai`.
