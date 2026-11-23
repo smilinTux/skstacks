@@ -67,6 +67,12 @@ PLAYBOOK_FACTS = {
                   skr_agent_middlewares="default-no-crowdsec@file", skr_sso_middleware="", skr_tls_options="none",
                   skr_data_node="", skr_data_path="", skr_files_path="", skr_extra_ca="", skr_internal_port="4430",
                   skr_auth_mode="", skr_backup_path=""),
+    "skpods": dict(skp_router="skpods", skp_host="pods.render.example.test", skp_middlewares="skpods-headers",
+                   skp_engine="nextcloud", skp_stack="skpods-prod", skp_ingress_network="cloud-public-prod",
+                   skp_data_node="", skp_app_path="/var/data/skpods-prod",
+                   skp_pg_path="/var/data/runtime/skpods-prod/postgres",
+                   skp_redis_path="/var/data/runtime/skpods-prod/redis", skp_admin_user="skpods-admin",
+                   skp_first_install_wait=1200, skp_trusted_proxies="172.16.200.0/24"),
 }
 # Templates the plain-jinja harness cannot render (they need Ansible-only
 # filters); none of them route an app through the shared chains.
