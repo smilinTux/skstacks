@@ -1,0 +1,159 @@
+---
+# skpods seed / reset (nextcloud engine). Included by deploy_skpods-<env>.yml
+# after tasks/engine_nextcloud.yml resolved the Nextcloud task's node and
+# container (skp_nc_node, skp_nc_container).
+#
+# skpods.SEED_USERS (instance vault), one entry per user:
+#   - id: alice                 # Nextcloud user id = the pod name
+#     display_name: Alice       # optional
+#     password: "..."           # required; from the vault, never logged
+#     resettable: true          # default true: wiped by -e skpods_reset=true
+#     client_credentials: false # true: mint an app password + Solid client
+#                               # credentials for this user (headless agents)
+#     admin: false              # true: add to the admin group
+#
+# Re-runnable: an existing user keeps its data; its password and display
+# name are set again from the vault. `-e skpods_reset=true` deletes every
+# resettable user (and with it the pod in its Files) and recreates it.
+# `-e '{"skpods_reset_users": ["bob"]}'` also resets a non-resettable user.
+#
+# Minted credentials are written ONLY to a root-only JSON file on the
+# controller (skpods_credentials_out or skpods.CREDENTIALS_OUT), for the
+# operator to move into their secret store; nothing secret is printed.
+
+- name: Resolve seed options
+  set_fact:
+    skp_reset: "{{ skpods_reset | default(false) | bool }}"
+    skp_reset_users: "{{ skpods_reset_users | default([]) }}"
+    skp_credentials_out: "{{ skpods_credentials_out | default(skpods.CREDENTIALS_OUT | default('', true), true) }}"
+    skp_mint_always: "{{ skpods_mint_credentials | default(false) | bool }}"
+  tags:
+    - always
+
+- name: Check the seed users
+  assert:
+    that:
+      - item.id is defined
+      - item.id is match('^[a-z0-9][a-z0-9._-]{0,63}$')
+      - item.password | default('', true) | length >= 12
+      - item.id != skp_admin_user
+    fail_msg: >-
+      skpods.SEED_USERS: every entry needs an `id` (lowercase letters,
+      digits, '.', '_' or '-'), a `password` of 12+ characters, and must not
+      be the install admin ({{ skp_admin_user }}).
+    quiet: true
+  loop: "{{ skpods.SEED_USERS }}"
+  loop_control:
+    label: "{{ item.id | default('?') }}"
+  tags:
+    - always
+
+- name: Refuse to mint credentials without a place to put them
+  assert:
+    that:
+      - skp_credentials_out | length > 0
+    fail_msg: >-
+      A seed user has client_credentials: true, so set skpods_credentials_out
+      (extra var) or skpods.CREDENTIALS_OUT to a controller path for the
+      minted credentials (written 0600, nothing is printed).
+  when: (skpods.SEED_USERS | selectattr('client_credentials', 'defined') | selectattr('client_credentials') | list | length) > 0
+  tags:
+    - always
+
+- name: Create, update or reset the seed users
+  shell: |
+    set -euo pipefail
+    C="{{ skp_nc_container.stdout | trim }}"
+    U="{{ item.id }}"
+    occ() { docker exec -u www-data "$C" php occ "$@"; }
+    occ_pw() { docker exec -u www-data -e OC_PASS "$C" php occ "$@"; }
+    exists=0
+    occ user:info "$U" >/dev/null 2>&1 && exists=1
+    if [ "$exists" = 1 ] && [ "{{ (skp_reset and (item.resettable | default(true) | bool)) or (item.id in skp_reset_users) }}" = "True" ]; then
+      occ user:delete "$U" >/dev/null
+      exists=0
+      echo "reset $U"
+    fi
+    if [ "$exists" = 0 ]; then
+      occ_pw user:add --password-from-env --display-name="{{ item.display_name | default(item.id, true) }}" "$U" >/dev/null
+      echo "created $U"
+    else
+      occ_pw user:resetpassword --password-from-env "$U" >/dev/null
+      occ user:profile "$U" displayname "{{ item.display_name | default(item.id, true) }}" >/dev/null 2>&1 || true
+      echo "kept $U"
+    fi
+    {% if item.admin | default(false) | bool %}
+    occ group:adduser admin "$U" >/dev/null 2>&1 || true
+    echo "admin $U"
+    {% endif %}
+  args:
+    executable: /bin/bash
+  environment:
+    OC_PASS: "{{ item.password }}"
+  delegate_to: "{{ skp_nc_node.stdout | trim }}"
+  loop: "{{ skpods.SEED_USERS }}"
+  loop_control:
+    label: "{{ item.id }}"
+  register: skp_seed
+  no_log: true
+  changed_when: "'created ' in skp_seed.stdout or 'reset ' in skp_seed.stdout"
+  tags:
+    - seed
+
+- name: Show seed results
+  debug:
+    msg: "{{ skp_seed.results | map(attribute='stdout') | map('replace', '\n', ', ') | list }}"
+  tags:
+    - seed
+
+- name: Mint Solid client credentials (app password + client_credentials)
+  # For each user with client_credentials: true that was just created or
+  # reset (or every such user with -e skpods_mint_credentials=true). The
+  # request goes to the container's own web server with the public Host, so
+  # the issuer and WebID in the answer are the https public ones.
+  shell: |
+    set -euo pipefail
+    C="{{ skp_nc_container.stdout | trim }}"
+    U="{{ item.0.id }}"
+    APP_PW=$(docker exec -u www-data -e OC_PASS "$C" php occ user:auth-tokens:add --password-from-env --name "skpods seed client credentials" "$U" </dev/null | awk 'NF {last=$NF} END {print last}')
+    [ -n "$APP_PW" ] || { echo "no app password for $U" >&2; exit 1; }
+    RESP=$(docker exec -e APP_PW="$APP_PW" "$C" sh -c 'curl -fsS --max-time 30 -u "$0:$APP_PW" -H "OCS-APIRequest: true" -H "Content-Type: application/json" -H "Host: {{ skp_host }}" -d "{\"name\": \"$0 agent\"}" http://localhost/apps/solid/client-credentials' "$U")
+    APP_PW="$APP_PW" RESP="$RESP" python3 -c 'import json,os,sys; r=json.loads(os.environ["RESP"]); r["app_password"]=os.environ["APP_PW"]; r["user"]=sys.argv[1]; print(json.dumps(r))' "$U"
+  args:
+    executable: /bin/bash
+  environment:
+    OC_PASS: "{{ item.0.password }}"
+  delegate_to: "{{ skp_nc_node.stdout | trim }}"
+  loop: "{{ skpods.SEED_USERS | zip(skp_seed.results) | list }}"
+  loop_control:
+    label: "{{ item.0.id }}"
+  when:
+    - item.0.client_credentials | default(false) | bool
+    - skp_mint_always or ('created ' in item.1.stdout)
+  register: skp_minted
+  no_log: true
+  tags:
+    - seed
+
+- name: Write the minted credentials to the controller (0600)
+  copy:
+    # Each minted result is one JSON object line; the file is a JSON array
+    # of them (anything else a task printed is left out).
+    content: "[{{ skp_minted.results | selectattr('stdout', 'defined') | map(attribute='stdout') | map('trim') | select('match', '^[{].*[}]$') | join(',') }}]\n"
+    dest: "{{ skp_credentials_out }}"
+    mode: '0600'
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when: (skp_minted.results | default([]) | selectattr('stdout', 'defined') | list | length) > 0
+  tags:
+    - seed
+
+- name: Report minted credentials (no secrets)
+  debug:
+    msg: >-
+      Minted client credentials for
+      {{ skp_minted.results | default([]) | selectattr('stdout', 'defined') | map(attribute='item') | map('first') | map(attribute='id') | list }};
+      written to {{ skp_credentials_out | default('(nowhere)', true) }} on the controller.
+  tags:
+    - seed

@@ -6,6 +6,23 @@ Each entry says what an instance must do, if anything.
 
 ## skstacks-v2.26.32 - 2026-11-23
 
+### skpods: new optional service for Solid pod hosting
+
+- New role `v1/ansible/optional/skpods` (`deploy_skpods-{dev,staging,prod}.yml`): Solid pods at
+  `https://pods[-<env>].<cluster>.<domain>`. One engine setting, `skpods.ENGINE`; only `nextcloud` is
+  implemented (a standalone, slim Nextcloud with Postgres, Redis and cron, most default apps
+  disabled, and the Solid app shipped inside an instance-built image pinned by digest).
+- The deploy sets and checks `overwriteprotocol`, `overwritehost`, `overwrite.cli.url`,
+  `trusted_domains` and `trusted_proxies` before it enables Solid (each pod's root ACL stores the
+  absolute WebID). The router carries only the role's own headers middleware: no CORS, error pages
+  or forward auth on any path.
+- `--tags seed [-e skpods_reset=true]` creates or resets users from `skpods.SEED_USERS`, and mints
+  Solid client credentials for users marked `client_credentials: true` into a 0600 file on the
+  controller. Optional `skpods.REGISTRY_LOGIN` logs the manager in to a private registry.
+- Networks: `skpods-prod` `172.16.184.0/24`, `skpods-staging` `172.16.185.0/24`, `skpods-dev`
+  `172.16.186.0/24`. **Instance action**: none unless you deploy it; then build an engine image,
+  add the `skpods` vault (README minimal snippet) and run the env playbook.
+
 ### skpayment: its own minimal runtime image
 
 skpayment ran its gateway inside a general-purpose web UI image only because
