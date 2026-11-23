@@ -24,7 +24,7 @@ pytestmark = pytest.mark.skipif(shutil.which("ansible-playbook") is None, reason
 ROLE = rp.ANSIBLE / "optional" / "sksec-web"
 BASE = yaml.safe_load((rp.VARS / "sksec-web.example.yml").read_text())["sksec_web"]
 SET = yaml.safe_load((rp.VARS / "sksec-web.set.yml").read_text())["sksec_web"]
-IMAGE = ("ghcr.io/theduffman85/crowdsec-web-ui:2026.10.10@sha256:"
+IMAGE = ("ghcr.io/theduffman85/crowdsec-web-ui:2026.11.12@sha256:"
          "f57568d27b2c7798155a638b9cb76302777a9dcf43d8026f344c17767589d694")
 
 
@@ -270,7 +270,7 @@ def test_refuses_short_lapi_password(tmp_path):
 
 
 def test_refuses_unpinned_image(tmp_path):
-    log = fails(tmp_path, BASE | {"CROWDSEC_WEB_UI_IMAGE": "ghcr.io/theduffman85/crowdsec-web-ui:2026.10.10"})
+    log = fails(tmp_path, BASE | {"CROWDSEC_WEB_UI_IMAGE": "ghcr.io/theduffman85/crowdsec-web-ui:2026.11.12"})
     assert "must be pinned by digest" in log
 
 

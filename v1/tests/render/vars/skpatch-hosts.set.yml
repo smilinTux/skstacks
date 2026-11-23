@@ -2,7 +2,7 @@
 skpatch_hosts:
   CLOUDFLARED: true
   HOSTNAME: patch.example.test
-  IMAGE: "registry.example.test/linux-update-dashboard:2026.10.9@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  IMAGE: "registry.example.test/linux-update-dashboard:2026.11.6@sha256:0000000000000000000000000000000000000000000000000000000000000000"
   DATA_NODE: render-node-1
   DATA_PATH: /var/lib/skpatch-hosts-render/data
   PLACEMENT_CONSTRAINTS: ["node.role == worker", "node.labels.skpatch-hosts == true"]

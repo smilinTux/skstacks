@@ -22,7 +22,7 @@ pytestmark = pytest.mark.skipif(shutil.which("ansible-playbook") is None, reason
 ROLE = rp.ANSIBLE / "optional" / "skhome"
 BASE = yaml.safe_load((rp.VARS / "skhome.example.yml").read_text())["skhome"]
 SET = yaml.safe_load((rp.VARS / "skhome.set.yml").read_text())["skhome"]
-IMAGE = ("ghcr.io/yatzin/homecenter:2.3.1@sha256:"
+IMAGE = ("ghcr.io/yatzin/homecenter:3.3.0@sha256:"
          "45bc4d6a0fed858ac8c89bd0631c69ab732093d5dd626e14a96678058e588bc4")
 
 
@@ -226,7 +226,7 @@ def test_refuses_short_auth_secret(tmp_path):
 
 
 def test_refuses_unpinned_image(tmp_path):
-    log = fails(tmp_path, BASE | {"HOMECENTER_IMAGE": "ghcr.io/yatzin/homecenter:2.3.1"})
+    log = fails(tmp_path, BASE | {"HOMECENTER_IMAGE": "ghcr.io/yatzin/homecenter:3.3.0"})
     assert "must be pinned by digest" in log
 
 

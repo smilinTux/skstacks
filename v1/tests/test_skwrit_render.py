@@ -19,7 +19,7 @@ pytestmark = pytest.mark.skipif(shutil.which("ansible-playbook") is None, reason
 ROLE = rp.ANSIBLE / "optional" / "skwrit"
 BASE = yaml.safe_load((rp.VARS / "skwrit.example.yml").read_text())["skwrit"]
 SET = yaml.safe_load((rp.VARS / "skwrit.set.yml").read_text())["skwrit"]
-MCP_IMAGE = ("ghcr.io/cbcoutinho/nextcloud-mcp-server:0.199.4@sha256:"
+MCP_IMAGE = ("ghcr.io/cbcoutinho/nextcloud-mcp-server:0.218.0@sha256:"
              "4db27920ca54f13965f8a509bcaf8491c2d06a476cc1b77062868ae901c2f0f1")
 
 

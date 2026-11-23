@@ -364,7 +364,7 @@ wrappers, `/usr/local/sbin/skpatch-apt-only-upgrade` and
 every argument against a strict regex and execs one fixed command. **Known
 limitation:** the pinned dashboard's "upgrade selected packages" still calls
 `apt-get`/`snap` directly (`server/services/script-service.ts`,
-`builtinUpgradeSelectedCommand`, lines 1134 and 1147 of 2026.10.9) and has no
+`builtinUpgradeSelectedCommand`, lines 1134 and 1147 of 2026.10.9, not re-audited for 2026.11.6) and has no
 env or config knob for it; point it at the wrappers once per system with a
 custom script override. Recipe, regexes and caveats: README "Selected-package
 upgrades". Applied with `provision_skpatch_hosts_nodes.yml`; do not apply it
@@ -410,7 +410,7 @@ Symptom to check. Runbook ids are in Appendix A; known-error ids (KE-SKPATCH-n) 
 | Host registration fails: `no dashboard user named ...` or `is read-only` | `REGISTER_AS` must be an existing ADMIN account. Sign in once (local or OIDC) so the account exists, or fix its role. |
 | Host registration fails: `GET /auth/me: HTTP 401` | The signed session was refused: the account's sessions were revoked mid-run, or the container's session key changed. Rerun; if it persists, check `LUDASH_SECRET_KEY` or `/data/.secret_key` in the container. |
 | Host registration fails: `no sshKey credential with id N` | `CREDENTIAL_ID` points at a credential that no longer exists. Unset it to let `SSH_PRIVATE_KEY` create one, or fix the id. |
-| `API_TOKEN is set, but the pinned dashboard ... refuses` | Expected: token registration never worked on 2026.10.9 (KE-SKPATCH-5). Remove `API_TOKEN`, set `REGISTER_AS`. |
+| `API_TOKEN is set, but the pinned dashboard ... refuses` | Expected: this role registers through `REGISTER_AS`, not a token (token registration never worked on 2026.10.9, KE-SKPATCH-5; 2026.11.2 added granular token permissions this role does not manage). Remove `API_TOKEN`, set `REGISTER_AS`. |
 | A node is missing from the dashboard after a `present` run | `REGISTER_AS` or the credential were unset (registration skips by design; read the play's debug output), or the host was out of the play's `-l`. Set them and rerun. |
 | A node's dashboard name or settings were not updated by a run | Expected: registration creates missing systems only and never edits one. Change it in the dashboard. |
 | A retired node still shows in the dashboard | Expected: registration never deletes. Remove it by hand (RB-SKPATCH-02). |

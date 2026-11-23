@@ -11,8 +11,8 @@ nothing renders or changes for an instance that never runs
 
 - **License.** MeshCentral is Apache-2.0. Nothing is vendored or rebuilt:
   the role runs the unmodified upstream image.
-- **Image.** `ghcr.io/ylianst/meshcentral`, release **`1.2.6`** (published
-  2026-09-24, the current stable GitHub release at the time this role was
+- **Image.** `ghcr.io/ylianst/meshcentral`, release **`1.3.1`** (published
+  2026-10-23, the current stable GitHub release at the time this role was
   written; not a pre-release), multi-arch (`amd64`, `arm64`, `arm/v7`,
   `arm/v6`), pinned by the manifest-list digest; the play refuses an image
   without `@sha256:`. If a later stable release moves ahead of what the
@@ -168,7 +168,7 @@ modes and never carries `SSO_MIDDLEWARE`.
 MeshCentral's OIDC client is the `openid-client@5.7.1` npm package, installed
 on demand (not a static dependency: `meshcentral.js` requires it only when
 `authstrategies.oidc` is set). That package's default HTTP request timeout
-is 3.5s, and MeshCentral 1.2.6's only call to
+is 3.5s, and MeshCentral 1.3.1's (and 1.2.6's) only call to
 `openid-client.custom.setHttpOptionsDefaults` (which could raise it) is
 gated behind an HTTPS proxy agent being configured (`webserver.js`,
 `setupDomainAuthStrategy`); it is never called for a plain deployment, so
@@ -368,7 +368,7 @@ skrac:
   BACKUP_INCLUDE_FILES: false               # also archive FILES_PATH, as a second, separate archive
 ```
 
-Default image: `ghcr.io/ylianst/meshcentral:1.2.6@sha256:09c5abfcf0758f2a7ab9b43fa8acb838b92bba1498c1447fc8c09bb1d296b73e`
+Default image: `ghcr.io/ylianst/meshcentral:1.3.1@sha256:266b01942545829f11d53e6cecd5c2e48033d9edb48bbd3a9a569482ff1d050d`
 (multi-arch index digest; full literal in the playbooks). Networks:
 override with the flat per-env `skrac_<env>_networks` list.
 
