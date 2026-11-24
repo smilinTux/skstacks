@@ -56,7 +56,11 @@ def misplaced(text, added, tagged=tag_exists):
     bad = []
     for n in added:
         sec = section.get(n, -1)
-        if n <= len(lines) and lines[n - 1].strip() and (sec > 0 or (sec == 0 and top_tagged)):
+        if n > len(lines) or HEADING.match(lines[n - 1]):
+            # A `## ` heading line carries no notes: a release PR that splits the top
+            # section re-adds the older heading below the new one (#529).
+            continue
+        if lines[n - 1].strip() and (sec > 0 or (sec == 0 and top_tagged)):
             bad.append((n, names[section[n]]))
     return bad
 
