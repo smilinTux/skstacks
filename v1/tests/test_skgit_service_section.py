@@ -1,4 +1,5 @@
-"""skgit's optional [service] knobs: DISABLE_REGISTRATION, REQUIRE_SIGNIN_VIEW.
+"""skgit's optional [service] knobs: DISABLE_REGISTRATION, REQUIRE_SIGNIN_VIEW,
+ENABLE_INTERNAL_SIGNIN.
 
 An internet-facing Forgejo defaults to open self-registration and anonymous
 read of every public repo. These two vault keys let an instance close both
@@ -50,6 +51,16 @@ def test_one_knob_alone():
     cfg = _parse(_render(DISABLE_REGISTRATION=False))
     assert cfg.get("service", "DISABLE_REGISTRATION") == "false"
     assert not cfg.has_option("service", "REQUIRE_SIGNIN_VIEW")
+
+
+def test_internal_signin_knob_alone_renders_the_section():
+    cfg = _parse(_render(ENABLE_INTERNAL_SIGNIN=False))
+    assert cfg.get("service", "ENABLE_INTERNAL_SIGNIN") == "false"
+    assert not cfg.has_option("service", "DISABLE_REGISTRATION")
+
+
+def test_internal_signin_unset_is_not_rendered():
+    assert "ENABLE_INTERNAL_SIGNIN" not in _render(DISABLE_REGISTRATION=True)
 
 
 def test_service_section_does_not_swallow_the_mailer():

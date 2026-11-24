@@ -6,6 +6,14 @@ Each entry says what an instance must do, if anything.
 
 ## skstacks-v2.26.33 - 2026-11-23
 
+### skgit: `ENABLE_INTERNAL_SIGNIN` knob (SSO-only web sign-in)
+
+- New optional `skgit.ENABLE_INTERNAL_SIGNIN` renders Forgejo's `[service] ENABLE_INTERNAL_SIGNIN`.
+  With `AUTH_MODE: oidc`, `false` hides the username and password form so the login page offers SSO
+  only. SSH keys, access tokens, runners and existing accounts are unaffected. Unset renders nothing
+  (Forgejo default `true`). README "Registration and anonymous read"; tests
+  `v1/tests/test_skgit_service_section.py`. **Instance action**: none unless you want SSO-only sign-in.
+
 ### skpods: new optional service for Solid pod hosting
 
 - New role `v1/ansible/optional/skpods` (`deploy_skpods-{dev,staging,prod}.yml`): Solid pods at
