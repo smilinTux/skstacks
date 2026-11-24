@@ -83,3 +83,16 @@ def test_fresh_unreleased_above_a_tagged_top_passes(tmp_path):
     new = TAGGED_TOP.replace("## skstacks-v1.0.1", "## Unreleased\n\n- new\n\n## skstacks-v1.0.1", 1)
     r = repo(tmp_path, new, tag="skstacks-v1.0.1")
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_splitting_a_tagged_top_section_passes(tmp_path):
+    """The #529 case: a note landed under the tagged top heading after the tag; the
+    release PR puts a new heading above it and re-adds the old heading below it."""
+    new = TAGGED_TOP.replace("## skstacks-v1.0.1 - 2026-01-02\n\n- fix a\n",
+                             "## skstacks-v1.0.2 - 2026-01-03\n\n- fix a\n\n## skstacks-v1.0.1 - 2026-01-02\n\n- older\n", 1)
+    r = repo(tmp_path, new, tag="skstacks-v1.0.1")
+    assert r.returncode == 1 and "skstacks-v1.0.1" in r.stdout  # "- older" is a real new note below
+    new_ok = TAGGED_TOP.replace("## skstacks-v1.0.1 - 2026-01-02\n\n- fix a\n",
+                                "## skstacks-v1.0.2 - 2026-01-03\n\n- fix a\n- two\n\n## skstacks-v1.0.1 - 2026-01-02\n", 1)
+    r2 = repo(tmp_path / "b", new_ok, tag="skstacks-v1.0.1") if (tmp_path / "b").mkdir() is None else None
+    assert r2.returncode == 0, r2.stdout + r2.stderr
