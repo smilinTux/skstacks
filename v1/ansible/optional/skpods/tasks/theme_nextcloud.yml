@@ -1,0 +1,97 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# skpods.id branding for the Nextcloud engine (README "Branding").
+# skpods.THEME: `skpods` (default) installs files/theme/skpods into the
+# engine's themes/ and points the theming app at it; `none` removes it and
+# leaves the stock look. Runs after engine_nextcloud.yml (needs
+# skp_nc_node and skp_nc_container).
+
+- name: Install the skpods.id theme files into the engine code tree
+  # html/ is the bind mount of /var/www/html; themes/ survives image
+  # upgrades (the image's upgrade rsync excludes it).
+  copy:
+    src: "{{ playbook_dir }}/files/theme/skpods/"
+    dest: "{{ skp_app_path }}/html/themes/skpods/"
+    owner: "33"
+    group: "33"
+    mode: '0644'
+    directory_mode: '0755'
+  delegate_to: "{{ skp_data_node if skp_data_node else inventory_hostname }}"
+  register: skp_theme_files
+  when: skp_theme == 'skpods'
+  tags:
+    - config
+    - theme
+
+- name: Activate the skpods.id theme (names, links, colors, logo, dark UI)
+  shell: |
+    set -euo pipefail
+    C="{{ skp_nc_container.stdout | trim }}"
+    occ() { docker exec -u www-data "$C" php occ "$@"; }
+    current=$(occ config:system:get theme 2>/dev/null || true)
+    if [ "$current" = "skpods" ] && [ "{{ skp_theme_files.changed | default(false) | lower }}" = "false" ]; then
+      echo "theme already active"
+      exit 0
+    fi
+    T=/var/www/html/themes/skpods
+    occ config:system:set theme --value=skpods
+    occ config:system:set enforce_theme --value=dark
+    occ theming:config name "skpods.id"
+    occ theming:config url "https://skpods.id"
+    occ theming:config slogan "your data, your pod, your rules"
+    occ theming:config primary_color "#7c3aed"
+    occ theming:config background backgroundColor
+    occ theming:config background_color "#05060d"
+    occ theming:config disable-user-theming yes
+    occ theming:config logo "$T/core/img/logo.svg"
+    occ theming:config logoheader "$T/core/img/logo.svg"
+    occ theming:config favicon "$T/core/img/logo.svg"
+    occ maintenance:theme:update
+    echo "theme activated"
+  args:
+    executable: /bin/bash
+  delegate_to: "{{ skp_nc_node.stdout | trim }}"
+  register: skp_theme_activate
+  changed_when: "'theme activated' in skp_theme_activate.stdout"
+  when: skp_theme == 'skpods'
+  tags:
+    - config
+    - theme
+
+- name: Remove the skpods.id theme (skpods.THEME is none)
+  shell: |
+    set -uo pipefail
+    C="{{ skp_nc_container.stdout | trim }}"
+    occ() { docker exec -u www-data "$C" php occ "$@"; }
+    current=$(occ config:system:get theme 2>/dev/null || true)
+    [ "$current" = "skpods" ] || { echo "theme not active"; exit 0; }
+    occ config:system:delete theme
+    occ config:system:delete enforce_theme
+    for k in name url slogan primary_color background logo logoheader favicon disable-user-theming; do
+      occ theming:config --reset "$k" >/dev/null 2>&1 || true
+    done
+    occ maintenance:theme:update
+    docker exec "$C" rm -rf /var/www/html/themes/skpods
+    echo "theme removed"
+  args:
+    executable: /bin/bash
+  delegate_to: "{{ skp_nc_node.stdout | trim }}"
+  register: skp_theme_remove
+  changed_when: "'theme removed' in skp_theme_remove.stdout"
+  when: skp_theme == 'none'
+  tags:
+    - config
+    - theme

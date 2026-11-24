@@ -14,6 +14,15 @@ Each entry says what an instance must do, if anything.
   (Forgejo default `true`). README "Registration and anonymous read"; tests
   `v1/tests/test_skgit_service_section.py`. **Instance action**: none unless you want SSO-only sign-in.
 
+### skpods: skpods.id branding (`THEME`)
+
+- The nextcloud engine now ships as skpods.id: a theme folder (`files/theme/skpods`) and theming
+  settings replace the upstream name, titles, footer, help and client links, logo and favicon, and
+  restyle the login and guest pages (dark aurora background, glass card), the signed-in header and
+  the Solid consent screen. Self-hosted OFL fonts; dark UI enforced. New `skpods.THEME`
+  (`skpods` default, `none` for the stock look); `--tags theme` re-applies it. README "Branding".
+  **Instance action**: none (redeploy picks it up); set `THEME: none` to keep the stock look.
+
 ### skpods: new optional service for Solid pod hosting
 
 - New role `v1/ansible/optional/skpods` (`deploy_skpods-{dev,staging,prod}.yml`): Solid pods at
