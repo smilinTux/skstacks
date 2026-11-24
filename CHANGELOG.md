@@ -4,7 +4,7 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
-## skstacks-v2.26.32 - 2026-11-23
+## skstacks-v2.26.33 - 2026-11-23
 
 ### skpods: new optional service for Solid pod hosting
 
@@ -22,6 +22,12 @@ Each entry says what an instance must do, if anything.
 - Networks: `skpods-prod` `172.16.184.0/24`, `skpods-staging` `172.16.185.0/24`, `skpods-dev`
   `172.16.186.0/24`. **Instance action**: none unless you deploy it; then build an engine image,
   add the `skpods` vault (README minimal snippet) and run the env playbook.
+
+### skpayment: idna 3.15 (security)
+
+- The skpayment runtime image pins `idna` 3.15 for its security fix (#527, `v1/ansible/optional/skpayment/image/requirements.txt`). **Instance action**: rebuild the skpayment image on your next skpayment deploy.
+
+## skstacks-v2.26.32 - 2026-11-23
 
 ### skpayment: its own minimal runtime image
 
