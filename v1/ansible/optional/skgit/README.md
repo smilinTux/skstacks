@@ -105,6 +105,15 @@ internet-facing instance should set both to `true`. Users are then created by
 an admin (web UI or `POST /api/v1/admin/users`), and API or git access needs a
 token or SSH key.
 
+`skgit.ENABLE_INTERNAL_SIGNIN` (optional) renders Forgejo's
+`[service] ENABLE_INTERNAL_SIGNIN`. Set it to `false` together with `AUTH_MODE: oidc`
+to make SSO the only web sign-in: the username and password form disappears and the
+login page offers the SSO button only. It changes nothing else: SSH keys, access
+tokens, runners and existing accounts keep working, and HTTPS git with a password is
+governed separately by Forgejo's `ENABLE_BASIC_AUTHENTICATION`. Break glass when the
+identity provider is down: set it back to `true` (or remove it) and redeploy, or use
+`forgejo admin` on the node. Unset, nothing is rendered and Forgejo's default (`true`) applies.
+
 ## Git pack memory limits
 
 `app.ini` always renders a `[git.config]` section, which Forgejo writes into
