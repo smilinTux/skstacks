@@ -85,12 +85,14 @@ outlet:
     # softflowd is unsampled and does not announce a rate.
     default-sampling-rate: 1
     interface-classifiers:
-      # One rule per interface, from its class. softflowd reports the same
+      # One rule per interface, from its class, keyed on the exporter's static
+      # provider name (Exporter.Name), which Akvorado keeps as written; the
+      # address form may be presented IPv4-mapped. softflowd reports the same
       # ifindex as input and output, so the boundary is per interface, not per
       # direction; group by ExporterName and InIfName.
 {% for e in sknet_exporters %}
 {% for i in e.interfaces %}
-      - {{ ('Exporter.IP == "' ~ e.address ~ '" && Interface.Index == ' ~ i.index ~ ' && ClassifyConnectivity("' ~ i.class ~ '") && ClassifyProvider("' ~ i.class ~ '") && ' ~ ('ClassifyExternal()' if i.class == 'internet' else 'ClassifyInternal()')) | to_json }}
+      - {{ ('Exporter.Name == ' ~ (e.name | to_json) ~ ' && Interface.Index == ' ~ i.index ~ ' && ClassifyConnectivity("' ~ i.class ~ '") && ClassifyProvider("' ~ i.class ~ '") && ' ~ ('ClassifyExternal()' if i.class == 'internet' else 'ClassifyInternal()')) | to_json }}
 {% endfor %}
 {% endfor %}
       - ClassifyInternal()
