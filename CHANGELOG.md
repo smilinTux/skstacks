@@ -30,6 +30,19 @@ Each entry says what an instance must do, if anything.
   missing and `allow_package_install` is true; `sknet_state: absent` removes it all and leaves the package.
   The interface hostvar rules (IPv4 export address, index 100 to 65535 and unique, class) now live in
   `tasks/exporter_check.yml`, shared with the swarm deploy.
+- `sknet` live host play `live.yml` (hosts `sknet_live_hosts`, or the group named by
+  `sknet_live_hosts_group`): ntopng Community 7.0 as the vault's pinned `NTOPNG_IMAGE`, run by
+  `sknet-live.service` (`docker run --network host`, `-i` per `sknet_live_interfaces` entry,
+  `-w <sknet_live_bind>:3000`, ntopng login disabled with `-l 1` because the SSO proxy and the
+  allowlist front it, capabilities dropped to the set ntopng needs, never `--privileged`).
+  `sknet_live_memory_max` (default `512M`, always rendered) caps the container (`--memory`) and the
+  unit (`MemoryMax`). `sknet_live_bind` must be an IPv4 literal (`0.0.0.0` refused, public refused
+  unless `sknet_live_allow_public_bind: true`) and `sknet_live_allow_sources` (IPv4 or CIDR) must be
+  non-empty. Its own iptables chain `SKNET-LIVE` accepts tcp 3000 from those sources only and is
+  re-applied at boot by `sknet-live-fw.service`. Docker must already be installed (the play fails
+  clearly if not). `sknet_state: absent` removes the units, container, chain and hook, keeps the
+  image, and keeps the data dir unless `sknet_live_purge_data: true`. The interface name rule is now
+  the shared `sknet_re_ifname`.
 - **Instance action:** none until the role is used. To use it: add a `sknet:` vault block
   (`DATA_NODE` and `FLOW_SOURCES` are required, and either the exporter inventory or
   `STATIC_EXPORTERS`), choose `FLOW_TTL_DAYS` before the first start (ClickHouse sizes its
