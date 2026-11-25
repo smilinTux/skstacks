@@ -40,6 +40,13 @@ Each entry says what an instance must do, if anything.
   `skpods` and `files_antivirus` apps (the deploy fails without them), set `SMTP_*`, and register
   `skpods-<env>` with skbackup.
 
+### templates: skpods-only instance config
+
+- `skstacks-config-template` gains a `skpods-prod` placeholder vault and a "Just want Solid pods?"
+  walkthrough: a private instance repo that runs only the skpods role. Its required keys are tied
+  to the skpods render-gate fixture by test, and `config-template-drift` now renders skpods too.
+- **Instance action:** none. Existing instance repos are unaffected.
+
 ### skpods: new optional service for Solid pod hosting
 
 - New role `v1/ansible/optional/skpods` (`deploy_skpods-{dev,staging,prod}.yml`): Solid pods at
