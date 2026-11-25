@@ -83,6 +83,46 @@
       tags:
         - always
 
+    # skmail.VIA_TRAEFIK: the mail ports are on every traefik-worker
+    # (skfenceha.MAIL_ENTRYPOINTS) and reach skmail over the overlay, so the
+    # mail-vip label is not used. Report (never fail) whether the fence is
+    # ready: the migration deploys skmail FIRST, so its host ports are free
+    # before the workers bind them (README "Behind Traefik (PROXY protocol)").
+    - name: Check the Traefik workers carry the mail entrypoints (skmail.VIA_TRAEFIK)
+      shell: |
+        set -u
+        FENCE="{{ fence_service_name }}"
+        if [ "${FENCE}" != "skfenceha" ]; then
+          echo "WARNING: skmail.VIA_TRAEFIK needs skfenceha with MAIL_ENTRYPOINTS; detected ${FENCE}. Mail is NOT reachable."
+          exit 0
+        fi
+        PORTS=" $(docker service inspect "${FENCE}-{{ env }}_traefik-worker" --format '{{ '{{range .Spec.EndpointSpec.Ports}}{{.PublishedPort}} {{end}}' }}' 2>/dev/null || true) "
+        MISSING=""
+        for p in 25 465 587 143 993; do
+          case "${PORTS}" in *" ${p} "*) ;; *) MISSING="${MISSING} ${p}" ;; esac
+        done
+        if [ -n "${MISSING}" ]; then
+          echo "WARNING: ${FENCE}-{{ env }}_traefik-worker does not publish:${MISSING}."
+          echo "Deploy skfenceha with skfenceha.MAIL_ENTRYPOINTS: true now; mail is down until it does."
+        elif ! grep -qs 'skmail-proxy-v2' "/var/data/config/${FENCE}-{{ env }}/dynamic/services.yml"; then
+          echo "WARNING: no skmail-proxy-v2 transport in ${FENCE}-{{ env }} dynamic/services.yml; redeploy skfenceha with MAIL_ENTRYPOINTS."
+        else
+          echo "Traefik workers publish 25 465 587 143 993 and define skmail-proxy-v2."
+        fi
+      register: skmail_traefik_check
+      changed_when: false
+      failed_when: false
+      when: skmail.VIA_TRAEFIK | default(false) | bool
+      tags:
+        - deploy
+
+    - name: Show the Traefik mail entrypoint check
+      debug:
+        msg: "{{ skmail_traefik_check.stdout_lines | default([]) }}"
+      when: skmail.VIA_TRAEFIK | default(false) | bool
+      tags:
+        - deploy
+
     # NOTE: the mail-vip label follows the VIP when skha.vip_node_labels lists it (skha_vip_labels.sh)
     # The label is automatically added to the MASTER node (with VIP) and removed from others
     # DO NOT manually add the label here - it will conflict with Keepalived's management
@@ -103,6 +143,7 @@
       register: label_check
       changed_when: false
       failed_when: false
+      when: not (skmail.VIA_TRAEFIK | default(false) | bool)
       tags:
         - labels
         - deploy

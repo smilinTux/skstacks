@@ -19,6 +19,29 @@ Each entry says what an instance must do, if anything.
 - **Instance action:** an estate running skmail sets `skha.vip_node_labels: [mail-vip]` and
   redeploys skha. skmail's data must be on storage every manager can reach.
 
+### skmail: mail through Traefik with PROXY protocol v2 (`skmail.VIA_TRAEFIK`)
+
+- Mail can now fail over with Traefik instead of following the VIP. New
+  `skfenceha.MAIL_ENTRYPOINTS` (default `false`) adds `smtp`/`submissions`/`submission`/`imap`/
+  `imaps` entrypoints (25/465/587/143/993, host mode like 80/443) to every traefik-worker and a
+  `skmail-proxy-v2` TCP serversTransport (PROXY protocol v2) to `dynamic/services.yml`. New
+  `skmail.VIA_TRAEFIK` (default `false`) drops skmail's host ports and its `mail-vip` placement
+  constraint (manager placement stays), joins `cloud-public-<env>`, and labels one `HostSNI(*)`
+  TCP passthrough router per port. Still one replica; TLS stays in docker-mailserver.
+- docker-mailserver gets separate PROXY-only listeners (Postfix 12525/10587/10465, Dovecot
+  10143/10993, from `user-patches.sh`), the layout its "mail server behind a proxy" tutorial
+  recommends, so Postfix and Dovecot log and check the real client IP and the standard ports
+  stay plain for clients on the overlay. New `skmail.PROXY_TRUSTED_NETWORKS` (Dovecot
+  `haproxy_trusted_networks`, default the `cloud-public-<env>` subnet). Uses the TCP
+  serversTransport, not the TCP `loadBalancer.proxyProtocol` label Traefik deprecated in v3.5.2.
+  With both vars unset nothing renders differently. README "Behind Traefik (PROXY protocol)";
+  render fixtures `skmail.set.yml`, `skfenceha.set.yml`.
+- **Instance action:** none to stay on host ports. To move: deploy skmail with
+  `VIA_TRAEFIK: true` FIRST (it releases 25/465/587/143/993 on the VIP node), then skfenceha with
+  `MAIL_ENTRYPOINTS: true`; the reverse order leaves a worker unable to bind its ports. Expect mail
+  downtime for one skmail start. Then drop the `mail` entry from `skha.health_checks` and
+  `mail-vip` from `skha.vip_node_labels`. Fail2ban bans no longer take effect (see the README).
+
 ### skgit: `ENABLE_INTERNAL_SIGNIN` knob (SSO-only web sign-in)
 
 - New optional `skgit.ENABLE_INTERNAL_SIGNIN` renders Forgejo's `[service] ENABLE_INTERNAL_SIGNIN`.
