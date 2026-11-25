@@ -14,8 +14,9 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # New-account files (README "New accounts"). skpods.SKELETON:
-#   skpods (default): new accounts get files/skeleton (a welcome note and
-#     the pod folders below), no stock files and no Templates folder; stock
+#   skpods (default): new accounts get the pod folders below (the skpods
+#     app in the engine image writes each account's Readme.md with its own
+#     WebID on first login), no stock files and no Templates folder; stock
 #     files already in existing accounts are removed, but only where they are
 #     byte-identical to the image's copy (anything a user changed stays).
 #   stock: the upstream defaults come back for new accounts.
@@ -25,22 +26,7 @@
 # root ACL (owner only), so nothing here is public until it is shared.
 # Runs after engine_nextcloud.yml (needs skp_nc_node and skp_nc_container).
 
-- name: Install the skpods new-account skeleton
-  # In config/ (not web-served, not a user directory).
-  copy:
-    src: "{{ playbook_dir }}/files/skeleton/"
-    dest: "{{ skp_app_path }}/config/skpods-skeleton/"
-    owner: "33"
-    group: "33"
-    mode: '0644'
-    directory_mode: '0755'
-  delegate_to: "{{ skp_data_node if skp_data_node else inventory_hostname }}"
-  when: skp_skeleton == 'skpods'
-  tags:
-    - config
-    - skeleton
-
-- name: Create the skeleton's pod folders (empty folders are not in git)
+- name: Create the skeleton's pod folders in config/ (not web-served, not a user directory)
   file:
     path: "{{ skp_app_path }}/config/skpods-skeleton/{{ item }}"
     state: directory

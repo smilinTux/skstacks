@@ -86,6 +86,9 @@
         skp_app_path: "{{ skpods.APP_PATH | default('/var/data/skpods-' + env, true) }}"
         skp_pg_path: "{{ skpods.POSTGRES_PATH | default('/var/data/runtime/skpods-' + env + '/postgres', true) }}"
         skp_redis_path: "{{ skpods.REDIS_PATH | default('/var/data/runtime/skpods-' + env + '/redis', true) }}"
+        skp_dump_path: "{{ skpods.DB_DUMP_PATH | default((skpods.APP_PATH | default('/var/data/skpods-' + env, true)) + '/database-dump', true) }}"
+        skp_clamav_path: "{{ skpods.CLAMAV_PATH | default('/var/data/runtime/skpods-' + env + '/clamav', true) }}"
+        skp_antivirus: "{{ skpods.ANTIVIRUS | default(true) | bool }}"
         skp_admin_user: "{{ skpods.ADMIN_USER | default('skpods-admin', true) }}"
         skp_first_install_wait: "{{ skpods.first_install_wait_seconds | default(1200, true) | int }}"
       tags:
@@ -162,6 +165,12 @@
 
     - name: Set up the new-account skeleton (nextcloud engine)
       include_tasks: tasks/skeleton_nextcloud.yml
+      when: skp_engine == 'nextcloud'
+      tags:
+        - always
+
+    - name: Account features (quota, mail, antivirus, owner-only pod roots, Readme)
+      include_tasks: tasks/features_nextcloud.yml
       when: skp_engine == 'nextcloud'
       tags:
         - always

@@ -186,3 +186,94 @@ services:
       labels:
         - "com.skt.app=skpods"
         - "com.skt.env={{ env }}"
+
+  # Consistent Postgres dumps for skbackup (README "Backups"). Each run dumps
+  # to a hidden temp file renamed only on success, then prunes dumps older
+  # than DB_DUMP_KEEP_DAYS, only after a good dump. Every $ is $$ so docker
+  # stack deploy does not interpolate it.
+  pgdump:
+    image: {{ skpods.POSTGRES_IMAGE | default('postgres:17.7-alpine@sha256:bb377b7239d2774ac8cc76f481596ce96c5a6b5e9d141f6d0a0ee371a6e7c0f2', true) }}
+    env_file: /var/data/config/skpods-{{ env }}/postgres.env
+    environment:
+      - DB_DUMP_KEEP_DAYS={{ skpods.DB_DUMP_KEEP_DAYS | default(7, true) | int }}
+      - DB_DUMP_FREQUENCY={{ skpods.DB_DUMP_FREQUENCY | default('1d', true) }}
+    volumes:
+      - {{ skp_dump_path }}:/dump
+      - /etc/localtime:/etc/localtime:ro
+    entrypoint:
+      - sh
+      - -c
+      - |
+        trap 'exit 0' HUP INT TERM
+        export PGPASSWORD="$${POSTGRES_PASSWORD}"
+        find /dump -maxdepth 1 -name '.dump_*.tmp' -delete
+        sleep 120 & wait $$!
+        while true; do
+          NAME=dump_$$(date +%Y-%m-%d_%H%M%S).pgc
+          TMP=/dump/.$${NAME}.tmp
+          if pg_dump -Fc -h postgres -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" -f "$${TMP}" && [ -s "$${TMP}" ]; then
+            mv -f "$${TMP}" "/dump/$${NAME}"
+            echo "[pgdump] OK /dump/$${NAME}"
+            DAYS=$${DB_DUMP_KEEP_DAYS:-7}
+            [ "$${DAYS}" -ge 1 ] 2>/dev/null || DAYS=1
+            find /dump -maxdepth 1 -type f -name 'dump_*.pgc' ! -name "$${NAME}" -mmin +$$((DAYS * 1440)) -print -delete
+          else
+            echo "[pgdump] FAIL: dump failed or empty, previous dumps kept" >&2
+            find /dump -maxdepth 1 -name ".$${NAME}.tmp" -delete
+          fi
+          sleep "$${DB_DUMP_FREQUENCY:-1d}" & wait $$!
+        done
+    networks:
+      - skpods-{{ env }}
+    logging: *logging
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: {{ data_constraints | tojson }}
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 32M
+      restart_policy:
+        condition: any
+        delay: 30s
+      labels:
+        - "com.skt.app=skpods"
+        - "com.skt.env={{ env }}"
+{% if skp_antivirus | bool %}
+
+  # Upload scanning for files_antivirus (README "Antivirus"). clamd.conf is a
+  # full mount: the image has no env vars for these limits.
+  clamav:
+    image: {{ skpods.CLAMAV_IMAGE | default('clamav/clamav:latest@sha256:45fe5149fbee5a46509c9848ef20d0c354b7b2323c9369f285939a37cf33422a', true) }}
+    volumes:
+      - {{ skp_clamav_path }}:/var/lib/clamav
+      - /var/data/config/skpods-{{ env }}/clamd.conf:/etc/clamav/clamd.conf:ro
+    networks:
+      - skpods-{{ env }}
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "clamdscan", "--ping", "3"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 180s
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: {{ data_constraints | tojson }}
+      resources:
+        limits:
+          memory: {{ skpods.CLAMAV_MEMORY_LIMIT | default('2G', true) }}
+        reservations:
+          memory: {{ skpods.CLAMAV_MEMORY_RESERVATION | default('512M', true) }}
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skpods"
+        - "com.skt.env={{ env }}"
+{% endif %}

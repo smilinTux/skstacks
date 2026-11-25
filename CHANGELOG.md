@@ -30,6 +30,15 @@ Each entry says what an instance must do, if anything.
   trash (`files_trashbin`), and Nextcloud sharing is off so pod data is shared only through Solid
   ACLs. New `skpods.ENABLE_APPS` and `skpods.NEXTCLOUD_SHARING` (default `false`). README "Files".
   **Instance action**: none; set `NEXTCLOUD_SHARING: true` if you relied on Nextcloud shares.
+- Accounts: each account gets its own `Readme.md` (WebID, pod address, links) from the new `skpods`
+  app in the engine image; pod roots are owner-only (new pods, and existing ones migrated by removing
+  exactly the old public block); `twofactor_totp` enabled; `DEFAULT_QUOTA` (10 GB); `SMTP_*` mail
+  settings (reset link hidden without them); the last two upstream product strings renamed.
+- Antivirus: `clamav` service and `files_antivirus` (`ANTIVIRUS`, default on). Backups: `pgdump`
+  service writes daily `pg_dump` files to `<APP_PATH>/database-dump` for skbackup. README "Accounts
+  and sign-in", "Antivirus", "Backups". **Instance action**: pin an engine image that ships the
+  `skpods` and `files_antivirus` apps (the deploy fails without them), set `SMTP_*`, and register
+  `skpods-<env>` with skbackup.
 
 ### skpods: new optional service for Solid pod hosting
 

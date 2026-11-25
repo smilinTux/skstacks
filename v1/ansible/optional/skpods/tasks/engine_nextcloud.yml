@@ -38,6 +38,18 @@
   tags:
     - always
 
+- name: Ensure the ClamAV signature directory exists (image user clamav, 100:101)
+  file:
+    path: "{{ skp_clamav_path }}"
+    state: directory
+    owner: "100"
+    group: "101"
+    mode: '0755'
+  delegate_to: "{{ skp_data_node if skp_data_node else inventory_hostname }}"
+  when: skp_antivirus | bool
+  tags:
+    - always
+
 - name: Ensure the Postgres and Redis data directories exist (0700)
   file:
     path: "{{ item.path }}"
@@ -48,6 +60,7 @@
   loop:
     - { path: "{{ skp_pg_path }}", owner: "70" }
     - { path: "{{ skp_redis_path }}", owner: "999" }
+    - { path: "{{ skp_dump_path }}", owner: "70" }
   delegate_to: "{{ skp_data_node if skp_data_node else inventory_hostname }}"
   tags:
     - always
@@ -63,6 +76,7 @@
     - { src: "nextcloud.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/nextcloud.env", mode: "0600" }
     - { src: "postgres.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/postgres.env", mode: "0600" }
     - { src: "{{ app }}.sh.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env", mode: "0640" }
+    - { src: "clamd.conf.j2", dest: "/var/data/config/{{ app }}-{{ env }}/clamd.conf", mode: "0644" }
   no_log: true
   tags:
     - templates
@@ -284,7 +298,6 @@
       - survey_client
       - suspicious_login
       - systemtags
-      - twofactor_totp
       - updatenotification
       - user_status
       - weather_status
@@ -296,10 +309,13 @@
     - config
 
 - name: Enable the Files features skpods uses
-  # Shipped with Nextcloud (no app store). Defaults: text (.md and plain
-  # text open in the browser), files_pdfviewer, files_trashbin (a deleted
-  # file goes to the owner's trash; it leaves the pod at once). Override
-  # with skpods.ENABLE_APPS (README "Files").
+  # From Nextcloud or the engine image (no app store). Defaults: text
+  # (.md and plain text open in the browser), files_pdfviewer,
+  # files_trashbin (a deleted file goes to the owner's trash; it leaves the
+  # pod at once), twofactor_totp, skpods (per-account Readme.md) and, with
+  # skpods.ANTIVIRUS, files_antivirus. skpods and files_antivirus ship in
+  # the engine image, so an older image fails here. Override with
+  # skpods.ENABLE_APPS (README "Files").
   shell: |
     set -euo pipefail
     C="{{ skp_nc_container.stdout | trim }}"
@@ -313,10 +329,7 @@
   args:
     executable: /bin/bash
   vars:
-    skp_default_enable_apps:
-      - files_pdfviewer
-      - files_trashbin
-      - text
+    skp_default_enable_apps: "{{ ['files_pdfviewer', 'files_trashbin', 'text', 'twofactor_totp', 'skpods'] + (['files_antivirus'] if (skp_antivirus | bool) else []) }}"
   delegate_to: "{{ skp_nc_node.stdout | trim }}"
   register: skp_enable_apps
   changed_when: "'enabled ' in skp_enable_apps.stdout"
