@@ -233,32 +233,10 @@
   tags: [config]
 
 - name: Check every exporter's address and interfaces
-  set_fact:
-    sknet_exporter_problems: >-
-      {%- set out = [] -%}
-      {%- for e in sknet_exporters_raw -%}
-      {%- if e.state not in ['present', 'absent'] -%}{%- set _ = out.append(e.name ~ ': sknet_state must be present or absent, got ' ~ e.state) -%}{%- endif -%}
-      {%- if e.state == 'present' -%}
-      {%- if not (e.address is match(sknet_re_ipv4)) -%}{%- set _ = out.append(e.name ~ ': sknet_export_address must be an IPv4 literal, got "' ~ e.address ~ '"') -%}{%- endif -%}
-      {%- if e.interfaces is string or e.interfaces is mapping or e.interfaces is not sequence or e.interfaces | length == 0 -%}
-      {%- set _ = out.append(e.name ~ ': sknet_interfaces must be a non-empty list') -%}
-      {%- else -%}
-      {%- set seen = [] -%}
-      {%- for i in e.interfaces -%}
-      {%- if i is not mapping -%}{%- set _ = out.append(e.name ~ ': every sknet_interfaces entry must be a map') -%}
-      {%- else -%}
-      {%- if not ((i.name | default('', true) | string) is match('^[A-Za-z0-9_.:@-]{1,15}$')) -%}{%- set _ = out.append(e.name ~ ': interface name must be 1 to 15 characters of letters, digits and _.:@-, got "' ~ (i.name | default('', true)) ~ '"') -%}{%- endif -%}
-      {%- if not ((i.index | default('', true) | string) is match('^[0-9]+$') and (i.index | int) >= 100) -%}{%- set _ = out.append(e.name ~ ': interface ' ~ (i.name | default('?')) ~ ' index must be an integer >= 100, got "' ~ (i.index | default('')) ~ '"') -%}
-      {%- elif (i.index | int) in seen -%}{%- set _ = out.append(e.name ~ ': interface index ' ~ i.index ~ ' is used twice') -%}
-      {%- else -%}{%- set _ = seen.append(i.index | int) -%}{%- endif -%}
-      {%- if (i.class | default('', true) | string) not in sknet_interface_classes -%}{%- set _ = out.append(e.name ~ ': interface ' ~ (i.name | default('?')) ~ ' class must be one of ' ~ (sknet_interface_classes | join(', ')) ~ ', got "' ~ (i.class | default('')) ~ '"') -%}{%- endif -%}
-      {%- if i.speed_mbps is defined and not ((i.speed_mbps | string) is match('^[1-9][0-9]*$')) -%}{%- set _ = out.append(e.name ~ ': interface ' ~ (i.name | default('?')) ~ ' speed_mbps must be a positive integer') -%}{%- endif -%}
-      {%- endif -%}
-      {%- endfor -%}
-      {%- endif -%}
-      {%- endif -%}
-      {%- endfor -%}
-      {{ out }}
+  # One rule set for the deploy and the host play: tasks/exporter_check.yml.
+  include_tasks: "{{ playbook_dir }}/tasks/exporter_check.yml"
+  vars:
+    sknet_check_exporters: "{{ sknet_exporters_raw }}"
   tags: [config]
 
 - name: Refuse an exporter with a bad address or interface list

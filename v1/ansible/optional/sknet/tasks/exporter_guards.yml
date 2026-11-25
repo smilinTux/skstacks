@@ -1,0 +1,77 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+# sknet exporter guards (exporters.yml), run for one host whose sknet_state is
+# present. Needs sknet_x_collector, sknet_x_port, sknet_x_interfaces and the
+# sknet_re_* patterns (vars/defaults.yml). Refuses before anything on the host
+# is touched. The interface rules (address, index, class) are the swarm
+# deploy's own, in tasks/exporter_check.yml.
+- name: Refuse a collector that is not an IPv4 literal
+  # A name would be resolved once, when softflowd starts, and a changed record
+  # would then send flows to the old address or nowhere.
+  assert:
+    that:
+      - sknet_x_collector is match(sknet_re_ipv4)
+    fail_msg: >-
+      {{ inventory_hostname }}: sknet_collector must be an IPv4 literal such as 192.0.2.10 (got
+      "{{ sknet_x_collector }}"). softflowd resolves a name once, at start, and the collector's
+      port allowlist takes literals only.
+    quiet: true
+
+- name: Refuse a public collector address
+  # Flow records show who talks to whom: they leave the estate only on purpose.
+  assert:
+    that:
+      - sknet_x_collector is match(sknet_re_private_v4) or (sknet_allow_public_collector | default(false) | bool)
+    fail_msg: >-
+      {{ inventory_hostname }}: sknet_collector {{ sknet_x_collector }} is a public address. Flow
+      records describe every conversation on the monitored interfaces; send them to a private
+      (RFC 1918, 100.64.0.0/10, loopback or documentation) collector, or set
+      sknet_allow_public_collector: true on this host if the export really must cross the internet.
+    quiet: true
+
+- name: Refuse a bad NetFlow port
+  assert:
+    that:
+      - (sknet_x_port | string) is match('^[0-9]+$') and (sknet_x_port | int) >= 1 and (sknet_x_port | int) <= 65535
+    fail_msg: "{{ inventory_hostname }}: the NetFlow port must be 1 to 65535 (got {{ sknet_x_port }})."
+    quiet: true
+
+- name: Check this host's address and interfaces with the deploy's rules
+  include_tasks: "{{ playbook_dir }}/tasks/exporter_check.yml"
+  vars:
+    sknet_check_exporters:
+      - name: "{{ inventory_hostname }}"
+        address: "{{ sknet_export_address | default('', true) | string }}"
+        state: present
+        interfaces: "{{ sknet_x_interfaces }}"
+
+- name: Refuse the interface problems found
+  assert:
+    that:
+      - sknet_exporter_problems | length == 0
+    fail_msg: "sknet exporter hostvars are invalid: {{ sknet_exporter_problems | join('; ') }}"
+    quiet: true
+
+- name: Refuse an interface name softflowd or systemd cannot carry
+  # The name becomes a unit instance and half of `-i <index>:<name>`: no colon,
+  # no at sign, no spaces.
+  assert:
+    that:
+      - sknet_x_interfaces | map(attribute='name') | map('string') | reject('match', '^[A-Za-z0-9_.-]{1,15}$') | list | length == 0
+    fail_msg: >-
+      {{ inventory_hostname }}: interface names must be 1 to 15 characters of letters, digits and _.-
+      (they become the unit instance sknet-softflowd@<name> and the name in `softflowd -i <index>:<name>`).
+      Got: {{ sknet_x_interfaces | map(attribute='name') | map('string') | reject('match', '^[A-Za-z0-9_.-]{1,15}$') | list }}.
+    quiet: true
