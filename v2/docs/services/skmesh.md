@@ -14,6 +14,7 @@
 - **Ingress exposure entry points** (stackable on the Traefik Gateway): lan (always-on baseline), tailscale, netbird, cloudflared, pangolin.
 
 ## Patterns
+- [Site isolation: trusted core, one-way sites](../patterns/skmesh-site-isolation.md) for any mesh that joins machines you do not fully trust.
 - [Flow visibility across mesh hops](../patterns/sknet-flow-visibility.md) (sknet): where to put the collector and exporters, and the one-way telemetry exception.
 
 ## Topology
