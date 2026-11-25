@@ -152,6 +152,7 @@ Namespace `skfetch`. Required: `MEDIA_NODE`, `OPENVPN_USER`,
 | `QBT_DL_LIMIT_KIB`, `QBT_UL_LIMIT_KIB` | `25600`, `0` | KiB/s, 0 = unlimited |
 | `QBT_MAX_ACTIVE_DOWNLOADS`, `QBT_MAX_ACTIVE_UPLOADS`, `QBT_MAX_ACTIVE_TORRENTS` | `2`, `2`, `4` | |
 | `QBT_MAX_RATIO`, `QBT_MAX_SEEDING_MINUTES` | `1`, `60` | then stop |
+| `GLUETUN_UPDATER_PERIOD` | `24h` | gluetun refreshes the VPN server list; a stale PIA list breaks port forwarding |
 | `GLUETUN_IMAGE`, `QBITTORRENT_IMAGE`, `PROWLARR_IMAGE`, `SONARR_IMAGE`, `RADARR_IMAGE`, `LIDARR_IMAGE`, `FLARESOLVERR_IMAGE` | digest-pinned | override with another `@sha256` pin |
 | `GLUETUN_MEM_LIMIT`, `QBITTORRENT_MEM_LIMIT`, `PROWLARR_MEM_LIMIT`, `SONARR_MEM_LIMIT`, `RADARR_MEM_LIMIT`, `LIDARR_MEM_LIMIT`, `FLARESOLVERR_MEM_LIMIT` | 256m, 768m, 384m, 640m x3, 512m | |
 | `TRAEFIK_DYNAMIC_DIR` | `''` | e.g. the skfenceha dynamic dir; empty = no Traefik routes |

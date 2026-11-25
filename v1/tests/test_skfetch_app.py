@@ -109,6 +109,15 @@ def test_vpn_provider_and_regions_are_knobs():
     assert e["VPN_SERVICE_PROVIDER"] == "mullvad" and e["SERVER_REGIONS"] == "Sweden"
 
 
+
+def test_gluetun_refreshes_its_server_list_for_the_chosen_provider():
+    # A stale PIA list breaks port forwarding (TLS name mismatch), nor 2026-11-25.
+    e = compose()["services"]["gluetun"]["environment"]
+    assert e["UPDATER_PERIOD"] == "24h"
+    assert e["UPDATER_VPN_SERVICE_PROVIDERS"] == e["VPN_SERVICE_PROVIDER"]
+    e = compose(VPN_SERVICE_PROVIDER="mullvad", GLUETUN_UPDATER_PERIOD="12h")["services"]["gluetun"]["environment"]
+    assert e["UPDATER_PERIOD"] == "12h" and e["UPDATER_VPN_SERVICE_PROVIDERS"] == "mullvad"
+
 def test_no_secret_value_in_the_compose_text():
     text = render(COMPOSE)
     for v in SECRETS.values():
