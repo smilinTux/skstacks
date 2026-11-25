@@ -13,6 +13,9 @@
 - **Tunnel ladder** (public exposure): cloudflared → pangolin (AGPL/$100K threshold).
 - **Ingress exposure entry points** (stackable on the Traefik Gateway): lan (always-on baseline), tailscale, netbird, cloudflared, pangolin.
 
+## Patterns
+- [Flow visibility across mesh hops](../patterns/sknet-flow-visibility.md) (sknet): where to put the collector and exporters, and the one-way telemetry exception.
+
 ## Topology
 
 ```mermaid

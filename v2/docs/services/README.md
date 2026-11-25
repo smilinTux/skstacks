@@ -4,6 +4,8 @@
 
 **Totals:** 11 ✅ deploy-ready · 17 📋 descriptor-only.
 
+`sknet` is listed under compute as a v1 role with a documentation page only; it has no descriptor and is not in these totals.
+
 Every service resolves secrets from the secret backend (`skvault` / OpenBao) at deploy time — Swarm via `${ENV}`, K8s via an ESO `ExternalSecret` (`external-secrets.io/v1`) → `Secret` → `envFrom` (UPPERCASE env names). Descriptors contain **structure only, never secret values**.
 
 ## core
@@ -52,6 +54,7 @@ Every service resolves secrets from the secret backend (`skvault` / OpenBao) at 
 | skflow | Automation / workflow — agent + human-in-loop | Windmill | ✅ | [skflow.md](skflow.md) |
 | skmon | Observability — metrics, logs, traces (OTel) | Prometheus + Grafana + VictoriaLogs + Tempo + Alloy | 📋 | [skmon.md](skmon.md) |
 | skpulse | Uptime / status monitoring | Gatus + Blackbox Exporter | 📋 | [skpulse.md](skpulse.md) |
+| sknet | Network flow visibility (v1 role, no v2 descriptor yet) | Akvorado + softflowd + ntopng Community | v1 | [sknet.md](sknet.md) |
 
 ## apps
 
