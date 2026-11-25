@@ -107,6 +107,7 @@ The vault holds one `sknet:` block, merged over `vars/defaults.yml`; set only wh
 | `CLUSTERNAME`, `DOMAIN` | cluster and domain of the play | Host names are `<HOSTNAME>[-env].<CLUSTERNAME>.<DOMAIN>` (`DOMAIN` alone when `CLOUDFLARED`) |
 | `HOSTNAME` / `LIVE_HOSTNAME` | `sknet` / `sknet-live` | Console and live labels; a value with a dot is a full host name |
 | `DATA_NODE` | required | Swarm node hostname that holds Kafka, ClickHouse and the flow ports |
+| `GATE_SECRET` | required | Random string of at least 32 characters (letters, digits, dash, underscore; `openssl rand -hex 32`). Traefik adds it as the `X-Sknet-Gate` header and the `gate` service refuses any request without it |
 | `DATA_DIR` | `/var/lib/sknet-<env>` | Local disk path on `DATA_NODE`; refused under `/var/data` |
 | `AKVORADO_IMAGE` | `quay.io/akvorado/akvorado:2026.10.1` | Pinned by tag or digest; floating tags refused |
 | `CLICKHOUSE_IMAGE` / `KAFKA_IMAGE` / `PROXY_IMAGE` | `clickhouse/clickhouse-server:26.8`, `apache/kafka:4.3.1`, `caddy:2.11.9-alpine` | Pinned |

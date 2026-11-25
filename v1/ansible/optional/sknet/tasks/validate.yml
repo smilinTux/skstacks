@@ -25,6 +25,8 @@
 #   sknet_router / sknet_live_router   router and service names
 #   sknet_allow_mw       the ipAllowList middleware name, sknet-<env>-allow
 #   sknet_chain          the router middleware chain (allowlist first)
+#   sknet_gate_mw        the headers middleware that adds the gate secret, sknet-<env>-gate
+#   sknet_gate_constraints   the gate's placement constraints
 #   sknet_exporters      active exporters: name, address, interfaces (ints normalised)
 #   sknet_flow_sources   FLOW_SOURCES, the port allowlist's sources
 - name: Refuse a missing sknet vault block
@@ -40,6 +42,7 @@
 - name: Merge the sknet vault over the defaults
   set_fact:
     skn: "{{ sknet_defaults | combine(sknet, recursive=True) }}"
+  no_log: true
   tags: [config]
 
 - name: Resolve the sknet names and paths
@@ -67,7 +70,26 @@
 
 - name: Build the router middleware chain
   set_fact:
-    sknet_chain: "{{ ['sknet-' ~ env ~ '-allow'] + (skn.TRAEFIK_MIDDLEWARES | string).split(',') + ([sknet_sso_mw] if sknet_sso_mw else []) }}"
+    sknet_chain: "{{ ['sknet-' ~ env ~ '-allow'] + ((skn.TRAEFIK_MIDDLEWARES | string).split(',') | map('trim') | reject('equalto', '') | list) + ([sknet_sso_mw] if sknet_sso_mw else []) }}"
+    sknet_gate_mw: "sknet-{{ env }}-gate"
+  tags: [config]
+
+- name: Refuse a missing or weak GATE_SECRET
+  # Traefik adds this value as the X-Sknet-Gate header and the gate (Caddy)
+  # refuses any request without it. Letters, digits, dash and underscore only,
+  # so it is safe in a label and a file; `openssl rand -hex 32` fits. The
+  # message names the key and never prints a value.
+  assert:
+    that:
+      - skn.GATE_SECRET is string
+      - skn.GATE_SECRET | length >= 32
+      - skn.GATE_SECRET is match('^[A-Za-z0-9_-]+$')
+    fail_msg: >-
+      sknet.GATE_SECRET is required: a random string of at least 32 characters (letters, digits, dash,
+      underscore; for example the output of `openssl rand -hex 32`) in the sknet vault. Traefik sends it
+      as the X-Sknet-Gate header and the gate refuses any request without it, which is what keeps the
+      other stacks on the shared cloud-public network away from the console and the live view.
+    quiet: true
   tags: [config]
 
 - name: Refuse an unknown AUTH_MODE, or SSO_MIDDLEWARE without Authentik
@@ -165,6 +187,52 @@
       http://192.0.2.1:3000 (got '{{ sknet_live_upstream }}'): the proxy refuses names, so the
       upstream cannot change under it. PROXY_PLACEMENT_CONSTRAINTS must be a list.
     quiet: true
+  tags: [config]
+
+- name: Work out the gate's placement constraints
+  # Keep the gate off the live host when the inventory names one: on a live host that is also a
+  # swarm node the gate's traffic to ntopng would come from docker_gwbridge, not the node address
+  # (see live.yml). An explicit PROXY_PLACEMENT_CONSTRAINTS replaces this default. The live host's
+  # inventory name must equal its swarm node hostname for the constraint to bite.
+  set_fact:
+    sknet_gate_constraints: >-
+      {%- if skn.PROXY_PLACEMENT_CONSTRAINTS | length > 0 -%}
+      {{ skn.PROXY_PLACEMENT_CONSTRAINTS }}
+      {%- else -%}
+      {%- set out = [] -%}
+      {%- for h in groups['sknet_live_hosts'] | default([]) -%}
+      {%- if (hostvars[h].sknet_state | default('present', true) | string) == 'present' and (h | string) is match('^[A-Za-z0-9][A-Za-z0-9._-]*$') -%}
+      {%- set _ = out.append('node.hostname != ' ~ h) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+      {%- endif -%}
+  tags: [config]
+
+- name: Warn when LIVE_UPSTREAM matches no live host of the inventory
+  # Only when the deploy runs with the live hosts in the inventory. A typo would
+  # otherwise show up as a 502 on the live host name.
+  debug:
+    msg: >-
+      WARNING: sknet.LIVE_UPSTREAM ({{ sknet_live_upstream }}) does not match any sknet_live_hosts host:
+      expected http://<sknet_live_bind>:3000 of one of {{ sknet_live_expected }}.
+  vars:
+    sknet_live_expected: >-
+      {%- set out = [] -%}
+      {%- for h in groups['sknet_live_hosts'] | default([]) -%}
+      {%- set _ = out.append(h ~ ' (http://' ~ (hostvars[h].sknet_live_bind | default('', true)) ~ ':3000)') -%}
+      {%- endfor -%}
+      {{ out }}
+    sknet_live_ok: >-
+      {%- set out = [] -%}
+      {%- for h in groups['sknet_live_hosts'] | default([]) -%}
+      {%- set _ = out.append('http://' ~ (hostvars[h].sknet_live_bind | default('', true)) ~ ':3000') -%}
+      {%- endfor -%}
+      {{ out }}
+  when:
+    - sknet_live_enabled | bool
+    - (groups['sknet_live_hosts'] | default([])) | length > 0
+    - sknet_live_upstream not in (sknet_live_ok | from_yaml)
   tags: [config]
 
 - name: Refuse a bad NETWORKS map

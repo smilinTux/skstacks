@@ -1,10 +1,11 @@
 # Public, obviously fake example vault for the real-Ansible render gate
 # (v1/tests/render/render_playbooks.py). example.test and RFC 5737 addresses
-# only; no real secrets (sknet has none).
+# only; GATE_SECRET is an obviously fake dummy.
 sknet:
   CLUSTERNAME: render
   DOMAIN: example.test
   DATA_NODE: render-node-1
+  GATE_SECRET: "render-dummy-gate-secret-0123456789abcdef"
   FLOW_SOURCES:
     - "192.0.2.10"
   STATIC_EXPORTERS:

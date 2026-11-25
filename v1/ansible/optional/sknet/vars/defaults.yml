@@ -28,7 +28,9 @@ sknet_defaults:
   KAFKA_IMAGE: "apache/kafka:4.3.1"
   PROXY_IMAGE: "caddy:2.11.9-alpine"
   # ntopng (host play, not part of the swarm stack). Docker Hub publishes only a
-  # floating `latest` tag for ntop/ntopng, so it is pinned by digest.
+  # floating `latest` tag for ntop/ntopng, so it is pinned by digest. This digest
+  # is ntop/ntopng:latest as of 2026-11-25: ntopng Community 7.0-stable, git rev
+  # 794702c0 built 2026-11-19 (`ntopng --version` in the image).
   NTOPNG_IMAGE: "ntop/ntopng@sha256:df5022c8c45fdcf8789ae2a4fa1bafaeb82dcc55c22cd8dfa12fdf3f5c11d7f2"
 
   # Where the data lives. DATA_NODE is the swarm node hostname that holds
@@ -54,8 +56,11 @@ sknet_defaults:
   # see client addresses (host mode, no NAT or proxy in front). Behind
   # routing-mesh NAT or a tunnel every client looks private and passes
   # ALLOW_CIDRS, so allowlist mode is refused with CLOUDFLARED true.
-  # The console and Akvorado trust the login header the proxy sets: keep the
-  # sknet-<env> network private and publish nothing but the router.
+  # The console and Akvorado trust the login header Authentik's forward auth sets.
+  # The shared cloud-public-<env> network is the real boundary: only the `gate`
+  # service sits on it, and it forwards a request only when it carries the
+  # X-Sknet-Gate header Traefik adds (GATE_SECRET). The console is on the
+  # private sknet-<env> network only: attach nothing else there.
   # SSO_MIDDLEWARE (default authentik@file) is read from the vault only, so an
   # allowlist-only vault that also names one can be refused.
   AUTH_MODE: "authentik"
@@ -106,13 +111,28 @@ sknet_defaults:
   ORCHESTRATOR_MEMORY_LIMIT: "192M"
   INLET_MEMORY_LIMIT: "160M"
   CONSOLE_MEMORY_LIMIT: "256M"
-  PROXY_MEMORY_LIMIT: "64M"
+  PROXY_MEMORY_LIMIT: "64M"          # the gate (Caddy)
 
-  # Live view note: the swarm live proxy reaches the ntopng host from the node address of
-  # whichever swarm node runs it, so each live host's sknet_live_allow_sources must include
-  # every swarm node address that can run the proxy.
-  # Live view: the ntopng upstream (http://<ipv4>:<port>). Unset renders no
-  # live router and no proxy service.
+  # The gate secret (required): a random string of at least 32 characters
+  # (letters, digits, dash, underscore; `openssl rand -hex 32`). Traefik adds it
+  # to every request as the X-Sknet-Gate header and the gate answers 403 to any
+  # request without it. Rotating it takes a redeploy. Never log it.
+  GATE_SECRET: ""
+
+  # Live view: the ntopng upstream (http://<ipv4>:<port>). Unset renders no live
+  # host on the gate (the console still goes through it).
+  # Where the gate reaches ntopng from depends on where it runs. From another
+  # swarm node its traffic is masqueraded out of that node's address, so each live
+  # host's sknet_live_allow_sources must list the address of every swarm node that
+  # can run the gate. On the live host itself, if it is also a swarm node, the
+  # packet arrives from docker_gwbridge (a subnet of its own, not the node address)
+  # and the host's SKNET-LIVE chain drops it. So the gate keeps off the live host by
+  # default: when the deploy runs with the live hosts in the inventory
+  # (group sknet_live_hosts) it renders `node.hostname != <inventory name>` for each
+  # (the name must equal the swarm node hostname). PROXY_PLACEMENT_CONSTRAINTS
+  # replaces that default (a list of Swarm placement constraints). The alternative on
+  # a live host that is also a swarm node is to add its docker_gwbridge subnet to
+  # sknet_live_allow_sources, which admits EVERY container on that host.
   LIVE_UPSTREAM: ""
   PROXY_PLACEMENT_CONSTRAINTS: []
 

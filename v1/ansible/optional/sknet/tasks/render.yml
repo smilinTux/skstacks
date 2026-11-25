@@ -30,6 +30,7 @@
     - "/var/data/{{ app }}-{{ env }}"
     - "/var/data/config/{{ app }}-{{ env }}"
     - "/var/data/config/{{ app }}-{{ env }}/configs"
+    - "/var/data/config/{{ app }}-{{ env }}/secrets"
 
 - name: Render the sknet Swarm config contents
   set_fact:
@@ -39,10 +40,11 @@
       clickhouse-logs: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/clickhouse-logs.xml.j2') }}"
   tags: [config]
 
-- name: Add the live proxy's Caddyfile when LIVE_UPSTREAM is set
+- name: Add the gate's Caddyfile
+  # Always: the gate fronts the console too. It has a live host block only when
+  # LIVE_UPSTREAM is set.
   set_fact:
     sknet_configs: "{{ sknet_configs | combine({'caddyfile': lookup('template', playbook_dir + '/src/config/' + app + '/Caddyfile.j2')}) }}"
-  when: sknet_live_enabled | bool
   tags: [config]
 
 - name: Name each sknet Swarm config after the sha256 of its content
@@ -51,6 +53,33 @@
   # the template renders under plain Jinja too.
   set_fact:
     sknet_config_names: "{{ dict(sknet_configs.keys() | list | zip(sknet_configs.values() | map('hash', 'sha256') | map('truncate', 12, True, '') | list)) }}"
+  tags: [config]
+
+- name: Render the sknet Docker secret contents
+  # The gate secret, as a file the gate mounts (never in a config or the Caddyfile).
+  set_fact:
+    sknet_secrets:
+      gate: "{{ skn.GATE_SECRET }}"
+  no_log: true
+  tags: [config]
+
+- name: Name each sknet Docker secret after the sha256 of its content
+  set_fact:
+    sknet_secret_names: "{{ dict(sknet_secrets.keys() | list | zip(sknet_secrets.values() | map('hash', 'sha256') | map('truncate', 12, True, '') | list)) }}"
+  no_log: true
+  tags: [config]
+
+- name: Write the sknet Docker secret sources
+  copy:
+    content: "{{ item.value }}"
+    dest: "/var/data/config/{{ app }}-{{ env }}/secrets/{{ item.key }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ sknet_secrets | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  no_log: true
   tags: [config]
 
 - name: Write the sknet Swarm config sources
@@ -72,6 +101,8 @@
     owner: root
     group: root
     mode: "0644"
+  # The stack file carries the gate header value in a Traefik label.
+  no_log: true
   tags: [compose]
 
 - name: Create docker-compose.yml symlink

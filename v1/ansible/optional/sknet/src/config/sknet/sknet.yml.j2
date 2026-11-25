@@ -25,8 +25,9 @@ version: '3.8'
 # published except the inlet's UDP ports (host mode, so the exporter's source
 # address survives; tasks/port_allowlist.yml firewalls them to FLOW_SOURCES).
 # Everything stateful is pinned to DATA_NODE with its data on local disk under
-# DATA_DIR (never NFS). The optional live-proxy fronts an ntopng that runs on
-# a host (the live play); it renders only when LIVE_UPSTREAM is set. Configs
+# DATA_DIR (never NFS). The gate (Caddy) is the only service on the shared
+# cloud-public network: it fronts the console and, when LIVE_UPSTREAM is set,
+# an ntopng that runs on a host (the live play). Configs
 # are Swarm configs named after their content, so a changed file rolls the
 # service. Opt-in: nothing renders unless this playbook runs.
 {#- Swarm config helper: `swarm_config(key)` names a config after the sha256 of
@@ -37,12 +38,20 @@ version: '3.8'
 name: "sknet_{{ env }}_{{ key }}_{{ sknet_config_names[key] }}"
     file: "/var/data/config/sknet-{{ env }}/configs/{{ key }}"
 {%- endmacro %}
+{#- Docker secret helper, same naming rule: the play writes each secret to the
+    file below (0600) before `docker stack deploy`. #}
+{% macro swarm_secret(key) -%}
+name: "sknet_{{ env }}_{{ key }}_{{ sknet_secret_names[key] }}"
+    file: "/var/data/config/sknet-{{ env }}/secrets/{{ key }}"
+{%- endmacro %}
 {% set data = sknet_data_dir | default('/var/lib/sknet-' ~ env, true) %}
 {% set node_constraint = ['node.hostname == ' ~ (sknet_data_node | default('', true))] %}
 {% set router = sknet_router | default('sknet', true) %}
 {% set live_router = sknet_live_router | default('sknet-live', true) %}
 {% set tls_options = skn.TLS_OPTIONS | default('none', true) %}
-{% set live_constraints = skn.PROXY_PLACEMENT_CONSTRAINTS | default([], true) %}
+{% set gate_constraints = sknet_gate_constraints | default([], true) %}
+{% set gate_mw = sknet_gate_mw | default('sknet-' ~ env ~ '-gate', true) %}
+{% set chain = (sknet_chain | default([], true)) + [gate_mw] %}
 
 x-logging: &logging
   driver: json-file
@@ -238,10 +247,11 @@ services:
         - "com.skt.env={{ env }}"
 
   console:
-    # The web UI. It trusts the login header the proxy in front of it sets, so
-    # it publishes no port: it is reachable only through the router below. WARNING:
-    # anything that can reach this service on the overlay can forge that header;
-    # keep sknet-<env> private (nothing else attached).
+    # The web UI. It trusts the login header Authentik's forward auth sets, so
+    # it publishes no port and is NOT on the shared cloud-public network: it is
+    # reachable only over sknet-<env>, from the gate below (which forwards a
+    # request only when Traefik added the secret header). Keep nothing else on
+    # sknet-<env>: anything attached there can forge that login header.
     image: {{ skn.AKVORADO_IMAGE | default('quay.io/akvorado/akvorado:2026.10.1', true) }}
     command: ["console", "http://orchestrator:8080"]
     environment:
@@ -250,7 +260,6 @@ services:
       - {{ data }}/console:/run/akvorado
     networks:
       - sknet-{{ env }}
-      - cloud-public-{{ env }}
     logging: *logging
     deploy:
       <<: *deploy
@@ -265,33 +274,24 @@ services:
       labels:
         - "com.skt.app=sknet"
         - "com.skt.env={{ env }}"
-        - "traefik.enable=true"
-        - "traefik.swarm.network=cloud-public-{{ env }}"
-        # The address gate for every sknet router, whatever the sign-in mode.
-        - "traefik.http.middlewares.{{ sknet_allow_mw | default('sknet-' ~ env ~ '-allow', true) }}.ipallowlist.sourcerange={{ skn.ALLOW_CIDRS | default([], true) | join(',') }}"
-        # Depth 0: judge the direct remote address Traefik sees (no X-Forwarded-For
-        # trust). Real client addresses need host-mode Traefik entrypoints.
-        - "traefik.http.middlewares.{{ sknet_allow_mw | default('sknet-' ~ env ~ '-allow', true) }}.ipallowlist.ipstrategy.depth=0"
-        - "traefik.http.routers.{{ router }}.rule=Host(`{{ sknet_host }}`)"
-        - "traefik.http.routers.{{ router }}.entrypoints=websecure"
-        - "traefik.http.routers.{{ router }}.tls=true"
-        - "traefik.http.routers.{{ router }}.tls.certresolver=main"
-{% if tls_options != 'none' %}
-        - "traefik.http.routers.{{ router }}.tls.options={{ tls_options }}"
-{% endif %}
-        - "traefik.http.routers.{{ router }}.middlewares={{ sknet_chain | default([], true) | join(',') }}"
-        - "traefik.http.routers.{{ router }}.service={{ router }}"
-        - "traefik.http.services.{{ router }}.loadbalancer.server.port=8080"
-{% if sknet_live_enabled | default(false) | bool %}
 
-  live-proxy:
-    # Fronts the ntopng on LIVE_UPSTREAM (an IPv4 literal) so the live view
-    # gets the same router, allowlist and sign-in as the console. It is the
-    # only service not pinned to DATA_NODE: it needs only a route to ntopng.
+  gate:
+    # The only sknet service on the shared cloud-public network, and so the only
+    # one Traefik can route to. Both routers (console host and live host) point
+    # here; Traefik adds the X-Sknet-Gate header (the GATE_SECRET vault key)
+    # after the allowlist and sign-in, and the Caddyfile answers 403 to any
+    # request without it, so a container that reaches the gate directly over
+    # cloud-public gets nothing. It then proxies the console host to the
+    # console over sknet-<env> and the live host to LIVE_UPSTREAM. It is not
+    # pinned to DATA_NODE: it needs only a route to the console and ntopng.
     image: {{ skn.PROXY_IMAGE | default('caddy:2.11.9-alpine', true) }}
     configs:
       - source: caddyfile
         target: /etc/caddy/Caddyfile
+    secrets:
+      - source: gate
+        target: sknet_gate
+        mode: 0400
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/_sknet_health"]
       interval: 30s
@@ -304,9 +304,9 @@ services:
     logging: *logging
     deploy:
       <<: *deploy
-{% if live_constraints | length > 0 %}
+{% if gate_constraints | length > 0 %}
       placement:
-        constraints: {{ live_constraints | tojson }}
+        constraints: {{ gate_constraints | tojson }}
 {% endif %}
       resources:
         limits:
@@ -319,6 +319,24 @@ services:
         - "com.skt.env={{ env }}"
         - "traefik.enable=true"
         - "traefik.swarm.network=cloud-public-{{ env }}"
+        # The address gate for every sknet router, whatever the sign-in mode.
+        - "traefik.http.middlewares.{{ sknet_allow_mw | default('sknet-' ~ env ~ '-allow', true) }}.ipallowlist.sourcerange={{ skn.ALLOW_CIDRS | default([], true) | join(',') }}"
+        # Depth 0: judge the direct remote address Traefik sees (no X-Forwarded-For
+        # trust). Real client addresses need host-mode Traefik entrypoints.
+        - "traefik.http.middlewares.{{ sknet_allow_mw | default('sknet-' ~ env ~ '-allow', true) }}.ipallowlist.ipstrategy.depth=0"
+        # The secret request header the Caddyfile requires (last in both chains).
+        - "traefik.http.middlewares.{{ gate_mw }}.headers.customrequestheaders.X-Sknet-Gate={{ skn.GATE_SECRET }}"
+        - "traefik.http.routers.{{ router }}.rule=Host(`{{ sknet_host }}`)"
+        - "traefik.http.routers.{{ router }}.entrypoints=websecure"
+        - "traefik.http.routers.{{ router }}.tls=true"
+        - "traefik.http.routers.{{ router }}.tls.certresolver=main"
+{% if tls_options != 'none' %}
+        - "traefik.http.routers.{{ router }}.tls.options={{ tls_options }}"
+{% endif %}
+        - "traefik.http.routers.{{ router }}.middlewares={{ chain | join(',') }}"
+        - "traefik.http.routers.{{ router }}.service={{ router }}"
+        - "traefik.http.services.{{ router }}.loadbalancer.server.port=8080"
+{% if sknet_live_enabled | default(false) | bool %}
         - "traefik.http.routers.{{ live_router }}.rule=Host(`{{ sknet_live_host }}`)"
         - "traefik.http.routers.{{ live_router }}.entrypoints=websecure"
         - "traefik.http.routers.{{ live_router }}.tls=true"
@@ -326,9 +344,17 @@ services:
 {% if tls_options != 'none' %}
         - "traefik.http.routers.{{ live_router }}.tls.options={{ tls_options }}"
 {% endif %}
-        - "traefik.http.routers.{{ live_router }}.middlewares={{ sknet_chain | default([], true) | join(',') }}"
+        - "traefik.http.routers.{{ live_router }}.middlewares={{ chain | join(',') }}"
         - "traefik.http.routers.{{ live_router }}.service={{ live_router }}"
         - "traefik.http.services.{{ live_router }}.loadbalancer.server.port=8080"
+{% endif %}
+{% if sknet_secret_names | default({}) %}
+
+secrets:
+{% for key in sknet_secret_names %}
+  {{ key }}:
+    {{ swarm_secret(key) }}
+{% endfor %}
 {% endif %}
 {% if sknet_config_names | default({}) %}
 

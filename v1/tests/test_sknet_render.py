@@ -24,6 +24,7 @@ pytestmark = pytest.mark.skipif(shutil.which("ansible-playbook") is None, reason
 
 ROLE = rp.ANSIBLE / "optional" / "sknet"
 BASE = yaml.safe_load((rp.VARS / "sknet.example.yml").read_text())["sknet"]
+GATE_SECRET = BASE["GATE_SECRET"]
 SET = yaml.safe_load((rp.VARS / "sknet.set.yml").read_text())["sknet"]
 DEFAULTS = yaml.safe_load((ROLE / "vars" / "defaults.yml").read_text())["sknet_defaults"] if (ROLE / "vars" / "defaults.yml").exists() else {}
 
@@ -50,7 +51,7 @@ EXPORTERS = {
 INV_SOURCES = ["192.0.2.20", "192.0.2.21"]
 
 
-def render(tmp: Path, vault, env: str = "prod", exporters=None) -> tuple[dict, Path]:
+def render(tmp: Path, vault, env: str = "prod", exporters=None, live_hosts=None) -> tuple[dict, Path]:
     work = tmp / "work"
     if not (work / "ansible").exists():
         shutil.copytree(rp.ANSIBLE, work / "ansible")
@@ -73,6 +74,11 @@ def render(tmp: Path, vault, env: str = "prod", exporters=None) -> tuple[dict, P
             inv["all"]["children"]["sknet_exporter_hosts"] = {
                 "hosts": {name: {"ansible_connection": "local", **hv} for name, hv in exporters.items()}}
             path.write_text(yaml.safe_dump(inv))
+        if live_hosts is not None:
+            inv = yaml.safe_load(path.read_text())
+            inv["all"]["children"]["sknet_live_hosts"] = {
+                "hosts": {name: {"ansible_connection": "local", **hv} for name, hv in live_hosts.items()}}
+            path.write_text(yaml.safe_dump(inv))
 
     rp.VARS, rp.write_inventory = vars_dir, inventory_with_exporters
     try:
@@ -84,14 +90,14 @@ def render(tmp: Path, vault, env: str = "prod", exporters=None) -> tuple[dict, P
     return res, run_dir / "out"
 
 
-def ok(tmp, vault, env="prod", exporters=None):
-    res, out = render(tmp, vault, env, exporters)
+def ok(tmp, vault, env="prod", exporters=None, live_hosts=None):
+    res, out = render(tmp, vault, env, exporters, live_hosts)
     assert res["status"] == "PASS", (res["findings"], res["log"][-3000:])
     return out
 
 
-def fails(tmp, vault, env="prod", exporters=None):
-    res, _ = render(tmp, vault, env, exporters)
+def fails(tmp, vault, env="prod", exporters=None, live_hosts=None):
+    res, _ = render(tmp, vault, env, exporters, live_hosts)
     assert res["status"] == "FAIL", "the deploy rendered although it must refuse this input"
     return res["log"]
 
@@ -141,9 +147,10 @@ def set_out(tmp_path_factory):
 # --- services, images, placement, storage -----------------------------------
 
 def test_services_without_and_with_live_upstream(base_out, live_out):
-    core = ["clickhouse", "console", "inlet", "kafka", "orchestrator", "outlet"]
+    # the gate fronts the console, so it is always there; LIVE_UPSTREAM only adds its live host
+    core = ["clickhouse", "console", "gate", "inlet", "kafka", "orchestrator", "outlet"]
     assert sorted(compose(base_out)["services"]) == core
-    assert sorted(compose(live_out)["services"]) == sorted(core + ["live-proxy"])
+    assert sorted(compose(live_out)["services"]) == core
 
 
 def test_every_image_is_pinned_and_the_defaults_are_the_documented_ones(live_out):
@@ -155,8 +162,8 @@ def test_every_image_is_pinned_and_the_defaults_are_the_documented_ones(live_out
         assert svcs[name]["image"] == AKVORADO_IMAGE
     assert svcs["clickhouse"]["image"] == CLICKHOUSE_IMAGE
     assert svcs["kafka"]["image"] == KAFKA_IMAGE
-    assert svcs["live-proxy"]["image"] == DEFAULTS["PROXY_IMAGE"]
-    assert ":latest" not in svcs["live-proxy"]["image"]
+    assert svcs["gate"]["image"] == DEFAULTS["PROXY_IMAGE"]
+    assert ":latest" not in svcs["gate"]["image"]
 
 
 def test_inlet_publishes_the_flow_ports_in_host_mode(base_out):
@@ -169,12 +176,12 @@ def test_inlet_publishes_the_flow_ports_in_host_mode(base_out):
             assert "ports" not in svc, name
 
 
-def test_data_services_are_pinned_to_the_data_node_and_the_proxy_is_not(live_out):
+def test_data_services_are_pinned_to_the_data_node_and_the_gate_is_not(live_out):
     svcs = compose(live_out)["services"]
     for name in ("orchestrator", "inlet", "outlet", "console", "kafka", "clickhouse"):
         assert svcs[name]["deploy"]["placement"]["constraints"] == ["node.hostname == render-node-1"], name
     assert not any("render-node-1" in c for c in
-                   svcs["live-proxy"]["deploy"].get("placement", {}).get("constraints", []))
+                   svcs["gate"]["deploy"].get("placement", {}).get("constraints", []))
 
 
 def test_clickhouse_and_kafka_live_on_local_disk_under_data_dir(base_out):
@@ -213,7 +220,7 @@ def test_kafka_is_kraft_single_node(base_out):
 # --- routers, allowlist, sign-in --------------------------------------------
 
 def test_console_router_host_and_middleware_chain(base_out):
-    lab = labels(compose(base_out)["services"]["console"])
+    lab = labels(compose(base_out)["services"]["gate"])
     assert lab["traefik.http.routers.sknet.rule"] == "Host(`sknet.render.example.test`)"
     assert lab["traefik.http.routers.sknet.entrypoints"] == "websecure"
     assert lab["traefik.http.routers.sknet.service"] == "sknet"
@@ -223,10 +230,12 @@ def test_console_router_host_and_middleware_chain(base_out):
     assert "sknet-prod-allow" in chain and "authentik@file" in chain
     # the allowlist runs first: an address outside it never reaches the SSO provider
     assert chain.index("sknet-prod-allow") < chain.index("authentik@file")
+    # the gate header is added last, after the address and sign-in checks
+    assert chain[-1] == "sknet-prod-gate"
 
 
 def test_allowlist_middleware_defaults_to_private_and_mesh_ranges(base_out):
-    lab = labels(compose(base_out)["services"]["console"])
+    lab = labels(compose(base_out)["services"]["gate"])
     assert lab["traefik.http.middlewares.sknet-prod-allow.ipallowlist.sourcerange"].split(",") == DEFAULT_CIDRS
 
 
@@ -234,12 +243,12 @@ def test_allowlist_middleware_follows_allow_cidrs(tmp_path):
     cidrs = ["203.0.113.0/24", "198.51.100.7/32"]
     out = ok(tmp_path, BASE | {"ALLOW_CIDRS": cidrs, "LIVE_UPSTREAM": "http://192.0.2.1:3000"})
     svcs = compose(out)["services"]
-    assert labels(svcs["console"])["traefik.http.middlewares.sknet-prod-allow.ipallowlist.sourcerange"] == ",".join(cidrs)
-    assert "sknet-prod-allow" in labels(svcs["live-proxy"])["traefik.http.routers.sknet-live.middlewares"].split(",")
+    assert labels(svcs["gate"])["traefik.http.middlewares.sknet-prod-allow.ipallowlist.sourcerange"] == ",".join(cidrs)
+    assert "sknet-prod-allow" in labels(svcs["gate"])["traefik.http.routers.sknet-live.middlewares"].split(",")
 
 
 def test_live_router_and_proxy(live_out):
-    svc = compose(live_out)["services"]["live-proxy"]
+    svc = compose(live_out)["services"]["gate"]
     lab = labels(svc)
     assert lab["traefik.http.routers.sknet-live.rule"] == "Host(`sknet-live.render.example.test`)"
     assert lab["traefik.http.services.sknet-live.loadbalancer.server.port"] == "8080"
@@ -248,20 +257,24 @@ def test_live_router_and_proxy(live_out):
     caddy = config_text(live_out, "caddyfile")
     assert "reverse_proxy http://192.0.2.1:3000" in caddy
     assert "admin off" in caddy and "auto_https off" in caddy
+    assert "sknet-live.render.example.test" in caddy
 
 
 def test_no_live_router_without_live_upstream(base_out):
     for svc in compose(base_out)["services"].values():
         assert not any("sknet-live" in l for l in svc["deploy"].get("labels", []))
-    assert not (base_out / "_copy/var/data/config/sknet-prod/configs/caddyfile").exists()
+    # the gate (and its Caddyfile) still exist for the console, with no live host block
+    caddy = config_text(base_out, "caddyfile")
+    assert "sknet-live" not in caddy and "sknet.render.example.test" in caddy
 
 
 def test_allowlist_still_applies_when_sso_is_off(tmp_path):
     out = ok(tmp_path, BASE | {"AUTH_MODE": "allowlist", "LIVE_UPSTREAM": "http://192.0.2.1:3000"})
     svcs = compose(out)["services"]
-    for name, router in (("console", "sknet"), ("live-proxy", "sknet-live")):
-        chain = labels(svcs[name])[f"traefik.http.routers.{router}.middlewares"].split(",")
-        assert "sknet-prod-allow" in chain and "authentik@file" not in chain, name
+    for router in ("sknet", "sknet-live"):
+        chain = labels(svcs["gate"])[f"traefik.http.routers.{router}.middlewares"].split(",")
+        assert "sknet-prod-allow" in chain and "authentik@file" not in chain, router
+        assert chain[-1] == "sknet-prod-gate", router
     # without a forwarded login the console needs a fixed user, or it would deny everyone
     assert akvorado(out)["console"]["auth"]["default-user"]["login"]
 
@@ -275,8 +288,8 @@ def test_authentik_mode_denies_a_request_without_the_login_header(base_out):
 
 def test_custom_sso_and_base_middlewares(tmp_path):
     out = ok(tmp_path, BASE | {"SSO_MIDDLEWARE": "sso-chain@file", "TRAEFIK_MIDDLEWARES": "gzip@file"})
-    chain = labels(compose(out)["services"]["console"])["traefik.http.routers.sknet.middlewares"]
-    assert chain == "sknet-prod-allow,gzip@file,sso-chain@file"
+    chain = labels(compose(out)["services"]["gate"])["traefik.http.routers.sknet.middlewares"]
+    assert chain == "sknet-prod-allow,gzip@file,sso-chain@file,sknet-prod-gate"
 
 
 @pytest.mark.parametrize("env,host,router,subnet", [
@@ -285,11 +298,99 @@ def test_custom_sso_and_base_middlewares(tmp_path):
 ])
 def test_dev_and_staging_hosts_routers_and_subnets(tmp_path, env, host, router, subnet):
     out = ok(tmp_path, BASE, env)
-    lab = labels(compose(out, env)["services"]["console"])
+    lab = labels(compose(out, env)["services"]["gate"])
     assert lab[f"traefik.http.routers.{router}.rule"] == f"Host(`{host}`)"
     assert f"traefik.http.middlewares.sknet-{env}-allow.ipallowlist.sourcerange" in lab
     assert subnet in (ROLE / f"deploy_sknet-{env}.yml").read_text()
 
+
+
+# --- the gate: the only sknet service on the shared cloud-public network ------
+
+def test_only_the_gate_is_on_cloud_public_and_it_is_on_both_networks(live_out):
+    svcs = compose(live_out)["services"]
+    assert svcs["gate"]["networks"] == ["sknet-prod", "cloud-public-prod"]
+    for name, svc in svcs.items():
+        if name != "gate":
+            assert "cloud-public-prod" not in svc["networks"], name
+    assert not any(l.startswith("traefik.") for l in svcs["console"]["deploy"]["labels"])
+
+
+def test_both_routers_point_at_the_gate_and_add_the_secret_header(live_out):
+    lab = labels(compose(live_out)["services"]["gate"])
+    for router in ("sknet", "sknet-live"):
+        assert lab[f"traefik.http.routers.{router}.service"] == router
+        assert lab[f"traefik.http.services.{router}.loadbalancer.server.port"] == "8080"
+        chain = lab[f"traefik.http.routers.{router}.middlewares"].split(",")
+        assert chain[-1] == "sknet-prod-gate" and "sknet-prod-allow" in chain
+    key = "traefik.http.middlewares.sknet-prod-gate.headers.customrequestheaders.X-Sknet-Gate"
+    assert lab[key] == GATE_SECRET
+
+
+def test_caddyfile_requires_the_gate_header_answers_403_and_strips_it(live_out):
+    caddy = config_text(live_out, "caddyfile")
+    assert "X-Sknet-Gate" in caddy and "403" in caddy
+    assert "header_up -X-Sknet-Gate" in caddy
+    # the secret itself is read from the docker secret file, never written to the Caddyfile
+    assert GATE_SECRET not in caddy
+    assert "{file./run/secrets/sknet_gate}" in caddy
+    # console host proxies to the console over the private network; /debug is blocked there
+    assert "reverse_proxy console:8080" in caddy
+    assert "/debug" in caddy and "404" in caddy
+    assert "sknet.render.example.test" in caddy and "sknet-live.render.example.test" in caddy
+
+
+def test_gate_secret_is_a_docker_secret_not_in_a_config(live_out):
+    svc = compose(live_out)["services"]["gate"]
+    assert svc["secrets"][0]["source"] == "gate" and svc["secrets"][0]["target"] == "sknet_gate"
+    sec = compose(live_out)["secrets"]["gate"]
+    assert sec["name"].startswith("sknet_prod_gate_")
+    assert sec["file"] == "/var/data/config/sknet-prod/secrets/gate"
+    written = (live_out / "_copy/var/data/config/sknet-prod/secrets/gate").read_text()
+    assert written == GATE_SECRET
+    for cfg in (live_out / "_copy/var/data/config/sknet-prod/configs").iterdir():
+        assert GATE_SECRET not in cfg.read_text(), cfg.name
+
+
+@pytest.mark.parametrize("secret", [None, "", "short-secret", "a" * 31, "x" * 31 + " ", ("a" * 40) + "=b", 12345])
+def test_gate_secret_is_required_and_long_enough(tmp_path, secret):
+    vault = {k: v for k, v in BASE.items() if k != "GATE_SECRET"}
+    if secret is not None:
+        vault["GATE_SECRET"] = secret
+    log = fails(tmp_path, vault)
+    assert "GATE_SECRET" in log
+    assert str(secret) not in log or secret in (None, "")
+
+
+def test_gate_stays_off_the_live_host_when_the_inventory_names_one(tmp_path):
+    live = {"live-gw-1": {"sknet_live_bind": "192.0.2.1", "sknet_live_interfaces": ["eth0"],
+                          "sknet_live_allow_sources": ["192.0.2.5"]}}
+    out = ok(tmp_path, BASE | {"LIVE_UPSTREAM": "http://192.0.2.1:3000"}, live_hosts=live)
+    assert compose(out)["services"]["gate"]["deploy"]["placement"]["constraints"] == ["node.hostname != live-gw-1"]
+
+
+def test_explicit_placement_constraints_replace_the_default(tmp_path):
+    live = {"live-gw-1": {"sknet_live_bind": "192.0.2.1"}}
+    out = ok(tmp_path, BASE | {"LIVE_UPSTREAM": "http://192.0.2.1:3000",
+                               "PROXY_PLACEMENT_CONSTRAINTS": ["node.role == worker"]}, live_hosts=live)
+    assert compose(out)["services"]["gate"]["deploy"]["placement"]["constraints"] == ["node.role == worker"]
+
+
+def test_a_live_upstream_that_matches_no_live_host_warns(tmp_path):
+    live = {"live-gw-1": {"sknet_live_bind": "192.0.2.1"}}
+    res, _ = render(tmp_path, BASE | {"LIVE_UPSTREAM": "http://192.0.2.9:3000"}, live_hosts=live)
+    assert res["status"] == "PASS" and "does not match any sknet_live_hosts" in res["log"]
+    res, _ = render(tmp_path / "b", BASE | {"LIVE_UPSTREAM": "http://192.0.2.1:3000"}, live_hosts=live)
+    assert res["status"] == "PASS" and "does not match any sknet_live_hosts" not in res["log"]
+
+
+def test_empty_traefik_middleware_names_are_dropped(tmp_path):
+    out = ok(tmp_path, BASE | {"TRAEFIK_MIDDLEWARES": ""})
+    chain = labels(compose(out)["services"]["gate"])["traefik.http.routers.sknet.middlewares"]
+    assert chain == "sknet-prod-allow,authentik@file,sknet-prod-gate"
+    out = ok(tmp_path / "b", BASE | {"TRAEFIK_MIDDLEWARES": "gzip@file, ,other@file,"})
+    chain = labels(compose(out)["services"]["gate"])["traefik.http.routers.sknet.middlewares"]
+    assert chain == "sknet-prod-allow,gzip@file,other@file,authentik@file,sknet-prod-gate"
 
 # --- Akvorado configuration --------------------------------------------------
 
@@ -325,12 +426,13 @@ def test_static_exporters_come_from_inventory_hostvars_when_the_group_exists(inv
 def test_interface_classes_drive_the_classifiers(inv_out):
     rules = akvorado(inv_out)["outlet"]["core"]["interface-classifiers"]
     by_text = "\n".join(rules)
-    assert 'Exporter.IP == "192.0.2.20" && Interface.Index == 103' in by_text
+    assert 'Exporter.Name == "gw-inv-a" && Interface.Index == 103' in by_text
+    assert "Exporter.IP" not in by_text
     ens3 = next(r for r in rules if "Interface.Index == 103" in r)
     assert 'ClassifyConnectivity("internet")' in ens3 and "ClassifyExternal()" in ens3
-    lan = next(r for r in rules if 'Exporter.IP == "192.0.2.20" && Interface.Index == 101' in r)
+    lan = next(r for r in rules if 'Exporter.Name == "gw-inv-a" && Interface.Index == 101' in r)
     assert 'ClassifyConnectivity("lan")' in lan and "ClassifyInternal()" in lan
-    link = next(r for r in rules if 'Exporter.IP == "192.0.2.21"' in r)
+    link = next(r for r in rules if 'Exporter.Name == "site-inv-b"' in r)
     assert 'ClassifyConnectivity("estate-link")' in link
 
 
@@ -375,7 +477,7 @@ def test_the_disk_gate_counts_space_the_data_dir_already_uses():
 
 
 def test_allowlist_middleware_uses_the_direct_remote_address(base_out):
-    lab = labels(compose(base_out)["services"]["console"])
+    lab = labels(compose(base_out)["services"]["gate"])
     assert lab["traefik.http.middlewares.sknet-prod-allow.ipallowlist.ipstrategy.depth"] == "0"
 
 
@@ -465,22 +567,22 @@ def test_set_pass_images_sizing_and_ports(set_out):
     assert svcs["outlet"]["image"] == SET["AKVORADO_IMAGE"]
     assert svcs["clickhouse"]["image"] == SET["CLICKHOUSE_IMAGE"]
     assert svcs["kafka"]["image"] == SET["KAFKA_IMAGE"]
-    assert svcs["live-proxy"]["image"] == SET["PROXY_IMAGE"]
+    assert svcs["gate"]["image"] == SET["PROXY_IMAGE"]
     assert svcs["clickhouse"]["deploy"]["resources"]["limits"]["memory"] == "2048M"
     assert svcs["outlet"]["deploy"]["resources"]["limits"]["memory"] == "768M"
-    assert svcs["live-proxy"]["deploy"]["placement"]["constraints"] == ["node.role == worker"]
+    assert svcs["gate"]["deploy"]["placement"]["constraints"] == ["node.role == worker"]
     assert sorted(p["published"] for p in svcs["inlet"]["ports"]) == [2056, 4740]
     assert svcs["clickhouse"]["volumes"] == ["/srv/sknet-render/clickhouse:/var/lib/clickhouse"]
 
 
 def test_set_pass_fqdn_hostnames_and_sso(set_out):
     svcs = compose(set_out)["services"]
-    lab = labels(svcs["console"])
+    lab = labels(svcs["gate"])
     assert lab["traefik.http.routers.sknet.rule"] == "Host(`sknet.example.test`)"
     assert lab["traefik.http.routers.sknet.middlewares"] == \
-        "sknet-prod-allow,crowdsec-bouncer@file,default-no-error-pages@file,sso-example@file"
+        "sknet-prod-allow,crowdsec-bouncer@file,default-no-error-pages@file,sso-example@file,sknet-prod-gate"
     assert lab["traefik.http.middlewares.sknet-prod-allow.ipallowlist.sourcerange"] == "203.0.113.0/24,198.51.100.0/24"
-    assert labels(svcs["live-proxy"])["traefik.http.routers.sknet-live.rule"] == "Host(`sknet-live.example.test`)"
+    assert labels(svcs["gate"])["traefik.http.routers.sknet-live.rule"] == "Host(`sknet-live.example.test`)"
 
 
 # --- refusals ------------------------------------------------------------------
