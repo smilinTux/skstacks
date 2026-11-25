@@ -92,7 +92,7 @@ The console and Akvorado trust the login header Authentik's forward auth sets (`
 
 - Traefik adds a request header, `X-Sknet-Gate`, to both routers after the allowlist and the sign-in. Its value is the vault key `GATE_SECRET` (required, at least 32 characters; `openssl rand -hex 32`).
 - Each host block of the gate's Caddyfile answers 403 to any request that does not carry exactly that value, and strips the header before proxying. The secret is read from a Docker secret file, never from the Caddyfile. A container that reaches the gate over `cloud-public-<env>` without it gets a 403, so it cannot forge a login header or reach ntopng.
-- The console host proxies to `console:8080` over `sknet-<env>`, passing the Authentik identity headers through. `/debug` (pprof and internals) is answered with 404 on that host. The live host proxies to `LIVE_UPSTREAM`.
+- The console host proxies to `sknet-<env>_console:8080` (the stack-qualified name) over `sknet-<env>`, passing the Authentik identity headers through. `/debug` (pprof and internals) is answered with 404 on that host. The live host proxies to `LIVE_UPSTREAM`.
 
 What this does not cover: the secret appears in the Traefik label of the gate service, so anyone who can read Swarm service specs (a manager) can read it, and a container that can read Traefik's own configuration can too. Treat `GATE_SECRET` as a deploy-time secret, rotate it by changing the vault key and redeploying, and keep it out of logs. Keep `sknet-<env>` private as a second line: attach nothing else to it, because anything there can reach the console without the gate.
 

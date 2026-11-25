@@ -100,8 +100,8 @@
     dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
     owner: root
     group: root
-    mode: "0644"
-  # The stack file carries the gate header value in a Traefik label.
+    mode: "0600"
+  # The stack file carries the gate header value in a Traefik label: root only.
   no_log: true
   tags: [compose]
 

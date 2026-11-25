@@ -335,7 +335,7 @@ def test_caddyfile_requires_the_gate_header_answers_403_and_strips_it(live_out):
     assert GATE_SECRET not in caddy
     assert "{file./run/secrets/sknet_gate}" in caddy
     # console host proxies to the console over the private network; /debug is blocked there
-    assert "reverse_proxy console:8080" in caddy
+    assert "reverse_proxy sknet-prod_console:8080" in caddy
     assert "/debug" in caddy and "404" in caddy
     assert "sknet.render.example.test" in caddy and "sknet-live.render.example.test" in caddy
 
@@ -717,3 +717,11 @@ def test_no_em_or_en_dashes_in_the_role():
         if path.is_file():
             text = path.read_text()
             assert chr(0x2014) not in text and chr(0x2013) not in text, path
+
+
+def test_files_that_carry_the_gate_secret_are_root_only():
+    tasks = yaml.safe_load((ROLE / "tasks" / "render.yml").read_text())
+    by_name = {t["name"]: t for t in tasks}
+    assert by_name["Process sknet Docker Compose template"]["template"]["mode"] == "0600"
+    assert by_name["Write the sknet Docker secret sources"]["copy"]["mode"] == "0600"
+    # no other rendered file may hold the secret (checked on the rendered tree elsewhere)
