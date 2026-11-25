@@ -94,7 +94,7 @@
   shell: |
     set -euo pipefail
     C="{{ skp_nc_container.stdout | trim }}"
-    docker exec -u www-data "$C" bash -s <<'EOS'
+    docker exec -i -u www-data "$C" bash -s <<'EOS'
     set -euo pipefail
     stock=/var/www/html/core/skeleton
     ours=/var/www/html/config/skpods-skeleton
