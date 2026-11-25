@@ -228,6 +228,9 @@
     {% endfor %}
     occ config:system:set default_phone_region --value="{{ skpods.DEFAULT_PHONE_REGION | default('US', true) }}"
     occ config:system:set maintenance_window_start --type=integer --value={{ skpods.MAINTENANCE_WINDOW_START | default(1, true) | int }}
+    # URLs generated from occ (occ skpods:readme) must match the web ones:
+    # no /index.php/. The engine image ships this for new installs only.
+    occ config:system:set htaccess.IgnoreFrontController --type=boolean --value=true
   args:
     executable: /bin/bash
   delegate_to: "{{ skp_nc_node.stdout | trim }}"
@@ -312,10 +315,10 @@
   # From Nextcloud or the engine image (no app store). Defaults: text
   # (.md and plain text open in the browser), files_pdfviewer,
   # files_trashbin (a deleted file goes to the owner's trash; it leaves the
-  # pod at once), twofactor_totp, skpods (per-account Readme.md) and, with
-  # skpods.ANTIVIRUS, files_antivirus. skpods and files_antivirus ship in
-  # the engine image, so an older image fails here. Override with
-  # skpods.ENABLE_APPS (README "Files").
+  # pod at once), twofactor_totp, skpods (per-account Readme.md). skpods
+  # ships in the engine image, so an older image fails here. files_antivirus
+  # is enabled in features_nextcloud.yml, only once clamd answers. Override
+  # with skpods.ENABLE_APPS (README "Files").
   shell: |
     set -euo pipefail
     C="{{ skp_nc_container.stdout | trim }}"
@@ -329,7 +332,7 @@
   args:
     executable: /bin/bash
   vars:
-    skp_default_enable_apps: "{{ ['files_pdfviewer', 'files_trashbin', 'text', 'twofactor_totp', 'skpods'] + (['files_antivirus'] if (skp_antivirus | bool) else []) }}"
+    skp_default_enable_apps: [files_pdfviewer, files_trashbin, text, twofactor_totp, skpods]
   delegate_to: "{{ skp_nc_node.stdout | trim }}"
   register: skp_enable_apps
   changed_when: "'enabled ' in skp_enable_apps.stdout"

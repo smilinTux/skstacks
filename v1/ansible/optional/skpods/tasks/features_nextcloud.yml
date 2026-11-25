@@ -136,6 +136,47 @@
     - features
     - antivirus
 
+- name: Wait for clamd to answer before files_antivirus is enabled
+  # files_antivirus refuses every file write when it cannot reach its
+  # scanner, so the app is only turned on once clamd replies (a first start
+  # downloads the signatures: allow several minutes).
+  shell: |
+    set -euo pipefail
+    C="{{ skp_nc_container.stdout | trim }}"
+    docker exec "$C" php -r '$s=@fsockopen("clamav",3310,$e,$m,5); if(!$s) exit(1); fwrite($s,"zPING\0"); $r=fread($s,16); exit(trim($r,"\0\n")==="PONG"?0:1);'
+  delegate_to: "{{ skp_nc_node.stdout | trim }}"
+  register: skp_clamd_ping
+  until: skp_clamd_ping.rc == 0
+  retries: 60
+  delay: 10
+  changed_when: false
+  when: skp_antivirus | bool
+  tags:
+    - config
+    - features
+    - antivirus
+
+- name: Enable files_antivirus (settings above already point it at clamd)
+  shell: |
+    set -euo pipefail
+    C="{{ skp_nc_container.stdout | trim }}"
+    if docker exec -u www-data "$C" php occ app:list --enabled | grep -q '^  - files_antivirus:'; then
+      echo "files_antivirus already enabled"
+    else
+      docker exec -u www-data "$C" php occ app:enable files_antivirus >/dev/null
+      echo "files_antivirus enabled"
+    fi
+  args:
+    executable: /bin/bash
+  delegate_to: "{{ skp_nc_node.stdout | trim }}"
+  register: skp_av_enable
+  changed_when: "'already' not in skp_av_enable.stdout"
+  when: skp_antivirus | bool
+  tags:
+    - config
+    - features
+    - antivirus
+
 - name: Make existing pod roots owner-only
   # Engine images before the owner-only root ACL wrote a root .acl that let
   # anyone list the pod root. This removes exactly that stock public block
