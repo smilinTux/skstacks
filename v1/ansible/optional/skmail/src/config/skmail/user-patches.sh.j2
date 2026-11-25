@@ -144,8 +144,8 @@ fi
 
 {% set _via_traefik = (skmail.VIA_TRAEFIK | default(false) | string | lower) in ["true", "yes", "1", "on"] %}
 {% if _via_traefik %}
-{% set _canonical_public = {'prod': '172.16.200.0/24', 'staging': '172.16.201.0/24', 'dev': '172.16.202.0/24'} %}
-{% set _trusted = skmail.PROXY_TRUSTED_NETWORKS | default([_canonical_public.get(env, '172.16.200.0/24')], true) %}
+{% set _proxy_default_net = {'prod': '172.16.200.0/24', 'staging': '172.16.201.0/24', 'dev': '172.16.202.0/24'} %}
+{% set _trusted = skmail.PROXY_TRUSTED_NETWORKS | default([_proxy_default_net.get(env, '172.16.200.0/24')], true) %}
 {% set _trusted = [_trusted] if _trusted is string else _trusted %}
 # =============================================================================
 # PROXY PROTOCOL LISTENERS (skmail.VIA_TRAEFIK)
