@@ -184,7 +184,7 @@ def test_play_targets_the_exporter_group_and_is_privileged():
 def test_no_dashes_in_the_new_files():
     for p in (PLAY, UNIT_SRC, ROLE / "tasks" / "exporter_guards.yml", ROLE / "tasks" / "exporter_check.yml"):
         text = p.read_text()
-        assert "—" not in text and "–" not in text, p
+        assert chr(0x2014) not in text and chr(0x2013) not in text, p
 
 
 # --- happy path -------------------------------------------------------------
