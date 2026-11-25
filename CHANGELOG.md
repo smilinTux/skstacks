@@ -22,6 +22,10 @@ Each entry says what an instance must do, if anything.
   the Solid consent screen. Self-hosted OFL fonts; dark UI enforced. New `skpods.THEME`
   (`skpods` default, `none` for the stock look); `--tags theme` re-applies it. README "Branding".
   **Instance action**: none (redeploy picks it up); set `THEME: none` to keep the stock look.
+- New accounts start with a skpods skeleton (welcome note, `solid/private/{documents,notes,photos}`,
+  `solid/public/shared`) and no stock files or Templates folder; the deploy removes stock files from
+  existing accounts when they are byte-identical to the image's copy. New `skpods.SKELETON`
+  (`skpods` default, `stock`); `--tags skeleton`. README "New accounts". **Instance action**: none.
 
 ### skpods: new optional service for Solid pod hosting
 

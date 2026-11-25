@@ -76,6 +76,7 @@
       set_fact:
         skp_engine: "{{ skpods.ENGINE | default('nextcloud', true) | string | lower }}"
         skp_theme: "{{ skpods.THEME | default('skpods', true) | string | lower }}"
+        skp_skeleton: "{{ skpods.SKELETON | default('skpods', true) | string | lower }}"
         skp_cluster: "{{ skpods.CLUSTERNAME | default(cluster_name | default(''), true) }}"
         skp_domain: "{{ skpods.DOMAIN | default(domain | default(''), true) }}"
         skp_router: "skpods{{ '' if env == 'prod' else '-' + env }}"
@@ -109,6 +110,7 @@
         that:
           - skp_engine in ['nextcloud']
           - skp_theme in ['skpods', 'none']
+          - skp_skeleton in ['skpods', 'stock']
           - skp_cluster | length > 0
           - skp_domain | length > 0
           - skpods.NEXTCLOUD_IMAGE | default('') | string | length > 0
@@ -124,7 +126,7 @@
           (<repo>:<tag>@sha256:...), ADMIN_PASSWORD and DB_PASSWORD must be
           set (16+ characters), and INGRESS_NETWORK ({{ skp_ingress_network }})
           must be one of the networks in app_networks. THEME must be skpods
-          or none. See README.md.
+          or none, SKELETON skpods or stock. See README.md.
       tags:
         - always
 
@@ -154,6 +156,12 @@
 
     - name: Apply the skpods.id branding (nextcloud engine)
       include_tasks: tasks/theme_nextcloud.yml
+      when: skp_engine == 'nextcloud'
+      tags:
+        - always
+
+    - name: Set up the new-account skeleton (nextcloud engine)
+      include_tasks: tasks/skeleton_nextcloud.yml
       when: skp_engine == 'nextcloud'
       tags:
         - always

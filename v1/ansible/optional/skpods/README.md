@@ -90,6 +90,7 @@ from the very first start.
 | `POSTGRES_PATH`, `REDIS_PATH` | `/var/data/runtime/skpods-<env>/{postgres,redis}` | Datastore paths. |
 | `PLACEMENT_CONSTRAINTS` | `[]` | Extra swarm constraints for every service. |
 | `THEME` | `skpods` | `skpods` brands the engine as skpods.id (login, titles, links, logo, dark UI); `none` restores the stock look. See [Branding](#branding). |
+| `SKELETON` | `skpods` | `skpods`: new accounts start with a welcome note and pod folders instead of the stock files, and stock files are removed from existing accounts. `stock` restores the upstream defaults. See [New accounts](#new-accounts). |
 | `DISABLE_APPS` | built-in list | Default Nextcloud apps to disable (best effort; always-enabled apps are skipped). |
 | `DEFAULT_PHONE_REGION`, `MAINTENANCE_WINDOW_START`, `TZ` | `US`, `1`, `UTC` | Nextcloud housekeeping. |
 | `PHP_MEMORY_LIMIT`, `PHP_UPLOAD_LIMIT` | `512M`, `1G` | PHP limits. |
@@ -119,6 +120,27 @@ active. `THEME: none` removes the folder and resets the theming settings.
 Two strings still read "Nextcloud" because they are built into upstream Vue
 components (personal settings: the profile toggle and "Choose from Nextcloud
 Files"). They only show to signed-in users in settings.
+
+## New accounts
+
+`SKELETON: skpods` (the default) sets `skeletondirectory` to
+`config/skpods-skeleton` (copied from `files/skeleton`) and `templatedirectory`
+to empty, so a new account starts with:
+
+    Welcome to your pod.md
+    solid/private/{documents,notes,photos}/
+    solid/public/shared/
+
+The Solid app adds the rest of the pod (root ACL, `inbox/`, `settings/`) on the
+first Solid request and only fills in what is missing. Folders without their
+own `.acl` inherit the owner-only root ACL, so nothing is public until shared.
+
+On every deploy the play also removes the stock files from existing accounts,
+but only files byte-identical to the image's `core/skeleton` copy, then any
+stock folder left empty, and gives each account it cleaned the skeleton entries
+it lacks (never overwriting). An account it has cleaned once is not touched
+again, so deleted skeleton files stay deleted. `--tags skeleton` runs only this
+step; `SKELETON: stock` restores the upstream defaults for new accounts.
 
 ## Traefik
 
