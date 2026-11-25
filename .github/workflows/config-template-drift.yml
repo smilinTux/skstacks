@@ -47,6 +47,7 @@ on:
       - 'scripts/tests/test_config_template_tooling.py'
       - 'v1/tests/render/**'
       - 'v1/ansible/optional/skbook/**'
+      - 'v1/ansible/optional/skpods/**'
       - '.github/workflows/config-template-drift.yml'
   pull_request:
     paths:
@@ -56,6 +57,7 @@ on:
       - 'scripts/tests/test_config_template_tooling.py'
       - 'v1/tests/render/**'
       - 'v1/ansible/optional/skbook/**'
+      - 'v1/ansible/optional/skpods/**'
       - '.github/workflows/config-template-drift.yml'
 
 concurrency:
@@ -142,3 +144,4 @@ jobs:
         with: { python-version: '3.12' }
       - run: pip install 'ansible-core==2.21.3' pyyaml jsonschema pytest
       - run: python v1/tests/render/render_playbooks.py --service skbook --env prod --pass base
+      - run: python v1/tests/render/render_playbooks.py --service skpods --env prod --pass base
