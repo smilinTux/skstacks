@@ -413,6 +413,17 @@ def test_default_filter_drops_rifftrax(title, hit):
     ("You.Can.See.Everything.2026.REPACK2.1080p.AMZN.WEB-DL.DDP5.1.Atmos.H.264-CHORTLE", False),
     ("Brave.New.World.S01.1080p.WEB-DL", False),
     ("Audio.Newsreel.1960.1080p", False),
+    ("The.Marksman.HDCAM.850MB.c1nem4.x264-SUNSCREEN", True),
+    ("John.Wick.Chapter.4.2023.1080p.HQCAM.Hindi-English.x264.1XBET", True),
+    ("Venom.Let.There.Be.Carnage.2021.720p.CAMRip.English.x264-1XBET", True),
+    ("Barbie 2023 720p HDTS X264 AC3-AOC", True),
+    ("Beetlejuice.Beetlejuice.2024.REPACK.1080p.TELESYNC.x264.COLLECTiVE", True),
+    ("Mufasa The Lion King (2024) 1080p DVDScr - x264 - AAC - 2GB", True),
+    ("Spider.Man.No.Way.Home.2021.1080p.HD-TS.LiNE.V3-C1NEM4", True),
+    ("Cam.2018.1080p.NF.WEB-DL.DDP5.1.x264", False),
+    ("Webcam.2023.1080p.WEB-DL", False),
+    ("The.Screening.2024.1080p.BluRay", False),
+    ("Se7en 1995 1080p.ts", False),
 ])
 def test_default_filter_drops_audionew_cam_rips(title, hit):
     import re
