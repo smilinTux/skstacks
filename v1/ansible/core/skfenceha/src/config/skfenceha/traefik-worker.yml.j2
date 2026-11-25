@@ -148,6 +148,24 @@ entryPoints:
   # 222 avoids colliding with the host's own SSH on 22.
   ssh:
     address: ":222"
+{% if (skfenceha.MAIL_ENTRYPOINTS | default(false) | string | lower) in ["true", "yes", "1", "on"] %}
+  # skfenceha.MAIL_ENTRYPOINTS instance var (default false): plain TCP
+  # entrypoints for skmail with skmail.VIA_TRAEFIK (see the skmail README,
+  # "Behind Traefik (PROXY protocol)"). No TLS here: docker-mailserver
+  # terminates implicit TLS (465/993) and STARTTLS (25/587/143) itself, and
+  # the skmail TCP routers are HostSNI(`*`) passthrough. The PROXY protocol
+  # v2 transport they use is in dynamic/services.yml (skmail-proxy-v2).
+  smtp:
+    address: ":25"
+  submissions:
+    address: ":465"
+  submission:
+    address: ":587"
+  imap:
+    address: ":143"
+  imaps:
+    address: ":993"
+{% endif %}
   metrics:
     address: ":8082"
 

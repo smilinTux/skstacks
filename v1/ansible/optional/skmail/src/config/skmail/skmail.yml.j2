@@ -6,6 +6,9 @@
 #   - NFS shared storage: Mail data accessible from any manager
 #   - Dedicated mail.example.com certificate via Traefik ACME
 #   - NO TRAEFIK for mail ports: Mail ports exposed directly on host network
+#   - skmail.VIA_TRAEFIK=true instead: no host ports, no mail-vip pin; every
+#     Traefik worker takes the mail ports and forwards them over the overlay
+#     with PROXY protocol v2 (README "Behind Traefik (PROXY protocol)")
 #
 # WHY REPLICATED (not global):
 #   - Postfix uses exclusive lock files (master.lock)
@@ -42,6 +45,12 @@ networks:
   cloud-public-{{ env }}:
     external: true
 
+{# skmail.VIA_TRAEFIK (default false): mail through the Traefik workers with
+   PROXY protocol v2 instead of host ports on the mail-vip node. README
+   "Behind Traefik (PROXY protocol)". Entrypoint name to DMS proxy-only port;
+   the same map is in user-patches.sh.j2. #}
+{% set _via_traefik = (skmail.VIA_TRAEFIK | default(false) | string | lower) in ["true", "yes", "1", "on"] %}
+{% set _proxy_ports = [["smtp", 12525], ["submissions", 10465], ["submission", 10587], ["imap", 10143], ["imaps", 10993]] %}
 services:
 {# skmail.MAIL_WEB_ENABLED (default true): false drops mail-web and its router.
    Written without the Ansible-only bool filter so plain jinja2 renders it too. #}
@@ -121,6 +130,7 @@ services:
       # marks the task healthy at once, so a long value never delays a fast
       # start. See README.md "Healthcheck and slow starts".
       start_period: {{ skmail.HEALTHCHECK_START_PERIOD | default('1800s') }}
+{% if not _via_traefik %}
     # HOST MODE: Ports bind directly to host network (no NAT/overlay)
     ports:
       - target: 25
@@ -143,6 +153,7 @@ services:
         published: 993
         protocol: tcp
         mode: host
+{% endif %}
     volumes:
       # === NFS DATA - DIRECT BIND (NO LOCAL DISK) ===
       - /var/data/skmail-{{ env }}/docker-data/dms/maildata:/var/mail
@@ -165,16 +176,26 @@ services:
 {% endif %}
       # Config files (read-only bind mounts)
       - /etc/localtime:/etc/localtime:ro
+{% if _via_traefik %}
+    # skmail.VIA_TRAEFIK: no host ports. Every traefik-worker accepts the mail
+    # ports (skfenceha.MAIL_ENTRYPOINTS) and forwards over this overlay, with
+    # a PROXY protocol v2 header, to the proxy-only listeners below.
+    networks:
+      - cloud-public-{{ env }}
+{% else %}
     # No overlay network - host mode
     # networks:
     #   - cloud-public-{{ env }}
+{% endif %}
     deploy:
       mode: replicated
       replicas: 1  # Single instance - postfix requires exclusive lock files
       placement:
         constraints:
           - node.role == manager  # Only managers (with NFS shared storage)
+{% if not _via_traefik %}
           - node.labels.mail-vip == true  # Must run on VIP node for external access
+{% endif %}
       update_config:
         parallelism: 1
         delay: 30s
@@ -205,8 +226,26 @@ services:
           memory: {{ _res_mem }}
 {% endif %}
 {% endif %}
+{% if _via_traefik %}
+      # === TRAEFIK: TCP PASSTHROUGH FOR MAIL (skmail.VIA_TRAEFIK) ===
+      # One HostSNI(`*`) router per mail entrypoint (skfenceha.MAIL_ENTRYPOINTS),
+      # no TLS at Traefik (DMS terminates it), each to a PROXY-only listener
+      # (user-patches.sh) through the skmail-proxy-v2 transport that skfenceha
+      # renders into dynamic/services.yml.
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+{% for _ep, _backend in _proxy_ports %}
+        - "traefik.tcp.routers.skmail-{{ env }}-{{ _ep }}.rule=HostSNI(`*`)"
+        - "traefik.tcp.routers.skmail-{{ env }}-{{ _ep }}.entrypoints={{ _ep }}"
+        - "traefik.tcp.routers.skmail-{{ env }}-{{ _ep }}.service=skmail-{{ env }}-{{ _ep }}"
+        - "traefik.tcp.services.skmail-{{ env }}-{{ _ep }}.loadbalancer.server.port={{ _backend }}"
+        - "traefik.tcp.services.skmail-{{ env }}-{{ _ep }}.loadbalancer.serverstransport=skmail-proxy-v2@file"
+{% endfor %}
+{% else %}
       # NO TRAEFIK LABELS - Host mode direct port binding
       labels:
         - "traefik.enable=false"
+{% endif %}
     cap_add:
       - NET_ADMIN
