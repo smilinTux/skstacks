@@ -45,6 +45,14 @@
   when: sknet_live_enabled | bool
   tags: [config]
 
+- name: Name each sknet Swarm config after the sha256 of its content
+  # The compose template reads these (a content change renames the config, so
+  # the service that mounts it rolls). Computed here, not in the template, so
+  # the template renders under plain Jinja too.
+  set_fact:
+    sknet_config_names: "{{ dict(sknet_configs.keys() | list | zip(sknet_configs.values() | map('hash', 'sha256') | map('truncate', 12, True, '') | list)) }}"
+  tags: [config]
+
 - name: Write the sknet Swarm config sources
   copy:
     content: "{{ item.value }}"

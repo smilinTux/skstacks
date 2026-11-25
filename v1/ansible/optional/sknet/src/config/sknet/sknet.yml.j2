@@ -30,10 +30,11 @@ version: '3.8'
 # are Swarm configs named after their content, so a changed file rolls the
 # service. Opt-in: nothing renders unless this playbook runs.
 {#- Swarm config helper: `swarm_config(key)` names a config after the sha256 of
-    its rendered content. The play passes sknet_configs (key -> content) and
-    writes each to the file below before `docker stack deploy`. #}
+    its rendered content. The play passes sknet_config_names (key -> first 12
+    hex digits of that hash) and writes each config to the file below before
+    `docker stack deploy`. #}
 {% macro swarm_config(key) -%}
-name: "sknet_{{ env }}_{{ key }}_{{ (sknet_configs[key] | hash('sha256'))[:12] }}"
+name: "sknet_{{ env }}_{{ key }}_{{ sknet_config_names[key] }}"
     file: "/var/data/config/sknet-{{ env }}/configs/{{ key }}"
 {%- endmacro %}
 {% set data = sknet_data_dir | default('/var/lib/sknet-' ~ env, true) %}
@@ -324,10 +325,10 @@ services:
         - "traefik.http.routers.{{ live_router }}.service={{ live_router }}"
         - "traefik.http.services.{{ live_router }}.loadbalancer.server.port=8080"
 {% endif %}
-{% if sknet_configs | default({}) %}
+{% if sknet_config_names | default({}) %}
 
 configs:
-{% for key in sknet_configs %}
+{% for key in sknet_config_names %}
   {{ key }}:
     {{ swarm_config(key) }}
 {% endfor %}

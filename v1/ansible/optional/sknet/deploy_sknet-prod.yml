@@ -99,6 +99,20 @@
       include_tasks: "{{ playbook_dir }}/tasks/deploy.yml"
       tags: [deploy]
 
+    - name: Resolve the portal tile access (who sees the tile)
+      # The tile is a bookmark only: this decides who sees it in the portal.
+      # Default mode admin-only (skadmin). forward_auth is true when the
+      # routers carry authentik@file, so the render-time check can see it.
+      include_tasks: ../../shared/tasks/sso_access_resolve.yml
+      vars:
+        sso_access_slug: "{{ skn.AUTHENTIK_TILE_SLUG | default(sknet_router, true) }}"
+        sso_access_cfg: "{{ skn }}"
+        sso_access_legacy_groups: "{{ [skn.AUTHENTIK_TILE_GROUP | default('', true)] }}"
+        sso_access_forward_auth: "{{ sknet_auth_mode == 'authentik' }}"
+      tags:
+        - config
+        - authentik
+
     - name: Create or update the sknet portal tile in Authentik
       # On by default (AUTHENTIK_TILE: true); opt out per instance with
       # AUTHENTIK_TILE: false. The sign-in gate is AUTH_MODE and ALLOW_CIDRS
@@ -111,7 +125,7 @@
           slug: "{{ skn.AUTHENTIK_TILE_SLUG | default(sknet_router, true) }}"
           name: "{{ skn.AUTHENTIK_TILE_NAME | default('SKNet (network flows)', true) }}"
           launch_url: "https://{{ sknet_host }}"
-          group: "{{ skn.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
+          access: "{{ sso_access }}"
           icon: "{{ skn.AUTHENTIK_TILE_ICON | default('fa://fa-network-wired', true) }}"
           icon_name: "{{ skn.AUTHENTIK_TILE_ICON_NAME | default('sknet', true) }}"
           open_in_new_tab: "{{ skn.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
