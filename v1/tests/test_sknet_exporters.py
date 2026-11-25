@@ -84,6 +84,13 @@ GOOD_IFACES = [
 ]
 
 
+FAKE_IP = '''#!/bin/sh
+# ip -4 route get <addr>: answers with the source address the test asks for
+src=$(cat "$FAKE_STATE/route_src" 2>/dev/null || echo 192.0.2.20)
+echo "$4 dev eth0 src $src uid 0"
+'''
+
+
 class FakeHost:
     """One exporter host on a scratch tree, run by the real play."""
 
@@ -95,7 +102,7 @@ class FakeHost:
         self.units = tmp / "units"
         for d in (self.bin, self.state, self.units):
             d.mkdir(parents=True, exist_ok=True)
-        for name, body in (("systemctl", FAKE_SYSTEMCTL), ("apt-get", FAKE_APT)):
+        for name, body in (("systemctl", FAKE_SYSTEMCTL), ("apt-get", FAKE_APT), ("ip", FAKE_IP)):
             (self.bin / name).write_text(body)
             (self.bin / name).chmod(0o755)
         if installed:
@@ -538,3 +545,40 @@ def test_second_run_after_the_distro_service_was_masked_reports_no_change(host):
     (host.state / "exists" / "softflowd.service").touch()
     host.ok()
     assert host.ok()["changed"] == 0
+
+
+# --- the export address cross-checks (warnings, never failures) --------------
+
+def test_no_warning_when_the_address_is_in_flow_sources_and_is_the_route_source(tmp_path):
+    h = FakeHost(tmp_path)
+    h.set_vault({"FLOW_SOURCES": ["192.0.2.20"]})
+    log = h.ok()["log"]
+    assert "is not in FLOW_SOURCES" not in log and "route to the collector" not in log
+
+
+def test_an_export_address_missing_from_flow_sources_warns_but_runs(tmp_path):
+    h = FakeHost(tmp_path)
+    h.set_vault({"FLOW_SOURCES": ["192.0.2.99"]})
+    log = h.ok()["log"]
+    assert "WARNING" in log and "192.0.2.20 is not in FLOW_SOURCES" in log
+    assert "softflowd-eth0.env" in h.env_files()
+
+
+def test_an_empty_flow_sources_also_warns(tmp_path):
+    h = FakeHost(tmp_path)
+    assert "is not in FLOW_SOURCES" in h.ok()["log"]
+
+
+def test_a_route_source_that_differs_from_the_export_address_warns_but_runs(tmp_path):
+    h = FakeHost(tmp_path)
+    h.set_vault({"FLOW_SOURCES": ["192.0.2.20"]})
+    (h.state / "route_src").write_text("192.0.2.77")
+    log = h.ok()["log"]
+    assert "route to the collector" in log and "192.0.2.77" in log and "192.0.2.20" in log
+    assert "softflowd-eth0.env" in h.env_files()
+
+
+def test_no_cross_check_warnings_for_state_absent(tmp_path):
+    h = FakeHost(tmp_path, sknet_state="absent")
+    log = h.ok()["log"]
+    assert "is not in FLOW_SOURCES" not in log and "route to the collector" not in log

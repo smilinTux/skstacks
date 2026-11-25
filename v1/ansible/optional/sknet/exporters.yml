@@ -140,6 +140,44 @@
       when: sknet_x_state == 'present'
       tags: [config]
 
+    - name: Check the export address against the vault FLOW_SOURCES
+      # Warnings only: the swarm deploy is what refuses, and an exporter rolled out first is normal.
+      # The collector's port allowlist drops flows from an address that is not listed.
+      debug:
+        msg: >-
+          WARNING: {{ inventory_hostname }}: sknet_export_address {{ sknet_export_address | default('') }} is not in
+          FLOW_SOURCES ({{ ((sknet | default({})).FLOW_SOURCES | default([], true)) | join(', ') or 'empty' }}). The collector's
+          firewall drops flows from an unlisted address, silently. Add it to FLOW_SOURCES and redeploy the stack.
+      when:
+        - sknet_x_state == 'present'
+        - (sknet_export_address | default('', true) | string) not in ((sknet | default({})).FLOW_SOURCES | default([], true) | map('string') | list)
+      tags: [config]
+
+    - name: Ask which source address this host uses to reach the collector
+      command: "ip -4 route get {{ sknet_x_collector }}"
+      register: sknet_x_route
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: sknet_x_state == 'present'
+      tags: [config]
+
+    - name: Compare the route source with the export address
+      # Warning only. `ip route get` prints "... src <address> ..."; no output (no ip, no route) skips it.
+      vars:
+        sknet_x_rsrc: "{{ (sknet_x_route.stdout | default('') | regex_findall('src ([0-9.]+)') | first) | default('', true) }}"
+      debug:
+        msg: >-
+          WARNING: {{ inventory_hostname }}: the route to the collector {{ sknet_x_collector }} leaves from
+          {{ sknet_x_rsrc }}, not from sknet_export_address {{ sknet_export_address | default('') }}. The collector
+          sees the route source, so its FLOW_SOURCES allowlist and the static metadata must name that address
+          (or fix the route, or set the right sknet_export_address).
+      when:
+        - sknet_x_state == 'present'
+        - sknet_x_rsrc != ''
+        - sknet_x_rsrc != (sknet_export_address | default('', true) | string)
+      tags: [config]
+
   tasks:
     # --- the package --------------------------------------------------------------
 
