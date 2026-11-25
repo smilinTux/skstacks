@@ -100,6 +100,7 @@
     ours=/var/www/html/config/skpods-skeleton
     data=$(php occ config:system:get datadirectory)
     changed_users=()
+    changed_count=0
     while IFS= read -r uid; do
       files="$data/$uid/files"
       [ -d "$files" ] || continue
@@ -122,12 +123,12 @@
         if [ -d "$e" ] && [ ! -e "$files/$rel" ]; then mkdir -p "$files/$rel"; n=$((n+1)); fi
         if [ -f "$e" ] && [ ! -e "$files/$rel" ]; then mkdir -p "$(dirname "$files/$rel")"; cp "$e" "$files/$rel"; n=$((n+1)); fi
       done < <(find "$ours" -mindepth 1 -print0 | sort -z)
-      if [ "$n" -gt 0 ]; then changed_users+=("$uid"); echo "updated $uid ($n entries)"; fi
+      if [ "$n" -gt 0 ]; then changed_users+=("$uid"); changed_count=$((changed_count+1)); echo "updated $uid ($n entries)"; fi
     done < <(php occ user:list --output=json | php -r 'foreach (array_keys(json_decode(stream_get_contents(STDIN), true)) as $u) echo $u, "\n";')
-    for uid in "${changed_users[@]}"; do
+    for uid in ${changed_users[@]+"${changed_users[@]}"}; do
       php occ files:scan --quiet --path="/$uid/files" >/dev/null
     done
-    [ "${#changed_users[@]}" -gt 0 ] || echo "no account changes"
+    [ "$changed_count" -gt 0 ] || echo "no account changes"
     EOS
   args:
     executable: /bin/bash
