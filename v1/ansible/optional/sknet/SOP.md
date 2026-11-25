@@ -10,7 +10,7 @@ Conventions in this file: placeholders are `<env>` (dev, staging, prod), `<insta
 
 **Scope, what it owns.**
 
-- The swarm stack `sknet-<env>`: `orchestrator`, `inlet`, `outlet`, `console`, single-node KRaft `kafka`, `clickhouse`, and, when `LIVE_UPSTREAM` is set, a `live-proxy` (Caddy).
+- The swarm stack `sknet-<env>`: `orchestrator`, `inlet`, `outlet`, `console`, single-node KRaft `kafka`, `clickhouse`, and the `gate` (Caddy), which fronts the console and, when `LIVE_UPSTREAM` is set, the live view.
 - The flow port allowlist on `DATA_NODE`: `sknet-<env>-fw.service` and the iptables chain `SKNET-<ENV>`.
 - The exporter host play: `sknet-softflowd@<interface>.service` per interface, env files under `/etc/sknet`.
 - The live host play: `sknet-live.service` (ntopng container) and `sknet-live-fw.service` (chain `SKNET-LIVE`, tcp 3000).
@@ -47,7 +47,7 @@ flowchart TD
       nfw["SKNET-LIVE chain<br/>sknet_live_allow_sources"]
       ntop["ntopng container<br/>sknet_live_bind:3000"]
     end
-    proxy["live-proxy (caddy) :8080"]
+    proxy["gate (caddy) :8080"]
     traefik["Traefik<br/>sknet-env-allow, TRAEFIK_MIDDLEWARES, authentik@file"]
     admin(["admin browser"])
 
@@ -88,8 +88,8 @@ Where the code lives: `deploy_sknet-<env>.yml` (three env plays), `exporters.yml
 | Piece | Where | Notes |
 |---|---|---|
 | inlet | `DATA_NODE` | udp `NETFLOW_PORT` (2055) and `IPFIX_PORT` (4739), published `mode: host` so the source address survives |
-| kafka, clickhouse, outlet, orchestrator, console | `DATA_NODE` | overlay only; data in `DATA_DIR/{kafka,clickhouse,outlet,console}` |
-| live-proxy | any node, or `PROXY_PLACEMENT_CONSTRAINTS` | only when `LIVE_UPSTREAM` is set; reaches ntopng from the node's own address |
+| kafka, clickhouse, outlet, orchestrator, console | `DATA_NODE` | `sknet-<env>` overlay only; data in `DATA_DIR/{kafka,clickhouse,outlet,console}` |
+| gate | any node except the live host (default from the inventory, or `PROXY_PLACEMENT_CONSTRAINTS`) | always; the only service on `cloud-public-<env>`; needs `X-Sknet-Gate`; reaches ntopng from the node's own address |
 | softflowd | exporter hosts | one systemd instance per interface; unit `sknet-softflowd@.service`; env `/etc/sknet/softflowd-<interface>.env` |
 | ntopng | live host | `sknet-live.service`, host network, `--memory` and `MemoryMax` from `sknet_live_memory_max` (512M) |
 
@@ -98,7 +98,7 @@ Where the code lives: `deploy_sknet-<env>.yml` (three env plays), `exporters.yml
 1. The router chain is `sknet-<env>-allow`, then `TRAEFIK_MIDDLEWARES`, then (authentik mode) `authentik@file`. The allowlist is first.
 2. `ALLOW_CIDRS` is judged on the address Traefik sees (ipStrategy depth 0). Behind NAT or a tunnel that is not the client.
 3. `AUTH_MODE: authentik` maps the `X-authentik-username`, `-name` and `-email` headers to the console login; no header, no access. `AUTH_MODE: allowlist` admits everyone the allowlist admits as one fixed user, and is refused with `CLOUDFLARED`.
-4. **Header trust.** The console and Akvorado trust the login header. Keep the `sknet-<env>` network private and publish nothing but the router.
+4. **Header trust and the gate.** The console and Akvorado trust the login header, and ntopng has no login. The shared `cloud-public-<env>` network is the boundary, and only `gate` sits on it. Traefik adds `X-Sknet-Gate` (vault `GATE_SECRET`, required, 32 or more characters, `openssl rand -hex 32`) on both routers; the gate answers 403 without it, strips it and proxies on over `sknet-<env>`. `/debug` is blocked on the console host. Keep `sknet-<env>` private too.
 
 ## 3. Build
 
@@ -142,7 +142,7 @@ The real-Ansible render gate (`v1/tests/render/render_playbooks.py`) renders the
 2. **Vault and inventory.** Write the `sknet:` vault block and the instance-private exporter inventory (groups `sknet_exporter_hosts`, `sknet_live_hosts`; hostvars in the README).
 3. **Stack.** `deploy_sknet-<env>.yml` with `-i <exporters ini>` (see §3 for the command without `--check --diff`).
 4. **Exporters.** `exporters.yml`, one host at a time with `-l <host>`.
-5. **Live view** (optional). `live.yml -l <host>`, then set `LIVE_UPSTREAM` in the vault and redeploy the stack to add the live router and proxy.
+5. **Live view** (optional). `live.yml -l <host>`, then set `LIVE_UPSTREAM` in the vault and redeploy the stack (with the live hosts in the inventory) to add the live host to the gate.
 6. **Verify** (§5.2).
 
 The stack deploy script waits up to `HEALTH_WAIT_SECONDS` (300) for the orchestrator to converge, then prints the console URL, the live URL when enabled, and the inlet ports.
@@ -208,7 +208,7 @@ There is no network API. Reference points:
 - **Units.** `sknet-<env>-fw.service` (DATA_NODE), `sknet-softflowd@<interface>.service` (exporters), `sknet-live.service` and `sknet-live-fw.service` (live host).
 - **iptables chains.** `SKNET-<ENV>` (hooked into `INPUT` and `DOCKER-USER`), `SKNET-LIVE` (hooked into `INPUT` for tcp 3000).
 - **Paths.** `/var/data/config/sknet-<env>/` (stack and configs on the manager), `DATA_DIR` (data on `DATA_NODE`), `/etc/sknet/` (exporter env files), `/var/lib/sknet-live/ntopng` (live data).
-- **Ports.** udp 2055 (NetFlow v9), udp 4739 (IPFIX), tcp 3000 (ntopng, bound to `sknet_live_bind`), tcp 8080 (console and proxy, overlay only).
+- **Ports.** udp 2055 (NetFlow v9), udp 4739 (IPFIX), tcp 3000 (ntopng, bound to `sknet_live_bind`), tcp 8080 (the gate and the console, overlay only).
 - **Upstream docs.** [Akvorado](https://github.com/akvorado/akvorado/tree/main/console/data/docs), [softflowd](https://github.com/irino/softflowd), [ntopng](https://www.ntop.org/guides/ntopng/).
 
 ## 8. Troubleshooting
@@ -224,7 +224,8 @@ There is no network API. Reference points:
 | Interface shows as a number | The index is not in that exporter's `sknet_interfaces`, or the metadata is stale (redeploy). |
 | 403 on the console | Client address not in `ALLOW_CIDRS` (judged on what Traefik sees), or an off-mesh resolver returned the public address. This is the allowlist working. |
 | Console loads but you are anonymous or looped to sign-in | Authentik headers missing; check `SSO_MIDDLEWARE` on the router. |
-| Live view 502 or timeout | The proxy reaches ntopng from its node's address. Add every node that can run it to `sknet_live_allow_sources`, or set `PROXY_PLACEMENT_CONSTRAINTS`. Check `systemctl status sknet-live`. |
+| Live view 502 or timeout | Where does the gate run? On another node, that node's address must be in `sknet_live_allow_sources`. On the live host itself (also a swarm node) the traffic comes from the `docker_gwbridge` subnet and is dropped: keep the gate off it (`PROXY_PLACEMENT_CONSTRAINTS`, or the inventory default) or add that subnet (admits every container there). Check `LIVE_UPSTREAM` equals `http://<sknet_live_bind>:3000`, `systemctl status sknet-live`, and after a host firewall reload `systemctl restart sknet-live-fw`. |
+| Plain `forbidden` (403) from the gate | The `X-Sknet-Gate` header is missing or wrong: both routers must end with `sknet-<env>-gate`; after changing `GATE_SECRET` redeploy. |
 | ntopng restarts under load | The memory cap is working. Lower `sknet_live_max_hosts` and `sknet_live_max_flows`, capture fewer interfaces, or raise `sknet_live_memory_max` if the host can spare it. |
 | Flows stop, disk nearly full | `MIN_FREE_GB` tripped. Lower the TTLs, free space, then flows resume. |
 | Traffic looks doubled | Forwarded traffic is seen on two interfaces. Filter by exporter and interface. |

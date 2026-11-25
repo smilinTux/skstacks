@@ -18,10 +18,13 @@ sknet:
   CLUSTERNAME: "<cluster>"
   DOMAIN: "example.com"
   DATA_NODE: "<swarm node hostname>"
+  GATE_SECRET: "<random, 32+ characters: openssl rand -hex 32>"
   FLOW_SOURCES: ["192.0.2.10", "198.51.100.7"]
   ALLOW_CIDRS: ["192.0.2.0/24", "100.64.0.0/10"]
   LIVE_UPSTREAM: "http://192.0.2.30:3000"     # optional, enables the live router
 ```
+
+`GATE_SECRET` is required (at least 32 characters of letters, digits, dash or underscore). It is the value Traefik sends in the `X-Sknet-Gate` header and the gate requires; see [architecture](./architecture.md#header-trust-and-the-gate). `DATA_NODE` must be both the swarm node hostname and a host name the deploy's inventory can reach: the data directories and the flow firewall are created on it with `delegate_to`, so a hostname that is not an inventory host fails the deploy.
 
 The exporter inventory is an instance-private ini (not in the framework):
 
@@ -80,7 +83,7 @@ Interface rules, enforced by both the deploy and the host play: name 1 to 15 cha
      framework/v1/ansible/optional/sknet/live.yml -l gateway-1
    ```
 
-   Set `LIVE_UPSTREAM` in the vault and redeploy the stack to create the live router and proxy.
+   Set `LIVE_UPSTREAM` in the vault and redeploy the stack to add the live host to the gate. Run the deploy with the live hosts in the inventory (`-i <ini>` with `sknet_live_hosts`) so it keeps the gate off the live host and checks `LIVE_UPSTREAM` against `sknet_live_bind`.
 
 4. Verify (next section).
 
@@ -216,9 +219,18 @@ A 403 comes from the allowlist, before sign-in.
 - A resolver outside the mesh returned the public address. That client is meant to be refused.
 - If you get an Authentik sign-in loop or a console with no user instead, the forward-auth headers are not arriving (`X-authentik-username` is empty); check the SSO middleware on the router.
 
+### 403 "forbidden" from the gate
+
+A plain `forbidden` body (not the allowlist's 403) comes from the gate: the request did not carry the right `X-Sknet-Gate` header. Traefik adds it through the `sknet-<env>-gate` middleware, which both routers must end with. After changing `GATE_SECRET`, redeploy so the Traefik label and the gate's Docker secret change together. A request that reaches the gate any other way (another container on `cloud-public-<env>`) is refused by design.
+
 ### Live view returns 502 or times out
 
-The proxy reaches the ntopng host from the address of the swarm node running it. Add every node that can run the proxy to `sknet_live_allow_sources`, or pin it with `PROXY_PLACEMENT_CONSTRAINTS`. Also check that ntopng is up (`systemctl status sknet-live`) and bound to the address in `LIVE_UPSTREAM`.
+Work through these in order:
+
+1. Where is the `gate` running (`docker service ps sknet-<env>_gate`)? On another swarm node its traffic reaches ntopng from that node's address, which must be in `sknet_live_allow_sources`. On the live host itself (when that is also a swarm node) the traffic arrives from the `docker_gwbridge` subnet, not the node address, and `SKNET-LIVE` drops it: adding the node address does not help. Keep the gate off the live host (the deploy does that by default when the live hosts are in the inventory; or set `PROXY_PLACEMENT_CONSTRAINTS`), or add the host's `docker_gwbridge` subnet to `sknet_live_allow_sources` (this admits every container on that host).
+2. Is `LIVE_UPSTREAM` exactly `http://<sknet_live_bind>:3000`? The deploy warns when it matches no host of `sknet_live_hosts`.
+3. Is ntopng up (`systemctl status sknet-live`) and bound to that address?
+4. After a host firewall reload (ufw, firewalld) the `SKNET-LIVE` hook may be gone: `systemctl restart sknet-live-fw`.
 
 ### ntopng memory
 

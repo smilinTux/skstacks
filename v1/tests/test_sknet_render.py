@@ -1,7 +1,7 @@
 """sknet's swarm deploy rendered through REAL Ansible (render/render_playbooks.py)
 with a given vault (and, where a test needs it, an exporter inventory group):
 the flattened Akvorado stack (orchestrator, inlet, outlet, console, Kafka,
-ClickHouse and the optional live proxy), every image pinned, the flow inlet's
+ClickHouse and the gate that fronts the console and the optional live view), every image pinned, the flow inlet's
 UDP ports published in host mode, every data service pinned to DATA_NODE with
 its volumes on local disk under DATA_DIR, the Traefik routers with the
 ipAllowList middleware always applied (also without SSO), Akvorado's own

@@ -17,17 +17,32 @@ Each entry says what an instance must do, if anything.
   `sknet-<env>-allow` ipAllowList (`ALLOW_CIDRS`, default RFC 1918 and 100.64.0.0/10) on every
   router, always, plus Authentik forward auth (`AUTH_MODE: authentik`, or `allowlist` for the
   address gate alone). Interface names come from static exporter metadata (inventory group
-  `sknet_exporter_hosts` hostvars, else vault `STATIC_EXPORTERS`); no SNMP. `LIVE_UPSTREAM`
-  adds a pinned Caddy service that fronts an ntopng running on a host; unset, it renders nothing.
-  Retention derives from `FLOW_TTL_DAYS` (raw, 1m) and `FLOW_AGG_TTL_DAYS` (5m, hourly 4x, at most 365); ClickHouse `keep_free_space_bytes` comes from `MIN_FREE_GB`; the allowlist uses ipStrategy depth 0 and `AUTH_MODE: allowlist` is refused with `CLOUDFLARED`. Default memory limits total 3.4 GB. New overlay subnets 172.16.67.0/24 (prod), .68 (staging),
-  .69 (dev) in `shared/networks`; catalog row and section; render vars `sknet.{example,set,with.sksso}.yml`.
+  `sknet_exporter_hosts` hostvars, else vault `STATIC_EXPORTERS`); no SNMP.
+- The `gate` service (pinned Caddy, always deployed) is the only sknet service on the shared
+  `cloud-public-<env>` network; the console is on the private `sknet-<env>` network only. Traefik
+  adds an `X-Sknet-Gate` request header on both routers (the `sknet-<env>-gate` headers
+  middleware, value from the new vault key `GATE_SECRET`), and the gate answers 403 to any
+  request without it, strips it before proxying, and answers 404 for `/debug` on the console
+  host. The secret reaches the gate as a Docker secret. The gate stays off the hosts of
+  inventory group `sknet_live_hosts` by default (`PROXY_PLACEMENT_CONSTRAINTS` overrides).
+  `LIVE_UPSTREAM` adds the live host to the gate (an ntopng running on a host); unset, the gate
+  has no live host block.
+- Retention derives from `FLOW_TTL_DAYS` (raw, 1m) and `FLOW_AGG_TTL_DAYS` (5m, hourly 4x, at most
+  365). ClickHouse `keep_free_space_bytes` comes from `MIN_FREE_GB`. The allowlist uses ipStrategy
+  depth 0 and `AUTH_MODE: allowlist` is refused with `CLOUDFLARED`. Default memory limits total
+  3.4 GB. New overlay subnets 172.16.67.0/24 (prod), .68 (staging), .69 (dev) in
+  `shared/networks`; catalog row and section; render vars `sknet.{example,set,with.sksso}.yml`.
 - `sknet` exporter host play `exporters.yml` (hosts `sknet_exporter_hosts`, or the group named by
   `sknet_exporter_hosts_group`): softflowd as one `sknet-softflowd@<interface>` systemd instance per
-  `sknet_interfaces` entry (`-i <index>:<name>` forced ifindex, `-n <sknet_collector>:<NETFLOW_PORT> -v 9 -T full`, port read from the instance vault like the deploy plays (a differing `sknet_netflow_port` hostvar is refused),
-  env file per instance under `/etc/sknet`, modest `MemoryMax` and `CPUQuota`). The collector must be an IPv4
-  literal and private unless `sknet_allow_public_collector: true`; instances no longer listed are stopped,
-  disabled and removed; the distro `softflowd.service` is masked; softflowd is installed with apt only when
-  missing and `allow_package_install` is true; `sknet_state: absent` removes it all and leaves the package.
+  `sknet_interfaces` entry (`-i <index>:<name>` forced ifindex,
+  `-n <sknet_collector>:<NETFLOW_PORT> -v 9 -T full`; the port is read from the instance vault like
+  the deploy plays, and a differing `sknet_netflow_port` hostvar is refused), env file per instance
+  under `/etc/sknet`, modest `MemoryMax` and `CPUQuota`. The collector must be an IPv4 literal and
+  private unless `sknet_allow_public_collector: true`; instances no longer listed are stopped,
+  disabled and removed; the distro `softflowd.service` is masked; softflowd is installed with apt
+  only when missing and `allow_package_install` is true; `sknet_state: absent` removes it all and
+  leaves the package. The play warns (never fails) when `sknet_export_address` is not in the
+  vault's `FLOW_SOURCES` or differs from the source address of the route to the collector.
   The interface hostvar rules (IPv4 export address, index 100 to 65535 and unique, class) now live in
   `tasks/exporter_check.yml`, shared with the swarm deploy.
 - `sknet` live host play `live.yml` (hosts `sknet_live_hosts`, or the group named by
@@ -44,9 +59,13 @@ Each entry says what an instance must do, if anything.
   image, and keeps the data dir unless `sknet_live_purge_data: true`. The interface name rule is now
   the shared `sknet_re_ifname`.
 - **Instance action:** none until the role is used. To use it: add a `sknet:` vault block
-  (`DATA_NODE` and `FLOW_SOURCES` are required, and either the exporter inventory or
-  `STATIC_EXPORTERS`), choose `FLOW_TTL_DAYS` before the first start (ClickHouse sizes its
-  partitions from it), and run `deploy_sknet-<env>.yml`.
+  (`DATA_NODE`, `FLOW_SOURCES` and the new vault key `GATE_SECRET` are required, and either the
+  exporter inventory or `STATIC_EXPORTERS`). `GATE_SECRET` is a random string of at least 32
+  characters (letters, digits, dash, underscore; for example `openssl rand -hex 32`): the deploy
+  refuses to run without it. Choose `FLOW_TTL_DAYS` before the first start (ClickHouse sizes its
+  partitions from it), then run `deploy_sknet-<env>.yml`. `DATA_NODE` must also be a host name in
+  the deploy's inventory. To use the live view, run `live.yml` first, set `LIVE_UPSTREAM`, and
+  deploy with the live hosts in the inventory.
 
 ### skha: node labels follow the VIP (`skha.vip_node_labels`)
 

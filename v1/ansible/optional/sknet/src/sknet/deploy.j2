@@ -33,7 +33,8 @@ cd "${CONFIG_DIR}"
 
 # Swarm configs are read from ${CONFIG_DIR}/configs once, here, and stored in
 # the Raft log; each is named after its content, so a changed file rolls the
-# service that mounts it, and --prune drops the superseded ones.
+# service that mounts it. --prune removes services that left the stack file only;
+# superseded hash-named configs and secrets stay (they are tiny).
 docker stack deploy \
     -c "${COMPOSE_FILE}" \
     --prune \

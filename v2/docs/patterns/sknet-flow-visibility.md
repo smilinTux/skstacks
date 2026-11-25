@@ -81,8 +81,10 @@ If someone needs more from the site, that is a different, deliberate decision.
 - **Allowlist.** The ingress lists the LAN and mesh ranges and refuses everything else with 403
   before sign-in. It must judge the real client address: host-mode ingress, no NAT, tunnel or proxy
   in front. Otherwise rely on SSO as the gate and do not use an allowlist-only mode.
-- **Header trust.** Flow consoles typically trust a login header set by the SSO proxy. Keep the
-  network between proxy and console private and publish only the router.
+- **Header trust.** Flow consoles typically trust a login header set by the SSO proxy. The shared
+  ingress network is the real boundary, since any container on it can reach a console directly. Put
+  only one gate service on it that requires a secret header the ingress adds (sknet does this with
+  `GATE_SECRET`), keep the console on a private network behind it, and publish only the router.
 
 ## The double-count caveat
 

@@ -18,17 +18,18 @@ flowchart LR
     ORCH["orchestrator"] -.-> INLET & OUTLET & CH
     CONSOLE["console"] --> CH
   end
-  skfence["skfence (Traefik)<br/>allowlist + SSO"] --> CONSOLE
-  skfence --> LIVEP["live proxy"] --> NTOP["ntopng on the gateway"]
+  skfence["skfence (Traefik)<br/>allowlist + SSO"]
+  skfence -->|"adds secret header"| GATE["gate (caddy)"] --> CONSOLE
+  GATE --> NTOP["ntopng on the gateway"]
   sksso["sksso (Authentik)"] -.forward auth.-> skfence
   skmesh["skmesh"] -.mesh DNS + one-way telemetry exception.-> EXP
 ```
 
 ## Secrets
-None. sknet holds no credentials of its own: the console takes its login from the SSO proxy headers, and the exporters and collector exchange only flow records. The vault block carries configuration only.
+`GATE_SECRET` (required): a random string of 32 or more characters that Traefik sends as the `X-Sknet-Gate` header and the gate requires. Nothing else: the console takes its login from the SSO proxy headers, and the exporters and collector exchange only flow records.
 
 ## Config
-`DATA_NODE` (required) · `DATA_DIR=/var/lib/sknet-<env>` · `FLOW_SOURCES` (required) · `ALLOW_CIDRS` · `AUTH_MODE=authentik` · `NETFLOW_PORT=2055` · `IPFIX_PORT=4739` · `FLOW_TTL_DAYS=30` · `FLOW_AGG_TTL_DAYS=90` · `DISK_BUDGET_GB=20` · `MIN_FREE_GB=5` · `LIVE_UPSTREAM` (unset: no live view). Full table: [role README](../../../v1/ansible/optional/sknet/README.md#configuration-vault).
+`DATA_NODE` (required) · `GATE_SECRET` (required) · `DATA_DIR=/var/lib/sknet-<env>` · `FLOW_SOURCES` (required) · `ALLOW_CIDRS` · `AUTH_MODE=authentik` · `NETFLOW_PORT=2055` · `IPFIX_PORT=4739` · `FLOW_TTL_DAYS=30` · `FLOW_AGG_TTL_DAYS=90` · `DISK_BUDGET_GB=20` · `MIN_FREE_GB=5` · `LIVE_UPSTREAM` (unset: no live view). Full table: [role README](../../../v1/ansible/optional/sknet/README.md#configuration-vault).
 
 ## Dependencies
 - **depends_on:** skfence (Traefik ingress), sksso (forward auth and portal tile), a swarm node with AVX2 and local disk

@@ -17,7 +17,7 @@ Built on [Akvorado](https://github.com/akvorado/akvorado) (AGPL-3.0) and [ntopng
 |---|---|---|
 | Collector and console: Akvorado `orchestrator`, `inlet`, `outlet`, `console`, plus single-node KRaft Kafka and ClickHouse | `deploy_sknet-<env>.yml` | swarm stack `sknet-<env>`, all stateful services pinned to `DATA_NODE`, data on local disk |
 | Flow exporters: softflowd, one instance per interface, NetFlow v9, unsampled | `exporters.yml` | `sknet-softflowd@<interface>.service` on each host of group `sknet_exporter_hosts` |
-| Live view: ntopng Community 7.0, packet capture on the gateway's own interfaces | `live.yml` | `sknet-live.service` (pinned container, host network, memory-capped) on each host of group `sknet_live_hosts`; fronted by a Caddy proxy service in the stack |
+| Live view: ntopng Community 7.0, packet capture on the gateway's own interfaces | `live.yml` | `sknet-live.service` (pinned container, host network, memory-capped) on each host of group `sknet_live_hosts`; fronted by the stack's `gate` (Caddy) service |
 
 The inlet's UDP ports (`NETFLOW_PORT` 2055, `IPFIX_PORT` 4739) are published in host mode so the exporter's source address survives, and an iptables allowlist (`sknet-<env>-fw.service`) drops every source not in `FLOW_SOURCES`. The web UIs are routed through Traefik with an address allowlist (`ALLOW_CIDRS`) and, by default, Authentik forward auth.
 
@@ -30,8 +30,9 @@ flowchart LR
       console --> ch
     end
     admin(["admin browser"]) -->|"https"| traefik["Traefik<br/>sknet-env-allow + SSO"]
-    traefik --> console
-    traefik --> proxy["live-proxy (caddy)"] --> ntop["ntopng on the gateway<br/>(live.yml)"]
+    traefik -->|"adds X-Sknet-Gate"| gate["gate (caddy), the only service<br/>on cloud-public"]
+    gate --> console
+    gate -->|"live host"| ntop["ntopng on the gateway<br/>(live.yml)"]
 ```
 
 ## Quickstart
@@ -106,7 +107,7 @@ The vault holds one `sknet:` block, merged over `vars/defaults.yml`; set only wh
 |---|---|---|
 | `CLUSTERNAME`, `DOMAIN` | cluster and domain of the play | Host names are `<HOSTNAME>[-env].<CLUSTERNAME>.<DOMAIN>` (`DOMAIN` alone when `CLOUDFLARED`) |
 | `HOSTNAME` / `LIVE_HOSTNAME` | `sknet` / `sknet-live` | Console and live labels; a value with a dot is a full host name |
-| `DATA_NODE` | required | Swarm node hostname that holds Kafka, ClickHouse and the flow ports |
+| `DATA_NODE` | required | Swarm node hostname that holds Kafka, ClickHouse and the flow ports. It must also be a host name in the deploy's inventory (the data directories and the flow firewall are created on it with `delegate_to`) |
 | `GATE_SECRET` | required | Random string of at least 32 characters (letters, digits, dash, underscore; `openssl rand -hex 32`). Traefik adds it as the `X-Sknet-Gate` header and the `gate` service refuses any request without it |
 | `DATA_DIR` | `/var/lib/sknet-<env>` | Local disk path on `DATA_NODE`; refused under `/var/data` |
 | `AKVORADO_IMAGE` | `quay.io/akvorado/akvorado:2026.10.1` | Pinned by tag or digest; floating tags refused |
@@ -126,9 +127,9 @@ The vault holds one `sknet:` block, merged over `vars/defaults.yml`; set only wh
 | `DISK_BUDGET_GB` | `20` | Planning figure (at least 5); deploy refuses a disk where `DATA_DIR` used plus free is below it |
 | `MIN_FREE_GB` | `5` | ClickHouse stops writing below this much free space |
 | `CLICKHOUSE_MEMORY_LIMIT`, `KAFKA_MEMORY_LIMIT`, `AKVORADO_MEMORY_LIMIT` | `1536M`, `704M`, `512M` | `AKVORADO_MEMORY_LIMIT` is the outlet |
-| `ORCHESTRATOR_MEMORY_LIMIT`, `INLET_MEMORY_LIMIT`, `CONSOLE_MEMORY_LIMIT`, `PROXY_MEMORY_LIMIT` | `192M`, `160M`, `256M`, `64M` | Whole stack 3424M, under 3.5 GB |
-| `LIVE_UPSTREAM` | unset | `http://<IPv4>:<port>` of the ntopng host; unset renders no live router or proxy |
-| `PROXY_PLACEMENT_CONSTRAINTS` | `[]` | Swarm placement for the live proxy |
+| `ORCHESTRATOR_MEMORY_LIMIT`, `INLET_MEMORY_LIMIT`, `CONSOLE_MEMORY_LIMIT`, `PROXY_MEMORY_LIMIT` | `192M`, `160M`, `256M`, `64M` | `PROXY_MEMORY_LIMIT` is the gate. Whole stack 3424M, under 3.5 GB |
+| `LIVE_UPSTREAM` | unset | `http://<IPv4>:<port>` of the ntopng host; unset renders no live host on the gate (the console still goes through it) |
+| `PROXY_PLACEMENT_CONSTRAINTS` | `[]` | Swarm placement for the `gate`. Empty means: keep it off every host of `sknet_live_hosts` in the inventory (`node.hostname != <name>`); a list replaces that default |
 | `LOG_MAX_SIZE`, `LOG_MAX_FILES` | `10m`, `3` | Container log rotation |
 | `AUTHENTIK_TILE`, `AUTHENTIK_TILE_SLUG`, `AUTHENTIK_TILE_NAME`, `AUTHENTIK_TILE_GROUP`, `AUTHENTIK_TILE_ICON`, `AUTHENTIK_TILE_DESCRIPTION`, `AUTHENTIK_TILE_OPEN_IN_NEW_TAB` | tile on | Portal tile (a bookmark; the sign-in gate is `AUTH_MODE` and `ALLOW_CIDRS`) |
 
@@ -144,7 +145,7 @@ The vault holds one `sknet:` block, merged over `vars/defaults.yml`; set only wh
 | `sknet_softflowd_max_flows`, `_maxlife`, `_memory_max`, `_cpu_quota` | exporters | `32768`, `60` s, `128M`, `10%` |
 | `sknet_live_interfaces` | live | 1 to 8 distinct interface names to capture |
 | `sknet_live_bind` | live | IPv4 literal for the ntopng UI (port 3000); `0.0.0.0` refused; public refused unless `sknet_live_allow_public_bind: true` |
-| `sknet_live_allow_sources` | live | Non-empty list of IPv4 or CIDR (prefix /8 or longer) allowed to reach tcp 3000; include every swarm node that can run the live proxy |
+| `sknet_live_allow_sources` | live | Non-empty list of IPv4 or CIDR (prefix /8 or longer) allowed to reach tcp 3000; include the address of every swarm node that can run the `gate` (a gate on the live host itself needs its `docker_gwbridge` subnet instead, see Security notes) |
 | `sknet_live_memory_max` | live | `512M`; applied to the container (swap included) and the unit |
 | `sknet_live_max_hosts`, `sknet_live_max_flows` | live | `16384` each (ntopng `-x`, `-X`) |
 | `sknet_live_purge_data` | live | With `sknet_state: absent`, also delete the data directory |
@@ -157,8 +158,9 @@ Raw flow rows are about 100 to 150 bytes compressed: `GB per day = flows per sec
 ## Security notes
 
 - **Allowlist first.** `ALLOW_CIDRS` is applied on every router before SSO. It judges the address Traefik sees; behind NAT or a tunnel that is not the client, which is why `AUTH_MODE: allowlist` is refused with `CLOUDFLARED`.
-- **Header trust.** The console and Akvorado trust the login header the proxy sets. Keep the `sknet-<env>` network private and publish nothing but the router, or anything that can reach the console container can send that header and be anyone.
-- **Live view.** ntopng runs with its own login off (`-l 1`); the bind address, the `SKNET-LIVE` iptables chain and the SSO proxy are the access control. The live proxy reaches ntopng from the address of the swarm node running it, so list those nodes in `sknet_live_allow_sources`.
+- **Header trust and the gate.** The console and Akvorado trust the login header Authentik's forward auth sets, and ntopng has no login. The shared `cloud-public-<env>` network is the boundary: every routed service of every stack is on it, so any container there could forge that header or reach ntopng. Only the `gate` service (Caddy) sits on it. Traefik adds the `X-Sknet-Gate` header (vault `GATE_SECRET`, required, 32 or more characters) to both routers, and the gate answers 403 to any request without it, strips it, and then proxies the console host to the console over the private `sknet-<env>` network and the live host to ntopng. `/debug` is blocked on the console host. The secret is a Docker secret for the gate and a Traefik label, so a Swarm manager can read it; rotate it by changing the vault key and redeploying. Keep `sknet-<env>` private too: nothing else should be attached to it.
+- **Live view.** ntopng runs with its own login off (`-l 1`); the bind address, the `SKNET-LIVE` iptables chain and the gate are the access control. The gate reaches ntopng from the address of the swarm node running it, so list those nodes in `sknet_live_allow_sources`. A gate on the live host itself (when it is also a swarm node) arrives from the `docker_gwbridge` subnet instead and is dropped, so the deploy keeps the gate off hosts of `sknet_live_hosts` by default (`PROXY_PLACEMENT_CONSTRAINTS` overrides). The alternative is adding that host's `docker_gwbridge` subnet to `sknet_live_allow_sources`, which admits every container on the host. `live.yml` warns when the host is an active swarm node. The `SKNET-LIVE` hook matches only `sknet_live_bind` on tcp 3000; rerun `systemctl restart sknet-live-fw` after a host firewall reload (ufw, firewalld). ntopng bundles a Redis on the host's loopback port 6379: a host Redis there would clash and silently receive ntopng's preferences.
+- **Reboot window.** `sknet-<env>-fw.service` starts after `docker.service`, so for a few seconds after a reboot the flow ports accept datagrams from any address. The inlet only accepts NetFlow into Kafka, so the exposure is small.
 - **Double counting.** softflowd reports one interface index as both input and output, so traffic forwarded between two monitored interfaces shows under both. Group by exporter and interface and do not sum across interfaces.
 - **One-way sites.** A site that may not open connections into the core can still export flows with one narrow exception: one UDP port to one collector. See [docs/multi-hop-pattern.md](./docs/multi-hop-pattern.md).
 

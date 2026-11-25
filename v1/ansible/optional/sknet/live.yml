@@ -18,7 +18,7 @@
 # of the instance-private inventory group sknet_live_hosts (or the group named by
 # sknet_live_hosts_group), for example
 #   ansible-playbook -i <ini> live.yml [-l <host>]
-# The swarm stack's live proxy (vault LIVE_UPSTREAM, http://<ipv4>:3000) points here.
+# The swarm stack's gate service (vault LIVE_UPSTREAM, http://<ipv4>:3000) points here.
 #
 # Hostvars:
 #   sknet_live_interfaces     list of interface names to capture (1 to 8; same name rule as the exporters)
@@ -39,6 +39,17 @@
 # Access control: ntopng runs with its own login disabled (-l 1, everyone is admin), because
 # the SSO proxy (Authentik) and the allowlist front it. Hence the guards on the bind address
 # and the source list. LIVE_ADMIN_PASSWORD is not used.
+#
+# Where the gate runs matters. From another swarm node its traffic reaches ntopng from that
+# node's address (list every such node in sknet_live_allow_sources). From this host, when it is
+# also a swarm node, the traffic arrives from the docker_gwbridge subnet and SKNET-LIVE drops it:
+# keep the gate off this host (the deploy does by default when this host is in the inventory
+# group; PROXY_PLACEMENT_CONSTRAINTS overrides) or add the docker_gwbridge subnet to
+# sknet_live_allow_sources, which admits every container on this host. The play warns when the
+# host is an active swarm node. The INPUT hook matches sknet_live_bind only; after a host firewall
+# reload (ufw, firewalld) rerun `systemctl restart sknet-live-fw`. The ntopng image bundles a
+# Redis on the host's loopback port 6379: a host Redis there would clash and would silently
+# receive ntopng's preferences.
 #
 # What lands on the host: sknet-live.service, sknet-live-fw.service, the allowlist script, and
 # <data dir>/ntopng. Docker must already be installed; the play fails clearly if it is not.

@@ -35,14 +35,15 @@ flowchart LR
   GW["gateway host<br/>ntopng live view"]
   X1 -- "NetFlow v9" --> IN
   X2 -- "NetFlow v9" --> IN
-  TR["Traefik<br/>allowlist + SSO"] --> CON
-  TR --> PX["live proxy"] --> GW
+  TR["Traefik<br/>allowlist + SSO"] --> PX["gate<br/>secret header"]
+  PX --> CON
+  PX --> GW
   ADMIN(["admin browser<br/>on the LAN or mesh"]) --> TR
 ```
 
 1. **Exporters** (`exporters.yml`, a host play). `softflowd` runs once per interface you name and sends unsampled NetFlow v9 to the collector. Nothing else is installed on those hosts.
 2. **The collector stack** (`deploy_sknet-<env>.yml`, a swarm deploy). Akvorado plus Kafka and ClickHouse on one pinned node, with a port allowlist on the flow ports and a Traefik router with an address allowlist and single sign-on in front of the console.
-3. **The live view** (`live.yml`, a host play, optional). ntopng in a container with host networking on the gateway, capped in memory, fronted by the same allowlist and sign-in through a small proxy service in the stack.
+3. **The live view** (`live.yml`, a host play, optional). ntopng in a container with host networking on the gateway, capped in memory, fronted by the same allowlist and sign-in through the stack's small `gate` service.
 
 All three are opt-in. An estate that never runs these plays gets nothing from sknet.
 
@@ -60,7 +61,7 @@ Flow data is sensitive: it records every conversation. So sknet is private by co
 
 ## Sizing at a glance
 
-Defaults hold the whole stack to about 3.4 GB of memory (3424M: ClickHouse 1536M, Kafka 704M, outlet 512M, console 256M, orchestrator 192M, inlet 160M, proxy 64M). ClickHouse needs a CPU with AVX2 (`grep -w avx2 /proc/cpuinfo`).
+Defaults hold the whole stack to about 3.4 GB of memory (3424M: ClickHouse 1536M, Kafka 704M, outlet 512M, console 256M, orchestrator 192M, inlet 160M, gate 64M). ClickHouse needs a CPU with AVX2 (`grep -w avx2 /proc/cpuinfo`).
 
 Raw flow rows are about 100 to 150 bytes compressed. A rule of thumb:
 
