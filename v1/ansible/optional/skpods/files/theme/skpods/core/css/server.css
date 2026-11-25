@@ -1,0 +1,569 @@
+/*
+ * skpods.id theme: login, guest pages and the Solid consent page.
+ * Loaded by Nextcloud after core/css/server.css (themes/<name>/core/css).
+ * Fonts are self-hosted (CSP font-src 'self'): Space Grotesk and
+ * JetBrains Mono, both SIL Open Font License 1.1.
+ */
+@font-face {
+	font-family: 'SKP Grotesk';
+	src: url('../fonts/space-grotesk-latin-wght-normal.woff2') format('woff2');
+	font-weight: 300 700;
+	font-display: swap;
+}
+@font-face {
+	font-family: 'SKP Mono';
+	src: url('../fonts/jetbrains-mono-latin-wght-normal.woff2') format('woff2');
+	font-weight: 100 800;
+	font-display: swap;
+}
+
+:root {
+	--skp-void: #04050b;
+	--skp-ink: #e9ecff;
+	--skp-mute: #98a0c8;
+	--skp-violet: #8b5cf6;
+	--skp-cyan: #22d3ee;
+	--skp-pink: #f472b6;
+	--skp-glass: rgba(14, 16, 32, 0.58);
+	--skp-line: rgba(255, 255, 255, 0.09);
+	--skp-grad: linear-gradient(110deg, #a78bfa 0%, #22d3ee 50%, #f472b6 100%);
+	--skp-font: 'SKP Grotesk', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+	--skp-mono: 'SKP Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+}
+
+/* ------------------------------------------------------------------ */
+/* Guest pages (login, password reset, device login, errors)           */
+/* ------------------------------------------------------------------ */
+body#body-login {
+	/* Nextcloud's own variables, re-pointed for a dark glass UI */
+	--color-main-text: var(--skp-ink);
+	--color-main-background: #0b0d1c;
+	--color-main-background-rgb: 11, 13, 28;
+	--color-main-background-blur: rgba(11, 13, 28, 0.6);
+	--color-text-maxcontrast: var(--skp-mute);
+	--color-text-maxcontrast-default: var(--skp-mute);
+	--color-border: var(--skp-line);
+	--color-border-dark: rgba(255, 255, 255, 0.18);
+	--color-border-maxcontrast: rgba(255, 255, 255, 0.28);
+	--color-background-hover: rgba(255, 255, 255, 0.06);
+	--color-background-dark: rgba(255, 255, 255, 0.08);
+	--color-primary-element: var(--skp-violet);
+	--color-primary-element-hover: #7c3aed;
+	--color-primary-element-text: #fff;
+	--color-primary-element-light: rgba(139, 92, 246, 0.16);
+	--color-primary-element-light-text: #d9ccff;
+	--color-primary-element-light-hover: rgba(139, 92, 246, 0.26);
+	--color-error: #ff6b8a;
+	--color-success: #34f5c5;
+	--border-radius-element: 14px;
+	--border-radius-large: 22px;
+	--default-font-size: 15px;
+	color-scheme: dark;
+	font-family: var(--skp-font);
+	color: var(--skp-ink);
+	background: var(--skp-void) !important;
+	background-image: none !important;
+	min-height: 100vh;
+	overflow-x: hidden;
+	position: relative;
+}
+
+/* Aurora: three slow, blurred light fields */
+body#body-login::before {
+	content: '';
+	position: fixed;
+	inset: -20vmax;
+	z-index: 0;
+	pointer-events: none;
+	background:
+		radial-gradient(38vmax 38vmax at 18% 22%, rgba(139, 92, 246, 0.55), transparent 62%),
+		radial-gradient(34vmax 34vmax at 82% 74%, rgba(34, 211, 238, 0.42), transparent 60%),
+		radial-gradient(30vmax 30vmax at 64% 8%, rgba(244, 114, 182, 0.34), transparent 60%),
+		radial-gradient(26vmax 26vmax at 8% 92%, rgba(34, 211, 238, 0.20), transparent 60%);
+	filter: blur(40px) saturate(130%);
+	animation: skp-aurora 22s ease-in-out infinite alternate;
+}
+
+/* Perspective grid floor that fades into the horizon */
+body#body-login::after {
+	content: '';
+	position: fixed;
+	left: -50vw;
+	right: -50vw;
+	bottom: -10vh;
+	height: 62vh;
+	z-index: 0;
+	pointer-events: none;
+	background-image:
+		linear-gradient(rgba(139, 92, 246, 0.35) 1px, transparent 1px),
+		linear-gradient(90deg, rgba(34, 211, 238, 0.28) 1px, transparent 1px);
+	background-size: 64px 64px;
+	transform: perspective(520px) rotateX(62deg);
+	transform-origin: center top;
+	-webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 55%);
+	mask-image: linear-gradient(to bottom, transparent 0%, #000 55%);
+	animation: skp-grid 9s linear infinite;
+	opacity: 0.55;
+}
+
+@keyframes skp-aurora {
+	0% { transform: translate3d(0, 0, 0) rotate(0deg) scale(1); }
+	50% { transform: translate3d(3vmax, -2vmax, 0) rotate(8deg) scale(1.08); }
+	100% { transform: translate3d(-3vmax, 2vmax, 0) rotate(-6deg) scale(1.02); }
+}
+@keyframes skp-grid {
+	from { background-position: 0 0, 0 0; }
+	to { background-position: 0 64px, 0 0; }
+}
+@keyframes skp-spin { to { --skp-angle: 360deg; } }
+@keyframes skp-pulse {
+	0%, 100% { filter: drop-shadow(0 0 14px rgba(34, 211, 238, 0.55)) drop-shadow(0 0 34px rgba(139, 92, 246, 0.35)); }
+	50% { filter: drop-shadow(0 0 22px rgba(244, 114, 182, 0.6)) drop-shadow(0 0 48px rgba(34, 211, 238, 0.4)); }
+}
+@keyframes skp-rise {
+	from { opacity: 0; transform: translateY(18px) scale(0.985); }
+	to { opacity: 1; transform: none; }
+}
+@keyframes skp-sheen {
+	from { transform: translateX(-120%) skewX(-18deg); }
+	to { transform: translateX(260%) skewX(-18deg); }
+}
+
+@property --skp-angle {
+	syntax: '<angle>';
+	initial-value: 0deg;
+	inherits: false;
+}
+
+body#body-login .wrapper,
+body#body-login footer {
+	position: relative;
+	z-index: 1;
+}
+
+body#body-login .wrapper {
+	min-height: calc(100vh - 72px);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 40px 16px 24px;
+	box-sizing: border-box;
+}
+body#body-login .v-align {
+	width: 100%;
+	max-width: 440px;
+	margin: 0 auto;
+}
+
+/* Brand lockup: glyph, wordmark, eyebrow */
+body#body-login #header.header-guest {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 10px;
+	margin-bottom: 28px;
+	padding: 0;
+	animation: skp-rise 0.7s cubic-bezier(.2, .8, .2, 1) both;
+}
+body#body-login #header .logo {
+	width: 76px !important;
+	height: 76px !important;
+	margin: 0 auto !important;
+	background-image: url('../img/logo.svg') !important;
+	background-size: contain !important;
+	background-repeat: no-repeat !important;
+	background-position: center !important;
+	animation: skp-pulse 5s ease-in-out infinite;
+	position: relative;
+}
+body#body-login #header::after {
+	content: 'skpods.id';
+	display: block;
+	font-family: var(--skp-font);
+	font-weight: 700;
+	font-size: 40px;
+	line-height: 1;
+	letter-spacing: -0.035em;
+	background: var(--skp-grad);
+	background-size: 200% 100%;
+	-webkit-background-clip: text;
+	background-clip: text;
+	color: transparent;
+	animation: skp-flow 8s linear infinite;
+}
+body#body-login #header::before {
+	content: 'SOLID POD \00B7  WEBID \00B7  YOURS';
+	order: 3;
+	font-family: var(--skp-mono);
+	font-size: 11px;
+	letter-spacing: 0.32em;
+	color: rgba(196, 241, 255, 0.72);
+	text-transform: uppercase;
+	padding: 5px 12px;
+	border: 1px solid rgba(34, 211, 238, 0.28);
+	border-radius: 999px;
+	background: rgba(34, 211, 238, 0.06);
+	margin-top: 6px;
+}
+@keyframes skp-flow {
+	from { background-position: 0% 50%; }
+	to { background-position: 200% 50%; }
+}
+
+/* Glass card with a rotating gradient edge */
+body#body-login .guest-box.login-box,
+body#body-login .guest-content > div > .guest-box,
+body#body-login .guest-content .update,
+body#body-login .guest-content .body-login-container {
+	position: relative;
+	width: 100%;
+	max-width: 440px;
+	box-sizing: border-box;
+	margin: 0 auto;
+	padding: 34px 30px 22px;
+	color: var(--skp-ink);
+	background: var(--skp-glass) !important;
+	-webkit-backdrop-filter: blur(22px) saturate(150%);
+	backdrop-filter: blur(22px) saturate(150%);
+	border: 1px solid transparent;
+	border-radius: 24px;
+	box-shadow:
+		0 30px 80px -20px rgba(0, 0, 0, 0.75),
+		0 0 0 1px rgba(255, 255, 255, 0.04) inset,
+		0 1px 0 rgba(255, 255, 255, 0.08) inset;
+	animation: skp-rise 0.8s 0.08s cubic-bezier(.2, .8, .2, 1) both;
+	isolation: isolate;
+}
+body#body-login .guest-box.login-box::before {
+	content: '';
+	position: absolute;
+	inset: -1px;
+	border-radius: inherit;
+	padding: 1px;
+	background: conic-gradient(from var(--skp-angle), rgba(167, 139, 250, 0.9), rgba(34, 211, 238, 0.15) 25%, rgba(34, 211, 238, 0.9) 50%, rgba(244, 114, 182, 0.15) 75%, rgba(167, 139, 250, 0.9));
+	-webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+	-webkit-mask-composite: xor;
+	mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+	animation: skp-spin 7s linear infinite;
+	pointer-events: none;
+	z-index: -1;
+}
+body#body-login .guest-box.login-box::after {
+	content: '';
+	position: absolute;
+	inset: 18% 10% auto;
+	height: 60%;
+	border-radius: 50%;
+	background: radial-gradient(closest-side, rgba(139, 92, 246, 0.22), transparent);
+	filter: blur(30px);
+	z-index: -2;
+	pointer-events: none;
+}
+
+body#body-login .login-box__wrapper,
+body#body-login .login-form,
+body#body-login .login-form__fieldset {
+	width: 100%;
+	max-width: none;
+}
+
+/* Headline: "Enter your pod" with a quiet subline */
+body#body-login .login-form__headline {
+	font-size: 0 !important;
+	margin: 0 0 22px !important;
+	text-align: left;
+	line-height: 1;
+}
+body#body-login .login-form__headline::before {
+	content: 'Enter your pod';
+	display: block;
+	font-family: var(--skp-font);
+	font-size: 26px;
+	font-weight: 650;
+	letter-spacing: -0.02em;
+	color: #fff;
+}
+body#body-login .login-form__headline::after {
+	content: 'One identity for every Solid app. Your data never leaves your pod.';
+	display: block;
+	margin-top: 10px;
+	font-family: var(--skp-font);
+	font-size: 14px;
+	font-weight: 400;
+	line-height: 1.45;
+	letter-spacing: 0;
+	color: var(--skp-mute);
+}
+
+/* Inputs */
+body#body-login .input-field {
+	margin-block: 0 14px !important;
+}
+body#body-login .input-field__input {
+	height: 52px !important;
+	font-family: var(--skp-font) !important;
+	font-size: 15px !important;
+	color: #fff !important;
+	background: rgba(255, 255, 255, 0.035) !important;
+	border: 1px solid rgba(255, 255, 255, 0.11) !important;
+	border-radius: 14px !important;
+	box-shadow: none !important;
+	transition: border-color 0.2s, box-shadow 0.2s, background 0.2s !important;
+}
+body#body-login .input-field__input:hover {
+	border-color: rgba(167, 139, 250, 0.45) !important;
+	background: rgba(255, 255, 255, 0.05) !important;
+}
+body#body-login .input-field__input:focus,
+body#body-login .input-field__input:focus-visible {
+	outline: none !important;
+	border-color: rgba(34, 211, 238, 0.85) !important;
+	background: rgba(34, 211, 238, 0.05) !important;
+	box-shadow: 0 0 0 4px rgba(34, 211, 238, 0.14), 0 0 28px -4px rgba(34, 211, 238, 0.45) !important;
+}
+body#body-login .input-field__label {
+	color: var(--skp-mute) !important;
+	font-family: var(--skp-font) !important;
+}
+body#body-login .input-field__input:focus + .input-field__label,
+body#body-login .input-field__input:not(:placeholder-shown) + .input-field__label {
+	color: #9eeaff !important;
+	background: #0d1022 !important;
+	border-radius: 6px;
+}
+body#body-login .input-field__icon,
+body#body-login .input-field__trailing-button {
+	color: var(--skp-mute) !important;
+}
+body#body-login input:-webkit-autofill {
+	-webkit-text-fill-color: #fff !important;
+	-webkit-box-shadow: 0 0 0 1000px #11142a inset !important;
+	caret-color: #fff;
+}
+
+/* Remember me */
+body#body-login .checkbox-radio-switch {
+	margin: 4px 0 18px !important;
+	color: var(--skp-mute) !important;
+	--color-primary-element: var(--skp-cyan);
+}
+body#body-login .checkbox-content__text {
+	font-family: var(--skp-font);
+	font-size: 14px;
+}
+
+/* Primary action */
+body#body-login .button-vue--vue-primary {
+	position: relative;
+	overflow: hidden;
+	height: 52px !important;
+	min-height: 52px !important;
+	border: 0 !important;
+	border-radius: 14px !important;
+	background: linear-gradient(100deg, #7c3aed 0%, #6d5cf6 35%, #0ea5e9 75%, #22d3ee 100%) !important;
+	background-size: 160% 100% !important;
+	color: #fff !important;
+	font-family: var(--skp-font) !important;
+	font-weight: 650 !important;
+	font-size: 15px !important;
+	letter-spacing: 0.01em;
+	box-shadow: 0 12px 32px -10px rgba(124, 58, 237, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.12) inset !important;
+	transition: background-position 0.5s, transform 0.15s, box-shadow 0.3s !important;
+}
+body#body-login .button-vue--vue-primary::after {
+	content: '';
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	width: 40%;
+	background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.38), transparent);
+	transform: translateX(-120%) skewX(-18deg);
+	pointer-events: none;
+}
+body#body-login .button-vue--vue-primary:hover {
+	background-position: 100% 0 !important;
+	box-shadow: 0 16px 40px -10px rgba(34, 211, 238, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.2) inset !important;
+	transform: translateY(-1px);
+}
+body#body-login .button-vue--vue-primary:hover::after {
+	animation: skp-sheen 0.9s ease-out;
+}
+body#body-login .button-vue--vue-primary:active {
+	transform: translateY(0) scale(0.99);
+}
+body#body-login .button-vue--vue-primary:focus-visible {
+	outline: 2px solid #9eeaff !important;
+	outline-offset: 3px;
+}
+
+/* Secondary actions */
+body#body-login .button-vue--vue-tertiary,
+body#body-login .button-vue--tertiary {
+	margin-top: 6px;
+	color: var(--skp-mute) !important;
+	background: transparent !important;
+	font-family: var(--skp-font) !important;
+	font-weight: 500 !important;
+	border-radius: 12px !important;
+}
+body#body-login .login-box__wrapper > .button-vue--tertiary:hover,
+body#body-login .login-box__wrapper > .button-vue--vue-tertiary:hover {
+	color: #fff !important;
+	background: rgba(255, 255, 255, 0.05) !important;
+}
+body#body-login .login-box__wrapper > .button-vue--wide:first-of-type {
+	margin-top: 14px;
+	border-top: 1px solid var(--skp-line);
+	border-radius: 0 0 12px 12px !important;
+	padding-top: 6px;
+}
+
+/* Messages and errors */
+body#body-login .notecard,
+body#body-login .warning,
+body#body-login .update p {
+	color: var(--skp-ink) !important;
+	background: rgba(255, 255, 255, 0.04) !important;
+	border-radius: 12px !important;
+}
+body#body-login a {
+	color: #9eeaff;
+}
+
+/* Footer: replace the stock line with our own */
+body#body-login footer.guest-box {
+	background: transparent !important;
+	-webkit-backdrop-filter: none;
+	backdrop-filter: none;
+	box-shadow: none !important;
+	border: 0 !important;
+	margin: 0 auto 18px;
+	padding: 0 16px;
+	text-align: center;
+}
+body#body-login footer .info {
+	margin: 0;
+	font-family: var(--skp-mono);
+	font-size: 12px;
+	letter-spacing: 0.04em;
+	color: rgba(152, 160, 200, 0.85);
+}
+body#body-login footer .info br {
+	display: none;
+}
+body#body-login footer .info a::after {
+	content: '  \00B7  ';
+	white-space: pre;
+	color: rgba(152, 160, 200, 0.6);
+	text-shadow: none;
+}
+body#body-login footer .info a {
+	font-weight: 600;
+	letter-spacing: 0.08em;
+	color: #c4f1ff !important;
+	text-decoration: none;
+}
+body#body-login footer .info a:hover {
+	color: #fff !important;
+	text-shadow: 0 0 12px rgba(34, 211, 238, 0.8);
+}
+
+@media (max-width: 480px) {
+	body#body-login .guest-box.login-box { padding: 26px 18px 18px; border-radius: 20px; }
+	body#body-login #header::after { font-size: 34px; }
+	body#body-login #header::before { letter-spacing: 0.22em; font-size: 10px; }
+	body#body-login .login-form__headline::before { font-size: 23px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	body#body-login::before,
+	body#body-login::after,
+	body#body-login #header .logo,
+	body#body-login #header::after,
+	body#body-login .guest-box.login-box::before {
+		animation: none !important;
+	}
+	body#body-login #header.header-guest,
+	body#body-login .guest-box.login-box {
+		animation: none !important;
+	}
+}
+
+/* ------------------------------------------------------------------ */
+/* Signed-in pages: the Solid consent screen                            */
+/* ------------------------------------------------------------------ */
+#body-user .solid-container form {
+	max-width: 560px;
+	margin: 8vh auto 0;
+	padding: 34px 30px;
+	border-radius: 24px;
+	background:
+		radial-gradient(120% 140% at 0% 0%, rgba(139, 92, 246, 0.18), transparent 55%),
+		radial-gradient(120% 140% at 100% 100%, rgba(34, 211, 238, 0.16), transparent 55%),
+		var(--color-main-background);
+	border: 1px solid rgba(139, 92, 246, 0.35);
+	box-shadow: 0 30px 80px -30px rgba(76, 29, 149, 0.6);
+	font-family: var(--skp-font);
+	text-align: center;
+}
+#body-user .solid-container form::before {
+	content: '';
+	display: block;
+	width: 64px;
+	height: 64px;
+	margin: 0 auto 18px;
+	background: url('../img/logo.svg') center / contain no-repeat;
+	filter: drop-shadow(0 0 18px rgba(34, 211, 238, 0.5));
+}
+#body-user .solid-container form h1 {
+	font-family: var(--skp-font);
+	font-size: 22px;
+	font-weight: 600;
+	line-height: 1.35;
+	letter-spacing: -0.01em;
+	margin: 0 0 26px;
+}
+#body-user .solid-container form button {
+	min-width: 140px;
+	height: 48px;
+	margin: 0 6px;
+	border-radius: 14px;
+	font-family: var(--skp-font);
+	font-weight: 650;
+	font-size: 15px;
+	cursor: pointer;
+}
+#body-user .solid-container form button[value="allow"] {
+	color: #fff;
+	border: 0;
+	background: linear-gradient(100deg, #7c3aed, #22d3ee);
+	box-shadow: 0 12px 30px -10px rgba(124, 58, 237, 0.7);
+}
+#body-user .solid-container form button[value="deny"] {
+	color: var(--color-main-text);
+	background: transparent;
+	border: 1px solid var(--color-border-dark);
+}
+
+/* ------------------------------------------------------------------ */
+/* Signed-in UI: skpods font, no upstream promo blocks                 */
+/* (the role enforces the dark theme: config enforce_theme=dark)        */
+/* ------------------------------------------------------------------ */
+#body-user,
+#body-settings,
+#body-public {
+	--font-face: var(--skp-font);
+	--color-primary-element: #8b5cf6;
+	--color-primary-element-hover: #7c3aed;
+	font-family: var(--skp-font);
+}
+#body-user #header,
+#body-settings #header,
+#body-public #header {
+	background: linear-gradient(90deg, #070814 0%, #120a2a 45%, #061a24 100%) !important;
+	box-shadow: 0 1px 0 rgba(139, 92, 246, 0.35), 0 8px 30px -12px rgba(34, 211, 238, 0.35);
+}
+.development-notice {
+	display: none !important;
+}

@@ -89,6 +89,10 @@ from the very first start.
 | `APP_PATH` | `/var/data/skpods-<env>` | Nextcloud `html/`, `config/`, `data/` (pods live in each user's Files under `solid/`). |
 | `POSTGRES_PATH`, `REDIS_PATH` | `/var/data/runtime/skpods-<env>/{postgres,redis}` | Datastore paths. |
 | `PLACEMENT_CONSTRAINTS` | `[]` | Extra swarm constraints for every service. |
+| `THEME` | `skpods` | `skpods` brands the engine as skpods.id (login, titles, links, logo, dark UI); `none` restores the stock look. See [Branding](#branding). |
+| `SKELETON` | `skpods` | `skpods`: new accounts start with a welcome note and pod folders instead of the stock files, and stock files are removed from existing accounts. `stock` restores the upstream defaults. See [New accounts](#new-accounts). |
+| `ENABLE_APPS` | `files_pdfviewer`, `files_trashbin`, `text` | Shipped apps to enable. See [Files](#files). |
+| `NEXTCLOUD_SHARING` | `false` | `false` turns off Nextcloud shares and public links so pod data is shared only through Solid ACLs. See [Files](#files). |
 | `DISABLE_APPS` | built-in list | Default Nextcloud apps to disable (best effort; always-enabled apps are skipped). |
 | `DEFAULT_PHONE_REGION`, `MAINTENANCE_WINDOW_START`, `TZ` | `US`, `1`, `UTC` | Nextcloud housekeeping. |
 | `PHP_MEMORY_LIMIT`, `PHP_UPLOAD_LIMIT` | `512M`, `1G` | PHP limits. |
@@ -98,6 +102,61 @@ from the very first start.
 | `CREDENTIALS_OUT` | unset | Controller path for minted client credentials (JSON, 0600). |
 | `AUTHENTIK_TILE`, `AUTHENTIK_TILE_*` | `true` | Portal tile (a bookmark only; it never puts Authentik in front of the service). |
 | `SSO_ACCESS`, `SSO_*` | `admin-only` | Who sees the tile in the portal (shared `sso_access_resolve.yml`; `app-groups` uses `app-<slug>-admins`/`-users`). It never gates the pod server itself. |
+
+## Branding
+
+`THEME: skpods` (the default) installs `files/theme/skpods` into the engine's
+`themes/` folder and sets the theming app to match, so no page shows the
+upstream product name or its links:
+
+- `defaults.php`: product name, page titles, help and client links (all point at https://skpods.id).
+- `core/css/server.css`: the login and guest pages (aurora background, glass card, "Enter your pod"), the dark signed-in header and the Solid consent screen. It also hides the upstream promo block in personal settings.
+- `core/img/logo.svg`: logo, header logo and favicon.
+- `core/fonts/`: Space Grotesk and JetBrains Mono, self-hosted (the engine's CSP only allows `font-src 'self'`), both SIL OFL 1.1 (license texts next to the fonts).
+
+The theme also sets `enforce_theme=dark` and disables per-user theming. Edit the
+files in the role and redeploy (`--tags theme` re-applies only this step); the
+play re-runs the theming commands only when a file changed or the theme is not
+active. `THEME: none` removes the folder and resets the theming settings.
+
+Two strings still read "Nextcloud" because they are built into upstream Vue
+components (personal settings: the profile toggle and "Choose from Nextcloud
+Files"). They only show to signed-in users in settings.
+
+## Files
+
+The Files app is the owner's view of their own pod (`solid/` is the pod):
+browse what apps wrote, upload, move and delete. It is part of Nextcloud and
+cannot be disabled. The role adds:
+
+- `text`: `.md` and plain text open in the browser (and the owner can edit them). Pod files such as `.ttl` and `.acl` still only download.
+- `files_pdfviewer`: PDFs open in the browser. Images and video already preview (`viewer`).
+- `files_trashbin`: a deleted file goes to the owner's trash. It leaves the pod at once, as Solid expects.
+- Version history (`files_versions`) stays off: apps write often (every chat message is a write).
+- Nextcloud sharing is off (`shareapi_enabled=no`): shares and public links would reach pod data without the pod's ACLs. Share through Solid instead. `NEXTCLOUD_SHARING: true` turns it back on.
+
+## New accounts
+
+`SKELETON: skpods` (the default) sets `skeletondirectory` to
+`config/skpods-skeleton` (copied from `files/skeleton`), `templatedirectory`
+to empty and the templates folder name to `.templates` (Nextcloud always
+creates one; the dot hides it in Files and it sits outside the pod), so a new
+account starts with:
+
+    Welcome to your pod.md
+    solid/private/{documents,notes,photos}/
+    solid/public/shared/
+
+The Solid app adds the rest of the pod (root ACL, `inbox/`, `settings/`) on the
+first Solid request and only fills in what is missing. Folders without their
+own `.acl` inherit the owner-only root ACL, so nothing is public until shared.
+
+On every deploy the play also removes the stock files from existing accounts,
+but only files byte-identical to the image's `core/skeleton` copy, then any
+stock folder left empty, and gives each account it cleaned the skeleton entries
+it lacks (never overwriting). An account it has cleaned once is not touched
+again, so deleted skeleton files stay deleted. `--tags skeleton` runs only this
+step; `SKELETON: stock` restores the upstream defaults for new accounts.
 
 ## Traefik
 
