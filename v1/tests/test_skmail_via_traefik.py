@@ -159,3 +159,17 @@ def test_fence_mail_entrypoints_publish_host_ports_and_define_transport(value):
         assert entrypoints[name] == {"address": address}  # plain TCP, no TLS or http block
     transports = yaml.safe_load(_fence("services.yml.j2", MAIL_ENTRYPOINTS=value))["tcp"]["serversTransports"]
     assert transports == {"skmail-proxy-v2": {"proxyProtocol": {"version": 2}}}
+
+
+def test_proxied_smtp_never_trusts_a_claimed_address():
+    """A forged PROXY header could claim 127.0.0.1; the proxied listeners
+    must relay only after SASL auth (empty mynetworks), and postscreen on
+    12525 must hand off to its own pass service, since an -o on the
+    postscreen line does not reach the shared smtpd pass service."""
+    src = (pathlib.Path(__file__).resolve().parents[1] / "ansible" / "optional" / "skmail"
+           / "src" / "config" / "skmail" / "user-patches.sh.j2").read_text()
+    for needle in ("12525/inet/smtpd_service_name=smtpd-proxyprotocol",
+                   "smtpd-proxyprotocol/pass/mynetworks=",
+                   "10587/inet/mynetworks=",
+                   "10465/inet/mynetworks="):
+        assert needle in src, needle

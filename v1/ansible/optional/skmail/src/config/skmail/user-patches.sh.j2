@@ -163,13 +163,29 @@ if [ -z "$(postconf -M 12525/inet 2>/dev/null)" ]; then
     postconf -Mf smtp/inet | sed -e 's/^smtp /12525 /' >> /etc/postfix/master.cf
     postconf -Mf submission/inet | sed -e 's/^submission /10587 /' >> /etc/postfix/master.cf
     postconf -Mf submissions/inet | sed -e 's/^submissions /10465 /' >> /etc/postfix/master.cf
+    # postscreen on 12525 hands accepted connections to its own smtpd pass
+    # service (not the shared "smtpd" one used by port 25), so the relay
+    # decision for proxied mail runs with the empty mynetworks below.
+    postconf -Mf smtpd/pass | sed -e 's/^smtpd /smtpd-proxyprotocol /' >> /etc/postfix/master.cf
     postconf -P \
         12525/inet/postscreen_upstream_proxy_protocol=haproxy \
         12525/inet/syslog_name=postfix/smtpd-proxyprotocol \
         10587/inet/smtpd_upstream_proxy_protocol=haproxy \
         10587/inet/syslog_name=postfix/submission-proxyprotocol \
         10465/inet/smtpd_upstream_proxy_protocol=haproxy \
-        10465/inet/syslog_name=postfix/submissions-proxyprotocol
+        10465/inet/syslog_name=postfix/submissions-proxyprotocol \
+        12525/inet/smtpd_service_name=smtpd-proxyprotocol \
+        smtpd-proxyprotocol/pass/mynetworks= \
+        smtpd-proxyprotocol/pass/syslog_name=postfix/smtpd-proxyprotocol \
+        10587/inet/mynetworks= \
+        10465/inet/mynetworks=
+    # On these listeners the client address comes from the PROXY header,
+    # which anything on the Traefik overlay can write. An empty mynetworks
+    # means no claimed address (127.0.0.1 included) is trusted to relay:
+    # every relay on them needs SASL auth (permit_sasl_authenticated).
+    # Tested on docker-mailserver 17.0.0: a PROXY v2 header claiming
+    # 127.0.0.1 relayed to an outside domain (250) with only the postscreen
+    # -o, and is refused (554 Relay access denied) with the pass service.
     # Two postscreen services (25 and 12525) share one cache through the
     # proxymap service instead of both locking the btree file directly.
     postconf 'postscreen_cache_map = proxy:btree:$data_directory/postscreen_cache'
