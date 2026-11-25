@@ -87,9 +87,7 @@ SUBNET                NETWORK                           DEFINED IN
 172.16.190.0/24       skseek-prod                       optional/skseek
 172.16.191.0/24       skseek-staging                    optional/skseek
 172.16.192.0/24       skseek-dev                        optional/skseek
-172.16.200.0/24       cloud-public-dev                  (shared by every service)
 172.16.200.0/24       cloud-public-prod                 (shared by every service)
-172.16.200.0/24       cloud-public-staging              (shared by every service)
 172.16.201.0/24       cloud-public-staging              (shared by every service)
 172.16.202.0/24       cloud-public-dev                  (shared by every service)
 172.16.203.0/24       cloud-edge-dev                    core/skfence, core/skfenceha

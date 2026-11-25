@@ -6,6 +6,26 @@ Each entry says what an instance must do, if anything.
 
 ## skstacks-v2.26.33 - 2026-11-23
 
+### sknet: network flow visibility (Akvorado), new optional role
+
+- New optional role `sknet`: Akvorado (2026.10.1, unchanged upstream) as a flattened Swarm stack
+  with Kafka (KRaft, one node) and ClickHouse, deployed by `deploy_sknet-<env>.yml`. Every
+  stateful service is pinned to `sknet.DATA_NODE` with its data on local disk under `DATA_DIR`
+  (default `/var/lib/sknet-<env>`, never `/var/data`). The inlet publishes NetFlow v9 (2055) and
+  IPFIX (4739) UDP in host mode, protected by an iptables allowlist (`sknet-<env>-fw.service`,
+  chain `SKNET-<ENV>`) built from `FLOW_SOURCES`. The console is routed through Traefik with an
+  `sknet-<env>-allow` ipAllowList (`ALLOW_CIDRS`, default RFC 1918 and 100.64.0.0/10) on every
+  router, always, plus Authentik forward auth (`AUTH_MODE: authentik`, or `allowlist` for the
+  address gate alone). Interface names come from static exporter metadata (inventory group
+  `sknet_exporter_hosts` hostvars, else vault `STATIC_EXPORTERS`); no SNMP. `LIVE_UPSTREAM`
+  adds a pinned Caddy service that fronts an ntopng running on a host; unset, it renders nothing.
+  Default memory limits total 3.4 GB. New overlay subnets 172.16.67.0/24 (prod), .68 (staging),
+  .69 (dev) in `shared/networks`; catalog row and section; render vars `sknet.{example,set,with.sksso}.yml`.
+- **Instance action:** none until the role is used. To use it: add a `sknet:` vault block
+  (`DATA_NODE` and `FLOW_SOURCES` are required, and either the exporter inventory or
+  `STATIC_EXPORTERS`), choose `FLOW_TTL_DAYS` before the first start (ClickHouse sizes its
+  partitions from it), and run `deploy_sknet-<env>.yml`.
+
 ### skha: node labels follow the VIP (`skha.vip_node_labels`)
 
 - Fixes services with host-published ports (skmail) being unreachable after a VIP failover: the

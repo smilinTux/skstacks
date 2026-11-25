@@ -68,7 +68,7 @@
       set_fact:
         app_networks: "{{ sknet_dev_networks | default([
           { 'name': 'sknet-dev', 'subnet': '172.16.69.0/24', 'driver': 'overlay', 'attachable': true },
-          { 'name': 'cloud-public-dev', 'subnet': '172.16.200.0/24', 'driver': 'overlay', 'attachable': true }
+          { 'name': 'cloud-public-dev', 'subnet': '172.16.202.0/24', 'driver': 'overlay', 'attachable': true }
         ]) }}"
       tags: [networks, config]
 

@@ -58,6 +58,7 @@ tag yet.
 | [skmem-pg](#skmem-pg) | optional | Postgres 17 + pgvector + pg_search + AGE | Postgres 17 custom image `pg17-bm25-age` | none | internal only, no Traefik | `runtime/skmem-pg-<env>/postgres` | `skmem_pg_password` | `skmem_pg_default_agent`/`skmem_pg_graph` | v2.14.0 |
 | [skmesh](#skmesh) | optional | Netbird self-hosted WireGuard mesh VPN | netbird `0.83.2` (mgmt/signal/relay), dashboard `v2.98.0` | sksso (OIDC app) | `skmesh.<cluster>.<domain>` (path-routed) | `skmesh-<env>/database-dump` | `NETBIRD_*` secrets, `POSTGRES_PASSWORD`, `SSO_HOST_IP` | `DEPLOY_COTURN` (false) | v2.19.0 |
 | [skmon](#skmon) | optional | Observability stack (metrics, logs, alerts, optional profiles) | VictoriaMetrics `v1.155.0`, Grafana Alloy `v1.21.3`, Loki `3.7.9`, Grafana `13.3.0`, Alertmanager `v0.35.0` (all digest-pinned, `pins.yml`) | Authentik (Grafana OIDC, forward auth for vmui and Alertmanager, tiles) | `skmon\|vmui\|alertmanager[-env].<cluster>.<domain>` | `DATA_PATH` on `DATA_NODE` (local disk, default `/srv/local/skmon-<env>`) | `DATA_NODE`, `ESTATE`, `CLUSTERNAME`, `DOMAIN`, `GRAFANA_ADMIN_USER/_PASSWORD`, `GRAFANA_SECRET_KEY`, `GRAFANA_OIDC_CLIENT_ID/_SECRET`, `AUTHENTIK_HOST`, `HEALTHZ_ALLOW`, `SKALERT_SCRIPT_SRC/_SHA256`, `ALERT_ROUTING`, `ALERT_SECRETS`, `ALERT_OUT_OF_DOMAIN_CHANNEL` | `DATA_PATH`, `PROBES` (default: every Traefik router host), `PROFILING`, `PVE`, `METRICS_RETENTION` (90d), `LOGS_RETENTION` (30d), `replicas` (1; 0 = parked); full table in the [README](../v1/ansible/optional/skmon/README.md) | v2.15.0 |
+| [sknet](#sknet) | optional | Network flow visibility: Akvorado flow collector and console (Kafka + ClickHouse), optional live view proxy | Akvorado `2026.10.1`, Kafka `4.3.1`, ClickHouse `26.8`, Caddy `2.11.9` (tag-pinned) | skfence or skfenceha; sksso for the portal tile and forward auth; exporters (host plays) | `sknet[-env].<cluster>.<domain>`, `sknet-live[-env].<cluster>.<domain>`; UDP `2055` / `4739` host mode on `DATA_NODE` | `DATA_DIR` on `DATA_NODE` (local disk, default `/var/lib/sknet-<env>`) | `DATA_NODE`, `FLOW_SOURCES` | `ALLOW_CIDRS` (RFC1918 + CGNAT), `AUTH_MODE` (`authentik`), `FLOW_TTL_DAYS` (30), `DISK_BUDGET_GB` (20), `LIVE_UPSTREAM` (unset: no live router), `STATIC_EXPORTERS`, `NETWORKS`, `*_MEMORY_LIMIT` (3.4 GB total) | pending |
 | [skorch](#skorch) | optional | n8n workflow automation | n8n (digest-pinned) + pgvector Postgres | none | `skorch[-env].<cluster>.<domain>` | `skorch-<env>/{n8n_data,database-backup,gpg-keys}` | `POSTGRES_USER/_PASSWORD/_DB`, `REDIS_PASSWORD` | `enable_gpg_signer` (false) | v2.18.0 |
 | [skpatch-hosts](#skpatch-hosts) | optional | Linux update/patch dashboard (SSH, holds a key per estate); host half of the [skpatch program](./skpatch-program.md) | linux-update-dashboard `2026.11.6` (upstream, digest-pinned) | skfence or skfenceha; sksso for default `AUTH_MODE: sso` | `skpatch-hosts[-env].<cluster>.<domain>` | `skpatch-hosts-<env>/data` | `LUDASH_ENCRYPTION_KEY`, `SSH_PUBLIC_KEY` (provisioning) | `AUTH_MODE` (sso), `ALLOW_ACTIONS` (false, enforced by `provision_skpatch_hosts_nodes.yml`, not this deploy), `DATA_NODE` (floating) | pending |
 | [skpdf](#skpdf) | optional | Stirling-PDF toolkit | Stirling-PDF `3.5.0` | sksso (forward auth by default, `SSO_MIDDLEWARE: none` opts out) | `skpdf[-env].<cluster>.<domain>` | `skpdf-<env>/{trainingData,customFiles}` | `CLUSTERNAME`, `DOMAIN`; `SECURITY_INITIAL_PASSWORD` if login on | `SECURITY_ENABLELOGIN` (false) | v2.13.0 |
@@ -924,6 +925,60 @@ list: current Grafana refuses the Angular ones in it
 On a slow shared
 filesystem Grafana's first boot can outlast the 60s health start period;
 raise `skmon.GRAFANA_HEALTH_START_PERIOD` (for example `5m`).
+
+### sknet
+
+Network flow visibility on [Akvorado](https://github.com/akvorado/akvorado)
+(AGPL-3.0, used unchanged): `orchestrator`, `inlet`, `outlet` and `console`
+plus single-node KRaft Kafka and ClickHouse, flattened from the upstream
+compose into one Swarm stack. Every stateful service is pinned to `DATA_NODE`
+with its data on local disk (`DATA_DIR`, never NFS); the inlet's NetFlow v9
+(`2055`) and IPFIX (`4739`) UDP ports are published in host mode so the
+exporter's source address survives, and an iptables allowlist
+(`sknet-<env>-fw.service`) drops every source not in `FLOW_SOURCES`. The
+console is routed through Traefik with an `sknet-<env>-allow` ipAllowList
+(`ALLOW_CIDRS`) on every router plus Authentik forward auth. With
+`LIVE_UPSTREAM` set, a pinned Caddy service fronts an ntopng running on a host
+under `sknet-live[-env].<cluster>.<domain>`; unset, no live router or proxy
+renders.
+
+**Prerequisites**: a swarm node with AVX2 (ClickHouse 26.6+) and local disk
+for `DATA_DIR`; flow exporters (the exporter host play, softflowd) on the
+hosts and interfaces to watch.
+
+**Minimal vault snippet**:
+
+```yaml
+sknet:
+  CLUSTERNAME: "<cluster>"
+  DOMAIN: "example.com"
+  DATA_NODE: "<swarm node hostname>"
+  FLOW_SOURCES: ["192.0.2.10"]
+  STATIC_EXPORTERS:
+    gw-example:
+      sknet_export_address: "192.0.2.10"
+      sknet_interfaces:
+        - { name: eth0, index: 101, class: lan }
+```
+
+`STATIC_EXPORTERS` is the fallback; run the deploy with
+`-i <exporters ini>` (group `sknet_exporter_hosts`, hostvars
+`sknet_export_address` and `sknet_interfaces`) to build the same metadata from
+the inventory instead. With neither, the deploy fails rather than render a
+collector that discards every flow.
+
+**Deploy**: `deploy_sknet-<env>.yml`, standard invocation.
+
+**Health check**: `docker service ls --filter name=sknet-<env>` (the
+Akvorado images carry their own healthcheck, Kafka and ClickHouse have one in
+the stack file), then open the console through its router: the home page
+shows the last flow once an exporter is sending.
+
+**Gotchas**: decide `FLOW_TTL_DAYS` before the first start, ClickHouse sizes
+its partitions from the TTL when it creates the tables. The deploy refuses a
+data disk with less than `DISK_BUDGET_GB` free. softflowd reports one ifindex
+as both input and output, so group by exporter and interface, and traffic
+forwarded between two monitored interfaces counts twice.
 
 ### skorch
 
