@@ -58,7 +58,7 @@ else
     docker service logs --tail 20 "${ORCHESTRATOR}" || true
 fi
 echo "Flow console: https://{{ sknet_host }}/"
-{% if sknet_live_enabled | default(false) | bool %}
+{% if sknet_live_enabled | default(false) %}
 echo "Live view: https://{{ sknet_live_host }}/"
 {% endif %}
 echo "Flow inlet: udp {{ sknet_netflow_port }} (NetFlow v9) and udp {{ sknet_ipfix_port }} (IPFIX) on {{ sknet_data_node }}"
