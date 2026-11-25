@@ -16,7 +16,8 @@
 # present. Needs sknet_x_collector, sknet_x_port, sknet_x_interfaces and the
 # sknet_re_* patterns (vars/defaults.yml). Refuses before anything on the host
 # is touched. The interface rules (address, index, class) are the swarm
-# deploy's own, in tasks/exporter_check.yml.
+# deploy's own, in tasks/exporter_check.yml (names included: they become the unit
+# instance and half of `softflowd -i <index>:<name>`, so no colon and no at sign).
 - name: Refuse a collector that is not an IPv4 literal
   # A name would be resolved once, when softflowd starts, and a changed record
   # would then send flows to the old address or nowhere.
@@ -62,16 +63,4 @@
     that:
       - sknet_exporter_problems | length == 0
     fail_msg: "sknet exporter hostvars are invalid: {{ sknet_exporter_problems | join('; ') }}"
-    quiet: true
-
-- name: Refuse an interface name softflowd or systemd cannot carry
-  # The name becomes a unit instance and half of `-i <index>:<name>`: no colon,
-  # no at sign, no spaces.
-  assert:
-    that:
-      - sknet_x_interfaces | map(attribute='name') | map('string') | reject('match', '^[A-Za-z0-9_.-]{1,15}$') | list | length == 0
-    fail_msg: >-
-      {{ inventory_hostname }}: interface names must be 1 to 15 characters of letters, digits and _.-
-      (they become the unit instance sknet-softflowd@<name> and the name in `softflowd -i <index>:<name>`).
-      Got: {{ sknet_x_interfaces | map(attribute='name') | map('string') | reject('match', '^[A-Za-z0-9_.-]{1,15}$') | list }}.
     quiet: true

@@ -23,7 +23,7 @@ Each entry says what an instance must do, if anything.
   .69 (dev) in `shared/networks`; catalog row and section; render vars `sknet.{example,set,with.sksso}.yml`.
 - `sknet` exporter host play `exporters.yml` (hosts `sknet_exporter_hosts`, or the group named by
   `sknet_exporter_hosts_group`): softflowd as one `sknet-softflowd@<interface>` systemd instance per
-  `sknet_interfaces` entry (`-i <index>:<name>` forced ifindex, `-n <sknet_collector>:<NETFLOW_PORT> -v 9 -T full`,
+  `sknet_interfaces` entry (`-i <index>:<name>` forced ifindex, `-n <sknet_collector>:<NETFLOW_PORT> -v 9 -T full`, port read from the instance vault like the deploy plays (a differing `sknet_netflow_port` hostvar is refused),
   env file per instance under `/etc/sknet`, modest `MemoryMax` and `CPUQuota`). The collector must be an IPv4
   literal and private unless `sknet_allow_public_collector: true`; instances no longer listed are stopped,
   disabled and removed; the distro `softflowd.service` is masked; softflowd is installed with apt only when

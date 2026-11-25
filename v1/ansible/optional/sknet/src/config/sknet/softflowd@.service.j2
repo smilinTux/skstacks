@@ -33,8 +33,10 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile={{ sknet_x_etc }}/softflowd-%i.env
-RuntimeDirectory=sknet-softflowd
-ExecStart={{ sknet_x_binary }} -d -i ${SKNET_IFINDEX}:${SKNET_IFACE} -n ${SKNET_COLLECTOR}:${SKNET_PORT} -v 9 -T full -N -p /run/sknet-softflowd/%i.pid -c /run/sknet-softflowd/%i.ctl $SKNET_OPTIONS ${SKNET_BPF}
+# One directory per instance: systemd removes it when that instance stops, which
+# must not take the other instances' pid and control files with it.
+RuntimeDirectory=sknet-softflowd-%i
+ExecStart={{ sknet_x_binary }} -d -i ${SKNET_IFINDEX}:${SKNET_IFACE} -n ${SKNET_COLLECTOR}:${SKNET_PORT} -v 9 -T full -N -p /run/sknet-softflowd-%i/softflowd.pid -c /run/sknet-softflowd-%i/softflowd.ctl $SKNET_OPTIONS ${SKNET_BPF}
 Restart=on-failure
 RestartSec=10
 NoNewPrivileges=true

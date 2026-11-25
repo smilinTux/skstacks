@@ -106,7 +106,18 @@ class FakeHost:
             "sknet_interfaces": GOOD_IFACES if interfaces is None else interfaces,
         }
         self.vars.update(hostvars)
-        self.extra = {}
+        self.vault_dir = tmp / "vaults"
+        self.set_vault({})
+        self.extra = {"skstacks_vault_dir": str(self.vault_dir)}
+
+    def set_vault(self, sknet: dict | None):
+        """The instance vault the play reads (None: no vault file at all)."""
+        f = self.vault_dir / "optional" / "group_vars" / "prod" / "sknet-prod_vault.yml"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        if sknet is None:
+            f.unlink(missing_ok=True)
+        else:
+            f.write_text(yaml.safe_dump({"sknet": sknet}))
 
     def install_binary(self):
         (self.bin / "softflowd").write_text("#!/bin/sh\nexit 0\n")
@@ -212,14 +223,59 @@ def test_unit_has_modest_limits_restart_and_env_file_per_instance(host):
     assert "ExecStart=" + str(host.bin / "softflowd") + " " in unit
 
 
-def test_netflow_port_follows_the_sknet_map_and_the_hostvar(tmp_path):
-    h = FakeHost(tmp_path)
-    h.extra = {"sknet": {"NETFLOW_PORT": 2056}}
+def test_netflow_port_comes_from_the_vault(host):
+    host.ok()
+    assert host.env("eth0")["SKNET_PORT"] == "2055"
+    host.set_vault({"NETFLOW_PORT": 2056})
+    host.ok()
+    assert host.env("eth0")["SKNET_PORT"] == "2056" and "2056" in host.env("eth0")["SKNET_BPF"]
+    assert f"restart {u('eth0')}" in host.calls()
+
+
+def test_hostvar_port_equal_to_the_vault_is_accepted(tmp_path):
+    h = FakeHost(tmp_path, sknet_netflow_port=2056)
+    h.set_vault({"NETFLOW_PORT": 2056})
     h.ok()
     assert h.env("eth0")["SKNET_PORT"] == "2056"
-    h2 = FakeHost(tmp_path / "b", sknet_netflow_port=2057)
+
+
+def test_hostvar_port_that_differs_from_the_vault_is_refused(tmp_path):
+    h = FakeHost(tmp_path, sknet_netflow_port=2057)
+    h.set_vault({"NETFLOW_PORT": 2056})
+    log = h.refused()
+    assert "2057" in log and "2056" in log and "NETFLOW_PORT" in log
+    assert h.env_files() == []
+    # the default port counts too: a vault without NETFLOW_PORT means 2055
+    h2 = FakeHost(tmp_path / "b", sknet_netflow_port=2056)
+    assert "2055" in h2.refused()
+
+
+def test_missing_vault_is_refused_for_present_but_not_for_absent(tmp_path):
+    h = FakeHost(tmp_path)
+    h.set_vault(None)
+    assert "no sknet vault" in h.refused()
+    assert h.env_files() == []
+    h2 = FakeHost(tmp_path / "b", sknet_state="absent")
+    h2.set_vault(None)
     h2.ok()
-    assert h2.env("eth0")["SKNET_PORT"] == "2057"
+
+
+def test_environment_selects_the_vault(host):
+    # -e env=staging reads sknet-staging_vault.yml
+    f = host.vault_dir / "optional" / "group_vars" / "staging" / "sknet-staging_vault.yml"
+    f.parent.mkdir(parents=True)
+    f.write_text(yaml.safe_dump({"sknet": {"NETFLOW_PORT": 2060}}))
+    host.ok(env="staging")
+    assert host.env("eth0")["SKNET_PORT"] == "2060"
+
+
+def test_each_instance_has_its_own_runtime_directory(host):
+    # a shared RuntimeDirectory is removed when ANY instance stops, taking the others' pid and ctl files
+    host.ok()
+    unit = host.unit_text()
+    assert "RuntimeDirectory=sknet-softflowd-%i\n" in unit
+    assert "-p /run/sknet-softflowd-%i/softflowd.pid" in unit and "-c /run/sknet-softflowd-%i/softflowd.ctl" in unit
+    assert "/run/sknet-softflowd/" not in unit and "RuntimeDirectory=sknet-softflowd\n" not in unit
 
 
 def test_export_traffic_is_excluded_from_the_flows(host):

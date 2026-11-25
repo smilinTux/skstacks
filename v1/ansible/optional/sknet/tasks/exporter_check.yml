@@ -38,7 +38,7 @@
       {%- for i in e.interfaces -%}
       {%- if i is not mapping -%}{%- set _ = out.append(e.name ~ ': every sknet_interfaces entry must be a map') -%}
       {%- else -%}
-      {%- if not ((i.name | default('', true) | string) is match('^[A-Za-z0-9_.:@-]{1,15}$')) -%}{%- set _ = out.append(e.name ~ ': interface name must be 1 to 15 characters of letters, digits and _.:@-, got "' ~ (i.name | default('', true)) ~ '"') -%}{%- endif -%}
+      {%- if not ((i.name | default('', true) | string) is match('^[A-Za-z0-9_.-]{1,15}$')) -%}{%- set _ = out.append(e.name ~ ': interface name must be 1 to 15 characters of letters, digits and _.-, got "' ~ (i.name | default('', true)) ~ '"') -%}{%- endif -%}
       {%- if not ((i.index | default('', true) | string) is match('^[0-9]+$') and (i.index | int) >= 100 and (i.index | int) <= 65535) -%}{%- set _ = out.append(e.name ~ ': interface ' ~ (i.name | default('?')) ~ ' index must be an integer from 100 to 65535, got "' ~ (i.index | default('')) ~ '"') -%}
       {%- elif (i.index | int) in seen -%}{%- set _ = out.append(e.name ~ ': interface index ' ~ i.index ~ ' is used twice') -%}
       {%- else -%}{%- set _ = seen.append(i.index | int) -%}{%- endif -%}

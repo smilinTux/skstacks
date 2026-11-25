@@ -30,8 +30,10 @@
 #   sknet_export_address   the address the collector sees as source (checked here,
 #                          used by the deploy for FLOW_SOURCES)
 #   sknet_state            present (default) or absent
-# Optional hostvars: sknet_netflow_port (else the sknet map's NETFLOW_PORT from
-# `-e @<vault>` or the default 2055), sknet_softflowd_max_flows (32768),
+# The play loads the instance vault like the deploy plays (select_vault_file; env
+# prod, or -e env=<env>) and sends to its NETFLOW_PORT (default 2055). Optional
+# hostvars: sknet_netflow_port (refused unless it equals the vault's port; the inlet
+# listens on exactly one), sknet_softflowd_max_flows (32768),
 # sknet_softflowd_maxlife (60 s), sknet_softflowd_memory_max (128M),
 # sknet_softflowd_cpu_quota (10%), sknet_etc_dir (/etc/sknet), sknet_unit_dir
 # (/etc/systemd/system). Play variable allow_package_install (default true).
@@ -51,9 +53,47 @@
 - hosts: "{{ sknet_exporter_hosts_group | default('sknet_exporter_hosts') }}"
   become: true
   gather_facts: false
+  vars:
+    # The vault is per environment: run with -e env=staging for another one.
+    env: prod
+    app: sknet
+    service_name: sknet
+    service_type: optional
   pre_tasks:
     - name: Load the sknet defaults
       include_vars: "{{ playbook_dir }}/vars/defaults.yml"
+      tags: [config]
+
+    - name: Select the sknet vault file
+      # Same selection as the deploy plays and skmon's agent play: the inlet's
+      # NETFLOW_PORT lives in the vault, so the exporters read it from there.
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+      when: (sknet_state | default('present', true)) == 'present'
+      tags: [config]
+
+    - name: Check that the sknet vault file exists
+      stat:
+        path: "{{ vault_file_path }}"
+      register: sknet_x_vault_stat
+      become: false
+      delegate_to: localhost
+      when: (sknet_state | default('present', true)) == 'present'
+      tags: [config]
+
+    - name: Refuse a missing sknet vault
+      fail:
+        msg: >-
+          {{ inventory_hostname }}: no sknet vault at {{ vault_file_path }}. The exporters send to the
+          inlet's NETFLOW_PORT, which the vault holds; without it they could silently use the wrong
+          port. Create the vault (an empty `sknet: {}` block is enough for the default port), set
+          skstacks_vault_dir if it lives outside the framework tree, or pick the environment with -e env=<env>.
+      when: (sknet_state | default('present', true)) == 'present' and not sknet_x_vault_stat.stat.exists
+      tags: [config]
+
+    - name: Load the sknet vault
+      include_vars: "{{ vault_file_path }}"
+      when: (sknet_state | default('present', true)) == 'present'
+      no_log: true
       tags: [config]
 
     - name: Derive this exporter's settings
@@ -71,7 +111,20 @@
 
     - name: Derive the NetFlow port
       set_fact:
-        sknet_x_port: "{{ sknet_netflow_port | default((sknet | default({})).NETFLOW_PORT | default(sknet_defaults.NETFLOW_PORT, true), true) }}"
+        sknet_x_port: "{{ (sknet | default({})).NETFLOW_PORT | default(sknet_defaults.NETFLOW_PORT, true) }}"
+      tags: [config]
+
+    - name: Refuse a per-host port that differs from the vault's NETFLOW_PORT
+      # The inlet listens on one port; an exporter sending elsewhere is silently lost (UDP).
+      assert:
+        that:
+          - sknet_netflow_port is not defined or (sknet_netflow_port | string) == (sknet_x_port | string)
+        fail_msg: >-
+          {{ inventory_hostname }}: sknet_netflow_port {{ sknet_netflow_port | default('') }} differs from the
+          vault's NETFLOW_PORT {{ sknet_x_port }} (the port the inlet listens on). Exporters follow the
+          vault: remove the hostvar, or change NETFLOW_PORT in the vault and redeploy the stack.
+        quiet: true
+      when: sknet_x_state == 'present'
       tags: [config]
 
     - name: Refuse an unknown sknet_state
