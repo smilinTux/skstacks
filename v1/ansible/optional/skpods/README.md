@@ -124,8 +124,10 @@ Files"). They only show to signed-in users in settings.
 ## New accounts
 
 `SKELETON: skpods` (the default) sets `skeletondirectory` to
-`config/skpods-skeleton` (copied from `files/skeleton`) and `templatedirectory`
-to empty, so a new account starts with:
+`config/skpods-skeleton` (copied from `files/skeleton`), `templatedirectory`
+to empty and the templates folder name to `.templates` (Nextcloud always
+creates one; the dot hides it in Files and it sits outside the pod), so a new
+account starts with:
 
     Welcome to your pod.md
     solid/private/{documents,notes,photos}/

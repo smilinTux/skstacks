@@ -66,14 +66,19 @@
     set -euo pipefail
     C="{{ skp_nc_container.stdout | trim }}"
     occ() { docker exec -u www-data "$C" php occ "$@"; }
+    # Nextcloud always creates a templates folder on first login unless the
+    # skeleton is off entirely, so it gets a hidden name (hidden in Files,
+    # outside the pod).
     want=/var/www/html/config/skpods-skeleton
     if [ "$(occ config:system:get skeletondirectory 2>/dev/null || true)" = "$want" ] \
-      && [ "$(occ config:system:get templatedirectory 2>/dev/null || echo unset)" = "" ]; then
+      && [ "$(occ config:system:get templatedirectory 2>/dev/null || echo unset)" = "" ] \
+      && [ "$(occ config:app:get core defaultTemplateDirectory 2>/dev/null || true)" = ".templates" ]; then
       echo "skeleton already set"
       exit 0
     fi
     occ config:system:set skeletondirectory --value="$want"
     occ config:system:set templatedirectory --value=""
+    occ config:app:set core defaultTemplateDirectory --value=".templates"
     echo "skeleton set"
   args:
     executable: /bin/bash
@@ -158,6 +163,7 @@
     fi
     occ config:system:delete skeletondirectory
     occ config:system:delete templatedirectory
+    occ config:app:delete core defaultTemplateDirectory
     echo "skeleton reset"
   args:
     executable: /bin/bash
