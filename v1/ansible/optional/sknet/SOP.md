@@ -81,7 +81,7 @@ sequenceDiagram
     Op->>N: verify: services 1/1, chain counters, console shows flows
 ```
 
-Where the code lives: `deploy_sknet-<env>.yml` (three env plays), `exporters.yml`, `live.yml`, `vars/defaults.yml`, `tasks/*.yml`, `src/config/sknet/*.j2`, `src/sknet/deploy.j2`. Networks `sknet-<env>` (172.16.67.0/24 prod, .68 staging, .69 dev) and `cloud-public-<env>`.
+Where the code lives: `deploy_sknet-<env>.yml` (three env plays), `exporters.yml`, `live.yml`, `vars/defaults.yml`, `tasks/*.yml`, `src/config/sknet/*.j2`, `src/sknet/deploy.j2`. Overlay networks `sknet-<env>` (subnets reserved per environment in the deploy plays) and `cloud-public-<env>`.
 
 ### Components and ports
 
