@@ -144,6 +144,8 @@
     set -euo pipefail
     C="{{ skp_nc_container.stdout | trim }}"
     docker exec "$C" php -r '$s=@fsockopen("clamav",3310,$e,$m,5); if(!$s) exit(1); fwrite($s,"zPING\0"); $r=fread($s,16); exit(trim($r,"\0\n")==="PONG"?0:1);'
+  args:
+    executable: /bin/bash
   delegate_to: "{{ skp_nc_node.stdout | trim }}"
   register: skp_clamd_ping
   until: skp_clamd_ping.rc == 0
