@@ -83,7 +83,7 @@
       tags:
         - always
 
-    # NOTE: mail-vip label is managed by Keepalived notify script (keepalived_notify.sh)
+    # NOTE: the mail-vip label follows the VIP when skha.vip_node_labels lists it (skha_vip_labels.sh)
     # The label is automatically added to the MASTER node (with VIP) and removed from others
     # DO NOT manually add the label here - it will conflict with Keepalived's management
     # See: v1/ansible/core/keepalived/src/keepalived/scripts/keepalived_notify.sh

@@ -6,6 +6,19 @@ Each entry says what an instance must do, if anything.
 
 ## skstacks-v2.26.33 - 2026-11-23
 
+### skha: node labels follow the VIP (`skha.vip_node_labels`)
+
+- Fixes services with host-published ports (skmail) being unreachable after a VIP failover: the
+  VIP moved to another manager, but the `mail-vip` label (and so skmail) stayed behind, and the
+  mail ports on the VIP refused every connection. Nothing in the framework moved that label,
+  although the skmail README said one was expected to.
+- New `skha.vip_node_labels` (list, default empty). On every MASTER transition `skha_notify.sh`
+  runs `skha_vip_labels.sh`, which adds each label to the new VIP holder and removes it from
+  every other node; Swarm then moves the pinned service. The deploy also syncs it once on the
+  current VIP holder. README "Services with host-published ports follow the VIP".
+- **Instance action:** an estate running skmail sets `skha.vip_node_labels: [mail-vip]` and
+  redeploys skha. skmail's data must be on storage every manager can reach.
+
 ### skgit: `ENABLE_INTERNAL_SIGNIN` knob (SSO-only web sign-in)
 
 - New optional `skgit.ENABLE_INTERNAL_SIGNIN` renders Forgejo's `[service] ENABLE_INTERNAL_SIGNIN`.

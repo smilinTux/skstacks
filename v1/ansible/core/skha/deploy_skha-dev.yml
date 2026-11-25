@@ -85,6 +85,17 @@
           {{ skha.vip_gate_checks | default(['traefik']) | difference(app_health_checks | map(attribute='name') | list) }}
       when: skha_unknown_gates | length > 0
 
+    - name: Verify skha.vip_node_labels is a list of node label names
+      fail:
+        msg: >-
+          skha.vip_node_labels must be a list of Swarm node label names (for
+          example [mail-vip]): lowercase letters, digits, '.', '_' or '-'.
+      when: >-
+        skha.vip_node_labels is defined and
+        (skha.vip_node_labels is string or skha.vip_node_labels is mapping or
+         skha.vip_node_labels is not sequence or
+         (skha.vip_node_labels | reject('match', '^[a-z0-9][a-z0-9._-]{0,62}$') | list | length > 0))
+
     # Upper bound for the per-node wait after a keepalived restart: the
     # slowest check's time to pass `rise` times, plus margin. The handler
     # returns as soon as the node reports MASTER or BACKUP.
@@ -290,6 +301,22 @@
         group: root
         mode: '0755'
 
+    - name: Deploy the VIP node label script
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/src/keepalived/scripts/skha_vip_labels.sh"
+        dest: /usr/local/bin/skha_vip_labels.sh
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Write the node labels that follow the VIP (skha.vip_node_labels)
+      ansible.builtin.copy:
+        content: "{{ (skha.vip_node_labels | default([])) | join('\n') }}{{ '\n' if (skha.vip_node_labels | default([])) | length > 0 else '' }}"
+        dest: /etc/keepalived/skha_vip_labels
+        owner: root
+        group: root
+        mode: '0644'
+
     - name: Ensure keepalived log directory exists
       ansible.builtin.file:
         path: /var/log
@@ -311,6 +338,20 @@
         name: keepalived
         state: started
         enabled: yes
+
+    - name: Move the VIP node labels to the node holding the VIP now
+      # skha_notify.sh does this on every MASTER transition; this covers an
+      # estate where the labels and the VIP are already apart (or the list
+      # just changed). Runs only on the current VIP holder.
+      ansible.builtin.shell: |
+        if ip -4 -o addr show | grep -qF " {{ skha.vip.split('/')[0] }}/"; then
+          /usr/local/bin/skha_vip_labels.sh
+        else
+          echo "not the VIP holder"
+        fi
+      register: skha_vip_labels
+      changed_when: "'moved ' in skha_vip_labels.stdout"
+      when: (skha.vip_node_labels | default([])) | length > 0
 
     - name: Ensure keepalived is running
       ansible.builtin.command:

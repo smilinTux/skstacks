@@ -22,10 +22,11 @@ host network (Swarm `mode: host`) instead of through an overlay network:
 
 Because ports are host-published, `skmail` also carries a
 `node.labels.mail-vip == true` placement constraint: exactly one manager
-should hold that label at a time (e.g. moved by a keepalived VIP notify
-script), so mail traffic always lands on the node currently reachable at the
-public IP. Deploying this service assumes something in the instance already
-manages that label; the playbook only checks that one manager has it.
+should hold that label at a time, so mail traffic always lands on the node
+currently reachable at the public IP. skha moves it with the VIP when the
+instance sets `skha.vip_node_labels: [mail-vip]` (skha README "Services with
+host-published ports follow the VIP"); the playbook only checks that one
+manager has it.
 
 ## Required vault keys
 
