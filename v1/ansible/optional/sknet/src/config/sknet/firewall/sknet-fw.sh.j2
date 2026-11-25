@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# sknet {{ env }} flow port allowlist on {{ sknet_fw_node }}, rendered by tasks/port_allowlist.yml.
+# One chain, {{ 'SKNET-' ~ (env | upper) }}: for every flow port one RETURN per allowed exporter address,
+# then a DROP. It is flushed and rebuilt in a single iptables-restore --noflush of the filter table (atomic: no
+# window without rules), then hooked from DOCKER-USER (the inlet's host-mode UDP ports are DNATed and pass FORWARD)
+# and from INPUT, each hook inserted only when missing. Re-running changes nothing.
+# Rules match --ctorigdstport, not --dport: a published Swarm port is DNATed before DOCKER-USER, which then sees
+# the container port; the original destination port is the published one on both hooks. --ctdir ORIGINAL judges
+# only original-direction packets, so replies need no ESTABLISHED accept.
+# Sources are IPv4 literals (iptables resolves a name once, at apply time), so the deploy refuses names.
+# IPv6 is not filtered here: the exporters send over IPv4.
+set -euo pipefail
+{% set chain = 'SKNET-' ~ (env | upper) %}
+
+iptables-restore -w --noflush <<'SKNET_RULES'
+*filter
+:{{ chain }} - [0:0]
+-F {{ chain }}
+{% for port in [sknet_netflow_port, sknet_ipfix_port] %}
+{% for src in sknet_flow_sources %}
+-A {{ chain }} -p udp -m conntrack --ctorigdstport {{ port }} --ctdir ORIGINAL -s {{ src }} -j RETURN
+{% endfor %}
+-A {{ chain }} -p udp -m conntrack --ctorigdstport {{ port }} --ctdir ORIGINAL -j DROP
+{% endfor %}
+COMMIT
+SKNET_RULES
+
+iptables -w -N DOCKER-USER 2>/dev/null || true
+iptables -w -C DOCKER-USER -j {{ chain }} 2>/dev/null || iptables -w -I DOCKER-USER -j {{ chain }}
+iptables -w -C INPUT -j {{ chain }} 2>/dev/null || iptables -w -I INPUT -j {{ chain }}

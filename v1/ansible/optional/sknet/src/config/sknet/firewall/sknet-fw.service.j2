@@ -1,0 +1,17 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# sknet {{ env }} flow port allowlist: re-applies the iptables chain at boot and
+# whenever Docker restarts (PartOf), which recreates its own chains.
+[Unit]
+Description=sknet {{ env }} flow port allowlist
+After=docker.service network-online.target
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/sknet-{{ env }}-fw
+
+[Install]
+WantedBy=multi-user.target

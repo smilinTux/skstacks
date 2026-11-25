@@ -1,0 +1,66 @@
+#!/bin/bash
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+set -e
+
+# sknet (Akvorado flow collector) Deploy Script
+# Environment: {{ env }}
+APPNAME=sknet
+STACK_NAME=sknet-{{ env }}
+CONFIG_DIR="/var/data/config/${STACK_NAME}"
+COMPOSE_FILE="${CONFIG_DIR}/sknet.yml"
+ORCHESTRATOR="${STACK_NAME}_orchestrator"
+
+if [ ! -f "${COMPOSE_FILE}" ]; then
+    echo "Error: Compose file not found: ${COMPOSE_FILE}"
+    exit 1
+fi
+
+cd "${CONFIG_DIR}"
+
+# Swarm configs are read from ${CONFIG_DIR}/configs once, here, and stored in
+# the Raft log; each is named after its content, so a changed file rolls the
+# service that mounts it. --prune removes services that left the stack file only;
+# superseded hash-named configs and secrets stay (they are tiny).
+docker stack deploy \
+    -c "${COMPOSE_FILE}" \
+    --prune \
+    --with-registry-auth \
+    "${STACK_NAME}"
+
+# First boot creates the Kafka topic and the ClickHouse schema before the
+# other Akvorado services get a configuration, so the poll budget is generous
+# (HEALTH_WAIT_SECONDS, default 300) and the result is a warning, never a
+# failed deploy.
+echo "Waiting for ${ORCHESTRATOR} to converge..."
+WAIT=${HEALTH_WAIT_SECONDS:-300}
+for _ in $(seq 1 $(( (WAIT + 4) / 5 ))); do
+    REPLICAS=$(docker service ls --filter "name=${ORCHESTRATOR}" --format "{% raw %}{{.Replicas}}{% endraw %}")
+    [[ -n "$REPLICAS" && "${REPLICAS%%/*}" == "${REPLICAS##*/}" && "${REPLICAS##*/}" != 0 ]] && break
+    sleep 5
+done
+if [[ -n "$REPLICAS" && "${REPLICAS%%/*}" == "${REPLICAS##*/}" && "${REPLICAS##*/}" != 0 ]]; then
+    echo "${ORCHESTRATOR} is running (${REPLICAS})"
+else
+    echo "${ORCHESTRATOR} not converged: ${REPLICAS}"
+    docker service logs --tail 20 "${ORCHESTRATOR}" || true
+fi
+echo "Flow console: https://{{ sknet_host }}/"
+{% if sknet_live_enabled | default(false) %}
+echo "Live view: https://{{ sknet_live_host }}/"
+{% endif %}
+echo "Flow inlet: udp {{ sknet_netflow_port }} (NetFlow v9) and udp {{ sknet_ipfix_port }} (IPFIX) on {{ sknet_data_node }}"
+echo "Deployment complete!"

@@ -1,0 +1,69 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# sknet gate ({{ env }}): the only sknet service on the shared cloud-public network.
+# Traefik terminates TLS, applies the allowlist and the sign-in, then adds the
+# X-Sknet-Gate header (vault GATE_SECRET). Each host block below answers 403 to
+# any request that does not carry exactly that value, so a container that reaches
+# the gate directly gets nothing and a forged X-authentik-* login header never
+# reaches the console. The secret is read from the docker secret file, never
+# written here, and the header is stripped before the request is proxied on.
+# The console host goes to the console over the private sknet-{{ env }} network;
+# the live host (only when LIVE_UPSTREAM is set) goes to that ntopng, an IPv4
+# literal.
+{
+	admin off
+	auto_https off
+}
+
+# Anything addressed to another host name: the Swarm health check, nothing else.
+:8080 {
+	handle /_sknet_health {
+		respond "ok" 200
+	}
+	handle {
+		respond "not found" 404
+	}
+}
+
+http://{{ sknet_host }}:8080 {
+	@nogate not header X-Sknet-Gate {file./run/secrets/sknet_gate}
+	handle @nogate {
+		respond "forbidden" 403
+	}
+	# Akvorado's pprof and internals stay off the public host.
+	handle /debug* {
+		respond "not found" 404
+	}
+	handle {
+		reverse_proxy sknet-{{ env }}_console:8080 {
+			header_up -X-Sknet-Gate
+		}
+	}
+}
+{% if sknet_live_enabled | bool %}
+
+http://{{ sknet_live_host }}:8080 {
+	@nogate not header X-Sknet-Gate {file./run/secrets/sknet_gate}
+	handle @nogate {
+		respond "forbidden" 403
+	}
+	handle {
+		reverse_proxy {{ sknet_live_upstream }} {
+			header_up -X-Sknet-Gate
+		}
+	}
+}
+{% endif %}

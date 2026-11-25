@@ -1,0 +1,151 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# sknet defaults. The instance vault's `sknet:` block is merged over this
+# (recursively, lists and scalars replace), so a vault sets only what it
+# changes. The deploy plays call the merged result `skn`. The image literals
+# below are the same ones the compose template carries as its own defaults (so
+# v1/scripts/list_images.py sees the pins); test_sknet_render.py keeps the two
+# equal.
+sknet_defaults:
+  # Upstream images, used unchanged. Pinned by tag (quay.io/akvorado/akvorado,
+  # clickhouse/clickhouse-server, apache/kafka, caddy).
+  AKVORADO_IMAGE: "quay.io/akvorado/akvorado:2026.10.1"
+  CLICKHOUSE_IMAGE: "clickhouse/clickhouse-server:26.8"
+  KAFKA_IMAGE: "apache/kafka:4.3.1"
+  PROXY_IMAGE: "caddy:2.11.9-alpine"
+  # ntopng (host play, not part of the swarm stack). Docker Hub publishes only a
+  # floating `latest` tag for ntop/ntopng, so it is pinned by digest. This digest
+  # is ntop/ntopng:latest as of 2026-11-25: ntopng Community 7.0-stable, git rev
+  # 794702c0 built 2026-11-19 (`ntopng --version` in the image).
+  NTOPNG_IMAGE: "ntop/ntopng@sha256:df5022c8c45fdcf8789ae2a4fa1bafaeb82dcc55c22cd8dfa12fdf3f5c11d7f2"
+
+  # Where the data lives. DATA_NODE is the swarm node hostname that holds
+  # ClickHouse, Kafka and the inlet's published ports; it is required (the
+  # deploy refuses to run without it). DATA_DIR is local disk on that node,
+  # never NFS.
+  DATA_NODE: ""
+  DATA_DIR: "/var/lib/sknet-{{ env }}"
+
+  # Names. HOSTNAME / LIVE_HOSTNAME are labels under <CLUSTERNAME>.<DOMAIN>
+  # (a value with a dot is used as the full host name).
+  HOSTNAME: "sknet"
+  LIVE_HOSTNAME: "sknet-live"
+
+  # Who may reach the web UIs. Applied to every sknet router as the
+  # `sknet-<env>-allow` ipAllowList middleware, whatever AUTH_MODE is.
+  ALLOW_CIDRS: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+  # authentik: ALLOW_CIDRS plus Authentik forward auth (SSO_MIDDLEWARE).
+  # allowlist: ALLOW_CIDRS only, for an estate that gates the host another way;
+  # the console then trusts every admitted client as one fixed user.
+  # The gate judges the address Traefik sees (ipStrategy depth 0, the direct
+  # remote address). That is the real client only when Traefik's entrypoints
+  # see client addresses (host mode, no NAT or proxy in front). Behind
+  # routing-mesh NAT or a tunnel every client looks private and passes
+  # ALLOW_CIDRS, so allowlist mode is refused with CLOUDFLARED true.
+  # The console and Akvorado trust the login header Authentik's forward auth sets.
+  # The shared cloud-public-<env> network is the real boundary: only the `gate`
+  # service sits on it, and it forwards a request only when it carries the
+  # X-Sknet-Gate header Traefik adds (GATE_SECRET). The console is on the
+  # private sknet-<env> network only: attach nothing else there.
+  # SSO_MIDDLEWARE (default authentik@file) is read from the vault only, so an
+  # allowlist-only vault that also names one can be refused.
+  AUTH_MODE: "authentik"
+  TRAEFIK_MIDDLEWARES: "default-no-error-pages@file"
+  TLS_OPTIONS: "none"
+  CLOUDFLARED: false
+
+  # Flow collector. Exporters send NetFlow v9 / IPFIX to these UDP ports on
+  # DATA_NODE (published in host mode so the exporter's source address
+  # survives). FLOW_SOURCES is the allowlist of exporter addresses (IPv4
+  # literals); an empty list refuses the deploy.
+  NETFLOW_PORT: 2055
+  IPFIX_PORT: 4739
+  FLOW_SOURCES: []
+  # Exporter metadata when the deploy runs without the exporter inventory
+  # group: a map of exporter name to {sknet_export_address, sknet_interfaces},
+  # the same shape as the inventory hostvars.
+  STATIC_EXPORTERS: {}
+  # CIDR -> name, for Akvorado's network naming.
+  NETWORKS: {}
+  GEOIP_ENABLED: false
+
+  # Retention. Every TTL derives from these two knobs. FLOW_TTL_DAYS is the raw
+  # and the 1 minute table; FLOW_AGG_TTL_DAYS (at most 365) is the 5 minute
+  # table and 4 times that the hourly table (default 90 and 360 days). Decide
+  # before the first start: ClickHouse sizes partitions from the TTL when it
+  # creates the tables.
+  # Sizing: raw rows are about 100 to 150 bytes compressed, so 100 flows/s
+  # (8.6M a day) is roughly 1 to 1.5 GB a day, and 20 GB holds about 15 to 20
+  # days of raw flows at that rate; the aggregate tables are small next to it.
+  # Measure with `SELECT formatReadableSize(sum(bytes_on_disk)) FROM
+  # system.parts WHERE database = 'default' AND active` and set FLOW_TTL_DAYS
+  # to fit. A TTL bounds bytes only roughly, so MIN_FREE_GB is the hard stop.
+  FLOW_TTL_DAYS: 30
+  FLOW_AGG_TTL_DAYS: 90
+  # The expected footprint of DATA_DIR. The deploy refuses a data disk where
+  # (what DATA_DIR already uses + what is free) is below it, so a redeploy of a
+  # growing install still passes. It is a planning figure, not a quota.
+  DISK_BUDGET_GB: 20
+  # ClickHouse stops writing when the disk has less than this much free
+  # (storage_configuration keep_free_space_bytes), before the disk fills.
+  MIN_FREE_GB: 5
+
+  # Memory limits (whole stack 3424M by default, under 3.5 GB).
+  CLICKHOUSE_MEMORY_LIMIT: "1536M"
+  KAFKA_MEMORY_LIMIT: "704M"
+  AKVORADO_MEMORY_LIMIT: "512M"        # the outlet
+  ORCHESTRATOR_MEMORY_LIMIT: "192M"
+  INLET_MEMORY_LIMIT: "160M"
+  CONSOLE_MEMORY_LIMIT: "256M"
+  PROXY_MEMORY_LIMIT: "64M"          # the gate (Caddy)
+
+  # The gate secret (required): a random string of at least 32 characters
+  # (letters, digits, dash, underscore; `openssl rand -hex 32`). Traefik adds it
+  # to every request as the X-Sknet-Gate header and the gate answers 403 to any
+  # request without it. Rotating it takes a redeploy. Never log it.
+  GATE_SECRET: ""
+
+  # Live view: the ntopng upstream (http://<ipv4>:<port>). Unset renders no live
+  # host on the gate (the console still goes through it).
+  # Where the gate reaches ntopng from depends on where it runs. From another
+  # swarm node its traffic is masqueraded out of that node's address, so each live
+  # host's sknet_live_allow_sources must list the address of every swarm node that
+  # can run the gate. On the live host itself, if it is also a swarm node, the
+  # packet arrives from docker_gwbridge (a subnet of its own, not the node address)
+  # and the host's SKNET-LIVE chain drops it. So the gate keeps off the live host by
+  # default: when the deploy runs with the live hosts in the inventory
+  # (group sknet_live_hosts) it renders `node.hostname != <inventory name>` for each
+  # (the name must equal the swarm node hostname). PROXY_PLACEMENT_CONSTRAINTS
+  # replaces that default (a list of Swarm placement constraints). The alternative on
+  # a live host that is also a swarm node is to add its docker_gwbridge subnet to
+  # sknet_live_allow_sources, which admits EVERY container on that host.
+  LIVE_UPSTREAM: ""
+  PROXY_PLACEMENT_CONSTRAINTS: []
+
+  LOG_MAX_SIZE: "10m"
+  LOG_MAX_FILES: "3"
+
+# Patterns the validation tasks use. Core Jinja only (no ipaddr filter).
+sknet_re_ipv4: '^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])[.]){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$'
+sknet_re_cidr: '^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])[.]){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])$'
+# Interface name: becomes a systemd instance, `softflowd -i <index>:<name>` and an ntopng `-i <name>`,
+# so no colon, at sign, slash or space; the kernel limit is 15 characters.
+sknet_re_ifname: '^[A-Za-z0-9_.-]{1,15}$'
+sknet_interface_classes: ["lan", "mesh", "estate-link", "internet"]
+# Addresses a collector may have without sknet_allow_public_collector: RFC 1918,
+# RFC 6598 shared space, loopback and the RFC 5737 documentation ranges.
+sknet_re_private_v4: '^(10[.]|127[.]|192[.]168[.]|172[.](1[6-9]|2[0-9]|3[01])[.]|100[.](6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])[.]|192[.]0[.]2[.]|198[.]51[.]100[.]|203[.]0[.]113[.])'

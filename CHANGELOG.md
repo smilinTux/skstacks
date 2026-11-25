@@ -6,6 +6,67 @@ Each entry says what an instance must do, if anything.
 
 ## skstacks-v2.26.33 - 2026-11-23
 
+### sknet: network flow visibility (Akvorado), new optional role
+
+- New optional role `sknet`: Akvorado (2026.10.1, unchanged upstream) as a flattened Swarm stack
+  with Kafka (KRaft, one node) and ClickHouse, deployed by `deploy_sknet-<env>.yml`. Every
+  stateful service is pinned to `sknet.DATA_NODE` with its data on local disk under `DATA_DIR`
+  (default `/var/lib/sknet-<env>`, never `/var/data`). The inlet publishes NetFlow v9 (2055) and
+  IPFIX (4739) UDP in host mode, protected by an iptables allowlist (`sknet-<env>-fw.service`,
+  chain `SKNET-<ENV>`) built from `FLOW_SOURCES`. The console is routed through Traefik with an
+  `sknet-<env>-allow` ipAllowList (`ALLOW_CIDRS`, default the RFC 1918 ranges) on every
+  router, always, plus Authentik forward auth (`AUTH_MODE: authentik`, or `allowlist` for the
+  address gate alone). Interface names come from static exporter metadata (inventory group
+  `sknet_exporter_hosts` hostvars, else vault `STATIC_EXPORTERS`); no SNMP.
+- The `gate` service (pinned Caddy, always deployed) is the only sknet service on the shared
+  `cloud-public-<env>` network; the console is on the private `sknet-<env>` network only. Traefik
+  adds an `X-Sknet-Gate` request header on both routers (the `sknet-<env>-gate` headers
+  middleware, value from the new vault key `GATE_SECRET`), and the gate answers 403 to any
+  request without it, strips it before proxying, and answers 404 for `/debug` on the console
+  host. The secret reaches the gate as a Docker secret. The gate stays off the hosts of
+  inventory group `sknet_live_hosts` by default (`PROXY_PLACEMENT_CONSTRAINTS` overrides).
+  `LIVE_UPSTREAM` adds the live host to the gate (an ntopng running on a host); unset, the gate
+  has no live host block.
+- Retention derives from `FLOW_TTL_DAYS` (raw, 1m) and `FLOW_AGG_TTL_DAYS` (5m, hourly 4x, at most
+  365). ClickHouse `keep_free_space_bytes` comes from `MIN_FREE_GB`. The allowlist uses ipStrategy
+  depth 0 and `AUTH_MODE: allowlist` is refused with `CLOUDFLARED`. Default memory limits total
+  3.4 GB. New overlay subnets 172.16.67.0/24 (prod), .68 (staging), .69 (dev) in
+  `shared/networks`; catalog row and section; render vars `sknet.{example,set,with.sksso}.yml`.
+- `sknet` exporter host play `exporters.yml` (hosts `sknet_exporter_hosts`, or the group named by
+  `sknet_exporter_hosts_group`): softflowd as one `sknet-softflowd@<interface>` systemd instance per
+  `sknet_interfaces` entry (`-i <index>:<name>` forced ifindex,
+  `-n <sknet_collector>:<NETFLOW_PORT> -v 9 -T full`; the port is read from the instance vault like
+  the deploy plays, and a differing `sknet_netflow_port` hostvar is refused), env file per instance
+  under `/etc/sknet`, modest `MemoryMax` and `CPUQuota`. The collector must be an IPv4 literal and
+  private unless `sknet_allow_public_collector: true`; instances no longer listed are stopped,
+  disabled and removed; the distro `softflowd.service` is masked; softflowd is installed with apt
+  only when missing and `allow_package_install` is true; `sknet_state: absent` removes it all and
+  leaves the package. The play warns (never fails) when `sknet_export_address` is not in the
+  vault's `FLOW_SOURCES` or differs from the source address of the route to the collector.
+  The interface hostvar rules (IPv4 export address, index 100 to 65535 and unique, class) now live in
+  `tasks/exporter_check.yml`, shared with the swarm deploy.
+- `sknet` live host play `live.yml` (hosts `sknet_live_hosts`, or the group named by
+  `sknet_live_hosts_group`): ntopng Community 7.0 as the vault's pinned `NTOPNG_IMAGE`, run by
+  `sknet-live.service` (`docker run --network host`, `-i` per `sknet_live_interfaces` entry,
+  `-w <sknet_live_bind>:3000`, ntopng login disabled with `-l 1` because the SSO proxy and the
+  allowlist front it, capabilities dropped to the set ntopng needs, never `--privileged`).
+  `sknet_live_memory_max` (default `512M`, always rendered) caps the container (`--memory`) and the
+  unit (`MemoryMax`). `sknet_live_bind` must be an IPv4 literal (`0.0.0.0` refused, public refused
+  unless `sknet_live_allow_public_bind: true`) and `sknet_live_allow_sources` (IPv4 or CIDR) must be
+  non-empty. Its own iptables chain `SKNET-LIVE` accepts tcp 3000 from those sources only and is
+  re-applied at boot by `sknet-live-fw.service`. Docker must already be installed (the play fails
+  clearly if not). `sknet_state: absent` removes the units, container, chain and hook, keeps the
+  image, and keeps the data dir unless `sknet_live_purge_data: true`. The interface name rule is now
+  the shared `sknet_re_ifname`.
+- **Instance action:** none until the role is used. To use it: add a `sknet:` vault block
+  (`DATA_NODE`, `FLOW_SOURCES` and the new vault key `GATE_SECRET` are required, and either the
+  exporter inventory or `STATIC_EXPORTERS`). `GATE_SECRET` is a random string of at least 32
+  characters (letters, digits, dash, underscore; for example `openssl rand -hex 32`): the deploy
+  refuses to run without it. Choose `FLOW_TTL_DAYS` before the first start (ClickHouse sizes its
+  partitions from it), then run `deploy_sknet-<env>.yml`. `DATA_NODE` must also be a host name in
+  the deploy's inventory. To use the live view, run `live.yml` first, set `LIVE_UPSTREAM`, and
+  deploy with the live hosts in the inventory.
+
 ### skha: node labels follow the VIP (`skha.vip_node_labels`)
 
 - Fixes services with host-published ports (skmail) being unreachable after a VIP failover: the

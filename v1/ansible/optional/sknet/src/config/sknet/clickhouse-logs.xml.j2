@@ -1,0 +1,29 @@
+<!--
+Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<!--
+  sknet ClickHouse system log retention ({{ env }}): the logs ClickHouse keeps
+  (query_log, part_log and friends) do not grow without bound. Upstream's
+  docker/clickhouse/server.xml keeps 30 days; sknet keeps 7 on its smaller disk.
+-->
+<clickhouse>
+  <part_log>
+    <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+  </part_log>
+  <query_log>
+    <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+  </query_log>
+  <query_metric_log>
+    <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+  </query_metric_log>
+  <query_views_log>
+    <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+  </query_views_log>
+  <error_log>
+    <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+  </error_log>
+  <latency_log>
+    <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+  </latency_log>
+</clickhouse>

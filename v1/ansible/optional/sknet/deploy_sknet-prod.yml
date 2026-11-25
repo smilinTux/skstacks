@@ -1,0 +1,135 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# sknet: network flow visibility. Akvorado (upstream github.com/akvorado/
+# akvorado, AGPL-3.0) as a flattened Swarm stack: orchestrator, inlet, outlet
+# and console, with Kafka (KRaft, one node) and ClickHouse, all pinned to one
+# data node with local-disk data. Flows arrive as NetFlow v9 / IPFIX on the
+# inlet's UDP ports (host mode; tasks/port_allowlist.yml firewalls them to
+# FLOW_SOURCES). The web UI is routed through Traefik with an ipAllowList on
+# every router and, by default, Authentik forward auth. When LIVE_UPSTREAM is
+# set a small proxy service fronts an ntopng that runs on a host (that play is
+# separate). Opt-in: nothing renders unless this playbook runs.
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+# Step 1: Select manager node with failover
+# Run on all hosts to ensure it executes even with -l limit
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+# Step 2: Deploy to selected manager
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: sknet
+    env: prod
+    service_name: sknet
+    service_type: optional
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Load the sknet defaults
+      include_vars: "{{ playbook_dir }}/vars/defaults.yml"
+      tags: [config]
+
+    - name: Validate the sknet vault and resolve its facts
+      include_tasks: "{{ playbook_dir }}/tasks/validate.yml"
+      tags: [config, authmode]
+
+    - name: Define network variables from vault (idempotent network creation)
+      # Subnets: sknet-prod 172.16.67.0/24, -staging .68, -dev .69 (reserved for
+      # sknet, checked against v1/tests/test_unique_subnets.py). Override with
+      # the flat per-env sknet_prod_networks.
+      set_fact:
+        app_networks: "{{ sknet_prod_networks | default([
+          { 'name': 'sknet-prod', 'subnet': '172.16.67.0/24', 'driver': 'overlay', 'attachable': true },
+          { 'name': 'cloud-public-prod', 'subnet': '172.16.200.0/24', 'driver': 'overlay', 'attachable': true }
+        ]) }}"
+      tags: [networks, config]
+
+  tasks:
+    - name: Deploying {{ app }}
+      debug:
+        msg: Running SKStacks deploy {{ app }} scripts...
+
+    - name: Create the sknet data directories on the data node and check the disk
+      include_tasks: "{{ playbook_dir }}/tasks/data_dirs.yml"
+      tags: [config]
+
+    - name: Render the sknet config, stack file and deploy script
+      include_tasks: "{{ playbook_dir }}/tasks/render.yml"
+      tags: [config, compose, deploy-script]
+
+    - name: Install the flow port allowlist on the data node
+      include_tasks: "{{ playbook_dir }}/tasks/port_allowlist.yml"
+      vars:
+        sknet_fw_node: "{{ sknet_data_node }}"
+      tags: [firewall]
+
+    - name: Ensure overlay networks exist from app_networks variable
+      include_tasks: ../../shared/tasks/create_networks.yml
+      tags: [networks]
+
+    - name: Deploy the sknet stack
+      include_tasks: "{{ playbook_dir }}/tasks/deploy.yml"
+      tags: [deploy]
+
+    - name: Resolve the portal tile access (who sees the tile)
+      # The tile is a bookmark only: this decides who sees it in the portal.
+      # Default mode admin-only (skadmin). forward_auth is true when the
+      # routers carry authentik@file, so the render-time check can see it.
+      include_tasks: ../../shared/tasks/sso_access_resolve.yml
+      vars:
+        sso_access_slug: "{{ skn.AUTHENTIK_TILE_SLUG | default(sknet_router, true) }}"
+        sso_access_cfg: "{{ skn }}"
+        sso_access_legacy_groups: "{{ [skn.AUTHENTIK_TILE_GROUP | default('', true)] }}"
+        sso_access_forward_auth: "{{ sknet_auth_mode == 'authentik' }}"
+      tags:
+        - config
+        - authentik
+
+    - name: Create or update the sknet portal tile in Authentik
+      # On by default (AUTHENTIK_TILE: true); opt out per instance with
+      # AUTHENTIK_TILE: false. The sign-in gate is AUTH_MODE and ALLOW_CIDRS
+      # (sknet_chain); this only gives the console a bookmark tile on the
+      # Authentik portal. See shared/tasks/authentik_portal_tile.yml.
+      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
+      vars:
+        portal_tile:
+          enabled: "{{ skn.AUTHENTIK_TILE | default(true) | bool }}"
+          slug: "{{ skn.AUTHENTIK_TILE_SLUG | default(sknet_router, true) }}"
+          name: "{{ skn.AUTHENTIK_TILE_NAME | default('SKNet (network flows)', true) }}"
+          launch_url: "https://{{ sknet_host }}"
+          access: "{{ sso_access }}"
+          icon: "{{ skn.AUTHENTIK_TILE_ICON | default('fa://fa-network-wired', true) }}"
+          icon_name: "{{ skn.AUTHENTIK_TILE_ICON_NAME | default('sknet', true) }}"
+          open_in_new_tab: "{{ skn.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
+          description: "{{ skn.AUTHENTIK_TILE_DESCRIPTION | default('', true) }}"
+      tags:
+        - config
+        - authentik

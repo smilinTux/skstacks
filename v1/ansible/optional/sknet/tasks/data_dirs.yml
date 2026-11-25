@@ -1,0 +1,87 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# Local data directories on DATA_NODE, and the disk check. The owners are the
+# container UIDs: Kafka's image runs as 1000, ClickHouse's data is 101, the
+# Akvorado image (distroless, no USER) runs as root. Never recursive.
+# Needs sknet_data_node and sknet_data_dir (tasks/validate.yml).
+- name: Create the sknet data root
+  file:
+    path: "{{ sknet_data_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  delegate_to: "{{ sknet_data_node }}"
+
+- name: Create the sknet data directories
+  file:
+    path: "{{ sknet_data_dir }}/{{ item.sub }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.owner }}"
+    mode: "{{ item.mode }}"
+  delegate_to: "{{ sknet_data_node }}"
+  loop:
+    - { sub: "kafka", owner: "1000", mode: "0700" }
+    - { sub: "clickhouse", owner: "101", mode: "0700" }
+    - { sub: "outlet", owner: "0", mode: "0755" }
+    - { sub: "console", owner: "0", mode: "0755" }
+  loop_control:
+    label: "{{ item.sub }}"
+
+- name: Create the GeoIP directory (the operator drops the databases here)
+  file:
+    path: "{{ sknet_data_dir }}/geoip"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  delegate_to: "{{ sknet_data_node }}"
+  when: skn.GEOIP_ENABLED | bool
+
+- name: Measure the free space and what the data directory already uses
+  # Prints "<free GB> <used KB>". du can take a while on a big install; it only
+  # reads directory metadata.
+  shell: |
+    set -o pipefail
+    free=$(df --output=avail -BG {{ sknet_data_dir | quote }} | tail -n 1 | tr -dc '0-9')
+    used=$(du -sk {{ sknet_data_dir | quote }} | cut -f1)
+    echo "${free} ${used}"
+  args:
+    executable: /bin/bash
+  register: sknet_df
+  changed_when: false
+  check_mode: false
+  delegate_to: "{{ sknet_data_node }}"
+
+- name: Refuse a data disk that cannot hold DISK_BUDGET_GB
+  # Judged on (what the directory already uses + what is free), so a redeploy of
+  # a growing install passes while a fresh, too small disk is refused. An
+  # unreadable answer counts as enough (the shell task above already fails on a
+  # df or du error).
+  vars:
+    sknet_df_words: "{{ (sknet_df.stdout | default('', true) | trim).split() }}"
+    sknet_gb_free: "{{ (sknet_df_words[0] | default('999999', true)) | int(999999) }}"
+    sknet_gb_used: "{{ ((sknet_df_words[1] | default('0', true)) | int(0)) // 1048576 }}"
+  assert:
+    that:
+      - (sknet_gb_free | int) + (sknet_gb_used | int) >= (skn.DISK_BUDGET_GB | int)
+    fail_msg: >-
+      {{ sknet_data_dir }} on {{ sknet_data_node }} has {{ sknet_gb_free }} GB free and {{ sknet_gb_used }} GB used
+      by sknet already, which is less than sknet.DISK_BUDGET_GB ({{ skn.DISK_BUDGET_GB }}). Free the space,
+      point DATA_DIR at a bigger local disk, or lower DISK_BUDGET_GB together with FLOW_TTL_DAYS.
+    quiet: true

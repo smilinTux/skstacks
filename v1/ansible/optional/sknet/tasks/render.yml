@@ -1,0 +1,135 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# Renders the sknet files on the selected manager: the Swarm config sources,
+# the stack file and the deploy script. Needs the facts from tasks/validate.yml.
+# The configs are written to disk only so the docker CLI can read them once at
+# stack deploy; the compose template names each after the sha256 of its content
+# so a change rolls the service that mounts it.
+- name: Create the sknet directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "/var/data/{{ app }}-{{ env }}"
+    - "/var/data/config/{{ app }}-{{ env }}"
+    - "/var/data/config/{{ app }}-{{ env }}/configs"
+    - "/var/data/config/{{ app }}-{{ env }}/secrets"
+
+- name: Render the sknet Swarm config contents
+  set_fact:
+    sknet_configs:
+      akvorado-yaml: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/akvorado.yaml.j2') }}"
+      clickhouse-lowmem: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/clickhouse-lowmem.xml.j2') }}"
+      clickhouse-logs: "{{ lookup('template', playbook_dir + '/src/config/' + app + '/clickhouse-logs.xml.j2') }}"
+  tags: [config]
+
+- name: Add the gate's Caddyfile
+  # Always: the gate fronts the console too. It has a live host block only when
+  # LIVE_UPSTREAM is set.
+  set_fact:
+    sknet_configs: "{{ sknet_configs | combine({'caddyfile': lookup('template', playbook_dir + '/src/config/' + app + '/Caddyfile.j2')}) }}"
+  tags: [config]
+
+- name: Name each sknet Swarm config after the sha256 of its content
+  # The compose template reads these (a content change renames the config, so
+  # the service that mounts it rolls). Computed here, not in the template, so
+  # the template renders under plain Jinja too.
+  set_fact:
+    sknet_config_names: "{{ dict(sknet_configs.keys() | list | zip(sknet_configs.values() | map('hash', 'sha256') | map('truncate', 12, True, '') | list)) }}"
+  tags: [config]
+
+- name: Render the sknet Docker secret contents
+  # The gate secret, as a file the gate mounts (never in a config or the Caddyfile).
+  set_fact:
+    sknet_secrets:
+      gate: "{{ skn.GATE_SECRET }}"
+  no_log: true
+  tags: [config]
+
+- name: Name each sknet Docker secret after the sha256 of its content
+  set_fact:
+    sknet_secret_names: "{{ dict(sknet_secrets.keys() | list | zip(sknet_secrets.values() | map('hash', 'sha256') | map('truncate', 12, True, '') | list)) }}"
+  no_log: true
+  tags: [config]
+
+- name: Write the sknet Docker secret sources
+  copy:
+    content: "{{ item.value }}"
+    dest: "/var/data/config/{{ app }}-{{ env }}/secrets/{{ item.key }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ sknet_secrets | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  no_log: true
+  tags: [config]
+
+- name: Write the sknet Swarm config sources
+  copy:
+    content: "{{ item.value }}"
+    dest: "/var/data/config/{{ app }}-{{ env }}/configs/{{ item.key }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ sknet_configs | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  tags: [config]
+
+- name: Process sknet Docker Compose template
+  template:
+    src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
+    dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+    owner: root
+    group: root
+    mode: "0600"
+  # The stack file carries the gate header value in a Traefik label: root only.
+  no_log: true
+  tags: [compose]
+
+- name: Create docker-compose.yml symlink
+  file:
+    src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+    dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml"
+    force: yes
+    owner: root
+    group: root
+    state: link
+  tags: [compose]
+
+- name: Process deploy script template
+  template:
+    src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+    dest: "/var/data/{{ app }}-{{ env }}/deploy"
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [deploy-script]
+
+- name: Create sknet control script symlink
+  file:
+    src: "/var/data/{{ app }}-{{ env }}/deploy"
+    dest: "/var/data/deploy_{{ app }}-{{ env }}"
+    force: yes
+    owner: root
+    group: root
+    state: link
+  tags: [deploy-script]

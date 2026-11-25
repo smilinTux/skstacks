@@ -1,0 +1,142 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# Akvorado configuration for sknet ({{ env }}), read by the orchestrator, which
+# hands the inlet, outlet and console their parts (see sknet.yml.j2). Rendered
+# by tasks/render.yml; the keys are documented at
+# https://github.com/akvorado/akvorado/blob/v2026.10.1/console/data/docs/50-configuration.md
+kafka:
+  topic: flows
+  brokers: ["kafka:9092"]
+  topic-configuration:
+    # outlet max-workers must not exceed the partition count
+    num-partitions: 2
+    replication-factor: 1
+    config-entries:
+      segment.bytes: 268435456
+      # Kafka is only a buffer for ClickHouse catch-up: half a day, and a size
+      # cap taken from DISK_BUDGET_GB (retention.bytes is per partition).
+      retention.ms: 43200000
+      retention.bytes: {{ sknet_kafka_retention_bytes }}
+      cleanup.policy: delete
+      compression.type: producer
+
+clickhousedb:
+  servers: ["clickhouse:9000"]
+
+clickhouse:
+  orchestrator-url: http://orchestrator:8080
+  # Decide before the first start: ClickHouse sizes partitions from the TTL when
+  # it creates a table. FLOW_TTL_DAYS ({{ skn.FLOW_TTL_DAYS }}) is the raw and the 1 minute table,
+  # FLOW_AGG_TTL_DAYS ({{ skn.FLOW_AGG_TTL_DAYS }}) the 5 minute table and 4 times that the hourly one.
+  resolutions:
+    - interval: 0
+      ttl: "{{ sknet_ttl_hours }}h"
+    - interval: 1m
+      ttl: "{{ sknet_ttl_hours }}h"
+    - interval: 5m
+      ttl: "{{ sknet_agg_ttl_hours }}h"
+    - interval: 1h
+      ttl: "{{ (sknet_agg_ttl_hours | int) * 4 }}h"
+
+inlet:
+  flow:
+    inputs:
+      # NetFlow v9 (softflowd -v 9) and IPFIX; both are decoded by the netflow
+      # decoder. The container ports are fixed; the node's published ports are
+      # NETFLOW_PORT and IPFIX_PORT.
+      - {type: udp, decoder: netflow, listen: ":2055", workers: 2}
+      - {type: udp, decoder: netflow, listen: ":4739", workers: 2}
+  kafka:
+    compression-codec: zstd
+
+outlet:
+  kafka-input:
+    max-workers: 2
+  metadata:
+    providers:
+      # Static interface metadata, no SNMP anywhere. Each exporter is keyed by
+      # the source address the inlet sees; unknown ifindexes still produce flows.
+      - type: static
+        exporters:
+{% for e in sknet_exporters %}
+          {{ e.address }}/32:
+            name: {{ e.name | to_json }}
+            default: {name: unknown, description: Unknown, speed: 1000}
+            ifindexes:
+{% for i in e.interfaces %}
+              {{ i.index }}: {name: {{ i.name | to_json }}, description: {{ i.description | to_json }}, speed: {{ i.speed }}}
+{% endfor %}
+{% endfor %}
+  core:
+    # softflowd is unsampled and does not announce a rate.
+    default-sampling-rate: 1
+    interface-classifiers:
+      # One rule per interface, from its class, keyed on the exporter's static
+      # provider name (Exporter.Name), which Akvorado keeps as written; the
+      # address form may be presented IPv4-mapped. softflowd reports the same
+      # ifindex as input and output, so the boundary is per interface, not per
+      # direction; group by ExporterName and InIfName.
+{% for e in sknet_exporters %}
+{% for i in e.interfaces %}
+      - {{ ('Exporter.Name == ' ~ (e.name | to_json) ~ ' && Interface.Index == ' ~ i.index ~ ' && ClassifyConnectivity("' ~ i.class ~ '") && ClassifyProvider("' ~ i.class ~ '") && ' ~ ('ClassifyExternal()' if i.class == 'internet' else 'ClassifyInternal()')) | to_json }}
+{% endfor %}
+{% endfor %}
+      - ClassifyInternal()
+{% if skn.NETWORKS | default({}, true) %}
+  networks:
+    networks:
+{% for cidr, name in skn.NETWORKS.items() %}
+      {{ cidr }}: {name: {{ name | to_json }}}
+{% endfor %}
+{% endif %}
+{% if skn.GEOIP_ENABLED | default(false) | bool %}
+  geoip:
+    # Country and ASN files (any MaxMind-format database) dropped into
+    # DATA_DIR/geoip on the data node; optional so the outlet starts without them.
+    optional: true
+    asn-database: [/usr/share/GeoIP/asn.mmdb]
+    geo-database: [/usr/share/GeoIP/country.mmdb]
+{% endif %}
+
+console:
+  default-visualize-options:
+    start: 6 hours ago
+    end: now
+    filter: ""
+    dimensions: [ExporterName, InIfName]
+  homepage-top-widgets: [exporter, protocol, src-port, dst-port, etype]
+{% set has_internet = sknet_exporters | selectattr('interfaces') | map(attribute='interfaces') | flatten | selectattr('class', 'equalto', 'internet') | list | length > 0 %}
+  # "external" exists only where an exporter has an internet-class interface.
+  homepage-top-widgets-filter: {{ ('InIfBoundary = external' if has_internet else '') | to_json }}
+  homepage-graph-filter: {{ ('InIfBoundary = external' if has_internet else '') | to_json }}
+  auth:
+{% if sknet_auth_mode == 'authentik' %}
+    # The login comes from the Authentik forward-auth headers. With no header
+    # the console denies access (empty default user).
+    headers:
+      login: X-authentik-username
+      name: X-authentik-name
+      email: X-authentik-email
+    default-user:
+      login: ""
+{% else %}
+    # AUTH_MODE allowlist: no proxy login, so a fixed user lets the clients
+    # ALLOW_CIDRS admits in. Anyone allowed by the address gate is this user.
+    default-user:
+      login: sknet-allowlist
+      name: sknet allowlist user
+{% endif %}

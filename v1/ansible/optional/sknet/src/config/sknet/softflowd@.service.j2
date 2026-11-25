@@ -1,0 +1,49 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+# sknet exporter unit (one instance per interface), rendered by exporters.yml
+# to /etc/systemd/system/sknet-softflowd@.service. The instance name is the
+# interface name; everything per instance comes from
+# /etc/sknet/softflowd-<instance>.env (SKNET_IFACE, SKNET_IFINDEX,
+# SKNET_COLLECTOR, SKNET_PORT, SKNET_OPTIONS, SKNET_BPF). Do not edit on the
+# host: the play rewrites it.
+#   -i <index>:<name>   forces the interface index softflowd puts in the flow
+#                       records (softflowd 1.0.0 and later), so Akvorado's
+#                       static interface metadata can name the port
+#   -v 9 -T full        NetFlow v9, full 5-tuple tracking
+#   -N                  no promiscuous mode (a tun or WireGuard device has none)
+#   -d                  stay in the foreground, systemd supervises it
+[Unit]
+Description=sknet softflowd exporter on %i
+Documentation=https://github.com/irino/softflowd
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile={{ sknet_x_etc }}/softflowd-%i.env
+# One directory per instance: systemd removes it when that instance stops, which
+# must not take the other instances' pid and control files with it.
+RuntimeDirectory=sknet-softflowd-%i
+ExecStart={{ sknet_x_binary }} -d -i ${SKNET_IFINDEX}:${SKNET_IFACE} -n ${SKNET_COLLECTOR}:${SKNET_PORT} -v 9 -T full -N -p /run/sknet-softflowd-%i/softflowd.pid -c /run/sknet-softflowd-%i/softflowd.ctl $SKNET_OPTIONS ${SKNET_BPF}
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+MemoryMax={{ sknet_x_memory_max }}
+CPUQuota={{ sknet_x_cpu_quota }}
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,17 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# sknet live view allowlist: re-applies the iptables chain at boot, before the ntopng unit.
+[Unit]
+Description=sknet live view port allowlist
+Wants=network-pre.target
+After=network-pre.target
+Before=sknet-live.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart={{ sknet_l_fw_script }}
+
+[Install]
+WantedBy=multi-user.target

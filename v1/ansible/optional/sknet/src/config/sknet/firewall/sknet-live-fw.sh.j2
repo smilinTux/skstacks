@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# sknet live view allowlist, rendered by live.yml. One chain, {{ sknet_l_chain }}: tcp {{ sknet_l_port }} is accepted
+# from the listed sources only, then dropped. The chain is flushed and rebuilt in one
+# iptables-restore --noflush (atomic), then hooked from INPUT for tcp {{ sknet_l_port }} to ntopng's own address
+# ({{ sknet_l_bind }}) only, when missing, so another host-network service on that port is not touched.
+# ntopng runs with host networking, so its port is judged in INPUT (no DOCKER-USER). IPv4 only.
+set -euo pipefail
+
+iptables-restore -w --noflush <<'SKNET_RULES'
+*filter
+:{{ sknet_l_chain }} - [0:0]
+-F {{ sknet_l_chain }}
+{% for src in sknet_l_sources %}
+-A {{ sknet_l_chain }} -s {{ src }} -j ACCEPT
+{% endfor %}
+-A {{ sknet_l_chain }} -j DROP
+COMMIT
+SKNET_RULES
+
+iptables -w -C INPUT -p tcp -d {{ sknet_l_bind }} --dport {{ sknet_l_port }} -j {{ sknet_l_chain }} 2>/dev/null || iptables -w -I INPUT -p tcp -d {{ sknet_l_bind }} --dport {{ sknet_l_port }} -j {{ sknet_l_chain }}
+
+# A hook from before the destination match (any address on the port) is dropped, after the new one is in place.
+while iptables -w -C INPUT -p tcp --dport {{ sknet_l_port }} -j {{ sknet_l_chain }} 2>/dev/null; do
+  iptables -w -D INPUT -p tcp --dport {{ sknet_l_port }} -j {{ sknet_l_chain }}
+done
