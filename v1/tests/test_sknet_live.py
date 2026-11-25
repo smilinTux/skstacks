@@ -330,7 +330,7 @@ def test_public_bind_needs_the_explicit_flag(tmp_path):
     assert "0.0.0.0" in h2.refused()
 
 
-@pytest.mark.parametrize("sources", [[], None, "192.0.2.5", ["live.example.test"], ["192.0.2.5/33"], ["0.0.0.0/0"]])
+@pytest.mark.parametrize("sources", [[], None, "192.0.2.5", ["live.example.test"], ["192.0.2.5/33"], ["0.0.0.0/0"], ["192.0.2.0/0"], ["10.0.0.0/4"]])
 def test_bad_allow_sources_are_refused(tmp_path, sources):
     h = LiveHost(tmp_path)
     if sources is None:
@@ -470,3 +470,17 @@ def test_absent_does_not_need_docker_or_the_live_hostvars(tmp_path):
     h = LiveHost(tmp_path, docker=False, sknet_state="absent")
     h.vars.pop("sknet_live_bind")
     h.ok()
+
+
+def test_short_prefix_refused_and_slash_8_accepted(tmp_path):
+    LiveHost(tmp_path / "a", sknet_live_allow_sources=["10.0.0.0/8"]).ok()
+    assert "sknet_live_allow_sources" in LiveHost(tmp_path / "b", sknet_live_allow_sources=["192.0.2.50", "10.0.0.0/7"]).refused()
+
+
+def test_unit_hardening_and_log_cap(host):
+    host.ok()
+    ex = host.exec_start()
+    for f in ("--security-opt no-new-privileges", "--log-opt max-size=10m", "--log-opt max-file=3"):
+        assert f in ex
+    fw = (host.units / "sknet-live-fw.service").read_text()
+    assert "Wants=network-pre.target" in fw and "After=network-pre.target" in fw

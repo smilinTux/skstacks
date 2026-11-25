@@ -4,6 +4,7 @@
 # sknet live view allowlist: re-applies the iptables chain at boot, before the ntopng unit.
 [Unit]
 Description=sknet live view port allowlist
+Wants=network-pre.target
 After=network-pre.target
 Before=sknet-live.service
 

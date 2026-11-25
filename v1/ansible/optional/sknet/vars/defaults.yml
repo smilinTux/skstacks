@@ -108,6 +108,9 @@ sknet_defaults:
   CONSOLE_MEMORY_LIMIT: "256M"
   PROXY_MEMORY_LIMIT: "64M"
 
+  # Live view note: the swarm live proxy reaches the ntopng host from the node address of
+  # whichever swarm node runs it, so each live host's sknet_live_allow_sources must include
+  # every swarm node address that can run the proxy.
   # Live view: the ntopng upstream (http://<ipv4>:<port>). Unset renders no
   # live router and no proxy service.
   LIVE_UPSTREAM: ""
