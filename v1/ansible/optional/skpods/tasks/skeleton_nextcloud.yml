@@ -47,6 +47,17 @@
     - config
     - skeleton
 
+- name: Remove the earlier static welcome note from the skeleton
+  # Replaced by the skpods app's per-account Readme.md.
+  file:
+    path: "{{ skp_app_path }}/config/skpods-skeleton/Welcome to your pod.md"
+    state: absent
+  delegate_to: "{{ skp_data_node if skp_data_node else inventory_hostname }}"
+  when: skp_skeleton == 'skpods'
+  tags:
+    - config
+    - skeleton
+
 - name: Point new accounts at the skpods skeleton and drop the stock templates
   shell: |
     set -euo pipefail
