@@ -26,6 +26,10 @@ Each entry says what an instance must do, if anything.
   `solid/public/shared`) and no stock files or Templates folder; the deploy removes stock files from
   existing accounts when they are byte-identical to the image's copy. New `skpods.SKELETON`
   (`skpods` default, `stock`); `--tags skeleton`. README "New accounts". **Instance action**: none.
+- Files: `.md`, text and PDFs open in the browser (`text`, `files_pdfviewer`), deletes go to the
+  trash (`files_trashbin`), and Nextcloud sharing is off so pod data is shared only through Solid
+  ACLs. New `skpods.ENABLE_APPS` and `skpods.NEXTCLOUD_SHARING` (default `false`). README "Files".
+  **Instance action**: none; set `NEXTCLOUD_SHARING: true` if you relied on Nextcloud shares.
 
 ### skpods: new optional service for Solid pod hosting
 

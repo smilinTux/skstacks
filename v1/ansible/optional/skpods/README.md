@@ -91,6 +91,8 @@ from the very first start.
 | `PLACEMENT_CONSTRAINTS` | `[]` | Extra swarm constraints for every service. |
 | `THEME` | `skpods` | `skpods` brands the engine as skpods.id (login, titles, links, logo, dark UI); `none` restores the stock look. See [Branding](#branding). |
 | `SKELETON` | `skpods` | `skpods`: new accounts start with a welcome note and pod folders instead of the stock files, and stock files are removed from existing accounts. `stock` restores the upstream defaults. See [New accounts](#new-accounts). |
+| `ENABLE_APPS` | `files_pdfviewer`, `files_trashbin`, `text` | Shipped apps to enable. See [Files](#files). |
+| `NEXTCLOUD_SHARING` | `false` | `false` turns off Nextcloud shares and public links so pod data is shared only through Solid ACLs. See [Files](#files). |
 | `DISABLE_APPS` | built-in list | Default Nextcloud apps to disable (best effort; always-enabled apps are skipped). |
 | `DEFAULT_PHONE_REGION`, `MAINTENANCE_WINDOW_START`, `TZ` | `US`, `1`, `UTC` | Nextcloud housekeeping. |
 | `PHP_MEMORY_LIMIT`, `PHP_UPLOAD_LIMIT` | `512M`, `1G` | PHP limits. |
@@ -120,6 +122,18 @@ active. `THEME: none` removes the folder and resets the theming settings.
 Two strings still read "Nextcloud" because they are built into upstream Vue
 components (personal settings: the profile toggle and "Choose from Nextcloud
 Files"). They only show to signed-in users in settings.
+
+## Files
+
+The Files app is the owner's view of their own pod (`solid/` is the pod):
+browse what apps wrote, upload, move and delete. It is part of Nextcloud and
+cannot be disabled. The role adds:
+
+- `text`: `.md` and plain text open in the browser (and the owner can edit them). Pod files such as `.ttl` and `.acl` still only download.
+- `files_pdfviewer`: PDFs open in the browser. Images and video already preview (`viewer`).
+- `files_trashbin`: a deleted file goes to the owner's trash. It leaves the pod at once, as Solid expects.
+- Version history (`files_versions`) stays off: apps write often (every chat message is a write).
+- Nextcloud sharing is off (`shareapi_enabled=no`): shares and public links would reach pod data without the pod's ACLs. Share through Solid instead. `NEXTCLOUD_SHARING: true` turns it back on.
 
 ## New accounts
 
