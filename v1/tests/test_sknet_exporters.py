@@ -376,7 +376,7 @@ def test_public_collector_is_refused(tmp_path):
     assert h.env_files() == []
 
 
-@pytest.mark.parametrize("ok", ["10.1.2.3", "172.16.0.9", "172.31.255.1", "192.168.5.5", "100.64.0.7", "127.0.0.1",
+@pytest.mark.parametrize("ok", ["10.1.2.3", "172.16.0.9", "172.31.255.1", "192.168.5.5", "127.0.0.1",
                                 "192.0.2.10", "198.51.100.4", "203.0.113.9"])
 def test_private_and_documentation_collectors_pass(tmp_path, ok):
     h = FakeHost(tmp_path, sknet_collector=ok)

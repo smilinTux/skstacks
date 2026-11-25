@@ -38,7 +38,7 @@
     fail_msg: >-
       {{ inventory_hostname }}: sknet_collector {{ sknet_x_collector }} is a public address. Flow
       records describe every conversation on the monitored interfaces; send them to a private
-      (RFC 1918, 100.64.0.0/10, loopback or documentation) collector, or set
+      (RFC 1918, RFC 6598 shared, loopback or documentation) collector, or set
       sknet_allow_public_collector: true on this host if the export really must cross the internet.
     quiet: true
 

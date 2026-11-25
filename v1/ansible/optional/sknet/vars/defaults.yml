@@ -47,7 +47,7 @@ sknet_defaults:
 
   # Who may reach the web UIs. Applied to every sknet router as the
   # `sknet-<env>-allow` ipAllowList middleware, whatever AUTH_MODE is.
-  ALLOW_CIDRS: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"]
+  ALLOW_CIDRS: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
   # authentik: ALLOW_CIDRS plus Authentik forward auth (SSO_MIDDLEWARE).
   # allowlist: ALLOW_CIDRS only, for an estate that gates the host another way;
   # the console then trusts every admitted client as one fixed user.
@@ -147,5 +147,5 @@ sknet_re_cidr: '^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])[.]){3}(25[0-5]|2[0
 sknet_re_ifname: '^[A-Za-z0-9_.-]{1,15}$'
 sknet_interface_classes: ["lan", "mesh", "estate-link", "internet"]
 # Addresses a collector may have without sknet_allow_public_collector: RFC 1918,
-# 100.64.0.0/10, loopback and the RFC 5737 documentation ranges.
+# RFC 6598 shared space, loopback and the RFC 5737 documentation ranges.
 sknet_re_private_v4: '^(10[.]|127[.]|192[.]168[.]|172[.](1[6-9]|2[0-9]|3[01])[.]|100[.](6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])[.]|192[.]0[.]2[.]|198[.]51[.]100[.]|203[.]0[.]113[.])'

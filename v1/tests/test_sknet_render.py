@@ -31,7 +31,7 @@ DEFAULTS = yaml.safe_load((ROLE / "vars" / "defaults.yml").read_text())["sknet_d
 AKVORADO_IMAGE = "quay.io/akvorado/akvorado:2026.10.1"
 CLICKHOUSE_IMAGE = "clickhouse/clickhouse-server:26.8"
 KAFKA_IMAGE = "apache/kafka:4.3.1"
-DEFAULT_CIDRS = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"]
+DEFAULT_CIDRS = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
 
 # Two exporter hosts as an instance-private inventory would define them.
 EXPORTERS = {

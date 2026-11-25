@@ -20,7 +20,7 @@ sknet:
   DATA_NODE: "<swarm node hostname>"
   GATE_SECRET: "<random, 32+ characters: openssl rand -hex 32>"
   FLOW_SOURCES: ["192.0.2.10", "198.51.100.7"]
-  ALLOW_CIDRS: ["192.0.2.0/24", "100.64.0.0/10"]
+  ALLOW_CIDRS: ["192.0.2.0/24", "198.51.100.0/24"]
   LIVE_UPSTREAM: "http://192.0.2.30:3000"     # optional, enables the live router
 ```
 

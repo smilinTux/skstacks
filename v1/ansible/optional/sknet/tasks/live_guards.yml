@@ -53,7 +53,7 @@
       - sknet_l_bind is match(sknet_re_private_v4) or (sknet_live_allow_public_bind | default(false) | bool)
     fail_msg: >-
       {{ inventory_hostname }}: sknet_live_bind {{ sknet_l_bind }} is a public address and ntopng's login is
-      disabled. Bind to a private (RFC 1918, 100.64.0.0/10, loopback or documentation) address, or set
+      disabled. Bind to a private (RFC 1918, RFC 6598 shared, loopback or documentation) address, or set
       sknet_live_allow_public_bind: true on this host if the allowlist alone must protect it.
     quiet: true
 

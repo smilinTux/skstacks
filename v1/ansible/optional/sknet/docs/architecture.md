@@ -65,7 +65,7 @@ Published ports bypass most host firewall rules, so the deploy installs its own.
 
 Every sknet router carries the middleware chain `sknet-<env>-allow`, then `TRAEFIK_MIDDLEWARES`, then (in `authentik` mode) `authentik@file`. The allowlist comes first, so an address outside `ALLOW_CIDRS` is refused before it ever reaches the sign-in provider, and gets a plain 403.
 
-`ALLOW_CIDRS` defaults to the three RFC 1918 private ranges plus the carrier-grade NAT range (100.64.0.0/10) commonly used by overlay meshes. Narrow it to your LAN and mesh ranges.
+`ALLOW_CIDRS` defaults to the three RFC 1918 private ranges; add your overlay mesh range if it uses shared address space (RFC 6598). Narrow it to your LAN and mesh ranges.
 
 ### `AUTH_MODE`
 

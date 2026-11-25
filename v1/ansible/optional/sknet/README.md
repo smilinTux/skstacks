@@ -113,7 +113,7 @@ The vault holds one `sknet:` block, merged over `vars/defaults.yml`; set only wh
 | `AKVORADO_IMAGE` | `quay.io/akvorado/akvorado:2026.10.1` | Pinned by tag or digest; floating tags refused |
 | `CLICKHOUSE_IMAGE` / `KAFKA_IMAGE` / `PROXY_IMAGE` | `clickhouse/clickhouse-server:26.8`, `apache/kafka:4.3.1`, `caddy:2.11.9-alpine` | Pinned |
 | `NTOPNG_IMAGE` | digest of the pinned ntopng build | Used by `live.yml`; Docker Hub publishes only a floating tag, so it is a digest |
-| `ALLOW_CIDRS` | RFC 1918 + `100.64.0.0/10` | The `sknet-<env>-allow` ipAllowList on every router; narrow it |
+| `ALLOW_CIDRS` | RFC 1918 | The `sknet-<env>-allow` ipAllowList on every router; narrow it |
 | `AUTH_MODE` | `authentik` | `authentik` (allowlist plus SSO) or `allowlist` (refused with `CLOUDFLARED`) |
 | `SSO_MIDDLEWARE` | `authentik@file` | Only valid with `AUTH_MODE: authentik` |
 | `TRAEFIK_MIDDLEWARES`, `TLS_OPTIONS`, `CLOUDFLARED` | `default-no-error-pages@file`, `none`, `false` | Router settings |

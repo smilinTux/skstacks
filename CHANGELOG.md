@@ -14,7 +14,7 @@ Each entry says what an instance must do, if anything.
   (default `/var/lib/sknet-<env>`, never `/var/data`). The inlet publishes NetFlow v9 (2055) and
   IPFIX (4739) UDP in host mode, protected by an iptables allowlist (`sknet-<env>-fw.service`,
   chain `SKNET-<ENV>`) built from `FLOW_SOURCES`. The console is routed through Traefik with an
-  `sknet-<env>-allow` ipAllowList (`ALLOW_CIDRS`, default RFC 1918 and 100.64.0.0/10) on every
+  `sknet-<env>-allow` ipAllowList (`ALLOW_CIDRS`, default the RFC 1918 ranges) on every
   router, always, plus Authentik forward auth (`AUTH_MODE: authentik`, or `allowlist` for the
   address gate alone). Interface names come from static exporter metadata (inventory group
   `sknet_exporter_hosts` hostvars, else vault `STATIC_EXPORTERS`); no SNMP.

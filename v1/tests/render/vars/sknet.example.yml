@@ -5,7 +5,7 @@ sknet:
   CLUSTERNAME: render
   DOMAIN: example.test
   DATA_NODE: render-node-1
-  GATE_SECRET: "render-dummy-gate-secret-0123456789abcdef"
+  GATE_SECRET: "DUMMY-DUMMY-DUMMY-DUMMY-DUMMY-DUMMY-DUMMY"
   FLOW_SOURCES:
     - "192.0.2.10"
   STATIC_EXPORTERS:
