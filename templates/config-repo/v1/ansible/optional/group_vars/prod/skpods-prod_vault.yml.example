@@ -1,0 +1,52 @@
+# Placeholder instance vault for skpods (Solid pod server), prod environment.
+#
+# PLAINTEXT reference copy, like skbook-prod_vault.yml.example next to it:
+# the framework repo never carries vault ciphertext, and the published
+# smilinTux/skstacks-config-template repo carries the encrypted sibling
+# skpods-prod_vault.yml (documented demo password, README "Set the vault
+# password"). Regenerate it after editing this file:
+#
+#   ansible-vault encrypt --vault-password-file <password-file> \
+#     --output skpods-prod_vault.yml skpods-prod_vault.yml.example
+#
+# Field reference: v1/ansible/optional/skpods/README.md in the framework.
+# The uncommented keys match the framework's render-gate fixture
+# (v1/tests/render/vars/skpods.example.yml) value for value. Every value is
+# a placeholder: example.test only, no real secrets.
+skpods:
+  # REQUIRED
+  CLUSTERNAME: render   # replace with your inventory's cluster_name
+  DOMAIN: example.test  # replace with your real domain
+  # Engine image, always repo:tag@sha256:digest. README "Engine image".
+  NEXTCLOUD_IMAGE: "registry.example.test/skpods/skpods-nextcloud:35.0.3-solid-0000000@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  ADMIN_PASSWORD: example-admin-password-not-a-secret  # 16+ characters
+  DB_PASSWORD: example-db-password-not-a-secret        # 16+ characters
+
+  # optional (defaults shown). The pod server is at
+  # https://<HOST_PREFIX>.<CLUSTERNAME>.<DOMAIN> (prod) unless HOSTNAME is
+  # set. Pick the hostname before the first account exists: WebIDs contain
+  # it, so it is permanent.
+  # HOST_PREFIX: pods
+  # HOSTNAME: pods.example.test
+  #
+  # Private engine image: the manager logs in before the stack deploy.
+  # REGISTRY_LOGIN:
+  #   registry: registry.example.test
+  #   username: example-pull-user
+  #   password: example-pull-token-not-a-secret
+  #
+  # Outgoing mail (password reset). Without SMTP_HOST, "Forgot password?"
+  # is hidden.
+  # SMTP_HOST: mail.example.test
+  # SMTP_PORT: 465
+  # SMTP_SECURE: ssl
+  # SMTP_USER: pods@example.test
+  # SMTP_PASSWORD: example-smtp-password-not-a-secret
+  # MAIL_FROM: pods
+  # MAIL_DOMAIN: example.test
+  #
+  # DEFAULT_QUOTA: 10 GB
+  # ANTIVIRUS: true
+  # THEME: skpods
+  # SKELETON: skpods
+  # NEXTCLOUD_SHARING: false

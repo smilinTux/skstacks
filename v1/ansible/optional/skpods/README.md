@@ -17,13 +17,18 @@ seed and reset, verification, troubleshooting).
 
 ## Quickstart
 
+Starting from nothing? Use the
+[skstacks-config-template](https://github.com/smilinTux/skstacks-config-template)
+repo: its "Just want Solid pods?" section sets up a private instance repo
+that runs only this role.
+
 1. Build and push an engine image (see [Engine image](#engine-image)) and
    note its digest.
 2. Add an `skpods` block to the instance vault (minimal snippet below).
 3. Deploy:
 
 ```bash
-ansible-playbook -i envs/dev/inventory.ini \
+ansible-playbook -i v1/ansible/shared/hosts \
   framework/v1/ansible/optional/skpods/deploy_skpods-dev.yml \
   -e target_manager_group=swarm_managers \
   -e skstacks_vault_dir=$(pwd)/v1/ansible \
@@ -50,9 +55,15 @@ The `nextcloud` engine does not use the Nextcloud app store. The instance
 builds a thin derived image: the official `nextcloud:<version>-apache` image
 (pinned by digest) plus the Solid app source the instance chooses, with its
 composer `vendor/` tree, under `/usr/src/skpods-apps/solid`. A
-`before-starting` entrypoint hook in that image copies the app into
-`custom_apps/solid` on every start, so a new image digest always ships its
-own app code, and finishes an app upgrade (`occ upgrade`) if one is pending.
+`before-starting` entrypoint hook in that image copies every app under
+`/usr/src/skpods-apps/` into `custom_apps/` on every start, so a new image
+digest always ships its own app code, and finishes an app upgrade
+(`occ upgrade`) if one is pending.
+
+Besides `solid`, the role expects two more apps in the image:
+`skpods` (writes each account's `Readme.md`, `occ skpods:readme`) and
+`files_antivirus` (when `ANTIVIRUS` is on). A public engine image is not
+published yet.
 
 The role only pins that image by digest (`NEXTCLOUD_IMAGE`). Where the image
 is built and which Solid app revision it carries is the instance's choice.
@@ -89,6 +100,17 @@ from the very first start.
 | `APP_PATH` | `/var/data/skpods-<env>` | Nextcloud `html/`, `config/`, `data/` (pods live in each user's Files under `solid/`). |
 | `POSTGRES_PATH`, `REDIS_PATH` | `/var/data/runtime/skpods-<env>/{postgres,redis}` | Datastore paths. |
 | `PLACEMENT_CONSTRAINTS` | `[]` | Extra swarm constraints for every service. |
+| `THEME` | `skpods` | `skpods` brands the engine as skpods.id (login, titles, links, logo, dark UI); `none` restores the stock look. See [Branding](#branding). |
+| `SKELETON` | `skpods` | `skpods`: new accounts start with a welcome note and pod folders instead of the stock files, and stock files are removed from existing accounts. `stock` restores the upstream defaults. See [New accounts](#new-accounts). |
+| `ENABLE_APPS` | `files_pdfviewer`, `files_trashbin`, `text`, `twofactor_totp`, `skpods`, and `files_antivirus` with `ANTIVIRUS` | Shipped apps to enable. See [Files](#files). |
+| `NEXTCLOUD_SHARING` | `false` | `false` turns off Nextcloud shares and public links so pod data is shared only through Solid ACLs. See [Files](#files). |
+| `ANTIVIRUS` | `true` | Runs a `clamav` service in the stack and enables `files_antivirus` (shipped in the engine image): uploads with a virus are refused. See [Antivirus](#antivirus). |
+| `CLAMAV_IMAGE`, `CLAMAV_PATH`, `CLAMAV_MEMORY_LIMIT`, `CLAMAV_MEMORY_RESERVATION` | pinned digest, `/var/data/runtime/skpods-<env>/clamav`, `2G`, `512M` | ClamAV service. |
+| `CLAMD_MAX_THREADS`, `CLAMD_STREAM_MAX_LENGTH_MB`, `CLAMD_MAX_SCAN_SIZE_MB` | `2`, `100`, `200` | `clamd.conf` limits; the stream limit also sets `files_antivirus`'s `av_stream_max_length`. |
+| `ANTIVIRUS_INFECTED_ACTION`, `ANTIVIRUS_MAX_FILE_SIZE` | `only_log`, `-1` | What background scans do with an infected stored file; upload refusal does not depend on it. |
+| `DEFAULT_QUOTA` | `10 GB` | Storage per account (`files` `default_quota`). Per-user overrides stay as set. |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_AUTHTYPE`, `SMTP_USER`, `SMTP_PASSWORD`, `MAIL_FROM`, `MAIL_DOMAIN` | unset, `465`, `ssl`, `LOGIN` | Outgoing mail (password reset). Without `SMTP_HOST` the "Forgot password?" link is hidden. |
+| `DB_DUMP_PATH`, `DB_DUMP_KEEP_DAYS`, `DB_DUMP_FREQUENCY` | `<APP_PATH>/database-dump`, `7`, `1d` | The `pgdump` service's consistent Postgres dumps, for skbackup. See [Backups](#backups). |
 | `DISABLE_APPS` | built-in list | Default Nextcloud apps to disable (best effort; always-enabled apps are skipped). |
 | `DEFAULT_PHONE_REGION`, `MAINTENANCE_WINDOW_START`, `TZ` | `US`, `1`, `UTC` | Nextcloud housekeeping. |
 | `PHP_MEMORY_LIMIT`, `PHP_UPLOAD_LIMIT` | `512M`, `1G` | PHP limits. |
@@ -98,6 +120,94 @@ from the very first start.
 | `CREDENTIALS_OUT` | unset | Controller path for minted client credentials (JSON, 0600). |
 | `AUTHENTIK_TILE`, `AUTHENTIK_TILE_*` | `true` | Portal tile (a bookmark only; it never puts Authentik in front of the service). |
 | `SSO_ACCESS`, `SSO_*` | `admin-only` | Who sees the tile in the portal (shared `sso_access_resolve.yml`; `app-groups` uses `app-<slug>-admins`/`-users`). It never gates the pod server itself. |
+
+## Branding
+
+`THEME: skpods` (the default) installs `files/theme/skpods` into the engine's
+`themes/` folder and sets the theming app to match, so no page shows the
+upstream product name or its links:
+
+- `defaults.php`: product name, page titles, help and client links (all point at https://skpods.id).
+- `core/css/server.css`: the login and guest pages (aurora background, glass card, "Enter your pod"), the dark signed-in header and the Solid consent screen. It also hides the upstream promo block in personal settings.
+- `core/img/logo.svg`: logo, header logo and favicon.
+- `core/fonts/`: Space Grotesk and JetBrains Mono, self-hosted (the engine's CSP only allows `font-src 'self'`), both SIL OFL 1.1 (license texts next to the fonts).
+
+The theme also sets `enforce_theme=dark` and disables per-user theming. Edit the
+files in the role and redeploy (`--tags theme` re-applies only this step); the
+play re-runs the theming commands only when a file changed or the theme is not
+active. `THEME: none` removes the folder and resets the theming settings.
+
+`apps/settings/l10n/en.{js,json}` in the theme renames the two upstream
+settings strings that name the product ("Public profile", "Choose from your
+files").
+
+## Files
+
+The Files app is the owner's view of their own pod (`solid/` is the pod):
+browse what apps wrote, upload, move and delete. It is part of Nextcloud and
+cannot be disabled. The role adds:
+
+- `text`: `.md` and plain text open in the browser (and the owner can edit them). Pod files such as `.ttl` and `.acl` still only download.
+- `files_pdfviewer`: PDFs open in the browser. Images and video already preview (`viewer`).
+- `files_trashbin`: a deleted file goes to the owner's trash. It leaves the pod at once, as Solid expects.
+- Version history (`files_versions`) stays off: apps write often (every chat message is a write).
+- Nextcloud sharing is off (`shareapi_enabled=no`): shares and public links would reach pod data without the pod's ACLs. Share through Solid instead. `NEXTCLOUD_SHARING: true` turns it back on.
+
+## New accounts
+
+`SKELETON: skpods` (the default) sets `skeletondirectory` to
+`config/skpods-skeleton` (copied from `files/skeleton`), `templatedirectory`
+to empty and the templates folder name to `.templates` (Nextcloud always
+creates one; the dot hides it in Files and it sits outside the pod), so a new
+account starts with:
+
+    Readme.md          (written by the skpods app, see "Accounts and sign-in")
+    solid/private/{documents,notes,photos}/
+    solid/public/shared/
+
+The Solid app adds the rest of the pod (root ACL, `inbox/`, `settings/`) on the
+first Solid request and only fills in what is missing. Folders without their
+own `.acl` inherit the owner-only root ACL, so nothing is public until shared.
+
+On every deploy the play also removes the stock files from existing accounts,
+but only files byte-identical to the image's `core/skeleton` copy, then any
+stock folder left empty, and gives each account it cleaned the skeleton entries
+it lacks (never overwriting). An account it has cleaned once is not touched
+again, so deleted skeleton files stay deleted. `--tags skeleton` runs only this
+step; `SKELETON: stock` restores the upstream defaults for new accounts.
+
+## Accounts and sign-in
+
+- **Readme.md**: the `skpods` app in the engine image writes each account's `Readme.md` on first login: their own WebID, pod address, where things live and how to sign in to a Solid app. The Text app shows it at the top of the Files view. The deploy runs `occ skpods:readme --all` for accounts that existed before (never overwrites) and removes the earlier static welcome note where it is unchanged.
+- **Owner-only pod roots**: engine images from this release write a root `.acl` that grants only the owner (no anonymous listing of the pod root). The deploy removes exactly the old stock public block from existing pods' root `.acl`; `inbox/` (public append), `public/` (public read) and the profile card are unchanged.
+- **Two-factor**: `twofactor_totp` (authenticator apps) and backup codes are available in Personal settings, Security; passkeys ("Log in with a device") are built in. Nothing is enforced.
+- **Mail**: with `SMTP_*` set, password reset and notifications send through it; without, the reset link is hidden.
+
+## Antivirus
+
+`ANTIVIRUS: true` (default) adds a `clamav` service (signatures in
+`CLAMAV_PATH`, `clamd.conf` from `clamd.conf.j2`) and points `files_antivirus`
+at it in daemon mode. An upload that clamd flags is refused with an error;
+background scans of stored files follow `ANTIVIRUS_INFECTED_ACTION`. ClamAV
+needs about 1 GB of RAM once its signatures load, and a few minutes after a
+first start before it answers.
+
+## Backups
+
+The `pgdump` service writes a consistent `pg_dump -Fc` of the Nextcloud
+database to `<APP_PATH>/database-dump` every `DB_DUMP_FREQUENCY`, keeping
+`DB_DUMP_KEEP_DAYS` days. Register the app with skbackup on the storage host
+(instance vault, `apps`):
+
+    - name: skpods-<env>
+      src: skpods-<env>
+      dump: database-dump
+      newest: [{dir: database-dump, keep: 7}]
+
+That copies the pods (`data/`), the code tree and config, and the dumps.
+Do not back up the live Postgres directory (`POSTGRES_PATH`) as a substitute
+for the dumps. Restore: stop the stack, restore `<APP_PATH>`, recreate the
+database from the newest dump (`pg_restore -d nextcloud`), start the stack.
 
 ## Traefik
 

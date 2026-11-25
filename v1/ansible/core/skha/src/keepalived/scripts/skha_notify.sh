@@ -27,4 +27,10 @@ echo "${TIMESTAMP} - ${HOSTNAME} - VRRP state changed to ${STATE}" >> /var/log/k
 # Current state for the deploy handler, which waits for master or backup.
 echo "${STATE}" > /run/skha.state
 
+# New VIP holder: bring the skha.vip_node_labels along (skha_vip_labels.sh),
+# in the background so a slow dockerd never holds up keepalived.
+if [ "${STATE}" = "master" ] && [ -x /usr/local/bin/skha_vip_labels.sh ]; then
+    setsid /usr/local/bin/skha_vip_labels.sh >/dev/null 2>&1 < /dev/null &
+fi
+
 exit 0

@@ -1,0 +1,173 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# New-account files (README "New accounts"). skpods.SKELETON:
+#   skpods (default): new accounts get the pod folders below (the skpods
+#     app in the engine image writes each account's Readme.md with its own
+#     WebID on first login), no stock files and no Templates folder; stock
+#     files already in existing accounts are removed, but only where they are
+#     byte-identical to the image's copy (anything a user changed stays).
+#   stock: the upstream defaults come back for new accounts.
+# The Solid app adds the rest of the pod itself (ACLs, inbox, settings) on
+# the first Solid request; it only fills in what is missing, so these
+# folders are safe to pre-create. A folder with no .acl inherits the pod's
+# root ACL (owner only), so nothing here is public until it is shared.
+# Runs after engine_nextcloud.yml (needs skp_nc_node and skp_nc_container).
+
+- name: Create the skeleton's pod folders in config/ (not web-served, not a user directory)
+  file:
+    path: "{{ skp_app_path }}/config/skpods-skeleton/{{ item }}"
+    state: directory
+    owner: "33"
+    group: "33"
+    mode: '0755'
+  loop:
+    - solid
+    - solid/private
+    - solid/private/documents
+    - solid/private/notes
+    - solid/private/photos
+    - solid/public
+    - solid/public/shared
+  delegate_to: "{{ skp_data_node if skp_data_node else inventory_hostname }}"
+  when: skp_skeleton == 'skpods'
+  tags:
+    - config
+    - skeleton
+
+- name: Remove the earlier static welcome note from the skeleton
+  # Replaced by the skpods app's per-account Readme.md.
+  file:
+    path: "{{ skp_app_path }}/config/skpods-skeleton/Welcome to your pod.md"
+    state: absent
+  delegate_to: "{{ skp_data_node if skp_data_node else inventory_hostname }}"
+  when: skp_skeleton == 'skpods'
+  tags:
+    - config
+    - skeleton
+
+- name: Point new accounts at the skpods skeleton and drop the stock templates
+  shell: |
+    set -euo pipefail
+    C="{{ skp_nc_container.stdout | trim }}"
+    occ() { docker exec -u www-data "$C" php occ "$@"; }
+    # Nextcloud always creates a templates folder on first login unless the
+    # skeleton is off entirely, so it gets a hidden name (hidden in Files,
+    # outside the pod).
+    want=/var/www/html/config/skpods-skeleton
+    if [ "$(occ config:system:get skeletondirectory 2>/dev/null || true)" = "$want" ] \
+      && [ "$(occ config:system:get templatedirectory 2>/dev/null || echo unset)" = "" ] \
+      && [ "$(occ config:app:get core defaultTemplateDirectory 2>/dev/null || true)" = ".templates" ]; then
+      echo "skeleton already set"
+      exit 0
+    fi
+    occ config:system:set skeletondirectory --value="$want"
+    occ config:system:set templatedirectory --value=""
+    occ config:app:set core defaultTemplateDirectory --value=".templates"
+    echo "skeleton set"
+  args:
+    executable: /bin/bash
+  delegate_to: "{{ skp_nc_node.stdout | trim }}"
+  register: skp_skeleton_set
+  changed_when: "'skeleton set' in skp_skeleton_set.stdout"
+  when: skp_skeleton == 'skpods'
+  tags:
+    - config
+    - skeleton
+
+- name: Clean the stock files out of existing accounts and add the skpods skeleton
+  # Deletes a file only when it is byte-identical to the stock copy in
+  # core/skeleton (same relative path), then removes stock folders left
+  # empty. An account that lost stock files gets the skpods skeleton entries
+  # it is missing (nothing is overwritten); a later run adds nothing, so a
+  # user who deletes the welcome note does not get it back.
+  shell: |
+    set -euo pipefail
+    C="{{ skp_nc_container.stdout | trim }}"
+    docker exec -i -u www-data "$C" bash -s <<'EOS'
+    set -euo pipefail
+    stock=/var/www/html/core/skeleton
+    ours=/var/www/html/config/skpods-skeleton
+    data=$(php occ config:system:get datadirectory)
+    changed_users=()
+    changed_count=0
+    while IFS= read -r uid; do
+      files="$data/$uid/files"
+      [ -d "$files" ] || continue
+      n=0
+      while IFS= read -r -d '' f; do
+        rel=${f#"$stock"/}
+        if [ -f "$files/$rel" ] && cmp -s "$f" "$files/$rel"; then
+          rm -f "$files/$rel"; n=$((n+1))
+        fi
+      done < <(find "$stock" -type f -print0)
+      # Stock folders, deepest first, only when now empty.
+      while IFS= read -r -d '' d; do
+        rel=${d#"$stock"/}
+        [ -d "$files/$rel" ] && rmdir "$files/$rel" 2>/dev/null && n=$((n+1)) || true
+      done < <(find "$stock" -mindepth 1 -type d -print0 | sort -rz)
+      # Add the skpods skeleton where missing (no overwrite), only to an
+      # account this run just cleaned.
+      [ "$n" -gt 0 ] && while IFS= read -r -d '' e; do
+        rel=${e#"$ours"/}
+        if [ -d "$e" ] && [ ! -e "$files/$rel" ]; then mkdir -p "$files/$rel"; n=$((n+1)); fi
+        if [ -f "$e" ] && [ ! -e "$files/$rel" ]; then mkdir -p "$(dirname "$files/$rel")"; cp "$e" "$files/$rel"; n=$((n+1)); fi
+      done < <(find "$ours" -mindepth 1 -print0 | sort -z)
+      if [ "$n" -gt 0 ]; then changed_users+=("$uid"); changed_count=$((changed_count+1)); echo "updated $uid ($n entries)"; fi
+    done < <(php occ user:list --output=json | php -r 'foreach (array_keys(json_decode(stream_get_contents(STDIN), true)) as $u) echo $u, "\n";')
+    for uid in ${changed_users[@]+"${changed_users[@]}"}; do
+      php occ files:scan --quiet --path="/$uid/files" >/dev/null
+    done
+    [ "$changed_count" -gt 0 ] || echo "no account changes"
+    EOS
+  args:
+    executable: /bin/bash
+  delegate_to: "{{ skp_nc_node.stdout | trim }}"
+  register: skp_skeleton_clean
+  changed_when: "'updated ' in skp_skeleton_clean.stdout"
+  when: skp_skeleton == 'skpods'
+  tags:
+    - config
+    - skeleton
+
+- name: Show the account cleanup
+  debug:
+    var: skp_skeleton_clean.stdout_lines
+  when: skp_skeleton == 'skpods'
+  tags:
+    - config
+    - skeleton
+
+- name: Restore the stock new-account files (skpods.SKELETON is stock)
+  shell: |
+    set -euo pipefail
+    C="{{ skp_nc_container.stdout | trim }}"
+    occ() { docker exec -u www-data "$C" php occ "$@"; }
+    if [ "$(occ config:system:get skeletondirectory 2>/dev/null || true)" != "/var/www/html/config/skpods-skeleton" ]; then
+      echo "stock already"; exit 0
+    fi
+    occ config:system:delete skeletondirectory
+    occ config:system:delete templatedirectory
+    occ config:app:delete core defaultTemplateDirectory
+    echo "skeleton reset"
+  args:
+    executable: /bin/bash
+  delegate_to: "{{ skp_nc_node.stdout | trim }}"
+  register: skp_skeleton_reset
+  changed_when: "'skeleton reset' in skp_skeleton_reset.stdout"
+  when: skp_skeleton == 'stock'
+  tags:
+    - config
+    - skeleton

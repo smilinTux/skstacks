@@ -113,6 +113,17 @@ services:
         published: 8082
         protocol: tcp
         mode: host
+{% if (skfenceha.MAIL_ENTRYPOINTS | default(false) | string | lower) in ["true", "yes", "1", "on"] %}
+      # skfenceha.MAIL_ENTRYPOINTS: mail entrypoints for skmail.VIA_TRAEFIK,
+      # host mode like 80/443 so every worker answers mail and the client's
+      # real source IP reaches Traefik (it is passed on via PROXY v2).
+{% for _mail_port in [25, 465, 587, 143, 993] %}
+      - target: {{ _mail_port }}
+        published: {{ _mail_port }}
+        protocol: tcp
+        mode: host
+{% endfor %}
+{% endif %}
     # Ports are host-mode, so start-first cannot work (the new task cannot
     # bind 80/443 until the old one exits). Instead: a stop grace longer than
     # Traefik's lifeCycle.graceTimeOut (skfenceha.WORKER_LIFECYCLE) so in-flight

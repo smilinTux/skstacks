@@ -75,6 +75,8 @@
     - name: Resolve skpods settings
       set_fact:
         skp_engine: "{{ skpods.ENGINE | default('nextcloud', true) | string | lower }}"
+        skp_theme: "{{ skpods.THEME | default('skpods', true) | string | lower }}"
+        skp_skeleton: "{{ skpods.SKELETON | default('skpods', true) | string | lower }}"
         skp_cluster: "{{ skpods.CLUSTERNAME | default(cluster_name | default(''), true) }}"
         skp_domain: "{{ skpods.DOMAIN | default(domain | default(''), true) }}"
         skp_router: "skpods{{ '' if env == 'prod' else '-' + env }}"
@@ -84,6 +86,9 @@
         skp_app_path: "{{ skpods.APP_PATH | default('/var/data/skpods-' + env, true) }}"
         skp_pg_path: "{{ skpods.POSTGRES_PATH | default('/var/data/runtime/skpods-' + env + '/postgres', true) }}"
         skp_redis_path: "{{ skpods.REDIS_PATH | default('/var/data/runtime/skpods-' + env + '/redis', true) }}"
+        skp_dump_path: "{{ skpods.DB_DUMP_PATH | default((skpods.APP_PATH | default('/var/data/skpods-' + env, true)) + '/database-dump', true) }}"
+        skp_clamav_path: "{{ skpods.CLAMAV_PATH | default('/var/data/runtime/skpods-' + env + '/clamav', true) }}"
+        skp_antivirus: "{{ skpods.ANTIVIRUS | default(true) | bool }}"
         skp_admin_user: "{{ skpods.ADMIN_USER | default('skpods-admin', true) }}"
         skp_first_install_wait: "{{ skpods.first_install_wait_seconds | default(1200, true) | int }}"
       tags:
@@ -107,6 +112,8 @@
       assert:
         that:
           - skp_engine in ['nextcloud']
+          - skp_theme in ['skpods', 'none']
+          - skp_skeleton in ['skpods', 'stock']
           - skp_cluster | length > 0
           - skp_domain | length > 0
           - skpods.NEXTCLOUD_IMAGE | default('') | string | length > 0
@@ -121,7 +128,8 @@
           resolve, NEXTCLOUD_IMAGE must be an image pinned by digest
           (<repo>:<tag>@sha256:...), ADMIN_PASSWORD and DB_PASSWORD must be
           set (16+ characters), and INGRESS_NETWORK ({{ skp_ingress_network }})
-          must be one of the networks in app_networks. See README.md.
+          must be one of the networks in app_networks. THEME must be skpods
+          or none, SKELETON skpods or stock. See README.md.
       tags:
         - always
 
@@ -145,6 +153,24 @@
 
     - name: Deploy the nextcloud engine
       include_tasks: tasks/engine_nextcloud.yml
+      when: skp_engine == 'nextcloud'
+      tags:
+        - always
+
+    - name: Apply the skpods.id branding (nextcloud engine)
+      include_tasks: tasks/theme_nextcloud.yml
+      when: skp_engine == 'nextcloud'
+      tags:
+        - always
+
+    - name: Set up the new-account skeleton (nextcloud engine)
+      include_tasks: tasks/skeleton_nextcloud.yml
+      when: skp_engine == 'nextcloud'
+      tags:
+        - always
+
+    - name: Account features (quota, mail, antivirus, owner-only pod roots, Readme)
+      include_tasks: tasks/features_nextcloud.yml
       when: skp_engine == 'nextcloud'
       tags:
         - always

@@ -22,10 +22,168 @@ host network (Swarm `mode: host`) instead of through an overlay network:
 
 Because ports are host-published, `skmail` also carries a
 `node.labels.mail-vip == true` placement constraint: exactly one manager
-should hold that label at a time (e.g. moved by a keepalived VIP notify
-script), so mail traffic always lands on the node currently reachable at the
-public IP. Deploying this service assumes something in the instance already
-manages that label; the playbook only checks that one manager has it.
+should hold that label at a time, so mail traffic always lands on the node
+currently reachable at the public IP. skha moves it with the VIP when the
+instance sets `skha.vip_node_labels: [mail-vip]` (skha README "Services with
+host-published ports follow the VIP"); the playbook only checks that one
+manager has it.
+
+That is the default. On skfenceha, mail can instead go through Traefik; see
+the next section.
+
+## Behind Traefik (PROXY protocol)
+
+With `skmail.VIA_TRAEFIK: true` the mail ports are no longer published by
+skmail. Every traefik-worker (global, host mode, like 80/443) accepts
+25/465/587/143/993 and forwards each connection over `cloud-public-<env>` to
+wherever the single skmail task runs, so mail answers on every Traefik node
+and the VIP can sit on any of them. It is still one replica: maildir and the
+Postfix queue cannot be shared, so this is failover, not load balancing.
+
+```yaml
+# skfenceha vault
+skfenceha:
+  MAIL_ENTRYPOINTS: true                  # default false
+
+# skmail vault
+skmail:
+  VIA_TRAEFIK: true                       # default false
+  PROXY_TRUSTED_NETWORKS: ["172.16.200.0/24"]   # default: the framework's cloud-public-<env> subnet
+```
+
+How it works:
+
+| Entrypoint (Traefik) | Public port | docker-mailserver listener | Service |
+|---|---|---|---|
+| `smtp` | 25 | 12525 | Postfix postscreen, `postscreen_upstream_proxy_protocol=haproxy` |
+| `submissions` | 465 | 10465 | Postfix smtpd (implicit TLS), `smtpd_upstream_proxy_protocol=haproxy` |
+| `submission` | 587 | 10587 | Postfix smtpd (STARTTLS), `smtpd_upstream_proxy_protocol=haproxy` |
+| `imap` | 143 | 10143 | Dovecot `haproxy = yes` |
+| `imaps` | 993 | 10993 | Dovecot `haproxy = yes`, `ssl = yes` |
+
+- Through a TCP proxy every connection would come from the worker's overlay
+  IP, which breaks SPF, RBL and postscreen checks and Dovecot's auth logging
+  and penalties. So each skmail TCP service uses the `skmail-proxy-v2`
+  serversTransport (PROXY protocol v2) that skfenceha renders into
+  `dynamic/services.yml` when `MAIL_ENTRYPOINTS` is on, and the listeners
+  above read the real client address from that header. Traefik deprecated
+  the TCP `loadBalancer.proxyProtocol` label in v3.5.2; the transport is its
+  replacement.
+- Routers are `HostSNI(\`*\`)` passthrough, one entrypoint per port, no TLS at
+  Traefik. docker-mailserver still terminates implicit TLS (465/993) and
+  STARTTLS (25/587/143) with the certificate it reads from `acme.json`.
+- The proxy listeners are docker-mailserver's "separate ports for PROXY
+  protocol" layout
+  ([tutorial](https://docker-mailserver.github.io/docker-mailserver/latest/examples/tutorials/mailserver-behind-proxy/)).
+  `user-patches.sh` adds them at every container start: Postfix services
+  copied from `smtp`/`submission`/`submissions` with `postconf -M`/`-P`
+  (plus `postscreen_cache_map = proxy:btree:...` so both postscreens share
+  one cache), and `/etc/dovecot/conf.d/95-skmail-proxy-protocol.conf` for
+  Dovecot (a conf.d file, so an instance's own `dovecot.cf` is untouched).
+  A listener with PROXY on refuses a connection without the header, which
+  is why the standard ports 25/587/465/143/993 stay plain: they are no
+  longer published, but a client on `cloud-public-<env>` can still reach
+  `skmail-<env>_skmail:587` directly (with SASL auth, like any client).
+- `PROXY_TRUSTED_NETWORKS` is Dovecot's `haproxy_trusted_networks`: the
+  overlay the workers connect from. Check it against the estate
+  (`docker network inspect cloud-public-<env> --format '{{(index .IPAM.Config 0).Subnet}}'`).
+  If it is wrong, Dovecot rejects every proxied IMAP connection. Postfix has
+  no such list: it accepts a PROXY header from anything that reaches 12525,
+  10587 or 10465.
+- `mynetworks` must not contain that overlay, or a client on it could relay
+  on the plain ports without auth. The env file sets `PERMIT_DOCKER=container`
+  (only the container's own /32); `user-patches.sh` prints a warning at
+  start if a trusted network shows up in `mynetworks` anyway.
+- The service task is only routed once it is healthy: Traefik's Swarm
+  provider skips tasks that are not running, and a task stays "starting"
+  until its healthcheck passes. A slow start (see "Healthcheck and slow
+  starts") therefore delays mail exactly as before.
+- skfence (single node) and holofence do not have the mail entrypoints. Keep
+  `VIA_TRAEFIK` off there; the deploy warns if it is on without them.
+
+### Migration order (host ports to Traefik)
+
+Host-mode ports are exclusive per node. Today skmail holds 25/465/587/143/993
+on the VIP node; a traefik-worker there cannot bind them until skmail lets
+go, and Swarm would leave that worker's task pending (no Traefik at all on
+that node, 80/443 included). So skmail moves first:
+
+1. Set `skmail.VIA_TRAEFIK: true` (and `PROXY_TRUSTED_NETWORKS` if the
+   estate's subnet differs) and deploy skmail. The update is stop-first: the
+   old task stops and frees the host ports, the new one starts with none.
+   Mail is down from here.
+2. Right away, set `skfenceha.MAIL_ENTRYPOINTS: true` and deploy skfenceha.
+   The workers roll one node at a time and bind the mail ports. The skmail
+   deploy reports whether the workers publish all five ports and define the
+   `skmail-proxy-v2` transport; it only warns, because in this order step 2
+   has not run yet.
+3. Mail is back once the new skmail task is healthy and the VIP holder's
+   worker has the ports. Expect downtime of one skmail start (the mailbox
+   ownership fix at start dominates it). Senders retry, so inbound mail
+   queues at the sender, not lost.
+4. Clean up skha: drop the `mail` entry from `skha.health_checks` (see
+   below) and `mail-vip` from `skha.vip_node_labels`, then redeploy skha.
+   The `mail-vip` node label itself is now unused.
+
+Rollback is the reverse order: `MAIL_ENTRYPOINTS: false` and deploy
+skfenceha first (frees the ports on every node), then `VIA_TRAEFIK: false`
+and deploy skmail (needs `mail-vip` back in `skha.vip_node_labels` and on
+the VIP holder).
+
+### skha health checks
+
+A `skha.health_checks` entry for mail (ports 25/587/465/143/993) was there
+to keep the VIP on the node that answers mail. With `VIA_TRAEFIK` every
+worker binds those ports, so the check passes on every node and only adds
+noise; with `require: true` it would even pin the VIP to the skmail node.
+Drop it. To make a worker that lost its mail ports give up the VIP, add the
+ports to the `traefik` gate check instead:
+
+```yaml
+skha:
+  health_checks:
+    - name: traefik
+      ports: [80, 443, 25, 465, 587, 143, 993]
+      container_pattern: traefik-worker
+```
+
+### Verifying real client IPs
+
+After the move, connect from outside (`openssl s_client -connect
+mail.example.com:465 -quiet`, or a test message to port 25) and read the
+mail log on the node running the task (`docker service logs
+skmail-<env>_skmail`, or `/var/data/skmail-<env>/docker-data/dms/logs/mail.log`):
+
+- Postfix logs the proxy listeners under their own syslog names:
+  `postfix/smtpd-proxyprotocol/postscreen[...]: CONNECT from [198.51.100.7]:...`,
+  `postfix/submissions-proxyprotocol/smtpd[...]: connect from ...[198.51.100.7]`.
+  The address must be the client's public IP, not a `cloud-public` address.
+- Dovecot: `imap-login: ... rip=198.51.100.7, lip=...`. A line
+  `imap-login: haproxy: ...` with an error means a connection without (or
+  with an untrusted) PROXY header: check `PROXY_TRUSTED_NETWORKS`.
+- `docker exec <container> postconf -M 12525/inet` and `doveconf -n | grep haproxy`
+  show the listeners are in place.
+
+### Known limits
+
+- **Fail2ban bans stop working.** It still reads the real IPs from the logs,
+  but it bans them with iptables inside the container, and every packet now
+  arrives from a Traefik worker, so a ban never matches. Brute-force
+  protection has to move to the edge (CrowdSec at Traefik or the host
+  firewall); Postscreen and Dovecot's auth penalty still use the real IP.
+- **Any container on `cloud-public-<env>` can forge a PROXY header** on the
+  proxy listeners and pick its apparent client IP, because that overlay is
+  shared by every routed service and Postfix trusts any sender of the
+  header. It cannot bypass SASL auth on 10587/10465, but it can dodge
+  postscreen and IP-based checks on 12525.
+- The ACME-master Traefik reads the same labels but has no mail entrypoints;
+  it logs that the skmail routers' entrypoints do not exist (as it already
+  does for the `ssh` entrypoint). Harmless.
+- The skmail playbook's UFW task still opens the mail ports on the deploying
+  manager only. Docker publishes host-mode ports through its own iptables
+  rules, which UFW's input rules do not filter on a stock setup; skfenceha
+  has no UFW tasks for 80/443 either. An estate that filters the DOCKER-USER
+  chain must allow the mail ports on every worker itself.
 
 ## Required vault keys
 
@@ -53,6 +211,8 @@ skmail:
   ENABLE_FAIL2BAN: "1"                   # default: 1
   HEALTHCHECK_START_PERIOD: "1800s"      # default: 1800s - see "Healthcheck and slow starts" below
   MAIL_WEB_ENABLED: true                 # default: true - see "The mail-web sidecar" below
+  VIA_TRAEFIK: false                     # default: false - see "Behind Traefik (PROXY protocol)" below
+  PROXY_TRUSTED_NETWORKS: ["172.16.200.0/24"]  # only with VIA_TRAEFIK; default: the cloud-public-<env> subnet
 
   # SSL_TYPE: default: letsencrypt - see "Certificates" below for manual/self-signed
   SSL_TYPE: "letsencrypt"
@@ -96,9 +256,9 @@ default is the observed worst case (~17 min) with about 75% headroom, and
 still bounded: a container that never becomes healthy is replaced after
 roughly 32 minutes (`start_period` plus 3 x 30s). A long value does not
 slow a normal start: failed probes inside the window are not counted, and
-the first passing probe marks the task healthy immediately (the mail ports
-are published in host mode, so nothing waits on the health state to route
-traffic). An instance whose NFS is slower, or which has many more
+the first passing probe marks the task healthy immediately (with host-mode
+ports nothing waits on the health state to route traffic; with
+`VIA_TRAEFIK` Traefik routes to the task only once it is healthy). An instance whose NFS is slower, or which has many more
 mailboxes, should raise it; time a restart
 (`docker service logs skmail-<env>_skmail` from "Welcome to
 docker-mailserver" to "is up and running") and leave generous headroom.

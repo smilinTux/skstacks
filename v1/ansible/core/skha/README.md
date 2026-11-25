@@ -113,6 +113,32 @@ renders its own `/usr/local/bin/skha_check_<name>.sh` from
 `rise` and `timeout` are all overridable per entry (defaults: 5s, -10, 2, 2,
 5s; a VIP gate check's weight defaults to 0 instead of -10).
 
+## Services with host-published ports follow the VIP
+
+A service that publishes its ports in host mode (skmail: 25, 465, 587, 143,
+993) answers only on the node running its task, so it must run where the
+VIP is. Pin the service to a node label and list that label in
+`skha.vip_node_labels`:
+
+```yaml
+skha:
+  vip_node_labels: [mail-vip]   # skmail is constrained to node.labels.mail-vip == true
+```
+
+Whenever a node becomes MASTER, `skha_notify.sh` runs
+`skha_vip_labels.sh` in the background. It adds each label to that node,
+then removes it from every other node, and Swarm moves the service onto the
+new VIP holder (its old task is rejected with "assigned node no longer
+meets constraints"). Every deploy also runs it once on the current VIP
+holder, which fixes an estate where the label and the VIP are already on
+different nodes. Moves are logged to `/var/log/keepalived-notify.log` and
+syslog (`skha-vip-labels`).
+
+The service's data has to be reachable from every manager (shared storage),
+because it can now start on any of them. Without `vip_node_labels`, nothing
+moves the label, and the VIP can sit on a node where those ports refuse
+every connection.
+
 ## Required instance vars (vault)
 
 There is deliberately no framework default for these - a VIP and a VRRP
@@ -129,6 +155,7 @@ skha:
   worker_base_priority: 80       # optional, default 80
   acme_master_priority: 150      # optional, default 150 (a preference, not a lock)
   vip_gate_checks: [traefik]     # optional, default shown: require + weight 0 + init_fail
+  vip_node_labels: []            # optional: Swarm node labels that follow the VIP, e.g. [mail-vip]
   restart_settle_seconds: 30     # optional, default derived from the checks: max per-node wait for MASTER/BACKUP
   lock_vip_to_acme_master: false # optional, default false: true = old lock, no failover
   acme_master_label: traefik.acme.master   # optional, default shown

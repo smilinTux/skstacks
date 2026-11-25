@@ -86,6 +86,17 @@ service is global). A deploy that changes it restarts each worker in turn
 (host-mode ports, so expect a brief connection reset per node); a live
 `docker service update --limit-cpu` does the same.
 
+**Mail entrypoints (`MAIL_ENTRYPOINTS`)**: `skfenceha.MAIL_ENTRYPOINTS: true`
+adds plain TCP entrypoints `smtp` (25), `submissions` (465), `submission`
+(587), `imap` (143) and `imaps` (993) to every worker, published in host mode
+like 80/443, and a `skmail-proxy-v2` TCP serversTransport (PROXY protocol v2)
+to `dynamic/services.yml`. They exist for skmail with `skmail.VIA_TRAEFIK`,
+which routes its mail ports through them so mail answers on every worker. The
+skmail README ("Behind Traefik (PROXY protocol)") has the deploy order: skmail
+first, because a worker cannot bind a port skmail still publishes in host
+mode on the same node. Static configuration: the deploy restarts each worker
+in turn. Default `false`: nothing renders differently.
+
 **Traefik image (`TRAEFIK_IMAGE`)**: `skfenceha.TRAEFIK_IMAGE` pins the
 image for both `traefik-acme` and `traefik-worker` (they move together;
 default `traefik:v3.7.19@sha256:...`). A separate `skfence.TRAEFIK_IMAGE`

@@ -6,6 +6,42 @@ Each entry says what an instance must do, if anything.
 
 ## skstacks-v2.26.33 - 2026-11-23
 
+### skha: node labels follow the VIP (`skha.vip_node_labels`)
+
+- Fixes services with host-published ports (skmail) being unreachable after a VIP failover: the
+  VIP moved to another manager, but the `mail-vip` label (and so skmail) stayed behind, and the
+  mail ports on the VIP refused every connection. Nothing in the framework moved that label,
+  although the skmail README said one was expected to.
+- New `skha.vip_node_labels` (list, default empty). On every MASTER transition `skha_notify.sh`
+  runs `skha_vip_labels.sh`, which adds each label to the new VIP holder and removes it from
+  every other node; Swarm then moves the pinned service. The deploy also syncs it once on the
+  current VIP holder. README "Services with host-published ports follow the VIP".
+- **Instance action:** an estate running skmail sets `skha.vip_node_labels: [mail-vip]` and
+  redeploys skha. skmail's data must be on storage every manager can reach.
+
+### skmail: mail through Traefik with PROXY protocol v2 (`skmail.VIA_TRAEFIK`)
+
+- Mail can now fail over with Traefik instead of following the VIP. New
+  `skfenceha.MAIL_ENTRYPOINTS` (default `false`) adds `smtp`/`submissions`/`submission`/`imap`/
+  `imaps` entrypoints (25/465/587/143/993, host mode like 80/443) to every traefik-worker and a
+  `skmail-proxy-v2` TCP serversTransport (PROXY protocol v2) to `dynamic/services.yml`. New
+  `skmail.VIA_TRAEFIK` (default `false`) drops skmail's host ports and its `mail-vip` placement
+  constraint (manager placement stays), joins `cloud-public-<env>`, and labels one `HostSNI(*)`
+  TCP passthrough router per port. Still one replica; TLS stays in docker-mailserver.
+- docker-mailserver gets separate PROXY-only listeners (Postfix 12525/10587/10465, Dovecot
+  10143/10993, from `user-patches.sh`), the layout its "mail server behind a proxy" tutorial
+  recommends, so Postfix and Dovecot log and check the real client IP and the standard ports
+  stay plain for clients on the overlay. New `skmail.PROXY_TRUSTED_NETWORKS` (Dovecot
+  `haproxy_trusted_networks`, default the `cloud-public-<env>` subnet). Uses the TCP
+  serversTransport, not the TCP `loadBalancer.proxyProtocol` label Traefik deprecated in v3.5.2.
+  With both vars unset nothing renders differently. README "Behind Traefik (PROXY protocol)";
+  render fixtures `skmail.set.yml`, `skfenceha.set.yml`.
+- **Instance action:** none to stay on host ports. To move: deploy skmail with
+  `VIA_TRAEFIK: true` FIRST (it releases 25/465/587/143/993 on the VIP node), then skfenceha with
+  `MAIL_ENTRYPOINTS: true`; the reverse order leaves a worker unable to bind its ports. Expect mail
+  downtime for one skmail start. Then drop the `mail` entry from `skha.health_checks` and
+  `mail-vip` from `skha.vip_node_labels`. Fail2ban bans no longer take effect (see the README).
+
 ### skgit: `ENABLE_INTERNAL_SIGNIN` knob (SSO-only web sign-in)
 
 - New optional `skgit.ENABLE_INTERNAL_SIGNIN` renders Forgejo's `[service] ENABLE_INTERNAL_SIGNIN`.
@@ -13,6 +49,39 @@ Each entry says what an instance must do, if anything.
   only. SSH keys, access tokens, runners and existing accounts are unaffected. Unset renders nothing
   (Forgejo default `true`). README "Registration and anonymous read"; tests
   `v1/tests/test_skgit_service_section.py`. **Instance action**: none unless you want SSO-only sign-in.
+
+### skpods: skpods.id branding (`THEME`)
+
+- The nextcloud engine now ships as skpods.id: a theme folder (`files/theme/skpods`) and theming
+  settings replace the upstream name, titles, footer, help and client links, logo and favicon, and
+  restyle the login and guest pages (dark aurora background, glass card), the signed-in header and
+  the Solid consent screen. Self-hosted OFL fonts; dark UI enforced. New `skpods.THEME`
+  (`skpods` default, `none` for the stock look); `--tags theme` re-applies it. README "Branding".
+  **Instance action**: none (redeploy picks it up); set `THEME: none` to keep the stock look.
+- New accounts start with a skpods skeleton (welcome note, `solid/private/{documents,notes,photos}`,
+  `solid/public/shared`) and no stock files or Templates folder; the deploy removes stock files from
+  existing accounts when they are byte-identical to the image's copy. New `skpods.SKELETON`
+  (`skpods` default, `stock`); `--tags skeleton`. README "New accounts". **Instance action**: none.
+- Files: `.md`, text and PDFs open in the browser (`text`, `files_pdfviewer`), deletes go to the
+  trash (`files_trashbin`), and Nextcloud sharing is off so pod data is shared only through Solid
+  ACLs. New `skpods.ENABLE_APPS` and `skpods.NEXTCLOUD_SHARING` (default `false`). README "Files".
+  **Instance action**: none; set `NEXTCLOUD_SHARING: true` if you relied on Nextcloud shares.
+- Accounts: each account gets its own `Readme.md` (WebID, pod address, links) from the new `skpods`
+  app in the engine image; pod roots are owner-only (new pods, and existing ones migrated by removing
+  exactly the old public block); `twofactor_totp` enabled; `DEFAULT_QUOTA` (10 GB); `SMTP_*` mail
+  settings (reset link hidden without them); the last two upstream product strings renamed.
+- Antivirus: `clamav` service and `files_antivirus` (`ANTIVIRUS`, default on). Backups: `pgdump`
+  service writes daily `pg_dump` files to `<APP_PATH>/database-dump` for skbackup. README "Accounts
+  and sign-in", "Antivirus", "Backups". **Instance action**: pin an engine image that ships the
+  `skpods` and `files_antivirus` apps (the deploy fails without them), set `SMTP_*`, and register
+  `skpods-<env>` with skbackup.
+
+### templates: skpods-only instance config
+
+- `skstacks-config-template` gains a `skpods-prod` placeholder vault and a "Just want Solid pods?"
+  walkthrough: a private instance repo that runs only the skpods role. Its required keys are tied
+  to the skpods render-gate fixture by test, and `config-template-drift` now renders skpods too.
+- **Instance action:** none. Existing instance repos are unaffected.
 
 ### skpods: new optional service for Solid pod hosting
 

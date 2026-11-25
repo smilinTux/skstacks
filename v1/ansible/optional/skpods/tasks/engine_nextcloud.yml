@@ -38,6 +38,18 @@
   tags:
     - always
 
+- name: Ensure the ClamAV signature directory exists (image user clamav, 100:101)
+  file:
+    path: "{{ skp_clamav_path }}"
+    state: directory
+    owner: "100"
+    group: "101"
+    mode: '0755'
+  delegate_to: "{{ skp_data_node if skp_data_node else inventory_hostname }}"
+  when: skp_antivirus | bool
+  tags:
+    - always
+
 - name: Ensure the Postgres and Redis data directories exist (0700)
   file:
     path: "{{ item.path }}"
@@ -48,6 +60,7 @@
   loop:
     - { path: "{{ skp_pg_path }}", owner: "70" }
     - { path: "{{ skp_redis_path }}", owner: "999" }
+    - { path: "{{ skp_dump_path }}", owner: "70" }
   delegate_to: "{{ skp_data_node if skp_data_node else inventory_hostname }}"
   tags:
     - always
@@ -63,6 +76,7 @@
     - { src: "nextcloud.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/nextcloud.env", mode: "0600" }
     - { src: "postgres.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/postgres.env", mode: "0600" }
     - { src: "{{ app }}.sh.env.j2", dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env", mode: "0640" }
+    - { src: "clamd.conf.j2", dest: "/var/data/config/{{ app }}-{{ env }}/clamd.conf", mode: "0644" }
   no_log: true
   tags:
     - templates
@@ -214,6 +228,9 @@
     {% endfor %}
     occ config:system:set default_phone_region --value="{{ skpods.DEFAULT_PHONE_REGION | default('US', true) }}"
     occ config:system:set maintenance_window_start --type=integer --value={{ skpods.MAINTENANCE_WINDOW_START | default(1, true) | int }}
+    # URLs generated from occ (occ skpods:readme) must match the web ones:
+    # no /index.php/. The engine image ships this for new installs only.
+    occ config:system:set htaccess.IgnoreFrontController --type=boolean --value=true
   args:
     executable: /bin/bash
   delegate_to: "{{ skp_nc_node.stdout | trim }}"
@@ -245,7 +262,7 @@
   # Nextcloud version, is skipped. Override the list with
   # skpods.DISABLE_APPS (README "Slim app set").
   shell: |
-    set -uo pipefail
+    set -euo pipefail
     C="{{ skp_nc_container.stdout | trim }}"
     enabled=$(docker exec -u www-data "$C" php occ app:list --enabled --output=json | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["enabled"]))' 2>/dev/null || docker exec -u www-data "$C" php occ app:list --enabled | sed -n 's/^  - \([a-z0-9_]*\):.*/\1/p' | tr '\n' ' ')
     for a in {{ (skpods.DISABLE_APPS | default(skp_default_disable_apps, true)) | join(' ') }}; do
@@ -265,10 +282,8 @@
       - dashboard
       - federation
       - files_downloadlimit
-      - files_pdfviewer
       - files_reminders
       - files_sharing_raw
-      - files_trashbin
       - files_versions
       - firstrunwizard
       - logreader
@@ -286,8 +301,6 @@
       - survey_client
       - suspicious_login
       - systemtags
-      - text
-      - twofactor_totp
       - updatenotification
       - user_status
       - weather_status
@@ -295,6 +308,53 @@
   delegate_to: "{{ skp_nc_node.stdout | trim }}"
   register: skp_disable_apps
   changed_when: "'disabled ' in skp_disable_apps.stdout"
+  tags:
+    - config
+
+- name: Enable the Files features skpods uses
+  # From Nextcloud or the engine image (no app store). Defaults: text
+  # (.md and plain text open in the browser), files_pdfviewer,
+  # files_trashbin (a deleted file goes to the owner's trash; it leaves the
+  # pod at once), twofactor_totp, skpods (per-account Readme.md). skpods
+  # ships in the engine image, so an older image fails here. files_antivirus
+  # is enabled in features_nextcloud.yml, only once clamd answers. Override
+  # with skpods.ENABLE_APPS (README "Files").
+  shell: |
+    set -euo pipefail
+    C="{{ skp_nc_container.stdout | trim }}"
+    enabled=$(docker exec -u www-data "$C" php occ app:list --enabled --output=json | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["enabled"]))')
+    for a in {{ (skpods.ENABLE_APPS | default(skp_default_enable_apps, true)) | join(' ') }}; do
+      case " $enabled " in
+        *" $a "*) ;;
+        *) docker exec -u www-data "$C" php occ app:enable "$a" >/dev/null; echo "enabled $a" ;;
+      esac
+    done
+  args:
+    executable: /bin/bash
+  vars:
+    skp_default_enable_apps: [files_pdfviewer, files_trashbin, text, twofactor_totp, skpods]
+  delegate_to: "{{ skp_nc_node.stdout | trim }}"
+  register: skp_enable_apps
+  changed_when: "'enabled ' in skp_enable_apps.stdout"
+  tags:
+    - config
+
+- name: Turn off Nextcloud sharing (Solid ACLs are the only way to share)
+  # A share or public link from Files would reach pod data without going
+  # through the pod's ACLs. skpods.NEXTCLOUD_SHARING: true keeps it on.
+  shell: |
+    set -euo pipefail
+    C="{{ skp_nc_container.stdout | trim }}"
+    want={{ 'yes' if (skpods.NEXTCLOUD_SHARING | default(false) | bool) else 'no' }}
+    got=$(docker exec -u www-data "$C" php occ config:app:get core shareapi_enabled 2>/dev/null || echo yes)
+    if [ "$got" = "$want" ]; then echo "sharing already $want"; exit 0; fi
+    docker exec -u www-data "$C" php occ config:app:set core shareapi_enabled --value="$want" >/dev/null
+    echo "sharing set to $want"
+  args:
+    executable: /bin/bash
+  delegate_to: "{{ skp_nc_node.stdout | trim }}"
+  register: skp_sharing
+  changed_when: "'sharing set' in skp_sharing.stdout"
   tags:
     - config
 
