@@ -1,0 +1,35 @@
+<!--
+Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<!--
+  sknet ClickHouse low-memory profile ({{ env }}): ClickHouse is tuned for 32 GB
+  upstream; this runs it in a container limit of CLICKHOUSE_MEMORY_LIMIT (default
+  1.5 GB) on a flow rate that is small. Values follow ClickHouse's own
+  low-memory tips. It reads its cgroup limit, and the ratio keeps headroom for
+  the page cache and merges.
+-->
+<clickhouse>
+  <max_server_memory_usage_to_ram_ratio>0.8</max_server_memory_usage_to_ram_ratio>
+  <mark_cache_size>134217728</mark_cache_size>
+  <uncompressed_cache_size>0</uncompressed_cache_size>
+  <max_concurrent_queries>16</max_concurrent_queries>
+  <background_pool_size>4</background_pool_size>
+  <background_schedule_pool_size>8</background_schedule_pool_size>
+
+  <!-- System logs that only cost RAM and disk here. -->
+  <asynchronous_metric_log remove="1"/>
+  <metric_log remove="1"/>
+  <text_log remove="1"/>
+  <trace_log remove="1"/>
+  <query_thread_log remove="1"/>
+
+  <profiles>
+    <default>
+      <max_threads>2</max_threads>
+      <max_download_threads>1</max_download_threads>
+      <input_format_parallel_parsing>0</input_format_parallel_parsing>
+      <output_format_parallel_formatting>0</output_format_parallel_formatting>
+    </default>
+  </profiles>
+</clickhouse>

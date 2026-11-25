@@ -1,0 +1,42 @@
+# The "set" pass: every optional knob set, fake values only.
+sknet:
+  CLOUDFLARED: true
+  HOSTNAME: sknet.example.test
+  LIVE_HOSTNAME: sknet-live.example.test
+  AKVORADO_IMAGE: "registry.example.test/akvorado:2026.10.1"
+  CLICKHOUSE_IMAGE: "registry.example.test/clickhouse-server:26.8"
+  KAFKA_IMAGE: "registry.example.test/kafka:4.3.1"
+  PROXY_IMAGE: "registry.example.test/caddy:2.11.9-alpine"
+  NTOPNG_IMAGE: "registry.example.test/ntopng@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  DATA_DIR: /srv/sknet-render
+  ALLOW_CIDRS: ["203.0.113.0/24", "198.51.100.0/24"]
+  AUTH_MODE: authentik
+  SSO_MIDDLEWARE: "sso-example@file"
+  TRAEFIK_MIDDLEWARES: "crowdsec-bouncer@file,default-no-error-pages@file"
+  TLS_OPTIONS: "none"
+  NETFLOW_PORT: 2056
+  IPFIX_PORT: 4740
+  FLOW_SOURCES: ["192.0.2.10", "192.0.2.11"]
+  FLOW_TTL_DAYS: 14
+  DISK_BUDGET_GB: 40
+  CLICKHOUSE_MEMORY_LIMIT: "2048M"
+  KAFKA_MEMORY_LIMIT: "1024M"
+  AKVORADO_MEMORY_LIMIT: "768M"
+  ORCHESTRATOR_MEMORY_LIMIT: "256M"
+  INLET_MEMORY_LIMIT: "256M"
+  CONSOLE_MEMORY_LIMIT: "384M"
+  PROXY_MEMORY_LIMIT: "128M"
+  NETWORKS:
+    "192.0.2.0/24": "site-a-lan"
+    "198.51.100.0/24": "site-b-lan"
+  LIVE_UPSTREAM: "http://192.0.2.1:3000"
+  PROXY_PLACEMENT_CONSTRAINTS: ["node.role == worker"]
+  GEOIP_ENABLED: false
+  LOG_MAX_SIZE: "20m"
+  LOG_MAX_FILES: "5"
+  AUTHENTIK_TILE_SLUG: "sknet-example"
+  AUTHENTIK_TILE_NAME: "Example flow console"
+  AUTHENTIK_TILE_GROUP: "example Admins"
+  AUTHENTIK_TILE_ICON: "fa://fa-chart-line"
+  AUTHENTIK_TILE_OPEN_IN_NEW_TAB: false
+  AUTHENTIK_TILE_DESCRIPTION: "Example description"

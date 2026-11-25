@@ -1,0 +1,32 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# sknet live view proxy ({{ env }}): Traefik terminates TLS and the sign-in, this
+# only forwards to the ntopng on LIVE_UPSTREAM (an IPv4 literal). Rendered by
+# tasks/render.yml only when LIVE_UPSTREAM is set.
+{
+	admin off
+	auto_https off
+}
+
+:8080 {
+	# Health endpoint for the Swarm healthcheck; answers without touching ntopng.
+	handle /_sknet_health {
+		respond "ok" 200
+	}
+	handle {
+		reverse_proxy {{ sknet_live_upstream }}
+	}
+}

@@ -1,0 +1,295 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# sknet validation and facts. Runs in pre_tasks of the env plays, before any
+# host is touched. Merges the vault over the defaults (`skn`), derives every
+# name the templates use, builds the exporter list (inventory hostvars, else
+# the vault fallback) and refuses inputs that would leave the collector open,
+# blind or unplaceable. set_fact and assert only: no host access.
+#   skn                  the vault merged over sknet_defaults
+#   sknet_sfx            '' in prod, -<env> elsewhere
+#   sknet_host / sknet_live_host   the two router hosts
+#   sknet_router / sknet_live_router   router and service names
+#   sknet_allow_mw       the ipAllowList middleware name, sknet-<env>-allow
+#   sknet_chain          the router middleware chain (allowlist first)
+#   sknet_exporters      active exporters: name, address, interfaces (ints normalised)
+#   sknet_flow_sources   FLOW_SOURCES, the port allowlist's sources
+- name: Refuse a missing sknet vault block
+  assert:
+    that:
+      - sknet is defined and sknet is mapping
+    fail_msg: >-
+      ERROR: no sknet vault block. Add `sknet:` to the sknet vault file
+      (DATA_NODE and FLOW_SOURCES are required).
+    quiet: true
+  tags: [config]
+
+- name: Merge the sknet vault over the defaults
+  set_fact:
+    skn: "{{ sknet_defaults | combine(sknet, recursive=True) }}"
+  tags: [config]
+
+- name: Resolve the sknet names and paths
+  set_fact:
+    sknet_sfx: "{{ '' if env == 'prod' else '-' ~ env }}"
+    sknet_data_node: "{{ skn.DATA_NODE | default('', true) | string }}"
+    sknet_data_dir: "{{ skn.DATA_DIR | string | regex_replace('/+$', '') }}"
+    sknet_base_domain: "{{ skn.DOMAIN | default(domain) if skn.CLOUDFLARED | default(false) | bool else (skn.CLUSTERNAME | default(cluster_name)) ~ '.' ~ (skn.DOMAIN | default(domain)) }}"
+    sknet_live_upstream: "{{ skn.LIVE_UPSTREAM | default('', true) | string }}"
+  tags: [config]
+
+- name: Resolve the sknet router hosts and middleware chain
+  # A HOSTNAME with a dot is a full host name. The allowlist middleware leads
+  # the chain so an address outside ALLOW_CIDRS never reaches the SSO provider.
+  set_fact:
+    sknet_router: "sknet{{ sknet_sfx }}"
+    sknet_live_router: "sknet-live{{ sknet_sfx }}"
+    sknet_host: "{{ skn.HOSTNAME if '.' in (skn.HOSTNAME | string) else (skn.HOSTNAME ~ sknet_sfx ~ '.' ~ sknet_base_domain) }}"
+    sknet_live_host: "{{ skn.LIVE_HOSTNAME if '.' in (skn.LIVE_HOSTNAME | string) else (skn.LIVE_HOSTNAME ~ sknet_sfx ~ '.' ~ sknet_base_domain) }}"
+    sknet_allow_mw: "sknet-{{ env }}-allow"
+    sknet_auth_mode: "{{ skn.AUTH_MODE | string | lower }}"
+    sknet_sso_mw: "{{ (sknet.SSO_MIDDLEWARE | default('authentik@file', true) | string) if (skn.AUTH_MODE | string | lower) == 'authentik' else '' }}"
+    sknet_live_enabled: "{{ (skn.LIVE_UPSTREAM | default('', true) | string) != '' }}"
+  tags: [config]
+
+- name: Build the router middleware chain
+  set_fact:
+    sknet_chain: "{{ ['sknet-' ~ env ~ '-allow'] + (skn.TRAEFIK_MIDDLEWARES | string).split(',') + ([sknet_sso_mw] if sknet_sso_mw else []) }}"
+  tags: [config]
+
+- name: Refuse an unknown AUTH_MODE, or SSO_MIDDLEWARE without Authentik
+  assert:
+    that:
+      - sknet_auth_mode in ['authentik', 'allowlist']
+      - sknet_auth_mode == 'authentik' or (sknet.SSO_MIDDLEWARE | default('', true) | string) == ''
+    fail_msg: >-
+      sknet.AUTH_MODE must be authentik or allowlist (got {{ sknet_auth_mode }}), and
+      SSO_MIDDLEWARE is only valid with AUTH_MODE authentik. Either way ALLOW_CIDRS is
+      applied to every router.
+    quiet: true
+  tags: [config, authmode]
+
+- name: Refuse a bad ALLOW_CIDRS
+  assert:
+    that:
+      - skn.ALLOW_CIDRS is sequence and skn.ALLOW_CIDRS is not string and skn.ALLOW_CIDRS is not mapping
+      - skn.ALLOW_CIDRS | length > 0
+      - skn.ALLOW_CIDRS | map('string') | reject('match', sknet_re_cidr) | list | length == 0
+    fail_msg: >-
+      sknet.ALLOW_CIDRS must be a non-empty list of IPv4 CIDRs such as 10.0.0.0/8
+      (it is the web UIs' only address gate when SSO is off, and the first one when it is on).
+      Got: {{ skn.ALLOW_CIDRS }}.
+    quiet: true
+  tags: [config]
+
+- name: Refuse an unplaceable or unsafe data location
+  assert:
+    that:
+      - sknet_data_node is match('^[A-Za-z0-9][A-Za-z0-9._-]*$')
+      - sknet_data_dir is match('^/[A-Za-z0-9._/-]+$')
+      - not (sknet_data_dir + '/').startswith('/var/data/')
+    fail_msg: >-
+      sknet.DATA_NODE must be the swarm node hostname that holds the data (got
+      '{{ sknet_data_node }}'), and DATA_DIR must be a local-disk path on it (got
+      '{{ sknet_data_dir }}'): ClickHouse and Kafka never go on shared /var/data storage.
+    quiet: true
+  tags: [config]
+
+- name: Refuse floating images
+  assert:
+    that:
+      - >-
+        [skn.AKVORADO_IMAGE, skn.CLICKHOUSE_IMAGE, skn.KAFKA_IMAGE, skn.PROXY_IMAGE, skn.NTOPNG_IMAGE]
+        | map('string') | reject('search', '@sha256:')
+        | reject('regex', '^[^@]*/?[^/@:]+:[0-9]+[.][0-9][^/]*$') | list | length == 0
+    fail_msg: >-
+      sknet.AKVORADO_IMAGE, CLICKHOUSE_IMAGE, KAFKA_IMAGE, PROXY_IMAGE and NTOPNG_IMAGE must each
+      be pinned by version tag (name:1.2.3) or digest (@sha256:); no latest, stable or major-only tag.
+    quiet: true
+  tags: [config]
+
+- name: Refuse bad numbers, limits and ports
+  assert:
+    that:
+      - (skn.FLOW_TTL_DAYS | string) is match('^[0-9]+$') and (skn.FLOW_TTL_DAYS | int) >= 1 and (skn.FLOW_TTL_DAYS | int) <= 3650
+      - (skn.DISK_BUDGET_GB | string) is match('^[0-9]+$') and (skn.DISK_BUDGET_GB | int) >= 5
+      - (skn.NETFLOW_PORT | string) is match('^[0-9]+$') and (skn.NETFLOW_PORT | int) >= 1 and (skn.NETFLOW_PORT | int) <= 65535
+      - (skn.IPFIX_PORT | string) is match('^[0-9]+$') and (skn.IPFIX_PORT | int) >= 1 and (skn.IPFIX_PORT | int) <= 65535
+      - (skn.NETFLOW_PORT | int) != (skn.IPFIX_PORT | int)
+      - >-
+        [skn.CLICKHOUSE_MEMORY_LIMIT, skn.KAFKA_MEMORY_LIMIT, skn.AKVORADO_MEMORY_LIMIT, skn.ORCHESTRATOR_MEMORY_LIMIT,
+         skn.INLET_MEMORY_LIMIT, skn.CONSOLE_MEMORY_LIMIT, skn.PROXY_MEMORY_LIMIT]
+        | map('string') | reject('match', '^[1-9][0-9]*[MG]$') | list | length == 0
+    fail_msg: >-
+      sknet: FLOW_TTL_DAYS must be 1 to 3650, DISK_BUDGET_GB at least 5, NETFLOW_PORT and IPFIX_PORT
+      two different ports (1 to 65535), and every *_MEMORY_LIMIT a number with M or G (512M).
+    quiet: true
+  tags: [config]
+
+- name: Refuse a bad LIVE_UPSTREAM or proxy placement
+  assert:
+    that:
+      - sknet_live_upstream == '' or (sknet_live_upstream is match('^http://((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])[.]){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9]):[0-9]{1,5}$'))
+      - skn.PROXY_PLACEMENT_CONSTRAINTS is sequence and skn.PROXY_PLACEMENT_CONSTRAINTS is not string
+    fail_msg: >-
+      sknet.LIVE_UPSTREAM must be empty (no live view) or http://<IPv4 literal>:<port>, for example
+      http://192.0.2.1:3000 (got '{{ sknet_live_upstream }}'): the proxy refuses names, so the
+      upstream cannot change under it. PROXY_PLACEMENT_CONSTRAINTS must be a list.
+    quiet: true
+  tags: [config]
+
+- name: Refuse a bad NETWORKS map
+  assert:
+    that:
+      - skn.NETWORKS is mapping
+      - skn.NETWORKS | dict2items | map(attribute='key') | map('string') | reject('match', sknet_re_cidr) | list | length == 0
+      - skn.NETWORKS | dict2items | map(attribute='value') | map('string') | reject('match', '^[A-Za-z0-9][A-Za-z0-9 ._-]*$') | list | length == 0
+    fail_msg: "sknet.NETWORKS must map IPv4 CIDRs to plain names (letters, digits, space, dot, dash, underscore)."
+    quiet: true
+  tags: [config]
+
+- name: Collect the exporters from the inventory group
+  # Hostvars of group sknet_exporter_hosts (the deploy run with
+  # -i <exporters ini>): sknet_export_address, sknet_interfaces, sknet_state.
+  set_fact:
+    sknet_inv_exporters: >-
+      {%- set out = [] -%}
+      {%- for h in groups['sknet_exporter_hosts'] | default([]) -%}
+      {%- set _ = out.append({'name': h, 'address': hostvars[h].sknet_export_address | default('', true) | string, 'state': hostvars[h].sknet_state | default('present', true) | string, 'interfaces': hostvars[h].sknet_interfaces | default([], true)}) -%}
+      {%- endfor -%}
+      {{ out }}
+  tags: [config]
+
+- name: Refuse a STATIC_EXPORTERS that is not a map
+  assert:
+    that:
+      - skn.STATIC_EXPORTERS is mapping
+    fail_msg: "sknet.STATIC_EXPORTERS must map an exporter name to {sknet_export_address, sknet_interfaces}."
+    quiet: true
+  tags: [config]
+
+- name: Pick the exporter source
+  # The inventory group wins when it has any member; the vault map is the
+  # fallback for a deploy run without the exporter inventory.
+  set_fact:
+    sknet_exporters_raw: >-
+      {%- if sknet_inv_exporters | length > 0 -%}
+      {{ sknet_inv_exporters }}
+      {%- else -%}
+      {%- set out = [] -%}
+      {%- for n, v in skn.STATIC_EXPORTERS.items() -%}
+      {%- set _ = out.append({'name': n | string, 'address': (v.sknet_export_address | default('', true) | string) if v is mapping else '', 'state': (v.sknet_state | default('present', true) | string) if v is mapping else 'present', 'interfaces': (v.sknet_interfaces | default([], true)) if v is mapping else []}) -%}
+      {%- endfor -%}
+      {{ out }}
+      {%- endif -%}
+    sknet_exporter_source: "{{ 'inventory group sknet_exporter_hosts' if sknet_inv_exporters | length > 0 else 'vault sknet.STATIC_EXPORTERS' }}"
+  tags: [config]
+
+- name: Keep the exporters that are present
+  set_fact:
+    sknet_exporters_active: "{{ sknet_exporters_raw | selectattr('state', 'equalto', 'present') | list }}"
+  tags: [config]
+
+- name: Refuse a deploy with no flow exporter at all
+  assert:
+    that:
+      - sknet_exporters_active | length > 0
+    fail_msg: >-
+      No flow exporter to build Akvorado's static interface metadata from ({{ sknet_exporter_source }}
+      has {{ sknet_exporters_raw | length }} exporter(s), {{ sknet_exporters_active | length }} not absent).
+      Run the deploy with -i <exporters ini> (group sknet_exporter_hosts, hostvars sknet_export_address
+      and sknet_interfaces) or set sknet.STATIC_EXPORTERS. An empty list would render a collector that
+      discards every flow with "metadata missing".
+    quiet: true
+  tags: [config]
+
+- name: Check every exporter's address and interfaces
+  set_fact:
+    sknet_exporter_problems: >-
+      {%- set out = [] -%}
+      {%- for e in sknet_exporters_raw -%}
+      {%- if e.state not in ['present', 'absent'] -%}{%- set _ = out.append(e.name ~ ': sknet_state must be present or absent, got ' ~ e.state) -%}{%- endif -%}
+      {%- if e.state == 'present' -%}
+      {%- if not (e.address is match(sknet_re_ipv4)) -%}{%- set _ = out.append(e.name ~ ': sknet_export_address must be an IPv4 literal, got "' ~ e.address ~ '"') -%}{%- endif -%}
+      {%- if e.interfaces is string or e.interfaces is mapping or e.interfaces is not sequence or e.interfaces | length == 0 -%}
+      {%- set _ = out.append(e.name ~ ': sknet_interfaces must be a non-empty list') -%}
+      {%- else -%}
+      {%- set seen = [] -%}
+      {%- for i in e.interfaces -%}
+      {%- if i is not mapping -%}{%- set _ = out.append(e.name ~ ': every sknet_interfaces entry must be a map') -%}
+      {%- else -%}
+      {%- if not ((i.name | default('', true) | string) is match('^[A-Za-z0-9_.:@-]{1,15}$')) -%}{%- set _ = out.append(e.name ~ ': interface name must be 1 to 15 characters of letters, digits and _.:@-, got "' ~ (i.name | default('', true)) ~ '"') -%}{%- endif -%}
+      {%- if not ((i.index | default('', true) | string) is match('^[0-9]+$') and (i.index | int) >= 100) -%}{%- set _ = out.append(e.name ~ ': interface ' ~ (i.name | default('?')) ~ ' index must be an integer >= 100, got "' ~ (i.index | default('')) ~ '"') -%}
+      {%- elif (i.index | int) in seen -%}{%- set _ = out.append(e.name ~ ': interface index ' ~ i.index ~ ' is used twice') -%}
+      {%- else -%}{%- set _ = seen.append(i.index | int) -%}{%- endif -%}
+      {%- if (i.class | default('', true) | string) not in sknet_interface_classes -%}{%- set _ = out.append(e.name ~ ': interface ' ~ (i.name | default('?')) ~ ' class must be one of ' ~ (sknet_interface_classes | join(', ')) ~ ', got "' ~ (i.class | default('')) ~ '"') -%}{%- endif -%}
+      {%- if i.speed_mbps is defined and not ((i.speed_mbps | string) is match('^[1-9][0-9]*$')) -%}{%- set _ = out.append(e.name ~ ': interface ' ~ (i.name | default('?')) ~ ' speed_mbps must be a positive integer') -%}{%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+  tags: [config]
+
+- name: Refuse an exporter with a bad address or interface list
+  assert:
+    that:
+      - sknet_exporter_problems | length == 0
+    fail_msg: "sknet exporter metadata is invalid: {{ sknet_exporter_problems | join('; ') }}"
+    quiet: true
+  tags: [config]
+
+- name: Normalise the active exporters
+  set_fact:
+    sknet_exporters: >-
+      {%- set out = [] -%}
+      {%- for e in sknet_exporters_active -%}
+      {%- set ifs = [] -%}
+      {%- for i in e.interfaces -%}
+      {%- set _ = ifs.append({'name': i.name | string, 'index': i.index | int, 'class': i.class | string, 'speed': (i.speed_mbps | default(1000, true) | int), 'description': (i.description | default(i.name, true) | string)}) -%}
+      {%- endfor -%}
+      {%- set _ = out.append({'name': e.name, 'address': e.address, 'interfaces': ifs}) -%}
+      {%- endfor -%}
+      {{ out }}
+  tags: [config]
+
+- name: Refuse FLOW_SOURCES that is empty, not IPv4 literals, or misses an exporter
+  # The port allowlist takes IPv4 literals only (iptables resolves a name once,
+  # when the rules are applied). An exporter whose address is not listed would
+  # be firewalled out, so that is refused here rather than found in the graphs.
+  assert:
+    that:
+      - skn.FLOW_SOURCES is sequence and skn.FLOW_SOURCES is not string and skn.FLOW_SOURCES is not mapping
+      - skn.FLOW_SOURCES | length > 0
+      - skn.FLOW_SOURCES | map('string') | reject('match', sknet_re_ipv4) | list | length == 0
+      - sknet_exporters | map(attribute='address') | reject('in', skn.FLOW_SOURCES | map('string') | list) | list | length == 0
+    fail_msg: >-
+      sknet.FLOW_SOURCES must list the addresses allowed to send flows: a non-empty list of IPv4
+      literals (no names, no CIDRs, no IPv6; got {{ skn.FLOW_SOURCES }}), and it must contain every
+      exporter's sknet_export_address. Missing:
+      {{ sknet_exporters | map(attribute='address') | reject('in', skn.FLOW_SOURCES | map('string') | list) | list }}.
+    quiet: true
+  tags: [config]
+
+- name: Set the flow sources and the resolved numbers
+  set_fact:
+    sknet_flow_sources: "{{ skn.FLOW_SOURCES | map('string') | unique | list }}"
+    sknet_netflow_port: "{{ skn.NETFLOW_PORT | int }}"
+    sknet_ipfix_port: "{{ skn.IPFIX_PORT | int }}"
+    sknet_ttl_hours: "{{ (skn.FLOW_TTL_DAYS | int) * 24 }}"
+    sknet_kafka_retention_bytes: "{{ ((skn.DISK_BUDGET_GB | int) * 1073741824 / 20) | int }}"
+  tags: [config]

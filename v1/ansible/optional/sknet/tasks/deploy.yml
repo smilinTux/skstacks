@@ -1,0 +1,32 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# Deploys the stack: runs the rendered deploy script on the selected manager.
+# The overlay networks exist by now (shared/tasks/create_networks.yml, run by
+# the play before this file).
+- name: Deploy sknet stack
+  # The configs and the stack file are read by `docker stack deploy`, and each
+  # config is named after its content, so a changed setting rolls the affected
+  # services by itself; no forced restart is needed.
+  shell: |
+    cd /var/data/{{ app }}-{{ env }}
+    ./deploy
+  register: deploy_output
+  tags: [deploy]
+
+- name: Show deploy output
+  debug: var=deploy_output.stdout_lines
+  tags: [deploy]

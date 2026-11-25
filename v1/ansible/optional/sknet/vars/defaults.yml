@@ -1,0 +1,101 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# sknet defaults. The instance vault's `sknet:` block is merged over this
+# (recursively, lists and scalars replace), so a vault sets only what it
+# changes. The deploy plays call the merged result `skn`. The image literals
+# below are the same ones the compose template carries as its own defaults (so
+# v1/scripts/list_images.py sees the pins); test_sknet_render.py keeps the two
+# equal.
+sknet_defaults:
+  # Upstream images, used unchanged. Pinned by tag (quay.io/akvorado/akvorado,
+  # clickhouse/clickhouse-server, apache/kafka, caddy).
+  AKVORADO_IMAGE: "quay.io/akvorado/akvorado:2026.10.1"
+  CLICKHOUSE_IMAGE: "clickhouse/clickhouse-server:26.8"
+  KAFKA_IMAGE: "apache/kafka:4.3.1"
+  PROXY_IMAGE: "caddy:2.11.9-alpine"
+  # ntopng (host play, not part of the swarm stack). Docker Hub publishes only a
+  # floating `latest` tag for ntop/ntopng, so it is pinned by digest.
+  NTOPNG_IMAGE: "ntop/ntopng@sha256:df5022c8c45fdcf8789ae2a4fa1bafaeb82dcc55c22cd8dfa12fdf3f5c11d7f2"
+
+  # Where the data lives. DATA_NODE is the swarm node hostname that holds
+  # ClickHouse, Kafka and the inlet's published ports; it is required (the
+  # deploy refuses to run without it). DATA_DIR is local disk on that node,
+  # never NFS.
+  DATA_NODE: ""
+  DATA_DIR: "/var/lib/sknet-{{ env }}"
+
+  # Names. HOSTNAME / LIVE_HOSTNAME are labels under <CLUSTERNAME>.<DOMAIN>
+  # (a value with a dot is used as the full host name).
+  HOSTNAME: "sknet"
+  LIVE_HOSTNAME: "sknet-live"
+
+  # Who may reach the web UIs. Applied to every sknet router as the
+  # `sknet-<env>-allow` ipAllowList middleware, whatever AUTH_MODE is.
+  ALLOW_CIDRS: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"]
+  # authentik: ALLOW_CIDRS plus Authentik forward auth (SSO_MIDDLEWARE).
+  # allowlist: ALLOW_CIDRS only, for an estate that gates the host another way.
+  # SSO_MIDDLEWARE (default authentik@file) is read from the vault only, so an
+  # allowlist-only vault that also names one can be refused.
+  AUTH_MODE: "authentik"
+  TRAEFIK_MIDDLEWARES: "default-no-error-pages@file"
+  TLS_OPTIONS: "none"
+  CLOUDFLARED: false
+
+  # Flow collector. Exporters send NetFlow v9 / IPFIX to these UDP ports on
+  # DATA_NODE (published in host mode so the exporter's source address
+  # survives). FLOW_SOURCES is the allowlist of exporter addresses (IPv4
+  # literals); an empty list refuses the deploy.
+  NETFLOW_PORT: 2055
+  IPFIX_PORT: 4739
+  FLOW_SOURCES: []
+  # Exporter metadata when the deploy runs without the exporter inventory
+  # group: a map of exporter name to {sknet_export_address, sknet_interfaces},
+  # the same shape as the inventory hostvars.
+  STATIC_EXPORTERS: {}
+  # CIDR -> name, for Akvorado's network naming.
+  NETWORKS: {}
+  GEOIP_ENABLED: false
+
+  # Retention. FLOW_TTL_DAYS is the raw and the 1 minute table; the 5 minute
+  # table keeps three times as long and the hourly table a year. Decide before
+  # the first start: ClickHouse sizes partitions from the TTL when it creates
+  # the tables. DISK_BUDGET_GB is what DATA_DIR must have free to deploy and
+  # caps Kafka's buffer.
+  FLOW_TTL_DAYS: 30
+  DISK_BUDGET_GB: 20
+
+  # Memory limits (whole stack 3424M by default, under 3.5 GB).
+  CLICKHOUSE_MEMORY_LIMIT: "1536M"
+  KAFKA_MEMORY_LIMIT: "704M"
+  AKVORADO_MEMORY_LIMIT: "512M"        # the outlet
+  ORCHESTRATOR_MEMORY_LIMIT: "192M"
+  INLET_MEMORY_LIMIT: "160M"
+  CONSOLE_MEMORY_LIMIT: "256M"
+  PROXY_MEMORY_LIMIT: "64M"
+
+  # Live view: the ntopng upstream (http://<ipv4>:<port>). Unset renders no
+  # live router and no proxy service.
+  LIVE_UPSTREAM: ""
+  PROXY_PLACEMENT_CONSTRAINTS: []
+
+  LOG_MAX_SIZE: "10m"
+  LOG_MAX_FILES: "3"
+
+# Patterns the validation tasks use. Core Jinja only (no ipaddr filter).
+sknet_re_ipv4: '^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])[.]){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$'
+sknet_re_cidr: '^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])[.]){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])$'
+sknet_interface_classes: ["lan", "mesh", "estate-link", "internet"]
