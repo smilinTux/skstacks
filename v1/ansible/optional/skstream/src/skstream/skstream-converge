@@ -67,12 +67,18 @@ FRIENDS = "My Friends Plex RSS Watchlist"
 # Stranger.Things.s01e01.2016.1080p.Rifftrax.6ch.2ch.AVC.mkv was collected
 # next to the real BluRay S01E01. Its riff track is tagged English, so neither
 # the language filters nor skstream-langguard can tell it apart.
+#
+# Fourth pattern: AUDIONEW / NEW AUDIO, a theater cam rip with a cleaner audio
+# track laid over it. cli_debrid drops CAM/TS/TELESYNC only through PTT's
+# "trash" flag, and PTT does not know this tag, so on nor (2026-11-24)
+# You.Can.See.Everything.2026.AUDIONEW.1080P was collected as a 1080p release.
 DEFAULT_FILTER_OUT = [
     r"(?i)\b(rus|ru|rudub|ukr|ultradox|lostfilm|newstudio|hdrezka|alexfilm|jaskier|baibako"
     r"|coldfilm|ideafilm|dublyazh|viruseproject|megapeer|rutor|rutracker)\b|[А-Яа-яЁё]",
     r"(?i)\b3d[ ._-]+(blu-?ray|bd|h-?sbs|sbs|half|full|h?ou|tab)\b|\b(h-?sbs|bdmv|iso|complete[ ._-]?blu-?ray)\b"
     r"|\brarbg\.com\b",
     r"(?i)\briff[ ._-]?trax\b",
+    r"(?i)\b(audio[ ._-]?new|new[ ._-]?audio)\b",
 ]
 
 # Rank down, not drop, multi/dual-audio releases and the dub groups behind them.

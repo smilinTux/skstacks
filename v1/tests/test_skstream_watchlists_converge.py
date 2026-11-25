@@ -407,6 +407,19 @@ def test_default_filter_drops_rifftrax(title, hit):
 
 
 @pytest.mark.parametrize("title,hit", [
+    ("You.Can.See.Everything.2026.AUDIONEW.1080P", True),
+    ("Movie.2025.1080p.HDTS.NEW.AUDIO.x264", True),
+    ("Film.2024.NewAudio.720p", True),
+    ("You.Can.See.Everything.2026.REPACK2.1080p.AMZN.WEB-DL.DDP5.1.Atmos.H.264-CHORTLE", False),
+    ("Brave.New.World.S01.1080p.WEB-DL", False),
+    ("Audio.Newsreel.1960.1080p", False),
+])
+def test_default_filter_drops_audionew_cam_rips(title, hit):
+    import re
+    assert bool(re.search(sc.DEFAULT_FILTER_OUT[3], title, re.IGNORECASE)) is hit
+
+
+@pytest.mark.parametrize("title,hit", [
     ("Heart.of.the.Beast.2026.MULTi.1080p.WEB.H265-YTO", True),
     ("Ava.2020.iTA-ENG.Bluray.1080p.x264-CYBER", True),
     ("John.Wick.2014.MULTi4.2160p.HDR.BluRay.AV1-Kleinmike", True),
