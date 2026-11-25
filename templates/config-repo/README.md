@@ -38,12 +38,45 @@ README.md
 ```
 
 One `<service>-<env>_vault.yml` per service per environment you deploy
-(`dev`, `staging`, `prod`); this template ships one example, `skbook`
-(BookStack), under `prod`. `v1/ansible/shared/tasks/select_vault_file.yml` in
+(`dev`, `staging`, `prod`); this template ships two examples under
+`prod`: `skbook` (BookStack) and `skpods` (Solid pod server). `v1/ansible/shared/tasks/select_vault_file.yml` in
 the framework also supports a per-domain/per-cluster vault name
 (`<service>-<env>-<domain>-<cluster>_vault.yml`, dots in the domain replaced
 with dashes) for instances running more than one site; this template uses the
 simpler form, which is what it falls back to automatically.
+
+## Just want Solid pods? (skpods only)
+
+You don't have to run the whole framework. Each service deploys on its own,
+so a pod server needs only Docker Swarm, a Traefik ingress and the `skpods`
+role. Add other services later, one vault file each, if you get curious.
+
+1. Follow "Use this template" below: private repo, framework submodule at a
+   release tag, your managers in `v1/ansible/shared/hosts`.
+2. Delete `skbook-prod_vault.yml.example` and `skbook-prod_vault.yml`.
+3. Fill in `skpods-prod_vault.yml.example` (the five required keys; the
+   optional ones are listed there with their defaults). Pick the hostname
+   before the first account exists: every WebID contains it.
+4. Encrypt it as `skpods-prod_vault.yml` (see "Set the vault password").
+5. Deploy it (see "First deploy"), with `skpods` in place of `skbook`:
+   ```
+   ansible-playbook -i v1/ansible/shared/hosts \
+     framework/v1/ansible/optional/skpods/deploy_skpods-prod.yml \
+     -e skstacks_vault_dir=$(pwd)/v1/ansible \
+     --vault-password-file <password-file>
+   ```
+
+You get Solid pods at `https://pods.<cluster>.<domain>` with the skpods.id
+look, owner-only pod roots, a personal `Readme.md` (WebID and pod links)
+in every new account, upload virus scanning, daily database dumps, 2FA and
+passkeys. Everything is documented in
+`framework/v1/ansible/optional/skpods/README.md`; app developers start at
+[smilinTux/skpods](https://github.com/smilinTux/skpods).
+
+**Engine image:** `NEXTCLOUD_IMAGE` must point at a skpods engine image
+(Nextcloud plus the Solid app, pinned by digest). A public image is not
+published yet; until it is, the README's "Engine image" section says what
+the image must contain.
 
 ## Config schema
 

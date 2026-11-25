@@ -190,18 +190,21 @@ def test_no_ansible_vault_ciphertext_is_committed_in_this_repo():
     assert not hits, f"real ansible-vault ciphertext committed in the framework repo: {hits}"
 
 
-def test_fixture_placeholder_secrets_match_the_framework_render_gate_fixture():
+@pytest.mark.parametrize("service", ["skbook", "skpods"])
+def test_fixture_placeholder_secrets_match_the_framework_render_gate_fixture(service):
     """Ties the fixture to v1/tests/render/render_playbooks.py's existing,
     already-CI-gated skbook.example.yml, so the two cannot silently drift
     apart and the render-gate CI job (which renders skbook.example.yml
     through real Ansible) is meaningful proof for this fixture's values too."""
-    fixture_vault = yaml.safe_load(VAULT_EXAMPLE.read_text())["skbook"]
-    render_gate_vault = yaml.safe_load(RENDER_GATE_FIXTURE.read_text())["skbook"]
+    example = VAULT_DIR / f"{service}-prod_vault.yml.example"
+    fixture = REPO_ROOT / "v1" / "tests" / "render" / "vars" / f"{service}.example.yml"
+    fixture_vault = yaml.safe_load(example.read_text())[service]
+    render_gate_vault = yaml.safe_load(fixture.read_text())[service]
     # Every key the render gate fixture sets must carry the identical
     # placeholder value here (CLUSTERNAME/DOMAIN included: both fixtures use
     # the same "render" / "example.test" placeholders).
     for key, value in render_gate_vault.items():
         assert fixture_vault.get(key) == value, (
-            f"skbook.{key} diverged between templates/config-repo and "
-            f"v1/tests/render/vars/skbook.example.yml"
+            f"{service}.{key} diverged between templates/config-repo and "
+            f"v1/tests/render/vars/{service}.example.yml"
         )

@@ -17,13 +17,18 @@ seed and reset, verification, troubleshooting).
 
 ## Quickstart
 
+Starting from nothing? Use the
+[skstacks-config-template](https://github.com/smilinTux/skstacks-config-template)
+repo: its "Just want Solid pods?" section sets up a private instance repo
+that runs only this role.
+
 1. Build and push an engine image (see [Engine image](#engine-image)) and
    note its digest.
 2. Add an `skpods` block to the instance vault (minimal snippet below).
 3. Deploy:
 
 ```bash
-ansible-playbook -i envs/dev/inventory.ini \
+ansible-playbook -i v1/ansible/shared/hosts \
   framework/v1/ansible/optional/skpods/deploy_skpods-dev.yml \
   -e target_manager_group=swarm_managers \
   -e skstacks_vault_dir=$(pwd)/v1/ansible \
@@ -50,9 +55,15 @@ The `nextcloud` engine does not use the Nextcloud app store. The instance
 builds a thin derived image: the official `nextcloud:<version>-apache` image
 (pinned by digest) plus the Solid app source the instance chooses, with its
 composer `vendor/` tree, under `/usr/src/skpods-apps/solid`. A
-`before-starting` entrypoint hook in that image copies the app into
-`custom_apps/solid` on every start, so a new image digest always ships its
-own app code, and finishes an app upgrade (`occ upgrade`) if one is pending.
+`before-starting` entrypoint hook in that image copies every app under
+`/usr/src/skpods-apps/` into `custom_apps/` on every start, so a new image
+digest always ships its own app code, and finishes an app upgrade
+(`occ upgrade`) if one is pending.
+
+Besides `solid`, the role expects two more apps in the image:
+`skpods` (writes each account's `Readme.md`, `occ skpods:readme`) and
+`files_antivirus` (when `ANTIVIRUS` is on). A public engine image is not
+published yet.
 
 The role only pins that image by digest (`NEXTCLOUD_IMAGE`). Where the image
 is built and which Solid app revision it carries is the instance's choice.
