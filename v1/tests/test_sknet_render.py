@@ -212,9 +212,24 @@ def test_default_memory_budget_is_at_most_3_5_gb(live_out):
 def test_kafka_is_kraft_single_node(base_out):
     env = dict(e.split("=", 1) for e in compose(base_out)["services"]["kafka"]["environment"])
     assert env["KAFKA_PROCESS_ROLES"] == "controller,broker"
-    assert env["KAFKA_CONTROLLER_QUORUM_VOTERS"] == "1@kafka:9093"
+    # Swarm DNS does not answer for "kafka" until a task is healthy: the voter
+    # and the healthcheck must not resolve the service name (lab deadlock, v2.26.33 gate).
+    assert env["KAFKA_CONTROLLER_QUORUM_VOTERS"] == "1@localhost:9093"
     assert env["KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR"] == "1"
     assert "-Xmx" in env["KAFKA_HEAP_OPTS"]
+    check = " ".join(compose(base_out)["services"]["kafka"]["healthcheck"]["test"])
+    assert "127.0.0.1/9092" in check and "kafka:" not in check
+
+
+def test_clickhouse_merge_tree_thresholds_fit_the_small_pool(base_out):
+    """ClickHouse exits (code 36) if a free-entries threshold exceeds pool x ratio."""
+    import re
+    lowmem = config_text(base_out, "clickhouse-lowmem")
+    pool = int(re.search(r"<background_pool_size>(\d+)<", lowmem).group(1))
+    for name in ("lower_max_size_of_merge", "execute_mutation", "execute_optimize_entire_partition"):
+        m = re.search(rf"<number_of_free_entries_in_pool_to_{name}>(\d+)<", lowmem)
+        assert m, name
+        assert int(m.group(1)) <= pool * 2, name
 
 
 # --- routers, allowlist, sign-in --------------------------------------------

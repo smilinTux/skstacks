@@ -17,6 +17,15 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   <background_pool_size>4</background_pool_size>
   <background_schedule_pool_size>8</background_schedule_pool_size>
 
+  <!-- ClickHouse refuses to start when a merge_tree free-entries threshold is above
+       background_pool_size x background_merges_mutations_concurrency_ratio (4 x 2 = 8);
+       the defaults (8, 20, 25) assume a pool of 16. Scale them down with the pool. -->
+  <merge_tree>
+    <number_of_free_entries_in_pool_to_lower_max_size_of_merge>4</number_of_free_entries_in_pool_to_lower_max_size_of_merge>
+    <number_of_free_entries_in_pool_to_execute_mutation>4</number_of_free_entries_in_pool_to_execute_mutation>
+    <number_of_free_entries_in_pool_to_execute_optimize_entire_partition>4</number_of_free_entries_in_pool_to_execute_optimize_entire_partition>
+  </merge_tree>
+
   <!-- Stop writing before the disk fills (MIN_FREE_GB): TTLs bound the data only roughly. -->
   <storage_configuration>
     <disks>
