@@ -1,0 +1,45 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+# sknet live view: ntopng Community in a pinned container, rendered by live.yml. Do not edit on the host.
+# Host networking is required to capture on host interfaces. Capabilities are dropped to the
+# set ntopng needs (raw capture, interface control, and the privilege drop to its own user
+# and chown of its data directory); the container is not privileged.
+# -i       one monitored interface per flag (ntopng 7.0 cli_options: `--interface|-i`)
+# -w       HTTP on the bind address and port, `[addr:]port` (`--http-port|-w`)
+# -l 1     disables ntopng login for all hosts (`--disable-login|-l`, 1 = everyone is admin):
+#          the web port is reachable only from the firewall allowlist (sknet-live-fw.service)
+#          and the SSO proxy in front of it
+# -d       data directory, a bind mount of local disk
+# -x, -X   cap on active hosts and flows (`--max-num-hosts|-x`, `--max-num-flows|-X`)
+# The image runs its own redis-server inside the container (entrypoint /run.sh); it is not
+# persisted, so ntopng preferences saved in the UI are lost when the container is recreated.
+# MemoryMax is also applied to the container itself with `docker run --memory`.
+[Unit]
+Description=sknet live view (ntopng Community)
+Requires=docker.service sknet-live-fw.service
+After=docker.service network-online.target sknet-live-fw.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=-{{ sknet_l_docker }} rm -f sknet-live
+ExecStart={{ sknet_l_docker }} run --rm --name sknet-live --network host --memory {{ sknet_l_mem }} --memory-swap {{ sknet_l_mem }} --cap-drop ALL{% for c in sknet_l_caps %} --cap-add {{ c }}{% endfor %} -v {{ sknet_l_data }}/ntopng:/var/lib/ntopng {{ sknet_l_image }}{% for i in sknet_l_ifaces %} -i {{ i }}{% endfor %} -w {{ sknet_l_bind }}:{{ sknet_l_port }} -l 1 -d /var/lib/ntopng -x {{ sknet_l_max_hosts }} -X {{ sknet_l_max_flows }}
+ExecStop=-{{ sknet_l_docker }} stop --time 20 sknet-live
+Restart=on-failure
+RestartSec=10
+MemoryMax={{ sknet_l_mem }}
+
+[Install]
+WantedBy=multi-user.target

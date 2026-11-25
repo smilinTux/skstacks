@@ -1,0 +1,330 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+---
+# sknet live host play: ntopng Community 7.0 as a pinned container run by a systemd
+# unit, plus its own iptables chain. NOT a swarm deploy (ntopng needs host networking
+# to capture on host interfaces, which swarm stacks cannot do). It runs against the hosts
+# of the instance-private inventory group sknet_live_hosts (or the group named by
+# sknet_live_hosts_group), for example
+#   ansible-playbook -i <ini> live.yml [-l <host>]
+# The swarm stack's live proxy (vault LIVE_UPSTREAM, http://<ipv4>:3000) points here.
+#
+# Hostvars:
+#   sknet_live_interfaces     list of interface names to capture (1 to 8; same name rule as the exporters)
+#   sknet_live_bind           IPv4 literal ntopng's web UI listens on (port 3000). 0.0.0.0 is refused,
+#                             public addresses too unless sknet_live_allow_public_bind: true
+#   sknet_live_allow_sources  non-empty list of IPv4 literals or CIDRs allowed to reach tcp 3000
+#   sknet_live_memory_max     default 512M. Applied to the container (docker --memory, swap included)
+#                             and to the unit (MemoryMax); always rendered
+#   sknet_state               present (default) or absent
+# Optional hostvars: sknet_live_max_hosts and sknet_live_max_flows (16384 each, ntopng -x and -X),
+# sknet_live_cap_add (capabilities the container keeps, everything else is dropped; default
+# NET_RAW NET_ADMIN SETUID SETGID CHOWN DAC_OVERRIDE FOWNER), sknet_live_data_dir
+# (/var/lib/sknet-live), sknet_live_sbin_dir (/usr/local/sbin), sknet_unit_dir
+# (/etc/systemd/system), sknet_live_purge_data (state absent only: also delete the data dir).
+# The image is the vault's NTOPNG_IMAGE (default: the digest pinned in vars/defaults.yml).
+# The play loads the instance vault like the other sknet plays (env prod, or -e env=<env>).
+#
+# Access control: ntopng runs with its own login disabled (-l 1, everyone is admin), because
+# the SSO proxy (Authentik) and the allowlist front it. Hence the guards on the bind address
+# and the source list. LIVE_ADMIN_PASSWORD is not used.
+#
+# What lands on the host: sknet-live.service, sknet-live-fw.service, the allowlist script, and
+# <data dir>/ntopng. Docker must already be installed; the play fails clearly if it is not.
+# The image is pulled when missing. state absent stops and removes the units, the container,
+# the script, the iptables chain and its INPUT hook; the image stays, and the data dir stays
+# unless sknet_live_purge_data is true.
+- hosts: "{{ sknet_live_hosts_group | default('sknet_live_hosts') }}"
+  become: true
+  gather_facts: false
+  vars:
+    env: prod
+    app: sknet
+    service_name: sknet
+    service_type: optional
+  pre_tasks:
+    - name: Load the sknet defaults
+      include_vars: "{{ playbook_dir }}/vars/defaults.yml"
+      tags: [config]
+
+    - name: Select the sknet vault file
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+      when: (sknet_state | default('present', true)) == 'present'
+      tags: [config]
+
+    - name: Check that the sknet vault file exists
+      stat:
+        path: "{{ vault_file_path }}"
+      register: sknet_l_vault_stat
+      become: false
+      delegate_to: localhost
+      when: (sknet_state | default('present', true)) == 'present'
+      tags: [config]
+
+    - name: Refuse a missing sknet vault
+      fail:
+        msg: >-
+          {{ inventory_hostname }}: no sknet vault at {{ vault_file_path }}. The vault holds the pinned
+          NTOPNG_IMAGE override; create it (an empty `sknet: {}` block is enough), set skstacks_vault_dir
+          if it lives outside the framework tree, or pick the environment with -e env=<env>.
+      when: (sknet_state | default('present', true)) == 'present' and not sknet_l_vault_stat.stat.exists
+      tags: [config]
+
+    - name: Load the sknet vault
+      include_vars: "{{ vault_file_path }}"
+      when: (sknet_state | default('present', true)) == 'present'
+      no_log: true
+      tags: [config]
+
+    - name: Derive this host's settings
+      set_fact:
+        sknet_l_state: "{{ sknet_state | default('present', true) | string }}"
+        sknet_l_unit_dir: "{{ (sknet_unit_dir | default('/etc/systemd/system', true) | string) | regex_replace('/+$', '') }}"
+        sknet_l_sbin: "{{ (sknet_live_sbin_dir | default('/usr/local/sbin', true) | string) | regex_replace('/+$', '') }}"
+        sknet_l_data: "{{ (sknet_live_data_dir | default('/var/lib/sknet-live', true) | string) | regex_replace('/+$', '') }}"
+        sknet_l_ifaces: "{{ sknet_live_interfaces | default([], true) }}"
+        sknet_l_bind: "{{ sknet_live_bind | default('', true) | string }}"
+        sknet_l_sources: "{{ sknet_live_allow_sources | default([], true) }}"
+        sknet_l_mem: "{{ sknet_live_memory_max | default('512M', true) | string }}"
+        sknet_l_max_hosts: "{{ sknet_live_max_hosts | default(16384, true) }}"
+        sknet_l_max_flows: "{{ sknet_live_max_flows | default(16384, true) }}"
+        sknet_l_caps: "{{ sknet_live_cap_add | default(['NET_RAW', 'NET_ADMIN', 'SETUID', 'SETGID', 'CHOWN', 'DAC_OVERRIDE', 'FOWNER'], true) }}"
+        sknet_l_port: 3000
+        sknet_l_chain: SKNET-LIVE
+        sknet_l_purge: "{{ sknet_live_purge_data | default(false) | bool }}"
+        sknet_l_image: "{{ (sknet | default({})).NTOPNG_IMAGE | default(sknet_defaults.NTOPNG_IMAGE, true) }}"
+      tags: [config]
+
+    - name: Refuse an unknown sknet_state
+      assert:
+        that:
+          - sknet_l_state in ['present', 'absent']
+        fail_msg: "{{ inventory_hostname }}: sknet_state must be present or absent (got '{{ sknet_l_state }}')."
+        quiet: true
+      tags: [config]
+
+    - name: Refuse an image that is not pinned
+      assert:
+        that:
+          - sknet_l_image is match('^[^ ]+(:[^ :/]+|@sha256:[0-9a-f]{64})$')
+          - not (sknet_l_image is match('.*:(latest|stable)$'))
+        fail_msg: "{{ inventory_hostname }}: NTOPNG_IMAGE must be pinned by version tag or digest, never latest or stable (got {{ sknet_l_image }})."
+        quiet: true
+      when: sknet_l_state == 'present'
+      tags: [config]
+
+    - name: Check this host's settings
+      include_tasks: "{{ playbook_dir }}/tasks/live_guards.yml"
+      when: sknet_l_state == 'present'
+      tags: [config]
+
+    - name: Work out the unit and script paths
+      set_fact:
+        sknet_l_fw_script: "{{ sknet_l_sbin }}/sknet-live-fw"
+        sknet_l_live_unit: "{{ sknet_l_unit_dir }}/sknet-live.service"
+        sknet_l_fw_unit: "{{ sknet_l_unit_dir }}/sknet-live-fw.service"
+      tags: [config]
+
+  tasks:
+    - name: Look for docker
+      shell: command -v docker
+      args:
+        executable: /bin/sh
+      register: sknet_l_which
+      changed_when: false
+      failed_when: false
+
+    - name: Refuse a host without docker
+      fail:
+        msg: >-
+          {{ inventory_hostname }} has no docker. The live view runs ntopng as a container and this play does
+          not install Docker: install Docker Engine on the host first, then run the play again.
+      when: sknet_l_state == 'present' and sknet_l_which.rc != 0
+
+    - name: Remember the docker path
+      set_fact:
+        sknet_l_docker: "{{ sknet_l_which.stdout | trim }}"
+      when: sknet_l_which.rc == 0
+
+    # --- present -----------------------------------------------------------------
+
+    - name: Check whether the pinned image is already on the host
+      command: "{{ sknet_l_docker }} image inspect {{ sknet_l_image }}"
+      register: sknet_l_img
+      changed_when: false
+      failed_when: false
+      when: sknet_l_state == 'present'
+
+    - name: Pull the pinned image
+      command: "{{ sknet_l_docker }} pull {{ sknet_l_image }}"
+      when: sknet_l_state == 'present' and sknet_l_img.rc != 0
+
+    - name: Create the data directory
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ sknet_l_data }}"
+        - "{{ sknet_l_data }}/ntopng"
+      when: sknet_l_state == 'present'
+
+    - name: Write the allowlist script
+      template:
+        src: "{{ playbook_dir }}/src/config/sknet/firewall/sknet-live-fw.sh.j2"
+        dest: "{{ sknet_l_fw_script }}"
+        mode: "0750"
+      register: sknet_l_fw_s
+      when: sknet_l_state == 'present'
+
+    - name: Write the allowlist unit
+      template:
+        src: "{{ playbook_dir }}/src/config/sknet/firewall/sknet-live-fw.service.j2"
+        dest: "{{ sknet_l_fw_unit }}"
+        mode: "0644"
+      register: sknet_l_fw_u
+      when: sknet_l_state == 'present'
+
+    - name: Write the live view unit
+      template:
+        src: "{{ playbook_dir }}/src/config/sknet/sknet-live.service.j2"
+        dest: "{{ sknet_l_live_unit }}"
+        mode: "0644"
+      register: sknet_l_live_u
+      when: sknet_l_state == 'present'
+
+    - name: Reload systemd when a unit changed
+      command: systemctl daemon-reload
+      when: sknet_l_state == 'present' and (sknet_l_fw_u.changed or sknet_l_live_u.changed)
+
+    - name: Ask which units are enabled and running
+      command: "systemctl {{ item.0 }} {{ item.1 }}"
+      loop: "{{ ['is-enabled', 'is-active'] | product(['sknet-live-fw.service', 'sknet-live.service']) | list }}"
+      loop_control:
+        label: "{{ item.0 }} {{ item.1 }}"
+      register: sknet_l_check
+      changed_when: false
+      failed_when: false
+      when: sknet_l_state == 'present'
+
+    - name: Work out what each unit needs
+      # The allowlist goes first, so the port is never open without it. A changed script or
+      # unit re-runs the oneshot; a changed live unit (flags, image, memory) restarts ntopng.
+      set_fact:
+        sknet_l_todo: >-
+          {%- set out = [] -%}
+          {%- for r in sknet_l_check.results -%}
+          {%- set unit = r.item[1] -%}
+          {%- set cfg = (sknet_l_fw_s.changed or sknet_l_fw_u.changed) if unit == 'sknet-live-fw.service' else sknet_l_live_u.changed -%}
+          {%- if r.item[0] == 'is-enabled' and (r.stdout | trim) != 'enabled' -%}{%- set _ = out.append(['enable', unit]) -%}{%- endif -%}
+          {%- if r.item[0] == 'is-active' -%}
+          {%- if (r.stdout | trim) != 'active' -%}{%- set _ = out.append(['start', unit]) -%}
+          {%- elif cfg -%}{%- set _ = out.append(['restart', unit]) -%}{%- endif -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {{ out | sort(attribute='1') }}
+      when: sknet_l_state == 'present'
+
+    - name: Enable, start or restart the units
+      command: "systemctl {{ item.0 }} {{ item.1 }}"
+      loop: "{{ sknet_l_todo }}"
+      loop_control:
+        label: "{{ item.0 }} {{ item.1 }}"
+      when: sknet_l_state == 'present'
+
+    # --- absent ------------------------------------------------------------------
+
+    - name: Ask which units are still enabled or running
+      command: "systemctl {{ item.0 }} {{ item.1 }}"
+      loop: "{{ ['is-enabled', 'is-active'] | product(['sknet-live.service', 'sknet-live-fw.service']) | list }}"
+      loop_control:
+        label: "{{ item.0 }} {{ item.1 }}"
+      register: sknet_l_acheck
+      changed_when: false
+      failed_when: false
+      when: sknet_l_state == 'absent'
+
+    - name: Stop and disable the units
+      command: "systemctl {{ 'stop' if item.item[0] == 'is-active' else 'disable' }} {{ item.item[1] }}"
+      loop: "{{ sknet_l_acheck.results }}"
+      loop_control:
+        label: "{{ item.item[0] }} {{ item.item[1] }}"
+      when: >-
+        sknet_l_state == 'absent'
+        and ((item.item[0] == 'is-active' and (item.stdout | trim) == 'active')
+             or (item.item[0] == 'is-enabled' and (item.stdout | trim) == 'enabled'))
+
+    - name: Look for a leftover container
+      command: "{{ sknet_l_docker }} ps -aq --filter name=^sknet-live$"
+      register: sknet_l_ctr
+      changed_when: false
+      failed_when: false
+      when: sknet_l_state == 'absent' and sknet_l_which.rc == 0
+
+    - name: Remove the container
+      command: "{{ sknet_l_docker }} rm -f sknet-live"
+      when: sknet_l_state == 'absent' and sknet_l_which.rc == 0 and (sknet_l_ctr.stdout | trim) != ''
+
+    - name: Remove the iptables chain and its INPUT hook
+      shell: |
+        set -eu
+        chain='{{ sknet_l_chain }}'
+        out=
+        command -v iptables >/dev/null 2>&1 || exit 0
+        while iptables -w -C INPUT -p tcp --dport {{ sknet_l_port }} -j "$chain" 2>/dev/null; do
+          iptables -w -D INPUT -p tcp --dport {{ sknet_l_port }} -j "$chain"; out=removed
+        done
+        if iptables -w -n -L "$chain" >/dev/null 2>&1; then
+          iptables -w -F "$chain" 2>/dev/null || true
+          iptables -w -X "$chain" 2>/dev/null || true
+          out=removed
+        fi
+        echo "$out"
+      args:
+        executable: /bin/bash
+      register: sknet_l_chain_rm
+      changed_when: "'removed' in sknet_l_chain_rm.stdout"
+      when: sknet_l_state == 'absent'
+
+    - name: Remove the units and the script
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ sknet_l_live_unit }}"
+        - "{{ sknet_l_fw_unit }}"
+        - "{{ sknet_l_fw_script }}"
+      register: sknet_l_removed
+      when: sknet_l_state == 'absent'
+
+    - name: Delete the data directory when asked
+      file:
+        path: "{{ sknet_l_data }}"
+        state: absent
+      when: sknet_l_state == 'absent' and sknet_l_purge
+      register: sknet_l_purged
+
+    - name: Reload systemd after removals
+      command: systemctl daemon-reload
+      when: sknet_l_state == 'absent' and sknet_l_removed.changed
+
+    - name: Say what was done
+      debug:
+        msg: >-
+          {{ inventory_hostname }}: {{
+          ('sknet live view removed (units, container, chain, script); the image is left in place and the data '
+           ~ ('directory was deleted.' if sknet_l_purge else 'directory kept.'))
+          if sknet_l_state == 'absent' else
+          ('ntopng capturing ' ~ (sknet_l_ifaces | join(', ')) ~ ', UI on ' ~ sknet_l_bind ~ ':' ~ sknet_l_port
+           ~ ', allowed from ' ~ (sknet_l_sources | join(', '))) }}

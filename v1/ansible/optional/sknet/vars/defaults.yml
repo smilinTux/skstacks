@@ -119,6 +119,9 @@ sknet_defaults:
 # Patterns the validation tasks use. Core Jinja only (no ipaddr filter).
 sknet_re_ipv4: '^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])[.]){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$'
 sknet_re_cidr: '^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])[.]){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])$'
+# Interface name: becomes a systemd instance, `softflowd -i <index>:<name>` and an ntopng `-i <name>`,
+# so no colon, at sign, slash or space; the kernel limit is 15 characters.
+sknet_re_ifname: '^[A-Za-z0-9_.-]{1,15}$'
 sknet_interface_classes: ["lan", "mesh", "estate-link", "internet"]
 # Addresses a collector may have without sknet_allow_public_collector: RFC 1918,
 # 100.64.0.0/10, loopback and the RFC 5737 documentation ranges.
