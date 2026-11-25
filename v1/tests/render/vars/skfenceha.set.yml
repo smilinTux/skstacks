@@ -56,3 +56,4 @@ skfenceha:
     acme: true
   CLOUDFLARE_EMAIL: acme@example.test
   CLOUDFLARE_DNS_API_TOKEN: example-cloudflare-dns-api-token-not-a-secret
+  MAIL_ENTRYPOINTS: true

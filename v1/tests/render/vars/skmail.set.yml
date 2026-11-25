@@ -14,3 +14,6 @@ skmail:
   MAIL_WEB_PLACEMENT_CONSTRAINTS: ["node.hostname == render-node-1", "node.role == manager"]
   BOOTSTRAP_ACCOUNT: postmaster@example.test
   BOOTSTRAP_PASSWORD: example-bootstrap-password-not-a-secret
+  # Behind Traefik (PROXY protocol): no host ports, TCP routers, proxy listeners.
+  VIA_TRAEFIK: true
+  PROXY_TRUSTED_NETWORKS: ["172.16.200.0/24"]
