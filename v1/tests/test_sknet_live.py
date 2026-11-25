@@ -43,6 +43,8 @@ if a[:2] == ["image", "inspect"]:
     sys.exit(0 if (st / "images" / a[2].replace("/", "_")).exists() else 1)
 if a[0] == "pull":
     (st / "images" / a[1].replace("/", "_")).touch(); sys.exit(0)
+if a[0] == "info":
+    print("active" if (st / "swarm").exists() else "inactive"); sys.exit(0)
 if a[0] == "ps":
     if ctr.exists(): print("abc123")
     sys.exit(0)
@@ -71,6 +73,10 @@ if op == "-D":
     hooks.write_text("\n".join(lines) + "\n"); sys.exit(0)
 if op == "-n" and a[1] == "-L":
     sys.exit(0 if (st / ("chain-" + a[2])).exists() else 1)
+if op == "-S":
+    for l in lines:
+        if l.startswith(a[1] + " "): print("-A " + l)
+    sys.exit(0)
 if op == "-F":
     sys.exit(0)
 if op == "-X":
@@ -93,6 +99,7 @@ for m in re.finditer(r"^:(\S+) ", data, re.M):
 sys.exit(0)
 '''
 
+HOOK = "INPUT -p tcp -d 192.0.2.30 --dport 3000 -j SKNET-LIVE"   # only ntopng's own address, not every tcp 3000
 IMG = DEFAULTS["sknet_defaults"]["NTOPNG_IMAGE"]
 
 
@@ -383,7 +390,7 @@ def test_chain_accepts_only_the_listed_sources_then_drops(host):
         "-A SKNET-LIVE -s 198.51.100.0/24 -j ACCEPT",
         "-A SKNET-LIVE -j DROP",
     ]
-    assert host.hooks() == ["INPUT -p tcp --dport 3000 -j SKNET-LIVE"]
+    assert host.hooks() == [HOOK]
     script = (host.sbin / "sknet-live-fw").read_text()
     assert "-j RETURN" not in script and "--privileged" not in script
 
@@ -392,7 +399,7 @@ def test_chain_script_is_idempotent_and_unit_runs_it(host):
     host.ok()
     host.apply_script()
     host.apply_script()
-    assert host.hooks() == ["INPUT -p tcp --dport 3000 -j SKNET-LIVE"]
+    assert host.hooks() == [HOOK]
     assert f"ExecStart={host.sbin}/sknet-live-fw" in (host.units / "sknet-live-fw.service").read_text()
     assert "Before=sknet-live.service" in (host.units / "sknet-live-fw.service").read_text()
 
@@ -484,3 +491,37 @@ def test_unit_hardening_and_log_cap(host):
         assert f in ex
     fw = (host.units / "sknet-live-fw.service").read_text()
     assert "Wants=network-pre.target" in fw and "After=network-pre.target" in fw
+
+
+# --- the review fix wave ------------------------------------------------------
+
+def test_hook_matches_only_the_bind_address_and_replaces_a_legacy_hook(host):
+    host.ok()
+    # a hook from before the destination match is replaced, not left matching every address
+    (host.state / "hooks").write_text("INPUT -p tcp --dport 3000 -j SKNET-LIVE\n")
+    host.apply_script()
+    assert host.hooks() == [HOOK]
+    host.apply_script()
+    assert host.hooks() == [HOOK]
+
+
+def test_absent_removes_the_destination_scoped_hook_even_without_the_bind_hostvar(host):
+    host.ok()
+    host.apply_script()
+    assert host.hooks() == [HOOK]
+    host.vars["sknet_state"] = "absent"
+    host.vars.pop("sknet_live_bind")
+    host.ok()
+    assert host.hooks() == [] and not (host.state / "chain-SKNET-LIVE").exists()
+
+
+def test_a_live_host_that_is_a_swarm_node_gets_a_gwbridge_warning(host):
+    (host.state / "swarm").touch()
+    res = host.ok()
+    assert "docker_gwbridge" in res["log"] and "swarm node" in res["log"]
+    assert "sknet_live_allow_sources" in res["log"] and "PROXY_PLACEMENT_CONSTRAINTS" in res["log"]
+
+
+def test_no_warning_on_a_host_outside_a_swarm(host):
+    res = host.ok()
+    assert "docker_gwbridge" not in res["log"]

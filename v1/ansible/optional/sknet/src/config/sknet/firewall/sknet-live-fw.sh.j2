@@ -16,7 +16,8 @@
 
 # sknet live view allowlist, rendered by live.yml. One chain, {{ sknet_l_chain }}: tcp {{ sknet_l_port }} is accepted
 # from the listed sources only, then dropped. The chain is flushed and rebuilt in one
-# iptables-restore --noflush (atomic), then hooked from INPUT for tcp {{ sknet_l_port }}, only when missing.
+# iptables-restore --noflush (atomic), then hooked from INPUT for tcp {{ sknet_l_port }} to ntopng's own address
+# ({{ sknet_l_bind }}) only, when missing, so another host-network service on that port is not touched.
 # ntopng runs with host networking, so its port is judged in INPUT (no DOCKER-USER). IPv4 only.
 set -euo pipefail
 
@@ -31,4 +32,9 @@ iptables-restore -w --noflush <<'SKNET_RULES'
 COMMIT
 SKNET_RULES
 
-iptables -w -C INPUT -p tcp --dport {{ sknet_l_port }} -j {{ sknet_l_chain }} 2>/dev/null || iptables -w -I INPUT -p tcp --dport {{ sknet_l_port }} -j {{ sknet_l_chain }}
+iptables -w -C INPUT -p tcp -d {{ sknet_l_bind }} --dport {{ sknet_l_port }} -j {{ sknet_l_chain }} 2>/dev/null || iptables -w -I INPUT -p tcp -d {{ sknet_l_bind }} --dport {{ sknet_l_port }} -j {{ sknet_l_chain }}
+
+# A hook from before the destination match (any address on the port) is dropped, after the new one is in place.
+while iptables -w -C INPUT -p tcp --dport {{ sknet_l_port }} -j {{ sknet_l_chain }} 2>/dev/null; do
+  iptables -w -D INPUT -p tcp --dport {{ sknet_l_port }} -j {{ sknet_l_chain }}
+done

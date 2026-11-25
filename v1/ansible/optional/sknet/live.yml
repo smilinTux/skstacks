@@ -159,6 +159,24 @@
 
     # --- present -----------------------------------------------------------------
 
+    - name: Ask docker whether this host is a swarm node
+      command: "{{ sknet_l_docker }} info --format {% raw %}'{{.Swarm.LocalNodeState}}'{% endraw %}"
+      register: sknet_l_swarm
+      changed_when: false
+      failed_when: false
+      when: sknet_l_state == 'present'
+
+    - name: Warn that the swarm gate must not run on this host
+      debug:
+        msg: >-
+          WARNING: {{ inventory_hostname }} is an active swarm node. If the swarm's gate service is
+          scheduled here, its traffic to ntopng ({{ sknet_l_bind }}:{{ sknet_l_port }}) arrives from the
+          docker_gwbridge subnet, not from a node address, and the SKNET-LIVE chain drops it. Either keep
+          the gate off this node (the deploy does that by default when this host is in sknet_live_hosts and
+          its inventory name is its node hostname; or set PROXY_PLACEMENT_CONSTRAINTS), or add this host's
+          docker_gwbridge subnet to sknet_live_allow_sources, which admits every container on this host.
+      when: sknet_l_state == 'present' and (sknet_l_swarm.stdout | default('') | trim) == 'active'
+
     - name: Check whether the pinned image is already on the host
       command: "{{ sknet_l_docker }} image inspect {{ sknet_l_image }}"
       register: sknet_l_img
@@ -282,9 +300,13 @@
         chain='{{ sknet_l_chain }}'
         out=
         command -v iptables >/dev/null 2>&1 || exit 0
-        while iptables -w -C INPUT -p tcp --dport {{ sknet_l_port }} -j "$chain" 2>/dev/null; do
-          iptables -w -D INPUT -p tcp --dport {{ sknet_l_port }} -j "$chain"; out=removed
-        done
+        # Every INPUT hook that jumps to the chain, whatever its match (the bind address is not
+        # needed, and an older hook without it goes too): list, turn -A into -D, run.
+        while IFS= read -r rule; do
+          [ -n "$rule" ] || continue
+          # shellcheck disable=SC2086
+          iptables -w ${rule/#-A/-D}; out=removed
+        done < <(iptables -w -S INPUT 2>/dev/null | grep -E -- " -j ${chain}\$" || true)
         if iptables -w -n -L "$chain" >/dev/null 2>&1; then
           iptables -w -F "$chain" 2>/dev/null || true
           iptables -w -X "$chain" 2>/dev/null || true
