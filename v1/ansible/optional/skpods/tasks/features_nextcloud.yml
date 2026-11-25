@@ -162,7 +162,8 @@
   shell: |
     set -euo pipefail
     C="{{ skp_nc_container.stdout | trim }}"
-    if docker exec -u www-data "$C" php occ app:list --enabled | grep -q '^  - files_antivirus:'; then
+    enabled=$(docker exec -u www-data "$C" php occ app:list --enabled)
+    if grep -q '^  - files_antivirus:' <<<"$enabled"; then
       echo "files_antivirus already enabled"
     else
       docker exec -u www-data "$C" php occ app:enable files_antivirus >/dev/null
