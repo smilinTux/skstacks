@@ -47,7 +47,15 @@ sknet_defaults:
   # `sknet-<env>-allow` ipAllowList middleware, whatever AUTH_MODE is.
   ALLOW_CIDRS: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"]
   # authentik: ALLOW_CIDRS plus Authentik forward auth (SSO_MIDDLEWARE).
-  # allowlist: ALLOW_CIDRS only, for an estate that gates the host another way.
+  # allowlist: ALLOW_CIDRS only, for an estate that gates the host another way;
+  # the console then trusts every admitted client as one fixed user.
+  # The gate judges the address Traefik sees (ipStrategy depth 0, the direct
+  # remote address). That is the real client only when Traefik's entrypoints
+  # see client addresses (host mode, no NAT or proxy in front). Behind
+  # routing-mesh NAT or a tunnel every client looks private and passes
+  # ALLOW_CIDRS, so allowlist mode is refused with CLOUDFLARED true.
+  # The console and Akvorado trust the login header the proxy sets: keep the
+  # sknet-<env> network private and publish nothing but the router.
   # SSO_MIDDLEWARE (default authentik@file) is read from the vault only, so an
   # allowlist-only vault that also names one can be refused.
   AUTH_MODE: "authentik"
@@ -70,13 +78,26 @@ sknet_defaults:
   NETWORKS: {}
   GEOIP_ENABLED: false
 
-  # Retention. FLOW_TTL_DAYS is the raw and the 1 minute table; the 5 minute
-  # table keeps three times as long and the hourly table a year. Decide before
-  # the first start: ClickHouse sizes partitions from the TTL when it creates
-  # the tables. DISK_BUDGET_GB is what DATA_DIR must have free to deploy and
-  # caps Kafka's buffer.
+  # Retention. Every TTL derives from these two knobs. FLOW_TTL_DAYS is the raw
+  # and the 1 minute table; FLOW_AGG_TTL_DAYS (at most 365) is the 5 minute
+  # table and 4 times that the hourly table (default 90 and 360 days). Decide
+  # before the first start: ClickHouse sizes partitions from the TTL when it
+  # creates the tables.
+  # Sizing: raw rows are about 100 to 150 bytes compressed, so 100 flows/s
+  # (8.6M a day) is roughly 1 to 1.5 GB a day, and 20 GB holds about 15 to 20
+  # days of raw flows at that rate; the aggregate tables are small next to it.
+  # Measure with `SELECT formatReadableSize(sum(bytes_on_disk)) FROM
+  # system.parts WHERE database = 'default' AND active` and set FLOW_TTL_DAYS
+  # to fit. A TTL bounds bytes only roughly, so MIN_FREE_GB is the hard stop.
   FLOW_TTL_DAYS: 30
+  FLOW_AGG_TTL_DAYS: 90
+  # The expected footprint of DATA_DIR. The deploy refuses a data disk where
+  # (what DATA_DIR already uses + what is free) is below it, so a redeploy of a
+  # growing install still passes. It is a planning figure, not a quota.
   DISK_BUDGET_GB: 20
+  # ClickHouse stops writing when the disk has less than this much free
+  # (storage_configuration keep_free_space_bytes), before the disk fills.
+  MIN_FREE_GB: 5
 
   # Memory limits (whole stack 3424M by default, under 3.5 GB).
   CLICKHOUSE_MEMORY_LIMIT: "1536M"

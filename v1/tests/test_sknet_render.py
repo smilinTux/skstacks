@@ -298,7 +298,7 @@ def test_akvorado_sampling_ttl_and_listeners_by_default(base_out):
     assert cfg["outlet"]["core"]["default-sampling-rate"] == 1
     ttl = {str(r["interval"]): r["ttl"] for r in cfg["clickhouse"]["resolutions"]}
     assert ttl["0"] == "720h"            # FLOW_TTL_DAYS 30
-    assert ttl["1m"] == "720h" and ttl["5m"] == "2160h" and ttl["1h"] == "8760h"
+    assert ttl["1m"] == "720h" and ttl["5m"] == "2160h" and ttl["1h"] == "8640h"   # FLOW_AGG_TTL_DAYS 90, 1h = 4x
     listen = sorted(i["listen"] for i in cfg["inlet"]["flow"]["inputs"])
     assert listen == [":2055", ":4739"]
     assert cfg["kafka"]["brokers"] == ["kafka:9092"]
@@ -348,7 +348,41 @@ def test_absent_exporters_leave_the_metadata_and_keep_the_others(tmp_path):
 def test_flow_ttl_days_sets_the_raw_and_one_minute_tables(tmp_path):
     out = ok(tmp_path, BASE | {"FLOW_TTL_DAYS": 14})
     ttl = {str(r["interval"]): r["ttl"] for r in akvorado(out)["clickhouse"]["resolutions"]}
-    assert ttl["0"] == "336h" and ttl["1m"] == "336h" and ttl["5m"] == "1008h" and ttl["1h"] == "8760h"
+    assert ttl["0"] == "336h" and ttl["1m"] == "336h" and ttl["5m"] == "2160h" and ttl["1h"] == "8640h"
+
+
+def test_aggregate_ttls_follow_flow_agg_ttl_days_and_nothing_is_hardcoded(tmp_path):
+    out = ok(tmp_path, BASE | {"FLOW_AGG_TTL_DAYS": 30})
+    ttl = {str(r["interval"]): r["ttl"] for r in akvorado(out)["clickhouse"]["resolutions"]}
+    assert ttl["5m"] == "720h" and ttl["1h"] == "2880h" and ttl["0"] == "720h"
+    assert "8760" not in (ROLE / "src/config/sknet/akvorado.yaml.j2").read_text()
+
+
+def test_clickhouse_keeps_free_space_from_min_free_gb(base_out, tmp_path):
+    assert "<keep_free_space_bytes>5368709120</keep_free_space_bytes>" in config_text(base_out, "clickhouse-lowmem")
+    out = ok(tmp_path, BASE | {"MIN_FREE_GB": 8})
+    assert "<keep_free_space_bytes>8589934592</keep_free_space_bytes>" in config_text(out, "clickhouse-lowmem")
+
+
+def test_the_disk_gate_counts_space_the_data_dir_already_uses():
+    text = (ROLE / "tasks/data_dirs.yml").read_text()
+    assert "du -sk" in text and "already" in text
+    gate = yaml.safe_load(text)
+    assert_task = next(t for t in gate if "DISK_BUDGET_GB" in str(t.get("assert", "")))
+    cond = str(assert_task["assert"]["that"])
+    assert "used" in cond and "free" in cond
+    assert "GB used" in assert_task["assert"]["fail_msg"] and "GB free" in assert_task["assert"]["fail_msg"]
+
+
+def test_allowlist_middleware_uses_the_direct_remote_address(base_out):
+    lab = labels(compose(base_out)["services"]["console"])
+    assert lab["traefik.http.middlewares.sknet-prod-allow.ipallowlist.ipstrategy.depth"] == "0"
+
+
+def test_allowlist_mode_is_refused_behind_cloudflared(tmp_path):
+    log = fails(tmp_path, BASE | {"AUTH_MODE": "allowlist", "CLOUDFLARED": True})
+    assert "CLOUDFLARED" in log and "real client" in log
+    ok(tmp_path / "b", BASE | {"AUTH_MODE": "authentik", "CLOUDFLARED": True})
 
 
 def test_networks_map_names_the_cidrs(tmp_path):
@@ -541,7 +575,7 @@ def test_floating_image_fails(tmp_path, knob, value):
 
 @pytest.mark.parametrize("knob,value", [
     ("FLOW_TTL_DAYS", 0), ("FLOW_TTL_DAYS", 4000), ("FLOW_TTL_DAYS", "many"),
-    ("DISK_BUDGET_GB", 1), ("NETFLOW_PORT", 70000), ("IPFIX_PORT", 2055),
+    ("DISK_BUDGET_GB", 1), ("FLOW_AGG_TTL_DAYS", 366), ("FLOW_AGG_TTL_DAYS", 0), ("MIN_FREE_GB", 0), ("NETFLOW_PORT", 70000), ("IPFIX_PORT", 2055),
 ])
 def test_out_of_range_numbers_fail(tmp_path, knob, value):
     fails(tmp_path, BASE | {knob: value})

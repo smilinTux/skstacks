@@ -40,16 +40,17 @@ clickhousedb:
 clickhouse:
   orchestrator-url: http://orchestrator:8080
   # Decide before the first start: ClickHouse sizes partitions from the TTL when
-  # it creates a table. FLOW_TTL_DAYS ({{ skn.FLOW_TTL_DAYS }}) is the raw and the 1 minute table.
+  # it creates a table. FLOW_TTL_DAYS ({{ skn.FLOW_TTL_DAYS }}) is the raw and the 1 minute table,
+  # FLOW_AGG_TTL_DAYS ({{ skn.FLOW_AGG_TTL_DAYS }}) the 5 minute table and 4 times that the hourly one.
   resolutions:
     - interval: 0
       ttl: "{{ sknet_ttl_hours }}h"
     - interval: 1m
       ttl: "{{ sknet_ttl_hours }}h"
     - interval: 5m
-      ttl: "{{ (sknet_ttl_hours | int) * 3 }}h"
+      ttl: "{{ sknet_agg_ttl_hours }}h"
     - interval: 1h
-      ttl: "8760h"
+      ttl: "{{ (sknet_agg_ttl_hours | int) * 4 }}h"
 
 inlet:
   flow:

@@ -19,7 +19,7 @@ Each entry says what an instance must do, if anything.
   address gate alone). Interface names come from static exporter metadata (inventory group
   `sknet_exporter_hosts` hostvars, else vault `STATIC_EXPORTERS`); no SNMP. `LIVE_UPSTREAM`
   adds a pinned Caddy service that fronts an ntopng running on a host; unset, it renders nothing.
-  Default memory limits total 3.4 GB. New overlay subnets 172.16.67.0/24 (prod), .68 (staging),
+  Retention derives from `FLOW_TTL_DAYS` (raw, 1m) and `FLOW_AGG_TTL_DAYS` (5m, hourly 4x, at most 365); ClickHouse `keep_free_space_bytes` comes from `MIN_FREE_GB`; the allowlist uses ipStrategy depth 0 and `AUTH_MODE: allowlist` is refused with `CLOUDFLARED`. Default memory limits total 3.4 GB. New overlay subnets 172.16.67.0/24 (prod), .68 (staging),
   .69 (dev) in `shared/networks`; catalog row and section; render vars `sknet.{example,set,with.sksso}.yml`.
 - **Instance action:** none until the role is used. To use it: add a `sknet:` vault block
   (`DATA_NODE` and `FLOW_SOURCES` are required, and either the exporter inventory or

@@ -53,10 +53,14 @@
   delegate_to: "{{ sknet_data_node }}"
   when: skn.GEOIP_ENABLED | bool
 
-- name: Measure the free space under the sknet data directory
+- name: Measure the free space and what the data directory already uses
+  # Prints "<free GB> <used KB>". du can take a while on a big install; it only
+  # reads directory metadata.
   shell: |
     set -o pipefail
-    df --output=avail -BG {{ sknet_data_dir | quote }} | tail -n 1 | tr -dc '0-9'
+    free=$(df --output=avail -BG {{ sknet_data_dir | quote }} | tail -n 1 | tr -dc '0-9')
+    used=$(du -sk {{ sknet_data_dir | quote }} | cut -f1)
+    echo "${free} ${used}"
   args:
     executable: /bin/bash
   register: sknet_df
@@ -64,14 +68,20 @@
   check_mode: false
   delegate_to: "{{ sknet_data_node }}"
 
-- name: Refuse a data disk smaller than DISK_BUDGET_GB
-  # The budget is what the retention is sized to fit. An unreadable answer
-  # counts as enough (the shell task above already fails on a df error).
+- name: Refuse a data disk that cannot hold DISK_BUDGET_GB
+  # Judged on (what the directory already uses + what is free), so a redeploy of
+  # a growing install passes while a fresh, too small disk is refused. An
+  # unreadable answer counts as enough (the shell task above already fails on a
+  # df or du error).
+  vars:
+    sknet_df_words: "{{ (sknet_df.stdout | default('', true) | trim).split() }}"
+    sknet_gb_free: "{{ (sknet_df_words[0] | default('999999', true)) | int(999999) }}"
+    sknet_gb_used: "{{ ((sknet_df_words[1] | default('0', true)) | int(0)) // 1048576 }}"
   assert:
     that:
-      - (sknet_df.stdout | default('', true) | trim | int(999999)) >= (skn.DISK_BUDGET_GB | int)
+      - (sknet_gb_free | int) + (sknet_gb_used | int) >= (skn.DISK_BUDGET_GB | int)
     fail_msg: >-
-      {{ sknet_data_dir }} on {{ sknet_data_node }} has {{ sknet_df.stdout | default('?') | trim }} GB free but
-      sknet.DISK_BUDGET_GB is {{ skn.DISK_BUDGET_GB }}. Free the space, point DATA_DIR at a bigger
-      local disk, or lower DISK_BUDGET_GB together with FLOW_TTL_DAYS.
+      {{ sknet_data_dir }} on {{ sknet_data_node }} has {{ sknet_gb_free }} GB free and {{ sknet_gb_used }} GB used
+      by sknet already, which is less than sknet.DISK_BUDGET_GB ({{ skn.DISK_BUDGET_GB }}). Free the space,
+      point DATA_DIR at a bigger local disk, or lower DISK_BUDGET_GB together with FLOW_TTL_DAYS.
     quiet: true

@@ -17,6 +17,15 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   <background_pool_size>4</background_pool_size>
   <background_schedule_pool_size>8</background_schedule_pool_size>
 
+  <!-- Stop writing before the disk fills (MIN_FREE_GB): TTLs bound the data only roughly. -->
+  <storage_configuration>
+    <disks>
+      <default>
+        <keep_free_space_bytes>{{ sknet_min_free_bytes }}</keep_free_space_bytes>
+      </default>
+    </disks>
+  </storage_configuration>
+
   <!-- System logs that only cost RAM and disk here. -->
   <asynchronous_metric_log remove="1"/>
   <metric_log remove="1"/>

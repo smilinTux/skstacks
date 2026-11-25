@@ -82,6 +82,20 @@
     quiet: true
   tags: [config, authmode]
 
+- name: Refuse allowlist-only sign-in behind a tunnel
+  # Behind CLOUDFLARED every request reaches Traefik from the tunnel, so the
+  # address gate cannot tell clients apart and, with no SSO, would admit all.
+  assert:
+    that:
+      - sknet_auth_mode != 'allowlist' or not (skn.CLOUDFLARED | default(false) | bool)
+    fail_msg: >-
+      sknet.AUTH_MODE allowlist cannot be used with CLOUDFLARED true: behind a tunnel Traefik does not
+      see the real client address, so ALLOW_CIDRS would admit everyone and the console (fixed default
+      user) would be open. Use AUTH_MODE authentik, or serve the host so Traefik sees the real client
+      address (host-mode entrypoints) and set CLOUDFLARED false.
+    quiet: true
+  tags: [config, authmode]
+
 - name: Refuse a bad ALLOW_CIDRS
   assert:
     that:
@@ -126,6 +140,8 @@
     that:
       - (skn.FLOW_TTL_DAYS | string) is match('^[0-9]+$') and (skn.FLOW_TTL_DAYS | int) >= 1 and (skn.FLOW_TTL_DAYS | int) <= 3650
       - (skn.DISK_BUDGET_GB | string) is match('^[0-9]+$') and (skn.DISK_BUDGET_GB | int) >= 5
+      - (skn.FLOW_AGG_TTL_DAYS | string) is match('^[0-9]+$') and (skn.FLOW_AGG_TTL_DAYS | int) >= 1 and (skn.FLOW_AGG_TTL_DAYS | int) <= 365
+      - (skn.MIN_FREE_GB | string) is match('^[0-9]+$') and (skn.MIN_FREE_GB | int) >= 1
       - (skn.NETFLOW_PORT | string) is match('^[0-9]+$') and (skn.NETFLOW_PORT | int) >= 1 and (skn.NETFLOW_PORT | int) <= 65535
       - (skn.IPFIX_PORT | string) is match('^[0-9]+$') and (skn.IPFIX_PORT | int) >= 1 and (skn.IPFIX_PORT | int) <= 65535
       - (skn.NETFLOW_PORT | int) != (skn.IPFIX_PORT | int)
@@ -134,7 +150,7 @@
          skn.INLET_MEMORY_LIMIT, skn.CONSOLE_MEMORY_LIMIT, skn.PROXY_MEMORY_LIMIT]
         | map('string') | reject('match', '^[1-9][0-9]*[MG]$') | list | length == 0
     fail_msg: >-
-      sknet: FLOW_TTL_DAYS must be 1 to 3650, DISK_BUDGET_GB at least 5, NETFLOW_PORT and IPFIX_PORT
+      sknet: FLOW_TTL_DAYS must be 1 to 3650, FLOW_AGG_TTL_DAYS 1 to 365, DISK_BUDGET_GB at least 5, MIN_FREE_GB at least 1, NETFLOW_PORT and IPFIX_PORT
       two different ports (1 to 65535), and every *_MEMORY_LIMIT a number with M or G (512M).
     quiet: true
   tags: [config]
@@ -291,5 +307,7 @@
     sknet_netflow_port: "{{ skn.NETFLOW_PORT | int }}"
     sknet_ipfix_port: "{{ skn.IPFIX_PORT | int }}"
     sknet_ttl_hours: "{{ (skn.FLOW_TTL_DAYS | int) * 24 }}"
+    sknet_agg_ttl_hours: "{{ (skn.FLOW_AGG_TTL_DAYS | int) * 24 }}"
+    sknet_min_free_bytes: "{{ (skn.MIN_FREE_GB | int) * 1073741824 }}"
     sknet_kafka_retention_bytes: "{{ ((skn.DISK_BUDGET_GB | int) * 1073741824 / 20) | int }}"
   tags: [config]

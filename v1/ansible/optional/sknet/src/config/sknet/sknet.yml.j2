@@ -239,7 +239,9 @@ services:
 
   console:
     # The web UI. It trusts the login header the proxy in front of it sets, so
-    # it publishes no port: it is reachable only through the router below.
+    # it publishes no port: it is reachable only through the router below. WARNING:
+    # anything that can reach this service on the overlay can forge that header;
+    # keep sknet-<env> private (nothing else attached).
     image: {{ skn.AKVORADO_IMAGE | default('quay.io/akvorado/akvorado:2026.10.1', true) }}
     command: ["console", "http://orchestrator:8080"]
     environment:
@@ -267,6 +269,9 @@ services:
         - "traefik.swarm.network=cloud-public-{{ env }}"
         # The address gate for every sknet router, whatever the sign-in mode.
         - "traefik.http.middlewares.{{ sknet_allow_mw | default('sknet-' ~ env ~ '-allow', true) }}.ipallowlist.sourcerange={{ skn.ALLOW_CIDRS | default([], true) | join(',') }}"
+        # Depth 0: judge the direct remote address Traefik sees (no X-Forwarded-For
+        # trust). Real client addresses need host-mode Traefik entrypoints.
+        - "traefik.http.middlewares.{{ sknet_allow_mw | default('sknet-' ~ env ~ '-allow', true) }}.ipallowlist.ipstrategy.depth=0"
         - "traefik.http.routers.{{ router }}.rule=Host(`{{ sknet_host }}`)"
         - "traefik.http.routers.{{ router }}.entrypoints=websecure"
         - "traefik.http.routers.{{ router }}.tls=true"
