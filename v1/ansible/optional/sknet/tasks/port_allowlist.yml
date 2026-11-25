@@ -58,7 +58,8 @@
     daemon_reload: true
   delegate_to: "{{ sknet_fw_node }}"
   become: true
-  when: sknet_fw_state | default('present') != 'absent'
+  # In check mode a first deploy has not written the unit, so systemd cannot find it.
+  when: sknet_fw_state | default('present') != 'absent' and not (ansible_check_mode and sknet_fw_unit.changed)
 
 - name: Re-run the flow port allowlist when its script or unit changed
   # A oneshot with RemainAfterExit is "active" after the first run, so start alone is a no-op.
@@ -67,7 +68,7 @@
     state: restarted
   delegate_to: "{{ sknet_fw_node }}"
   become: true
-  when: sknet_fw_state | default('present') != 'absent' and (sknet_fw_script.changed or sknet_fw_unit.changed)
+  when: sknet_fw_state | default('present') != 'absent' and (sknet_fw_script.changed or sknet_fw_unit.changed) and not (ansible_check_mode and sknet_fw_unit.changed)
 
 # --- state: absent: the unit, script, hooks and chain go -------------------------------
 

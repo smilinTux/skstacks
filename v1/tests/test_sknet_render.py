@@ -725,3 +725,19 @@ def test_files_that_carry_the_gate_secret_are_root_only():
     assert by_name["Process sknet Docker Compose template"]["template"]["mode"] == "0600"
     assert by_name["Write the sknet Docker secret sources"]["copy"]["mode"] == "0600"
     # no other rendered file may hold the secret (checked on the rendered tree elsewhere)
+
+
+def test_port_allowlist_unit_start_is_skipped_in_check_mode_on_first_deploy():
+    """A --check run before the first deploy must not fail on the not-yet-written unit."""
+    import yaml
+    from pathlib import Path
+
+    tasks = yaml.safe_load(
+        (Path(__file__).resolve().parents[1] / "ansible/optional/sknet/tasks/port_allowlist.yml").read_text()
+    )
+    by_name = {t.get("name"): t for t in tasks}
+    for name in (
+        "Enable and run the flow port allowlist",
+        "Re-run the flow port allowlist when its script or unit changed",
+    ):
+        assert "not (ansible_check_mode and sknet_fw_unit.changed)" in by_name[name]["when"], name
