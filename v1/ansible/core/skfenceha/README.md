@@ -97,6 +97,19 @@ first, because a worker cannot bind a port skmail still publishes in host
 mode on the same node. Static configuration: the deploy restarts each worker
 in turn. Default `false`: nothing renders differently.
 
+**NFS and port 993.** The kernel NFS client takes its source ports from
+`sunrpc.min_resvport`..`max_resvport` (665-1023), and 993 is inside that
+range. If an NFS mount (`/var/data`) connects first after a reboot, it can own
+993, and the worker on that node then loops on "bind 0.0.0.0:993: address
+already in use" (no process shows, because it is a kernel socket). The deploy
+therefore runs `shared/tasks/nfs_resvport_guard.yml` on every manager. It sets
+`max_resvport` just below the lowest published port inside the range (992 with
+`MAIL_ENTRYPOINTS`) in `/etc/modprobe.d/sunrpc.conf` (the setting that holds at
+boot, since sunrpc loads after systemd-sysctl) and in
+`/etc/sysctl.d/96-sunrpc-resvport.conf`, and sets the live value. A socket
+already holding the port is reported; remount the share or reboot that node
+to free it. Run it alone with `--tags sunrpc`.
+
 **Traefik image (`TRAEFIK_IMAGE`)**: `skfenceha.TRAEFIK_IMAGE` pins the
 image for both `traefik-acme` and `traefik-worker` (they move together;
 default `traefik:v3.7.19@sha256:...`). A separate `skfence.TRAEFIK_IMAGE`
