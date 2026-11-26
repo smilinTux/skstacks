@@ -4,6 +4,23 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
+## Unreleased (v2.26.34)
+
+### sknet: exporters work with softflowd 1.0.0 (Ubuntu 22.04)
+
+- `exporters.yml` passed `-N` (no promiscuous mode) to every softflowd, but 1.0.0, the Ubuntu
+  22.04 package, does not have it and exits on the whole command line ("invalid option -- 'N'"),
+  so every exporter on a 22.04 host restarted forever. The play now asks `softflowd -h` and
+  passes `-N` only where the binary lists it (1.1.0 and later). On 1.0.0 the device is opened
+  promiscuous, which changes nothing on tun or WireGuard devices and adds only flooded frames on
+  a switched Ethernet port. The release gate lab runs 24.04, which is why it passed there.
+  **Instance action:** on 22.04 exporters, rerun `exporters.yml` after the repin.
+- Docs: the role's `subnet` defaults (172.16.67-69.0/24) are only defaults. An instance whose
+  subnet registry already uses them overrides `sknet_<env>_networks`; a duplicate overlay
+  subnet leaves the Swarm allocator unable to place any task ("could not find local network
+  state").
+
+
 ## skstacks-v2.26.33 - 2026-11-23
 
 ### sknet: network flow visibility (Akvorado), new optional role

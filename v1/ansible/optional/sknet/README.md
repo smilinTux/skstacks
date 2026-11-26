@@ -140,6 +140,7 @@ The vault holds one `sknet:` block, merged over `vars/defaults.yml`; set only wh
 | `sknet_interfaces` | exporters, deploy | List of `{name, index, class, speed_mbps, description}`; name 1 to 15 characters of `A-Za-z0-9_.-`; index integer 100 to 65535 unique per host; class `lan`, `mesh`, `estate-link` or `internet` |
 | `sknet_collector` | exporters | IPv4 literal of the collector; names refused; public addresses refused unless `sknet_allow_public_collector: true` |
 | `sknet_export_address` | exporters, deploy | The address the collector sees as source; feeds `FLOW_SOURCES` checks and static metadata |
+| `sknet_<env>_networks` | deploy | Overlay networks with their subnets (default `sknet-<env>` on 172.16.67/68/69.0/24 plus `cloud-public-<env>`). Override when your subnet registry already uses those: a duplicate overlay subnet leaves the Swarm allocator unable to place any task |
 | `sknet_state` | exporters, live | `present` (default) or `absent` |
 | `sknet_netflow_port` | exporters | Refused unless it equals the vault's `NETFLOW_PORT` |
 | `sknet_softflowd_max_flows`, `_maxlife`, `_memory_max`, `_cpu_quota` | exporters | `32768`, `60` s, `128M`, `10%` |
