@@ -4,6 +4,21 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
+## Unreleased (v2.26.35)
+
+### skmesh: the IdP manager keeps access once a tile binds the application
+
+- NetBird looks up users through the `skmesh-idp-manager` service account with a
+  `client_credentials` token request. Authentik grants that only to a user the application
+  admits, so once the portal tile bound SKMesh to a group (skadmin by default) the request
+  failed with `invalid_grant`. Every NetBird SSO login that needs an account lookup then failed
+  ("unable to get authentik token, statusCode 400", then "JWT already used"): a device whose login
+  expired could no longer log in, and `/api/users` answered 500. The provisioner now binds the
+  service account itself to the application (added only, matched client-side; with policy mode
+  `any` it admits nobody else). **Instance action:** redeploy skmesh, or add a user binding for
+  `skmesh-idp-manager` on the SKMesh application by hand.
+
+
 ## skstacks-v2.26.34 - 2026-11-26
 
 ### skfenceha: NFS client source ports stay off host-mode 993 (#540)
