@@ -166,6 +166,16 @@
         logrotate_node: "{{ item.stdout | trim }}"
         retention_days: "{{ skfenceha.LOGROTATE_ROTATE | default('7' if env == 'prod' else '3') }}"
 
+    # Host-mode ports the traefik-worker publishes on every manager. Keep the
+    # kernel NFS client off the ones inside its reserved range (993 with
+    # MAIL_ENTRYPOINTS); see shared/tasks/nfs_resvport_guard.yml.
+    - name: Keep NFS client source ports off the worker's host-mode ports
+      include_tasks: ../../shared/tasks/nfs_resvport_guard.yml
+      vars:
+        nfs_resvport_guard_hosts: "{{ groups[target_manager_group] }}"
+        nfs_resvport_guard_ports: "{{ [80, 443, 222, 8082] + ([25, 465, 587, 143, 993] if (skfenceha.MAIL_ENTRYPOINTS | default(false) | string | lower) in ['true', 'yes', '1', 'on'] else []) }}"
+      tags: [sunrpc]
+
     - name: Create the {{ app }} directories
       file:
         path: "{{ item }}"
