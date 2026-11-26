@@ -227,6 +227,24 @@
         sknet_x_binary: "{{ sknet_x_found.stdout | trim }}"
       when: sknet_x_state == 'present'
 
+    # `-N` (no promiscuous mode) exists from softflowd 1.1.0 (Ubuntu 24.04);
+    # 1.0.0 (22.04) refuses the whole command line with "invalid option -- 'N'".
+    # Ask the binary instead of guessing from the distro. On 1.0.0 the device is
+    # opened promiscuous: no effect on a tun or WireGuard device, and on a
+    # switched Ethernet port it only adds the frames the switch floods.
+    - name: Ask softflowd whether it knows -N
+      shell: "{{ sknet_x_binary }} -h 2>&1 || true"
+      args:
+        executable: /bin/sh
+      register: sknet_x_help
+      changed_when: false
+      when: sknet_x_state == 'present'
+
+    - name: Remember the no-promiscuous flag
+      set_fact:
+        sknet_x_nopromisc: "{{ '-N' if (sknet_x_help.stdout is search('(?m)^\\s+-N\\s')) else '' }}"
+      when: sknet_x_state == 'present'
+
     # --- the distro's own service -------------------------------------------------
 
     - name: Ask systemd about the distro softflowd service

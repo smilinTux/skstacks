@@ -22,7 +22,8 @@
 #                       records (softflowd 1.0.0 and later), so Akvorado's
 #                       static interface metadata can name the port
 #   -v 9 -T full        NetFlow v9, full 5-tuple tracking
-#   -N                  no promiscuous mode (a tun or WireGuard device has none)
+#   -N                  no promiscuous mode, only where softflowd has it (1.1.0+;
+#                       the play asks `softflowd -h`, 1.0.0 refuses the flag)
 #   -d                  stay in the foreground, systemd supervises it
 [Unit]
 Description=sknet softflowd exporter on %i
@@ -36,7 +37,7 @@ EnvironmentFile={{ sknet_x_etc }}/softflowd-%i.env
 # One directory per instance: systemd removes it when that instance stops, which
 # must not take the other instances' pid and control files with it.
 RuntimeDirectory=sknet-softflowd-%i
-ExecStart={{ sknet_x_binary }} -d -i ${SKNET_IFINDEX}:${SKNET_IFACE} -n ${SKNET_COLLECTOR}:${SKNET_PORT} -v 9 -T full -N -p /run/sknet-softflowd-%i/softflowd.pid -c /run/sknet-softflowd-%i/softflowd.ctl $SKNET_OPTIONS ${SKNET_BPF}
+ExecStart={{ sknet_x_binary }} -d -i ${SKNET_IFINDEX}:${SKNET_IFACE} -n ${SKNET_COLLECTOR}:${SKNET_PORT} -v 9 -T full {% if sknet_x_nopromisc | default('') %}-N {% endif %}-p /run/sknet-softflowd-%i/softflowd.pid -c /run/sknet-softflowd-%i/softflowd.ctl $SKNET_OPTIONS ${SKNET_BPF}
 Restart=on-failure
 RestartSec=10
 NoNewPrivileges=true

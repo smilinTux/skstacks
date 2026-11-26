@@ -126,8 +126,13 @@ class FakeHost:
         else:
             f.write_text(yaml.safe_dump({"sknet": sknet}))
 
-    def install_binary(self):
-        (self.bin / "softflowd").write_text("#!/bin/sh\nexit 0\n")
+    def install_binary(self, version: str = "1.0.0"):
+        # `-h` prints the usage the way the real binary does; 1.1.0 adds -N.
+        usage = "  -i [idx:]interface      Specify interface to listen on\n"
+        if version != "1.0.0":
+            usage += "  -N                      Disable promiscuous mode\n"
+        (self.bin / "softflowd").write_text(
+            "#!/bin/sh\nif [ \"$1\" = -h ]; then cat <<'EOF'\nUsage: softflowd [options]\n" + usage + "EOF\nfi\nexit 0\n")
         (self.bin / "softflowd").chmod(0o755)
 
     def inventory(self) -> Path:
@@ -228,6 +233,20 @@ def test_unit_has_modest_limits_restart_and_env_file_per_instance(host):
     assert re.search(r"^MemoryMax=\d+M$", unit, re.M) and re.search(r"^CPUQuota=\d+%$", unit, re.M)
     assert "EnvironmentFile=" + str(host.etc) + "/softflowd-%i.env" in unit
     assert "ExecStart=" + str(host.bin / "softflowd") + " " in unit
+
+
+def test_softflowd_1_0_gets_no_dash_n(host):
+    """Ubuntu 22.04's softflowd 1.0.0 rejects -N and exits (nor, 2026-11-26)."""
+    host.ok()
+    exec_line = next(l for l in host.unit_text().splitlines() if l.startswith("ExecStart="))
+    assert " -N " not in exec_line and " -T full -p " in exec_line
+
+
+def test_softflowd_1_1_gets_dash_n(host):
+    host.install_binary("1.1.0")
+    host.ok()
+    exec_line = next(l for l in host.unit_text().splitlines() if l.startswith("ExecStart="))
+    assert " -T full -N -p " in exec_line
 
 
 def test_netflow_port_comes_from_the_vault(host):
