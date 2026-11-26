@@ -4,7 +4,18 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
-## Unreleased (v2.26.34)
+## skstacks-v2.26.34 - 2026-11-26
+
+### skfenceha: NFS client source ports stay off host-mode 993 (#540)
+
+- With `skfenceha.MAIL_ENTRYPOINTS: true` the traefik-worker publishes 993 in host mode on every
+  manager, and 993 lies inside the kernel RPC client's reserved source-port range (665-1023).
+  After a reboot an NFS socket to `/var/data` could take it first, and the worker then looped on
+  "address already in use". The skfenceha deploys now include
+  `shared/tasks/nfs_resvport_guard.yml`, which lowers `sunrpc.max_resvport` below the lowest
+  guarded port (992 for 993) in `/etc/modprobe.d/sunrpc.conf` and `/etc/sysctl.d`, sets the live
+  value, and reports an RPC socket already sitting on a guarded port (that one needs a remount or
+  reboot). **Instance action:** none; run the skfenceha deploy (alone: `--tags sunrpc`).
 
 ### sknet: exporters work with softflowd 1.0.0 (Ubuntu 22.04)
 
