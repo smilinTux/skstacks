@@ -1,5 +1,5 @@
 """shared/tasks/nfs_resvport_guard.yml keeps the kernel NFS/RPC client off
-host-mode ports a service publishes (2026-11-25: an NFS socket on norap1001
+host-mode ports a service publishes (2026-11-25: an NFS socket on a manager
 took 993 and traefik-worker could not bind IMAPS there).
 
 The task file runs under ansible-playbook on localhost in check mode, so
