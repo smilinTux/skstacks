@@ -268,22 +268,22 @@
   tags:
     - config
 
-- name: Disable the default apps this server does not need
-  # Best effort: an app that is always enabled, or not shipped by this
-  # Nextcloud version, is skipped. Override the list with
-  # skpods.DISABLE_APPS (README "Slim app set").
-  shell: |
-    set -euo pipefail
-    C="{{ skp_nc_container.stdout | trim }}"
-    enabled=$(docker exec -u www-data "$C" php occ app:list --enabled --output=json | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["enabled"]))' 2>/dev/null || docker exec -u www-data "$C" php occ app:list --enabled | sed -n 's/^  - \([a-z0-9_]*\):.*/\1/p' | tr '\n' ' ')
-    for a in {{ (skpods.DISABLE_APPS | default(skp_default_disable_apps, true)) | join(' ') }}; do
-      case " $enabled " in
-        *" $a "*) docker exec -u www-data "$C" php occ app:disable "$a" >/dev/null 2>&1 && echo "disabled $a" || echo "could not disable $a (always enabled?)" ;;
-      esac
-    done
-  args:
-    executable: /bin/bash
+- name: Work out which apps to disable and which to enable
+  # One place for both lists, so an app named in skpods.ENABLE_APPS is never
+  # also disabled by the default disable list (that would flip it off and on,
+  # and for files_trashbin empty every trash, on each deploy).
+  set_fact:
+    skp_enable_apps_list: "{{ skpods.ENABLE_APPS | default(skp_default_enable_apps, true) | list }}"
+    skp_disable_apps_list: "{{ skpods.DISABLE_APPS | default(skp_default_disable_apps, true) | difference(skpods.ENABLE_APPS | default(skp_default_enable_apps, true)) | list }}"
   vars:
+    # files_trashbin is off: a Solid DELETE means the resource is gone, and
+    # the trash app copies each deleted file into the account's local
+    # files_trashbin, also when the pod is an external mount (S3, WebDAV),
+    # so the file would stay on this server's disk after the user deleted
+    # it from the storage they chose. files_versions is off for the same
+    # reason (it keeps old versions in the local files_versions, whatever
+    # storage the file is on) and because apps write often.
+    skp_default_enable_apps: [files_pdfviewer, text, twofactor_totp, skpods]
     skp_default_disable_apps:
       - activity
       - app_api
@@ -295,6 +295,7 @@
       - files_downloadlimit
       - files_reminders
       - files_sharing_raw
+      - files_trashbin
       - files_versions
       - firstrunwizard
       - logreader
@@ -316,6 +317,31 @@
       - user_status
       - weather_status
       - webhook_listeners
+  tags:
+    - config
+
+- name: Disable the default apps this server does not need
+  # Best effort: an app that is always enabled, or not shipped by this
+  # Nextcloud version, is skipped. Override the list with
+  # skpods.DISABLE_APPS (README "Slim app set"). files_trashbin is emptied
+  # for every account before it is disabled: its files would otherwise stay
+  # on local disk where nothing can reach them.
+  shell: |
+    set -euo pipefail
+    C="{{ skp_nc_container.stdout | trim }}"
+    enabled=$(docker exec -u www-data "$C" php occ app:list --enabled --output=json | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["enabled"]))' 2>/dev/null || docker exec -u www-data "$C" php occ app:list --enabled | sed -n 's/^  - \([a-z0-9_]*\):.*/\1/p' | tr '\n' ' ')
+    for a in {{ skp_disable_apps_list | join(' ') }}; do
+      case " $enabled " in
+        *" $a "*)
+          if [ "$a" = files_trashbin ]; then
+            docker exec -u www-data "$C" php occ trashbin:cleanup --all-users >/dev/null
+            echo "emptied the trash of every account"
+          fi
+          docker exec -u www-data "$C" php occ app:disable "$a" >/dev/null 2>&1 && echo "disabled $a" || echo "could not disable $a (always enabled?)" ;;
+      esac
+    done
+  args:
+    executable: /bin/bash
   delegate_to: "{{ skp_nc_node.stdout | trim }}"
   register: skp_disable_apps
   changed_when: "'disabled ' in skp_disable_apps.stdout"
@@ -325,16 +351,15 @@
 - name: Enable the Files features skpods uses
   # From Nextcloud or the engine image (no app store). Defaults: text
   # (.md and plain text open in the browser), files_pdfviewer,
-  # files_trashbin (a deleted file goes to the owner's trash; it leaves the
-  # pod at once), twofactor_totp, skpods (per-account Readme.md). skpods
-  # ships in the engine image, so an older image fails here. files_antivirus
-  # is enabled in features_nextcloud.yml, only once clamd answers. Override
-  # with skpods.ENABLE_APPS (README "Files").
+  # twofactor_totp, skpods (per-account Readme.md). skpods ships in the
+  # engine image, so an older image fails here. files_antivirus is enabled
+  # in features_nextcloud.yml, only once clamd answers. Override with
+  # skpods.ENABLE_APPS (README "Files").
   shell: |
     set -euo pipefail
     C="{{ skp_nc_container.stdout | trim }}"
     enabled=$(docker exec -u www-data "$C" php occ app:list --enabled --output=json | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["enabled"]))')
-    for a in {{ (skpods.ENABLE_APPS | default(skp_default_enable_apps, true)) | join(' ') }}; do
+    for a in {{ skp_enable_apps_list | join(' ') }}; do
       case " $enabled " in
         *" $a "*) ;;
         *) docker exec -u www-data "$C" php occ app:enable "$a" >/dev/null; echo "enabled $a" ;;
@@ -342,8 +367,6 @@
     done
   args:
     executable: /bin/bash
-  vars:
-    skp_default_enable_apps: [files_pdfviewer, files_trashbin, text, twofactor_totp, skpods]
   delegate_to: "{{ skp_nc_node.stdout | trim }}"
   register: skp_enable_apps
   changed_when: "'enabled ' in skp_enable_apps.stdout"
