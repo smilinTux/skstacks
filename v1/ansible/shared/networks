@@ -93,6 +93,9 @@ SUBNET                NETWORK                           DEFINED IN
 172.16.203.0/24       cloud-edge-dev                    core/skfence, core/skfenceha
 172.16.204.0/24       cloud-edge-staging                core/skfence, core/skfenceha
 172.16.205.0/24       cloud-edge-prod                   core/skfence, core/skfenceha
+172.16.209.0/28       skfenceha-prod (internal)         core/skfenceha
+172.16.209.16/28      skfenceha-staging (internal)      core/skfenceha
+172.16.209.32/28      skfenceha-dev (internal)          core/skfenceha
 172.16.220.0/24       skbook-dev                        optional/skbook
 172.16.221.0/24       skbook-staging                    optional/skbook
 172.16.223.0/24       skmon-prod                        optional/skmon
