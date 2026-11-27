@@ -4,6 +4,30 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
+## Unreleased (v2.26.36)
+
+### Overlays: no stack joins an implicit default network; new swarms use 10.200.0.0/16
+
+- Swarm creates a `<stack>_default` overlay for any service that names no network, and takes its
+  subnet from the swarm's address pool. Docker's default pool is 10.0.0.0/8, which overlaps the
+  estate LANs and meshes: on nam, `skfenceha-prod_default` got 10.0.0.0/24, the nam LAN itself.
+- skfenceha `traefik-certs-watch` gets its own `internal` overlay `certs-watch` with a pinned
+  subnet (172.16.209.0/28 prod, .16/28 staging, .32/28 dev; `skfenceha.CERTS_WATCH_SUBNET`
+  overrides it). It still reaches nothing, as before, and Swarm refuses the `none` network.
+  skmail in host-port mode (no `VIA_TRAEFIK`) joins `cloud-public-<env>` for egress. Neither one
+  uses an implicit default network any more.
+- New test rule (`test_compose_templates_schema.py`): every rendered swarm service lists its
+  networks, unless the stack declares its own `default` network with an explicit subnet. Services
+  with `network_mode` (plain compose stacks behind a VPN container) are exempt.
+- v2 `swarm-init` and skbloom's single-node bootstrap pass `--default-addr-pool 10.200.0.0/16`
+  (mask 24; `swarm_default_addr_pool` / `swarm_default_addr_pool_mask` override it). Only
+  `swarm init` can set the pool. An existing swarm keeps 10.0.0.0/8, and the rule above is what
+  protects it.
+- Instance action: redeploy skfenceha (and skmail where it runs without `VIA_TRAEFIK`). Then
+  remove the now-unused network on a manager: `docker network rm skfenceha-<env>_default`
+  (and `skmail-<env>_default`). An empty leftover network does no harm, but its subnet stays
+  reserved until it is removed.
+
 ## skstacks-v2.26.35 - 2026-11-27
 
 ### sksso: one shared branded email set for every Authentik email (#467)

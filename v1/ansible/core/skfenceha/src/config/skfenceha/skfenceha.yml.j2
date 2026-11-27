@@ -377,6 +377,12 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+    # Needs no network at all, but a swarm service always joins one (Swarm
+    # refuses `none`). Left unnamed it got an implicit <stack>_default overlay
+    # from the swarm's 10.0.0.0/8 pool, which on nam was 10.0.0.0/24, the
+    # estate LAN. So: its own internal overlay, pinned subnet, reaches nothing.
+    networks:
+      - certs-watch
     volumes:
       - /var/data/config/{{ app }}-{{ env }}/certs-watch.sh:/certs-watch.sh:ro
       - /var/data/runtime/{{ app }}-{{ env }}/certs:/certs:ro
@@ -384,7 +390,14 @@ services:
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
 
+{% set _certs_watch_subnet = {'prod': '172.16.209.0/28', 'staging': '172.16.209.16/28', 'dev': '172.16.209.32/28'} %}
 networks:
+  certs-watch:
+    driver: overlay
+    internal: true
+    ipam:
+      config:
+        - subnet: {{ skfenceha.CERTS_WATCH_SUBNET | default(_certs_watch_subnet.get(env, '172.16.209.48/28'), true) }}
   cloud-edge-{{ env }}:
     external: true
   cloud-public-{{ env }}:

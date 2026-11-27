@@ -38,12 +38,16 @@ def _env():
     return env
 
 
-def skfenceha_services(**overrides):
+def skfenceha_doc(**overrides):
     skfenceha = {"ACME_ENABLED": False}
     skfenceha.update(overrides)
     out = _env().from_string(SKFENCEHA.read_text()).render(
         app="skfenceha", env="prod", skfenceha=skfenceha, cluster_name="test", domain="example.com")
-    return yaml.safe_load(out)["services"]
+    return yaml.safe_load(out)
+
+
+def skfenceha_services(**overrides):
+    return skfenceha_doc(**overrides)["services"]
 
 
 def skfence_services(**overrides):
@@ -101,7 +105,12 @@ def test_certs_watch_mounts_certs_readonly_and_dynamic_readwrite():
 def test_certs_watch_has_no_docker_socket_and_no_network():
     svc = skfenceha_services()["traefik-certs-watch"]
     assert not any("docker.sock" in v for v in svc["volumes"])
-    assert "networks" not in svc
+    # only its own internal overlay (Swarm refuses `none`; an unnamed one was an
+    # implicit default overlay that took nam's LAN range)
+    assert svc["networks"] == ["certs-watch"]
+    net = skfenceha_doc()["networks"]["certs-watch"]
+    assert net["internal"] is True and net["driver"] == "overlay"
+    assert net["ipam"]["config"][0]["subnet"].startswith("172.16.209.")
 
 
 def test_certs_watch_script_file_exists_and_is_posix_sh():
