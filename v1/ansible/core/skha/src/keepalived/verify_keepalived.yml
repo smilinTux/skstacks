@@ -106,15 +106,26 @@
           on a manager with no Traefik worker, otherwise check its gate checks.
       when: skha_final[0] == 'active' and skha_final[1] == 'fault'
 
+    # A plain Jinja loop, not zip/extract: the repo's template tests render
+    # task vars with plain jinja2.
     - name: Warn unless exactly one manager reports MASTER
       ansible.builtin.debug:
         msg: >-
           WARNING: expected exactly one MASTER, found {{ skha_masters | length }}
           ({{ skha_masters | join(', ') if skha_masters else 'none' }}). States:
-          {{ dict(ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars, ['skha_final', 1]))) }}.
+          {{ skha_states | join(', ') }}.
       vars:
         skha_masters: >-
-          {{ ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars, ['skha_final', 1]))
-             | selectattr(1, 'equalto', 'master') | map(attribute=0) | list }}
+          {%- set m = [] -%}
+          {%- for h in ansible_play_hosts -%}
+          {%- if (hostvars[h].skha_final | default(['', '', '']))[1] == 'master' -%}{%- set _ = m.append(h) -%}{%- endif -%}
+          {%- endfor -%}
+          {{ m }}
+        skha_states: >-
+          {%- set s = [] -%}
+          {%- for h in ansible_play_hosts -%}
+          {%- set _ = s.append(h ~ '=' ~ (hostvars[h].skha_final | default(['', 'none', '']))[1]) -%}
+          {%- endfor -%}
+          {{ s }}
       when: skha_masters | length != 1
       run_once: true
