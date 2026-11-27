@@ -28,6 +28,33 @@ Each entry says what an instance must do, if anything.
   (and `skmail-<env>_default`). An empty leftover network does no harm, but its subnet stays
   reserved until it is removed.
 
+### skmesh: 503, not the catch-all 403, while a backend is down; skpatch-hosts NetBird keep-up timer
+
+- While a skmesh service has no running task, Swarm drops its Traefik labels and the skmesh host
+  fell through to the fence's priority-1 catch-all, which answers 403. A NetBird client maps a 403
+  on GetServerKey to PermissionDenied, leaves its retry loop and stays in `NeedsLogin` until a
+  manual `netbird up`. The skmesh playbooks now render `dynamic/skmesh-<env>.yml` into each fence
+  dynamic directory present on the manager (`skfence`, `skfenceha`): one file-provider router for
+  the skmesh host at priority 2 (above the catch-alls, below every skmesh label router) to a load
+  balancer with no servers, so Traefik answers 503 (gRPC Unavailable, retried). The skmesh compose
+  file and every other stack render unchanged. On skfenceha (shared NFS `dynamic/`) the play
+  touches the file on every manager in the target manager group on every run, so every
+  traefik-worker loads it; an unreachable manager never blocks the stack deploy and is named in a
+  WARNING after it. skfence and skfenceha reserve `skmesh-<env>.yml` against
+  `EXTRA_DYNAMIC_FILES`.
+- skpatch-hosts: new opt-in host var `skpatch_hosts_netbird_keepup` (default false) installs
+  `skpatch-netbird-keepup` with a systemd service and a 5 minute timer. When netbird reports
+  `NeedsLogin` or `Idle` and the active profile does not set `DisableAutoConnect`, it runs
+  `timeout 60 netbird up --no-browser` and logs to the journal. Setup-key peers only. If `up`
+  prints its login prompt ("Use this URL to log in", a peer that really needs SSO), it logs one warning without the URL and
+  skips runs for 6 hours.
+  **Instance action:** redeploy skmesh (after the fence, so its dynamic directory exists) with
+  every manager of the target manager group in the inventory, so the play can touch the
+  skfenceha copy on each of them; for any manager the post-deploy WARNING names, run `touch
+  /var/data/config/skfenceha-<env>/dynamic/skmesh-<env>.yml` on it by hand. Peers
+  already in `NeedsLogin` need one `netbird up`; to automate that on setup-key peers, set
+  `skpatch_hosts_netbird_keepup: true` for them and rerun provisioning.
+
 ## skstacks-v2.26.35 - 2026-11-27
 
 ### sksso: one shared branded email set for every Authentik email (#467)

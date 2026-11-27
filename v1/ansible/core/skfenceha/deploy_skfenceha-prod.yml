@@ -388,6 +388,8 @@
           - tls.yml
           - sksec.yml
           - certs-generated.yml
+          # rendered by the skmesh playbook (its 503 fallback router)
+          - "skmesh-{{ env }}.yml"
       tags:
         - config
         - dynamic

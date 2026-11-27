@@ -449,6 +449,95 @@
         - /etc/default/sk-swarm-upgrade-gate
       when: not (skp_swarm_gate | bool)
 
+    # NetBird keep-up (opt-in host var skpatch_hosts_netbird_keepup, default
+    # false): a timer that runs `netbird up` when a setup-key peer has fallen
+    # into NeedsLogin or Idle (script header says why). Off on SSO-enrolled
+    # peers, where `netbird up` only prints a login URL.
+    - name: Decide whether the NetBird keep-up timer applies to this host
+      set_fact:
+        skp_netbird_keepup: "{{ skpatch_state == 'present' and (skpatch_hosts_netbird_keepup | default(false) | bool) }}"
+
+    - name: Install the NetBird keep-up script (opted-in hosts)
+      copy:
+        src: "{{ playbook_dir }}/src/skpatch-hosts/skpatch-netbird-keepup.sh"
+        dest: /usr/local/sbin/skpatch-netbird-keepup
+        owner: root
+        group: root
+        mode: '0755'
+      when: skp_netbird_keepup | bool
+
+    - name: Install the NetBird keep-up service and timer (opted-in hosts)
+      copy:
+        dest: "/etc/systemd/system/{{ item.name }}"
+        owner: root
+        group: root
+        mode: '0644'
+        content: "{{ item.content }}"
+      loop:
+        - name: skpatch-netbird-keepup.service
+          content: |
+            # Managed by skstacks skpatch-hosts (provision_skpatch_hosts_nodes.yml)
+            [Unit]
+            Description=skpatch-hosts: bring NetBird back up after NeedsLogin or Idle
+            After=netbird.service
+
+            [Service]
+            Type=oneshot
+            # bounded: a wedged daemon must not hang the unit (and so the timer)
+            TimeoutStartSec=120
+            ExecStart=/usr/local/sbin/skpatch-netbird-keepup
+        - name: skpatch-netbird-keepup.timer
+          content: |
+            # Managed by skstacks skpatch-hosts (provision_skpatch_hosts_nodes.yml)
+            [Unit]
+            Description=skpatch-hosts: NetBird keep-up every 5 minutes
+
+            [Timer]
+            OnBootSec=5min
+            OnUnitActiveSec=5min
+
+            [Install]
+            WantedBy=timers.target
+      loop_control:
+        label: "{{ item.name }}"
+      when: skp_netbird_keepup | bool
+
+    - name: Enable the NetBird keep-up timer (opted-in hosts)
+      systemd:
+        name: skpatch-netbird-keepup.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: skp_netbird_keepup | bool
+
+    - name: Stop the NetBird keep-up timer where it does not apply (absent, or opted out)
+      shell: |
+        [ -f /etc/systemd/system/skpatch-netbird-keepup.timer ] || exit 0
+        systemctl disable --now skpatch-netbird-keepup.timer
+        echo stopped
+      register: skp_keepup_stop
+      changed_when: "'stopped' in skp_keepup_stop.stdout"
+      when: not (skp_netbird_keepup | bool)
+
+    - name: Remove the NetBird keep-up timer, service and script where it does not apply
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/skpatch-netbird-keepup.timer
+        - /etc/systemd/system/skpatch-netbird-keepup.service
+        - /usr/local/sbin/skpatch-netbird-keepup
+        - /var/lib/skpatch-netbird-keepup
+      register: skp_keepup_removed
+      when: not (skp_netbird_keepup | bool)
+
+    - name: Reload systemd after removing the NetBird keep-up units
+      systemd:
+        daemon_reload: true
+      when:
+        - not (skp_netbird_keepup | bool)
+        - skp_keepup_removed is changed
+
     - name: Remove the sudoers rule (absent)
       file:
         path: /etc/sudoers.d/skpatch
