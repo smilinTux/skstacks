@@ -37,16 +37,16 @@ images:
     source: https://github.com/grafana/alloy/releases/tag/v1.21.3
   loki:
     repo: grafana/loki
-    tag: 3.7.9
-    digest: sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28
-    released: "2026-10-20"
-    source: https://github.com/grafana/loki/releases/tag/v3.7.9
+    tag: 3.7.10
+    digest: sha256:b43c257ccfc925d4a50b8717cac61a3b51df8c48d01847936057e5c4075a24a7
+    released: "2026-11-13"
+    source: https://github.com/grafana/loki/releases/tag/v3.7.10
   grafana:
     repo: grafana/grafana
-    tag: 13.3.0
-    digest: sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205
-    released: "2026-10-27"
-    source: https://github.com/grafana/grafana/releases/tag/v13.3.0
+    tag: 13.3.1
+    digest: sha256:0615ec4fbd4072004b7d86b46ded63013a74b7d6eb1119273dd89e8fa25c13cf
+    released: "2026-11-10"
+    source: https://github.com/grafana/grafana/releases/tag/v13.3.1
   pyroscope:
     repo: grafana/pyroscope
     tag: 2.4.3
