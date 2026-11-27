@@ -73,6 +73,29 @@ services:
         - "traefik.http.routers.{{ skp_router }}.middlewares={{ skp_middlewares }}"
         - "traefik.http.routers.{{ skp_router }}.service={{ skp_router }}"
         - "traefik.http.services.{{ skp_router }}.loadbalancer.server.port=80"
+{% if skp_identity_domain %}
+        # User hosts (<user>.<IDENTITY_DOMAIN>, one label) for WebIDs: same
+        # service, entrypoint and middlewares. Priority 3 sits below the main
+        # router (5, so pods.<domain> stays on it) and above the edge's
+        # per-domain catch-alls (1). The rule is single-quoted so the
+        # backslashes stay literal, and $$ is compose's escape for $.
+        - 'traefik.http.routers.{{ skp_router }}-identity.rule=HostRegexp(`^[a-z0-9-]+\.{{ skp_identity_domain | replace('.', '\\.') }}$$`)'
+        - "traefik.http.routers.{{ skp_router }}-identity.entrypoints=websecure"
+        - "traefik.http.routers.{{ skp_router }}-identity.tls=true"
+{% if skp_identity_certresolver %}
+        # A wildcard certificate needs a DNS-01 resolver: HTTP-01 and
+        # TLS-ALPN-01 cannot issue *.<domain>.
+        - "traefik.http.routers.{{ skp_router }}-identity.tls.certresolver={{ skp_identity_certresolver }}"
+        - "traefik.http.routers.{{ skp_router }}-identity.tls.domains[0].main={{ skp_identity_domain }}"
+        - "traefik.http.routers.{{ skp_router }}-identity.tls.domains[0].sans=*.{{ skp_identity_domain }}"
+{% endif %}
+{% if skpods.TLS_OPTIONS | default('', true) %}
+        - "traefik.http.routers.{{ skp_router }}-identity.tls.options={{ skpods.TLS_OPTIONS }}"
+{% endif %}
+        - "traefik.http.routers.{{ skp_router }}-identity.priority=3"
+        - "traefik.http.routers.{{ skp_router }}-identity.middlewares={{ skp_middlewares }}"
+        - "traefik.http.routers.{{ skp_router }}-identity.service={{ skp_router }}"
+{% endif %}
         # The role's own headers middleware: transport security only. It
         # sets NO Access-Control-* header (the Solid app answers CORS and
         # OPTIONS itself on /apps/solid/* and /.well-known/*), and Traefik

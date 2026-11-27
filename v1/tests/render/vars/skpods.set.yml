@@ -1,8 +1,11 @@
 # Second render pass: merged over skpods.example.yml to drive the optional
 # hooks down their "set" path (registry login, ingress override, data node,
-# seed users with client credentials). Fake values only.
+# identity domain, seed users with client credentials). Fake values only.
 skpods:
   HOST_PREFIX: pods
+  HOSTNAME: pods.id.example.test
+  IDENTITY_DOMAIN: id.example.test
+  IDENTITY_CERTRESOLVER: dns
   INGRESS_NETWORK: cloud-public-prod
   DATA_NODE: node-a
   APP_PATH: /srv/local/skpods

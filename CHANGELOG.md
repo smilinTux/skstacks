@@ -6,6 +6,23 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased (v2.26.36)
 
+### skpods: optional identity domain for per-user WebID hosts
+
+- New optional `skpods.IDENTITY_DOMAIN` (for example `skpods.id`) serves WebIDs at
+  `https://<user>.<IDENTITY_DOMAIN>/profile/card#me`. The deploy validates it as a lowercase
+  hostname (fails the play otherwise), requires `HOSTNAME` to be `pods.<IDENTITY_DOMAIN>` (the
+  engine treats that as the pods host), passes it to the engine as `SKPODS_IDENTITY_DOMAIN`, and
+  adds a second Traefik router `skpods[-<env>]-identity` for one-label subdomains
+  (`HostRegexp`, Traefik v3 syntax) at priority 3, below the main router (5) and above the edge
+  catch-alls (1). The new router sets no ACME resolver unless `skpods.IDENTITY_CERTRESOLVER`
+  names one (it must use DNS-01, which then gets `<domain>` plus `*.<domain>`). Unset, the
+  rendered files are unchanged.
+  **Instance action**: none unless you want user hosts. To use them, before the first user signs
+  in: set `IDENTITY_DOMAIN` and `HOSTNAME: pods.<IDENTITY_DOMAIN>`, publish DNS for
+  `pods.<domain>` and `*.<domain>`, give Traefik a `*.<domain>` certificate (or set
+  `IDENTITY_CERTRESOLVER`), and use an engine image that ships the identity-domain start hook.
+  Tests: `v1/tests/test_skpods_identity_domain.py`.
+
 ### Stack deploys pre-pull their images and stop before `docker stack deploy` if one cannot be pulled
 
 - `docker stack deploy` replaces the service spec before any node pulls the new image. On
