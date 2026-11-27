@@ -829,6 +829,31 @@ compliance check raises `dns-conflict`. The fix on the host is
 `netbird up --disable-dns`. Set `skpatch_hosts_dns_server: true` on every
 resolver, so a resolver that is down right now is still checked.
 
+## NetBird keep-up timer (opt-in)
+
+A NetBird client that gets a 403 from its management server (for example a
+proxy catch-all answering while the management backend is down) maps it to
+gRPC PermissionDenied, leaves its retry loop for good and stays in
+`NeedsLogin` until someone runs `netbird up` on the host. skmesh now answers
+503 in that window (skmesh README "503 while a backend is down"), but a peer
+can still meet another management server or proxy that answers 403.
+
+Set the host var `skpatch_hosts_netbird_keepup: true` (default false) and
+provisioning installs `/usr/local/sbin/skpatch-netbird-keepup` (from
+`src/skpatch-hosts/skpatch-netbird-keepup.sh`) with
+`skpatch-netbird-keepup.service` and a `.timer` that runs it every 5 minutes.
+It does nothing unless netbird is installed, `netbird status --json` reports
+`NeedsLogin` or `Idle`, and the active profile does not set
+`"DisableAutoConnect": true`; then it runs `timeout 60 netbird up --no-browser`
+and logs to the journal (`journalctl -u skpatch-netbird-keepup`).
+
+- Only for peers enrolled with a setup key. On an SSO-enrolled peer
+  `netbird up` just prints a login URL, so leave the var off there.
+- A plain `netbird down` is undone within 5 minutes. To keep a peer down, run
+  `netbird up --disable-auto-connect` before `netbird down`, or turn the var off.
+- Turning the var off (or `skpatch_hosts_provision_state=absent`) stops the
+  timer and removes the units and the script.
+
 ## Maintenance pause
 
 Pause a host (for example a hypervisor during a major upgrade) with the host
