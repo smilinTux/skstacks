@@ -71,7 +71,7 @@ prod deploy lock. Placeholders: `<env>`, `<node>` (the target swarm node),
      (a new id means Garage started on an empty dir: stop at once, see below);
    - `/garage bucket list` and `/garage key list` match step 1;
    - an S3 read of a known object succeeds;
-   - `docker exec $C /garage meta snapshot` writes a file under
+   - `docker exec $C /garage meta snapshot` writes `<timestamp>/db.sqlite` under
      `/var/data/skstor-<env>/meta-snapshots/`;
    - no new tasks in `docker service ps` for at least 15 minutes.
 8. After a few days of clean running, delete `meta.bak-*` and the old shared
