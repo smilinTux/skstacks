@@ -242,7 +242,33 @@ def test_refusal_that_outlasts_the_retries_stops_before_the_deploy(lab):
     assert proc.returncode != 0
     assert "stack deploy was NOT run" in out and "running" in out and "untouched" in out
     assert "docker.io/library/postgres:18" in out
-    assert len([c for c in calls(lab) if c.endswith("postgres:18")]) == 3  # the budget, no more
+    assert len([c for c in calls(lab) if c.startswith("pull") and c.endswith("postgres:18")]) == 3  # the budget, no more
+    assert not (lab / "deployed").exists()
+
+
+@needs_ansible
+def test_refused_image_the_node_already_holds_does_not_stop_the_deploy(lab):
+    # skfence builds skfence-<env>-error-pages:latest on the node; no registry has it.
+    (lab / "demo.yml").write_text(yaml.safe_dump({"services": {
+        "error-pages": {"image": "skfence-dev-error-pages:latest"},
+    }}))
+    proc = run_play(lab, env_extra={"FAKE_PULL_ALWAYS_FAIL": "error-pages", "FAKE_PRESENT": "skfence-dev-error-pages:latest"},
+                    extra_vars={"skstacks_prepull_retries": 2})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    log = calls(lab)
+    assert [c for c in log if c.startswith("pull")] == ["pull --quiet skfence-dev-error-pages:latest"] * 2  # the budget first
+    assert log[-1] == "image inspect skfence-dev-error-pages:latest"  # then the local copy is checked
+    assert (lab / "deployed").exists()
+
+
+@needs_ansible
+def test_refused_image_the_node_lacks_still_stops_the_deploy(lab):
+    (lab / "demo.yml").write_text(yaml.safe_dump({"services": {
+        "error-pages": {"image": "skfence-dev-error-pages:latest"},
+    }}))
+    proc = run_play(lab, env_extra={"FAKE_PULL_ALWAYS_FAIL": "error-pages"}, extra_vars={"skstacks_prepull_retries": 2})
+    assert proc.returncode != 0
+    assert "skfence-dev-error-pages:latest" in proc.stdout + proc.stderr
     assert not (lab / "deployed").exists()
 
 

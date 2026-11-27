@@ -6,6 +6,20 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased (v2.26.36)
 
+### deploy pre-pull: a refused image the node already holds no longer blocks the deploy; skfence error-pages pinned to its build node
+
+- The image pre-pull step (#548) asked the registry for every tag, so the error-pages image that
+  skfence and skfenceha build on the node (`<app>-<env>-error-pages:latest`, in no registry)
+  failed on every node and stopped the deploy. Found by the v2.26.36 release gate (skfence stage).
+  After the retries, a refused reference the node already holds now passes ("present locally,
+  registry refused"): the deploy uses that copy, as it did before the pre-pull existed. An image
+  the node lacks and cannot pull still stops the deploy.
+- skfence error-pages was placed on any manager although only the deploying manager builds it.
+  The playbooks now read that node's Swarm node ID and the stack file adds `node.id == <id>`
+  (skfenceha already pins it to the `traefik.acme.master` node).
+  **Instance action**: none. The next skfence deploy moves error-pages to the deploying manager.
+  Tests: `v1/tests/test_prepull_images.py`, `v1/tests/test_skfence_error_pages_placement.py`.
+
 ### skpods: optional identity domain for per-user WebID hosts
 
 - New optional `skpods.IDENTITY_DOMAIN` (for example `skpods.id`) serves WebIDs at
