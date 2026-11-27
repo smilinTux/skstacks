@@ -183,9 +183,12 @@ services:
     networks:
       - cloud-public-{{ env }}
 {% else %}
-    # No overlay network - host mode
-    # networks:
-    #   - cloud-public-{{ env }}
+    # Host-mode ports carry the mail traffic; the overlay is only for egress.
+    # Named explicitly: without it Swarm puts the service on an implicit
+    # skmail-<env>_default overlay from its 10.0.0.0/8 pool, which can collide
+    # with an estate LAN.
+    networks:
+      - cloud-public-{{ env }}
 {% endif %}
     deploy:
       mode: replicated

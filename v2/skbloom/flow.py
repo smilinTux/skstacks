@@ -107,7 +107,9 @@ def _swarm_flow(profile: Profile, *, run, v2_root: str) -> list:
         Step("preflight", description="check docker is present",
              run=lambda: run(["bash", "-c", "command -v docker >/dev/null"])),
         Step("bootstrap-swarm", description="single-node swarm (docker swarm init)",
-             run=lambda: run(["docker", "swarm", "init", "--advertise-addr", "127.0.0.1"]),
+             run=lambda: run(["docker", "swarm", "init", "--advertise-addr", "127.0.0.1",
+                              # not Docker's 10.0.0.0/8 default, which overlaps estate LANs
+                              "--default-addr-pool", "10.200.0.0/16"]),
              check=lambda: "Swarm: active" in out(["docker", "info"])),
     ]
     for svc in profile.services:
