@@ -91,6 +91,10 @@
         skp_antivirus: "{{ skpods.ANTIVIRUS | default(true) | bool }}"
         skp_admin_user: "{{ skpods.ADMIN_USER | default('skpods-admin', true) }}"
         skp_first_install_wait: "{{ skpods.first_install_wait_seconds | default(1200, true) | int }}"
+        # Optional: WebIDs at https://<user>.<IDENTITY_DOMAIN>/profile/card#me
+        # (README "Identity domain"). Empty means off.
+        skp_identity_domain: "{{ skpods.IDENTITY_DOMAIN | default('', true) | string }}"
+        skp_identity_certresolver: "{{ skpods.IDENTITY_CERTRESOLVER | default('', true) | string }}"
       tags:
         - always
 
@@ -130,6 +134,28 @@
           set (16+ characters), and INGRESS_NETWORK ({{ skp_ingress_network }})
           must be one of the networks in app_networks. THEME must be skpods
           or none, SKELETON skpods or stock. See README.md.
+      tags:
+        - always
+
+    - name: Check the identity domain
+      # The engine image validates SKPODS_IDENTITY_DOMAIN the same way and
+      # refuses a bad value at start; failing here keeps a typo from
+      # reaching a running stack. The engine treats pods.<domain> as the
+      # pods host (user hosts redirect there), so the hostname must be it.
+      assert:
+        that:
+          - skp_identity_domain is not search('[^a-z0-9.-]')
+          - skp_identity_domain is match('^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?([.][a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$')
+          - skp_host == 'pods.' + skp_identity_domain
+          - skp_identity_certresolver is not search('[^A-Za-z0-9_-]')
+        fail_msg: >-
+          skpods: IDENTITY_DOMAIN must be a plain lowercase hostname with two
+          or more labels (no scheme, port, slash, wildcard, whitespace or
+          upper case; got '{{ skp_identity_domain | truncate(80) }}'), the
+          hostname must be pods.<IDENTITY_DOMAIN> (got {{ skp_host }}; set
+          HOSTNAME), and IDENTITY_CERTRESOLVER, when set, must be a plain
+          resolver name. See README.md "Identity domain".
+      when: skp_identity_domain | length > 0
       tags:
         - always
 

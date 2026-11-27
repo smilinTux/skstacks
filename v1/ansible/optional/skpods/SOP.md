@@ -95,6 +95,24 @@ pods exist locks every owner out of their pod until the root ACLs are
 rewritten. Treat the hostname as fixed for the life of the environment (for
 a dev environment: reset all users after a change).
 
+### Identity domain
+
+`IDENTITY_DOMAIN` (README "Identity domain") is part of every WebID, so it is
+as permanent as the hostname: set it, with `HOSTNAME: pods.<IDENTITY_DOMAIN>`,
+before the first user signs in. Before the deploy: a DNS record for
+`pods.<domain>` and a wildcard `*.<domain>`, and a TLS certificate for
+`*.<domain>` in Traefik (or `IDENTITY_CERTRESOLVER` naming a DNS-01
+resolver). Check after the deploy:
+
+```bash
+curl -s -H 'Accept: text/turtle' https://<user>.<domain>/profile/card | head
+```
+
+To turn it off, removing the setting is not enough: the engine falls back to
+the stored value and keeps user hosts on (it logs a warning). Also run
+`occ config:app:delete solid identityDomain` and remove the `*.<domain>`
+entry from `trusted_domains`, then redeploy.
+
 ### First deploy
 
 1. Pick the env (`dev`, `staging`, `prod`) and create the vault
@@ -186,6 +204,8 @@ curl -si -X OPTIONS -H 'Origin: https://app.example.org' \
 | Owner gets `403` on their own pod after a hostname change | See "Hostname is permanent": reset the user (dev) or rewrite the root `.acl`. |
 | Solid app login fails with CORS errors | A proxy middleware is adding `Access-Control-*`; keep `MIDDLEWARES` to the role default. |
 | `404` from Traefik | Router not on the ingress Traefik watches: check `INGRESS_NETWORK`. |
+| Play stops at "Check the identity domain" | `IDENTITY_DOMAIN` is not a lowercase hostname, or `HOSTNAME` is not `pods.<IDENTITY_DOMAIN>`. |
+| `https://<user>.<domain>` gives a certificate error | Traefik has no certificate for `*.<domain>`: add one, or set `IDENTITY_CERTRESOLVER` to a DNS-01 resolver. |
 | Nextcloud shows "Update needed" | Run the deploy again (or `occ upgrade` in the container); the start hook normally does it. |
 
 Logs: `docker service logs skpods-<env>_nextcloud`, `docker exec -u www-data
