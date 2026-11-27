@@ -1,0 +1,131 @@
+---
+# Post-deploy check, on every manager, after the restart handler has run.
+# The handler restarts keepalived only when the rendered config changed, so a
+# manager left in FAULT (or with keepalived stopped) by an earlier failed
+# rollout stays that way on a rerun with no config change, and the play used
+# to report success. Here every manager reads its own state; a node in FAULT
+# or with keepalived not active is restarted once and re-read until it
+# settles. Still FAULT then fails the play on that host, named in the
+# message. FAULT while another manager answers on the VIP is the same
+# exception the handler makes (a manager with no Traefik worker, for example
+# plain skfence): a warning, not a failure.
+# Check mode skips shell tasks, so the whole check is skipped there.
+- name: Verify no manager is left in keepalived FAULT (skipped in check mode)
+  when: not ansible_check_mode
+  become: true
+  vars:
+    skha_verify_delay: 2
+    skha_verify_retries: "{{ (((skha_restart_wait | default(30) | int) / skha_verify_delay) | round(0, 'ceil') | int, 1) | max }}"
+    # Prints "<systemctl is-active> <state file or none> <VIP: local|remote|none>"
+    skha_read_state: |
+      active=$(systemctl is-active keepalived 2>/dev/null || true)
+      state=$(cat "$SKHA_STATE" 2>/dev/null || true)
+      vip=none
+      if [ -n "$SKHA_VIP" ]; then
+        if ip -4 -o addr show | grep -qF " $SKHA_VIP/"; then
+          vip=local
+        elif ping -c1 -W1 "$SKHA_VIP" >/dev/null 2>&1; then
+          vip=remote
+        fi
+      fi
+      echo "${active:-unknown} ${state:-none} $vip"
+  environment:
+    SKHA_NODE: "{{ inventory_hostname }}"
+    SKHA_STATE: "{{ skha_state_file | default('/run/skha.state') }}"
+    SKHA_VIP: "{{ ((skha | default({})).vip | default('') | string).split('/')[0] }}"
+  block:
+    - name: Read the keepalived state on every manager
+      ansible.builtin.shell: "{{ skha_read_state }}"
+      args:
+        executable: /bin/bash
+      register: skha_verify_before
+      changed_when: false
+
+    - name: Decide whether keepalived needs a restart (FAULT or not active)
+      ansible.builtin.set_fact:
+        skha_needs_restart: >-
+          {{ (skha_verify_before.stdout.split() + ['unknown', 'none', 'none'])[0] != 'active' or
+             (skha_verify_before.stdout.split() + ['unknown', 'none', 'none'])[1] == 'fault' }}
+
+    # Same stop, clear, start as the handler, so a state written by the old
+    # daemon cannot end the wait below.
+    - name: Restart keepalived once on a manager in FAULT or not active
+      ansible.builtin.shell: |
+        echo "keepalived on $SKHA_NODE was: $SKHA_BEFORE; restarting it once"
+        systemctl stop keepalived
+        rm -f "$SKHA_STATE"
+        if ! systemctl start keepalived; then
+          journalctl -u keepalived -n 20 --no-pager >&2
+          echo "keepalived on $SKHA_NODE failed to start (was: $SKHA_BEFORE)" >&2
+          exit 1
+        fi
+      args:
+        executable: /bin/bash
+      environment:
+        SKHA_BEFORE: "{{ skha_verify_before.stdout }}"
+      when: skha_needs_restart | bool
+
+    - name: Wait for the restarted keepalived to report MASTER or BACKUP
+      ansible.builtin.shell: "{{ skha_read_state }}"
+      args:
+        executable: /bin/bash
+      register: skha_verify_after
+      until: >-
+        (skha_verify_after.stdout.split() | length) == 3 and
+        skha_verify_after.stdout.split()[0] == 'active' and
+        skha_verify_after.stdout.split()[1] in ['master', 'backup']
+      retries: "{{ skha_verify_retries }}"
+      delay: "{{ skha_verify_delay }}"
+      failed_when: false
+      changed_when: false
+      when: skha_needs_restart | bool
+
+    - name: Record the settled keepalived state
+      ansible.builtin.set_fact:
+        skha_final: >-
+          {{ ((skha_verify_after.stdout if (skha_needs_restart | bool) else skha_verify_before.stdout).split()
+              + ['unknown', 'none', 'none'])[:3] }}
+
+    - name: Fail when keepalived on this manager is still FAULT or not active
+      ansible.builtin.fail:
+        msg: >-
+          keepalived on {{ inventory_hostname }} is still {{ skha_final[1] | upper }}
+          (systemctl is-active: {{ skha_final[0] }}, VIP: {{ skha_final[2] }}) after one
+          restart and {{ skha_verify_retries | int * skha_verify_delay }} s to settle.
+          Check its gate checks (/usr/local/bin/skha_check_*.sh), its interface and
+          `journalctl -u keepalived` on {{ inventory_hostname }}.
+      when: >-
+        skha_final[0] != 'active' or
+        (skha_final[1] == 'fault' and skha_final[2] != 'remote')
+
+    - name: Warn when a manager is FAULT while another manager holds the VIP
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: keepalived on {{ inventory_hostname }} is FAULT (its gate check
+          fails), so it cannot take the VIP; another manager holds the VIP. Expected
+          on a manager with no Traefik worker, otherwise check its gate checks.
+      when: skha_final[0] == 'active' and skha_final[1] == 'fault'
+
+    # A plain Jinja loop, not zip/extract: the repo's template tests render
+    # task vars with plain jinja2.
+    - name: Warn unless exactly one manager reports MASTER
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: expected exactly one MASTER, found {{ skha_masters | length }}
+          ({{ skha_masters | join(', ') if skha_masters else 'none' }}). States:
+          {{ skha_states | join(', ') }}.
+      vars:
+        skha_masters: >-
+          {%- set m = [] -%}
+          {%- for h in ansible_play_hosts -%}
+          {%- if (hostvars[h].skha_final | default(['', '', '']))[1] == 'master' -%}{%- set _ = m.append(h) -%}{%- endif -%}
+          {%- endfor -%}
+          {{ m }}
+        skha_states: >-
+          {%- set s = [] -%}
+          {%- for h in ansible_play_hosts -%}
+          {%- set _ = s.append(h ~ '=' ~ (hostvars[h].skha_final | default(['', 'none', '']))[1]) -%}
+          {%- endfor -%}
+          {{ s }}
+      when: skha_masters | length != 1
+      run_once: true
