@@ -15,6 +15,12 @@
 #   SKPW_IMAGE_ARGS=--registry-auth /path/to/docker-config.json   (optional)
 # The tool sits next to SKPW_TOOL (skpatch_watch.py).
 #
+# Every estate shares one Trivy DB, $CACHE_DIRECTORY/trivy (about 3.3 GB);
+# the per-estate directories keep only their results. Scans on the shared DB
+# take turns (a lock in the tool), so estates whose timers overlap queue up.
+# Upgrading from one DB per estate: delete the old <estate>/trivy directories
+# (rm -rf ~/.cache/skpatch-hosts/image-vulns/*/trivy) after the next run.
+#
 # Exit 1 means "one or more images failed to scan" (listed in the summary
 # and the digest); only exit 2 (the service list could not be read) fails
 # the unit.
@@ -26,7 +32,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 EnvironmentFile=%h/.config/skpatch-watch/%i.env
-ExecStart=/bin/sh -c 'exec /usr/bin/python3 "$(dirname "$SKPW_TOOL")/skpatch_image_vulns.py" --estate %i --out "$STATE_DIRECTORY/%i.json" --cache-dir "$CACHE_DIRECTORY/%i" $SKPW_IMAGE_ARGS'
+ExecStart=/bin/sh -c 'exec /usr/bin/python3 "$(dirname "$SKPW_TOOL")/skpatch_image_vulns.py" --estate %i --out "$STATE_DIRECTORY/%i.json" --cache-dir "$CACHE_DIRECTORY/%i" --trivy-cache "$CACHE_DIRECTORY/trivy" $SKPW_IMAGE_ARGS'
 StateDirectory=skpatch-hosts/image-vulns
 CacheDirectory=skpatch-hosts/image-vulns
 SuccessExitStatus=1

@@ -202,4 +202,54 @@ def test_the_image_units_run_before_the_digest_and_share_its_env():
     assert "skpatch_image_vulns.py" in svc and '--out "$STATE_DIRECTORY/%i.json"' in svc
     assert "StateDirectory=skpatch-hosts/image-vulns" in svc and "CacheDirectory=skpatch-hosts/image-vulns" in svc
     assert "SuccessExitStatus=1" in svc
+    # one Trivy DB for every estate, not a 3.3 GB copy each
+    assert '--trivy-cache "$CACHE_DIRECTORY/trivy"' in svc and '--cache-dir "$CACHE_DIRECTORY/%i"' in svc
     assert "OnCalendar=*-*-* 06:15:00" in timer
+
+
+def test_estates_share_one_trivy_db_and_keep_their_own_results(tmp_path):
+    b = _bin(tmp_path, f"skweb_app\talpine:3.18.0@{D1}\n")
+    shared = tmp_path / "trivy-shared"
+    for estate in ("lab-a", "lab-b"):
+        env = {"PATH": f"{b}:/usr/bin:/bin", "SKPW_SWARM_SSH": "mgr-node"}
+        proc = subprocess.run([sys.executable, str(TOOL), "--estate", estate, "--out", str(tmp_path / f"{estate}.json"),
+                               "--cache-dir", str(tmp_path / estate), "--trivy-cache", str(shared)],
+                              capture_output=True, text=True, env=env, timeout=60)
+        assert proc.returncode == 0, proc.stderr
+        assert (tmp_path / estate / "results").is_dir() and not (tmp_path / estate / "trivy").exists()
+    log = (tmp_path / "docker.log").read_text().splitlines()
+    assert len(log) == 2 and all(f"{shared}:/cache" in l for l in log)
+    assert (shared / iv.LOCK_NAME).exists()
+
+
+def test_without_trivy_cache_the_db_stays_under_the_estate_cache_dir(tmp_path):
+    b = _bin(tmp_path, f"skweb_app\talpine:3.18.0@{D1}\n")
+    assert _cli(tmp_path, b).returncode == 0
+    assert f"{tmp_path / 'cache' / 'trivy'}:/cache" in (tmp_path / "docker.log").read_text()
+
+
+def test_a_scan_waits_for_the_lock_on_the_shared_db(tmp_path, monkeypatch):
+    import fcntl, threading, time
+    db = tmp_path / "db"
+    db.mkdir()
+    holder = open(db / iv.LOCK_NAME, "w")
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    started = []
+
+    class P:
+        returncode, stdout, stderr = 0, json.dumps({"Results": []}), ""
+
+    def fake_run(*a, **k):
+        started.append(time.monotonic())
+        return P()
+
+    monkeypatch.setattr(iv.subprocess, "run", fake_run)
+    t = threading.Thread(target=iv.scan, args=("alpine:3", iv.TRIVY_IMAGE, db))
+    t.start()
+    time.sleep(0.3)
+    assert started == []  # blocked on the lock
+    released = time.monotonic()
+    fcntl.flock(holder, fcntl.LOCK_UN)
+    holder.close()
+    t.join(5)
+    assert started and started[0] >= released
