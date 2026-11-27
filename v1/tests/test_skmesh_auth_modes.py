@@ -319,6 +319,7 @@ class FakeAuthentik:
         self.version = version
         self.modern = version >= "2024.8"
         self.objects = {"provider": [], "application": [], "role": [], "group": [], "user": [], "token": []}
+        self.bindings = []
         self.log = []
         self.token_keys = {}
         self.brand = {"brand_uuid": "b1", "default": True, "flow_device_code": None}
@@ -360,6 +361,13 @@ class FakeAuthentik:
         if p.startswith("/core/tokens/") and p.endswith("/set_key/"):
             self.token_keys[p.split("/")[3]] = body["key"]
             return 204, None
+        if p == "/policies/bindings/":
+            if method == "POST":
+                self.next_pk += 1
+                self.bindings.append(dict(body, pk=f"b{self.next_pk}"))
+                return 201, self.bindings[-1]
+            # like 2026.8: the target filter is not trusted, the client matches
+            return 200, {"results": list(self.bindings)}
         if p == "/core/brands/":
             return 200, {"results": [self.brand]}
         if p.startswith("/core/brands/") and method == "PATCH":
@@ -380,6 +388,9 @@ class FakeAuthentik:
                 return (200, hit[0]) if hit else (404, {"detail": "Not found."})
             if method == "POST" and not rest:
                 obj = dict(body)
+                if kind == "application":
+                    self.next_pk += 1
+                    obj["pk"] = f"app-{self.next_pk}"
                 if key == "pk":
                     self.next_pk += 1
                     obj["pk"] = self.next_pk
@@ -481,6 +492,23 @@ def test_provisioner_creates_everything_then_is_idempotent(fake_authentik):
     assert second.returncode == 0, second.stderr
     assert "created" not in second.stdout and "updated (" not in second.stdout
     assert len(fake.objects["provider"]) == len(fake.objects["user"]) == 1
+
+
+def test_provisioner_lets_its_service_account_into_a_group_bound_application(fake_authentik):
+    """A portal tile binding the app to skadmin shut the IdP manager out (invalid_grant)."""
+    fake = fake_authentik()
+    assert _provision(_cfg(fake)).returncode == 0
+    app_pk = fake.objects["application"][0]["pk"]
+    user_pk = fake.objects["user"][0]["pk"]
+    mine = [b for b in fake.bindings if b["target"] == app_pk and b.get("user") == user_pk]
+    assert len(mine) == 1 and mine[0]["enabled"] and not mine[0]["negate"]
+    # a group binding added later (the tile) and a rerun: still exactly one, the group one kept
+    fake.bindings.append({"pk": "tile", "target": app_pk, "group": "skadmin-pk", "order": 0})
+    again = _provision(_cfg(fake))
+    assert again.returncode == 0, again.stderr
+    assert "service account application binding: present" in again.stdout
+    assert len([b for b in fake.bindings if b.get("user") == user_pk]) == 1
+    assert any(b["pk"] == "tile" for b in fake.bindings)
 
 
 def test_provisioner_repairs_drift(fake_authentik):

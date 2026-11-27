@@ -243,7 +243,7 @@ def provision(api, cfg):
     }
     if cfg.get("icon"):
         app_fields["meta_icon"] = cfg["icon"]
-    ensure(api, "/core/applications/", app_lookup, app_fields, "application", key="slug")
+    app = ensure(api, "/core/applications/", app_lookup, app_fields, "application", key="slug")
 
     # IdP manager service account: view users, nothing else.
     role = ensure(api, "/rbac/roles/",
@@ -271,6 +271,23 @@ def provision(api, cfg):
            "service account token", key="identifier")
     api.call("POST", f"/core/tokens/{cfg['sa_token_identifier']}/set_key/", {"key": cfg["sa_password"]})
     print("service account token key: set")
+
+    # client_credentials only succeeds for a user the application lets in. Once a
+    # portal tile binds the application to a group (skadmin by default), the IdP
+    # manager is shut out ("invalid_grant") and every NetBird SSO login that needs
+    # an account lookup fails (nor, 2026-11-14 to 2026-11-26). Bind the service
+    # account itself; with policy mode "any" this admits nobody else. Matched
+    # client-side and only ever added, like the portal tile script.
+    app_pk = app["pk"]
+    bindings = api.get("/policies/bindings/", target=app_pk).get("results", [])
+    mine = [x for x in bindings if str(x.get("target")) == str(app_pk) and x.get("user") == user["pk"]]
+    if mine:
+        print("service account application binding: present")
+    else:
+        order = max([x.get("order", 0) for x in bindings] + [0]) + 1
+        api.call("POST", "/policies/bindings/", {"target": app_pk, "user": user["pk"], "order": order,
+                                                  "enabled": True, "negate": False, "timeout": 30})
+        print("service account application binding: created")
 
     if cfg.get("device_flow"):
         brand = api.first("/core/brands/", default="true")
