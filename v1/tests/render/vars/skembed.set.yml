@@ -1,0 +1,20 @@
+# The "set" pass: every optional knob set, fake values only.
+skembed:
+  MODEL_ID: ""
+  MODEL_PATH: /var/data/models/example-embedding-model
+  MODEL_NAME: example-embed
+  MODEL_REVISION: v1
+  HF_TOKEN: "hf_example_not_a_secret"
+  API_KEY: "example-embed-key-not-a-secret"
+  IMAGE: "registry.example.test/tei-cpu:1.0@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  CACHE_PATH: /var/lib/skembed-render/cache
+  PLACEMENT_CONSTRAINTS: ["node.role == worker", "node.hostname == render-node-1"]
+  REPLICAS: 2
+  CPUS: "2.0"
+  MEMORY_LIMIT: 4G
+  MEMORY_RESERVATION: 1G
+  MAX_BATCH_TOKENS: 8192
+  MAX_CLIENT_BATCH_SIZE: 32
+  POOLING: cls
+  PUBLISHED_PORT: "18089"
+  HEALTH_START_PERIOD: 900s

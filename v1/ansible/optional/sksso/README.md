@@ -705,6 +705,51 @@ it created stay in Authentik (same limitation as the blueprints above); delete t
 hand when retiring the sign-in.
 
 
+## skai (Open WebUI) OIDC login
+
+`sksso.SKAI_OIDC_ENABLED: true` plus `sksso.SKAI_OIDC_CLIENT_SECRET` (32+ chars,
+`openssl rand -hex 32`) give `skai` (Open WebUI) its sign-in through Authentik as code. skai
+defaults to `AUTH_MODE: oidc`, so this is what an estate running skai turns on (see
+`optional/skai/README.md` "Sign-in (Authentik OIDC)"). The mechanism is the skgit one above:
+off by default, and with the flag unset every rendered file is byte-identical to a release
+without it; on, the deploy renders `/var/data/config/sksso-<env>/blueprints/skai-oidc.yaml`
+(no secret inside), mounts the blueprints directory at `/blueprints/custom` in `server` and
+`worker`, and puts the secret in `sksso.env` (0600) as `SKAI_OIDC_CLIENT_SECRET`, read with
+`!Env`.
+
+**Which vault holds the secret.** `sksso.SKAI_OIDC_CLIENT_SECRET` in the sksso vault and
+`skai.OIDC_CLIENT_SECRET` in the skai vault, the same value.
+
+| Object | Value |
+|---|---|
+| OAuth2 provider `skai` | confidential, client id `skai` (`SKAI_OIDC_CLIENT_ID` overrides, same value as `skai.OIDC_CLIENT_ID`), strict redirects `https://<skai host>/oauth/oidc/login/callback` and the legacy `/oauth/oidc/callback`, the same flows, signing key, subject and issuer modes and grant types as skgit, scopes openid, email, profile (profile carries the `groups` claim skai maps to admin) |
+| Application `skai` | name `SKAI_APP_NAME` (default `SKAI`), launch URL `https://<skai host>/` |
+
+| Group `skai-users` | `SKAI_USERS_GROUP` overrides (same value as `skai.USERS_GROUP`); members = `SKAI_USERS` when set (the list IS the membership, re-applied by the worker), otherwise left alone |
+| Bindings | the Application to the global admin group (`ADMIN_GROUP`, default `skadmin`, order 0) and to `skai-users` (order 10), policy engine mode `any` |
+
+**Members only.** Only members of the two bound groups can sign in to skai (access mode
+app-groups); the gate holds even with skai's portal tile off. skai's tile task (run from
+skai's deploy) uses the same slug and groups, keeps this provider and finds these bindings.
+Who becomes an Open WebUI admin is `skai.ADMIN_GROUP`, matched against the `groups` claim on
+every login. Members are instance vars: the framework sets no member. A username in
+`SKAI_USERS` that does not exist in Authentik makes the blueprint apply fail (shown in the
+Authentik admin UI under System, Blueprints); create the user first.
+
+```yaml
+sksso:
+  SKAI_OIDC_ENABLED: true                        # a YAML boolean, default false
+  SKAI_OIDC_CLIENT_SECRET: "..."                 # same value as skai.OIDC_CLIENT_SECRET
+  SKAI_HOST: ai.example.org                      # default skai[-<env>].<base>; same as skai.HOSTNAME
+  SKAI_OIDC_CLIENT_ID: skai                      # default skai (the portal tile slug)
+  SKAI_APP_NAME: "SKAI"
+  SKAI_OIDC_AUTHENTICATION_FLOW: ""              # or capauth-authentication
+  SKAI_USERS_GROUP: skai-users                   # default skai-users; same as skai.USERS_GROUP
+  SKAI_USERS: []                                 # Authentik usernames; set = the whole membership
+```
+
+Run order: deploy (or redeploy) `sksso` with the flag and secret set, THEN deploy `skai`.
+
 ## skaegis (OIDC) login
 
 `sksso.SKAEGIS_OIDC_CLIENT_SECRET` (32+ chars, `openssl rand -hex 32`) gives

@@ -1,0 +1,79 @@
+version: '3.8'
+
+# skembed: Hugging Face text-embeddings-inference (CPU) serving one embedding
+# model with an OpenAI-compatible /v1/embeddings on port 8080. Internal only
+# (no Traefik router). README.md has the vault keys.
+
+networks:
+  skembed-{{ env }}:
+    external: true
+
+services:
+  skembed:
+    # Default = ske_default_image in the playbook (a test keeps them equal);
+    # written out here so v1/scripts/list_images.py can see the pin.
+    image: {{ skembed.IMAGE | default('ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.4@sha256:2538ea1c9640d3763b15af668039d24172d063b42337b0c27796fc2be180c78d', true) }}
+    env_file:
+      - /var/data/config/skembed-{{ env }}/skembed.env
+    environment:
+      - PORT=8080
+      - HOSTNAME=0.0.0.0
+      - HUGGINGFACE_HUB_CACHE=/data
+      - MODEL_ID={{ '/model' if ske_model_path | length > 0 else ske_model_id }}
+{% if ske_model_revision | length > 0 %}
+      - REVISION={{ ske_model_revision }}
+{% endif %}
+{% if ske_model_name | length > 0 %}
+      - SERVED_MODEL_NAME={{ ske_model_name }}
+{% endif %}
+{% if ske_pooling | length > 0 %}
+      - POOLING={{ ske_pooling }}
+{% endif %}
+      - MAX_BATCH_TOKENS={{ ske_max_batch_tokens }}
+      - MAX_CLIENT_BATCH_SIZE={{ ske_max_client_batch_size }}
+      # Long queries are cut to the model's max length instead of answering 413.
+      - AUTO_TRUNCATE=true
+      - JSON_OUTPUT=true
+    volumes:
+      - {{ ske_cache_path }}:/data
+{% if ske_model_path | length > 0 %}
+      - {{ ske_model_path }}:/model:ro
+{% endif %}
+{% if ske_published_port | length > 0 %}
+    ports:
+      - target: 8080
+        published: {{ ske_published_port }}
+        protocol: tcp
+        mode: ingress
+{% endif %}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      # A first start downloads (MODEL_ID) or loads and warms the model.
+      start_period: {{ ske_health_start_period }}
+    networks:
+      - skembed-{{ env }}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    deploy:
+      mode: replicated
+      replicas: {{ ske_replicas }}
+      placement:
+        constraints: {{ (skembed.PLACEMENT_CONSTRAINTS | default(['node.role == worker'], true)) | tojson }}
+      resources:
+        limits:
+          cpus: '{{ ske_cpus }}'
+          memory: {{ ske_memory_limit }}
+        reservations:
+          memory: {{ ske_memory_reservation }}
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skembed"
+        - "com.skt.env={{ env }}"

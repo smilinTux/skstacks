@@ -1,0 +1,56 @@
+# The "set" pass: every optional knob set, fake values only.
+skcorpus:
+  CORPORA:
+    - name: example-legal
+      title: "Example Legal"
+      description: "Example legal corpus (fixture)"
+      collections: [example-chunks, example-reference-v1]
+      embed_url: "http://router.example.test:8090/v1"
+      document_prefix: ""
+      allowed_groups: [example-ai-users]
+      coherence_threshold: 0.8
+      graph: example-graph
+      embed_model: example-embed
+      query_prefix: ""
+      name_property: name
+    - name: example-notes
+      collections: [example-notes-v1]
+      embed_model: example-embed
+      vector_name: dense
+    - name: example-wiki
+      backend: pgvector
+      pg_dsn_env: EXAMPLE_WIKI_DSN
+      pg_relation: docs_public
+      pg_search_fn: hybrid_search_docs_public
+      pg_filter_column: corpus
+      pg_filter_values: [wiki, wiki-raw]
+      embed_model: example-embed
+      allowed_groups: [example-ai-users]
+  QDRANT_URL: "http://qdrant.example.test:6333"
+  QDRANT_API_KEY: "example-qdrant-ro-key-not-a-secret"
+  FALKORDB_HOST: graph.example.test
+  FALKORDB_PORT: 16379
+  FALKORDB_USERNAME: reader
+  FALKORDB_PASSWORD: "example-graph-password-not-a-secret"
+  EMBED_URL: "http://embed.example.test:8080/v1"
+  EMBED_API_KEY: "example-embed-key-not-a-secret"
+  PG_DSNS:
+    EXAMPLE_WIKI_DSN: "postgresql://reader:example-pg-password-not-a-secret@db.example.test:5432/examplewiki"
+  PG_NETWORKS: [example-db-net]
+  PG_STATEMENT_TIMEOUT_MS: 3000
+  IMAGE: "registry.example.test/python-fastapi:3.12@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  MAX_K: 10
+  MAX_WINDOW: 2
+  MAX_GRAPH_ROWS: 25
+  MAX_TEXT_CHARS: 2000
+  GLOBAL_ROUTES: true
+  COHERENCE_SAMPLE: 16
+  COHERENCE_INTERVAL_SECONDS: 1800
+  COHERENCE_MIN_COSINE: 0.98
+  COHERENCE_THRESHOLD: 0.85
+  REPLICAS: 2
+  CPUS: "0.5"
+  MEMORY_LIMIT: 256M
+  MEMORY_RESERVATION: 32M
+  PLACEMENT_CONSTRAINTS: ["node.role == worker"]
+  CONNECT_NETWORKS: [skembed-prod, skvector-prod]

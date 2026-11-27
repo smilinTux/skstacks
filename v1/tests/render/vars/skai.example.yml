@@ -1,0 +1,13 @@
+# Public, obviously fake example vault for the real-Ansible render gate
+# (v1/tests/render/render_playbooks.py). example.test only; no real secrets.
+skai:
+  CLUSTERNAME: render
+  DOMAIN: example.test
+  SECRET_KEY: "example-webui-secret-key-not-a-secret-0123"
+  DB_PASSWORD: "example-db-password-not-a-secret"
+  PROVISIONER_PASSWORD: "example-provisioner-password-not-a-secret"
+  GATEWAY_URL: "http://gateway.example.test:4000/v1"
+  GATEWAY_API_KEY: "sk-example-gateway-key-not-a-secret"
+  DEFAULT_MODEL: example-chat
+  EMBED_MODEL: example-embed
+  OIDC_CLIENT_SECRET: "example-oidc-client-secret-not-a-secret-0123"

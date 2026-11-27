@@ -1,0 +1,254 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# skembed: one embedding model served on CPU with an OpenAI-compatible
+# /v1/embeddings (Hugging Face text-embeddings-inference, CPU image, pinned by
+# digest). Internal only: no Traefik router, reached on the skembed-<env>
+# overlay by skcorpus and skai (and optionally on a published port). The
+# model comes from a local directory (MODEL_PATH) or a Hugging Face repo id
+# (MODEL_ID, token from the vault). See README.md.
+#
+# portal-tile: n/a (no Host() router, nothing to open in a browser).
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+# Step 1: Select manager node with failover
+# Run on all hosts to ensure it executes even with -l limit
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+# Step 2: Deploy to selected manager
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skembed
+    env: prod
+    service_name: skembed
+    service_type: optional
+    ske_default_image: "ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.4@sha256:2538ea1c9640d3763b15af668039d24172d063b42337b0c27796fc2be180c78d"
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Resolve the skembed settings
+      set_fact:
+        ske_image: "{{ skembed.IMAGE | default(ske_default_image, true) }}"
+        ske_model_path: "{{ skembed.MODEL_PATH | default('', true) | string }}"
+        ske_model_id: "{{ skembed.MODEL_ID | default('', true) | string }}"
+        ske_model_revision: "{{ skembed.MODEL_REVISION | default('', true) | string }}"
+        ske_model_name: "{{ skembed.MODEL_NAME | default('', true) | string }}"
+        ske_cache_path: "{{ skembed.CACHE_PATH | default('/var/data/' + app + '-' + env + '/cache', true) }}"
+        ske_placement: "{{ skembed.PLACEMENT_CONSTRAINTS | default(['node.role == worker'], true) }}"
+        ske_replicas: "{{ skembed.REPLICAS | default(1, true) | int }}"
+        ske_cpus: "{{ skembed.CPUS | default('4.0', true) | string }}"
+        ske_memory_limit: "{{ skembed.MEMORY_LIMIT | default('6G', true) | string }}"
+        ske_memory_reservation: "{{ skembed.MEMORY_RESERVATION | default('2G', true) | string }}"
+        ske_max_batch_tokens: "{{ skembed.MAX_BATCH_TOKENS | default(16384, true) | int }}"
+        ske_max_client_batch_size: "{{ skembed.MAX_CLIENT_BATCH_SIZE | default(64, true) | int }}"
+        ske_pooling: "{{ skembed.POOLING | default('', true) | string }}"
+        ske_published_port: "{{ skembed.PUBLISHED_PORT | default('', true) | string }}"
+        ske_health_start_period: "{{ skembed.HEALTH_START_PERIOD | default('600s', true) | string }}"
+      tags: [config]
+
+    - name: Validate the image pin
+      assert:
+        that:
+          - ske_image is search('@sha256:[0-9a-f]{64}$')
+        fail_msg: "ERROR: skembed.IMAGE must be pinned by digest (name:tag@sha256:<64 hex>), got {{ ske_image }}"
+        quiet: true
+      tags: [config]
+
+    - name: Validate the model source (exactly one of MODEL_PATH or MODEL_ID)
+      # MODEL_PATH: a directory on the nodes (shared storage, or local disk with
+      # a placement constraint) holding config.json, the tokenizer and the
+      # weights. MODEL_ID: a Hugging Face repo id, downloaded into CACHE_PATH on
+      # first start (HF_TOKEN for a private repo).
+      assert:
+        that:
+          - (ske_model_path | length > 0) != (ske_model_id | length > 0)
+          - ske_model_path == '' or ske_model_path is match('^/[A-Za-z0-9._/-]+$')
+          - ske_model_id == '' or ske_model_id is match('^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$')
+          - ske_model_revision == '' or ske_model_revision is match('^[A-Za-z0-9._/-]+$')
+          - ske_model_name == '' or ske_model_name is match('^[A-Za-z0-9][A-Za-z0-9._:/-]*$')
+        fail_msg: >-
+          ERROR: skembed needs exactly one of MODEL_PATH (an absolute directory
+          path on the nodes) or MODEL_ID (a Hugging Face repo id, owner/name).
+          MODEL_REVISION and MODEL_NAME, if set, are plain tokens.
+        quiet: true
+      tags: [config]
+
+    - name: Validate the service knobs
+      assert:
+        that:
+          - ske_placement is sequence and ske_placement is not string
+          - ske_replicas | int >= 1
+          - ske_cpus is match('^[0-9]+(\.[0-9]+)?$')
+          - ske_memory_limit is match('^[0-9]+[KMG]?$')
+          - ske_memory_reservation is match('^[0-9]+[KMG]?$')
+          - ske_max_batch_tokens | int >= 512
+          - ske_max_client_batch_size | int >= 1
+          - ske_pooling in ['', 'cls', 'mean', 'splade', 'last-token']
+          - ske_published_port == '' or (ske_published_port is match('^[0-9]+$') and ske_published_port | int > 1024 and ske_published_port | int < 65536)
+          - ske_health_start_period is match('^[0-9]+[sm]$')
+        fail_msg: >-
+          ERROR: skembed.PLACEMENT_CONSTRAINTS must be a list, REPLICAS >= 1,
+          CPUS a number, MEMORY_LIMIT/MEMORY_RESERVATION like 6G or 512M,
+          MAX_BATCH_TOKENS >= 512, MAX_CLIENT_BATCH_SIZE >= 1, POOLING one of
+          cls, mean, splade, last-token (or empty for the model's own), and
+          PUBLISHED_PORT empty or 1025-65535.
+        quiet: true
+      tags: [config]
+
+    - name: Fail closed on a local model or cache path without a placement pin
+      # A path outside /var/data is local disk: without a node.hostname
+      # constraint swarm may start the task on a node without the files.
+      assert:
+        that:
+          - (ske_placement | select('search', 'node.hostname') | list | length > 0) or ((ske_model_path == '' or ske_model_path.startswith('/var/data/')) and ske_cache_path.startswith('/var/data/'))
+        fail_msg: >-
+          skembed.MODEL_PATH or CACHE_PATH points at local disk but
+          PLACEMENT_CONSTRAINTS has no node.hostname == ... entry.
+        quiet: true
+      tags: [config]
+
+    - name: Define network variables from vault (idempotent network creation)
+      # Subnets: skembed-prod 172.16.126.0/24, -staging .127, -dev .128.
+      set_fact:
+        app_networks: "{{ skembed.networks | default([
+          { 'name': 'skembed-prod', 'subnet': '172.16.126.0/24', 'driver': 'overlay', 'attachable': true }
+        ]) }}"
+      tags: [networks, config]
+
+  tasks:
+    - name: Deploying {{ app }}
+      debug:
+        msg: Running SKStacks deploy {{ app }} scripts...
+
+    - name: Create the {{ app }} directories (not recursive)
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - "/var/data/{{ app }}-{{ env }}"
+        - "/var/data/config/{{ app }}-{{ env }}"
+
+    - name: Create the {{ app }} model cache directory (shared storage)
+      file:
+        path: "{{ ske_cache_path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      when: ske_cache_path.startswith('/var/data/')
+
+    - name: Process {{ app }} secrets env (root only)
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.env.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env"
+        owner: root
+        group: root
+        mode: '0600'
+      no_log: true
+      register: skembed_env
+      tags: [templates]
+
+    - name: Process {{ app }} shell env
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.sh.env.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env"
+        owner: root
+        group: root
+        mode: '0640'
+      tags: [templates]
+
+    - name: Process {{ app }} Docker Compose template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags: [compose]
+
+    - name: Create docker-compose.yml symlink
+      file:
+        src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags: [compose]
+
+    - name: Process deploy script template
+      template:
+        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/deploy"
+        owner: root
+        group: root
+        mode: '0755'
+      tags: [deploy-script]
+
+    - name: Create {{ app }} control script symlink
+      file:
+        src: "/var/data/{{ app }}-{{ env }}/deploy"
+        dest: "/var/data/deploy_{{ app }}-{{ env }}"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags: [deploy-script]
+
+    - name: Ensure overlay networks exist from app_networks variable
+      include_tasks: ../../shared/tasks/create_networks.yml
+      tags: [networks]
+
+    - name: Pre-pull the stack images (a registry refusal must not take a running service down)
+      include_tasks:
+        file: ../../shared/tasks/prepull_images.yml
+        apply:
+          tags:
+            - deploy
+            - prepull
+      tags:
+        - deploy
+        - prepull
+
+    - name: Deploy {{ app }} stack
+      # The env file is env_file: a changed token alone does not change the
+      # service spec, so the deploy script restarts an existing service.
+      shell: |
+        cd /var/data/{{ app }}-{{ env }}
+        RESTART={{ '1' if skembed_env is changed else '0' }} ./deploy
+      register: deploy_output
+      tags: [deploy]
+
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags: [deploy]

@@ -1,0 +1,63 @@
+version: '3.8'
+
+# skcorpus: read-only OpenAPI tool server (FastAPI on uvicorn, port 8000).
+# The image only provides Python + fastapi/uvicorn/httpx; the app is
+# app/skcorpus.py from this role, checked against its pinned sha256 and
+# bind-mounted read-only (README.md). Internal only (no Traefik router).
+
+{% set skc_nets = ['skcorpus-' ~ env] + (skcorpus.CONNECT_NETWORKS | default(([] if (skcorpus.EMBED_URL | default('', true) | string | length) > 0 else ['skembed-' ~ env]) + ['skvector-' ~ env, 'skgraph-' ~ env], true)) + (skcorpus.PG_NETWORKS | default([], true)) %}
+networks:
+{% for n in skc_nets | unique %}
+  {{ n }}:
+    external: true
+{% endfor %}
+
+services:
+  skcorpus:
+    # Default = skc_default_image in the playbook (a test keeps them equal);
+    # written out here so v1/scripts/list_images.py can see the pin.
+    image: {{ skcorpus.IMAGE | default('smilintux/skpayment-runtime:py3.11-20261123@sha256:79bd0222923e77f67c6dd4925ef51fc5623eaa5c58e5a4c9c9cbb90fae6731f5', true) }}
+    entrypoint: []
+    command: ["uvicorn", "--factory", "skcorpus:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info", "--no-access-log"]
+    working_dir: /
+    env_file:
+      - /var/data/config/skcorpus-{{ env }}/skcorpus.env
+    environment:
+      - CORPORA_FILE=/config/corpora.json
+      - PYTHONDONTWRITEBYTECODE=1
+    volumes:
+      - /var/data/skcorpus-{{ env }}/app/skcorpus.py:/skcorpus.py:ro
+      - /var/data/config/skcorpus-{{ env }}/corpora.json:/config/corpora.json:ro
+    read_only: true
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+{% for n in skc_nets | unique %}
+      - {{ n }}
+{% endfor %}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    deploy:
+      mode: replicated
+      replicas: {{ skcorpus.REPLICAS | default(1, true) }}
+      placement:
+        constraints: {{ (skcorpus.PLACEMENT_CONSTRAINTS | default(['node.role == worker'], true)) | tojson }}
+      resources:
+        limits:
+          cpus: '{{ skcorpus.CPUS | default("1.0", true) }}'
+          memory: {{ skcorpus.MEMORY_LIMIT | default("512M", true) }}
+        reservations:
+          memory: {{ skcorpus.MEMORY_RESERVATION | default("64M", true) }}
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - "com.skt.app=skcorpus"
+        - "com.skt.env={{ env }}"
