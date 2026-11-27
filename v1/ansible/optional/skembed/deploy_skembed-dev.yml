@@ -229,6 +229,17 @@
       include_tasks: ../../shared/tasks/create_networks.yml
       tags: [networks]
 
+    - name: Pre-pull the stack images (a registry refusal must not take a running service down)
+      include_tasks:
+        file: ../../shared/tasks/prepull_images.yml
+        apply:
+          tags:
+            - deploy
+            - prepull
+      tags:
+        - deploy
+        - prepull
+
     - name: Deploy {{ app }} stack
       # The env file is env_file: a changed token alone does not change the
       # service spec, so the deploy script restarts an existing service.
