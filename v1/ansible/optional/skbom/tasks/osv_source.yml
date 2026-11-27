@@ -1,0 +1,90 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# skbom.OSV_ENABLED (default true), after the stack deploy: enable
+# Dependency-Track's OSV vulnerability source so purl-only SBOMs (Trivy
+# CycloneDX) match. NVD alone matches CPEs, and a Trivy SBOM has none, so every
+# project showed zero vulnerabilities. Dependency-Track keeps the setting in its
+# own database, not in the environment, so a fresh skbom lacks it and it is
+# applied here, idempotently, through its admin API once the apiserver is
+# healthy. The first OSV mirror takes hours; see README.md.
+#
+# Needs skbom.ADMIN_PASSWORD (the password of the Dependency-Track admin
+# account, set once in the UI after the first login, which forces the change).
+# Without it this file says so and does nothing: the deploy never fails for a
+# missing optional secret. The password reaches the throwaway container on
+# stdin only; every task that carries it is no_log, and the script prints
+# status lines, never a secret.
+- name: Say that the OSV source is not applied for want of an admin password
+  debug:
+    msg: >-
+      skbom.OSV_ENABLED is on but skbom.ADMIN_PASSWORD is not set, so the OSV
+      vulnerability source was NOT enabled. Set skbom.ADMIN_PASSWORD (the
+      Dependency-Track admin password) in the vault and redeploy, or enable it
+      by hand (Administration, Vulnerability Sources, Google OSV).
+  when: (skbom.ADMIN_PASSWORD | default('', true) | string | length) == 0
+
+- name: Apply the OSV vulnerability source
+  when: (skbom.ADMIN_PASSWORD | default('', true) | string | length) > 0
+  block:
+    - name: Build the OSV provisioner input
+      set_fact:
+        skb_osv_input:
+          url: "http://{{ app }}-{{ env }}_apiserver:8080"
+          username: "{{ skbom.ADMIN_USERNAME | default('admin', true) }}"
+          password: "{{ skbom.ADMIN_PASSWORD }}"
+          ecosystems: "{{ skb_osv_ecosystems }}"
+          alias_sync: "{{ skbom.OSV_ALIAS_SYNC | default(true) | bool }}"
+          wait_seconds: "{{ skbom.OSV_WAIT_SECONDS | default(600, true) | int }}"
+      no_log: true
+
+    - name: Stage the OSV provisioner
+      copy:
+        src: "{{ playbook_dir }}/src/{{ app }}/osv_enable.py"
+        dest: "/var/data/config/{{ app }}-{{ env }}/osv_enable.py"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Enable the OSV vulnerability source in Dependency-Track
+      command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - -i
+          - --network
+          - "{{ app }}-{{ env }}"
+          - -v
+          - "/var/data/config/{{ app }}-{{ env }}/osv_enable.py:/osv_enable.py:ro"
+          - "{{ skbom.PROVISIONER_IMAGE | default('python:3.13.15-alpine@sha256:79e7a9b9ff1cbceff819f856fb374477792a5967759d94df266de7b7b4120e6f', true) }}"
+          - python
+          - /osv_enable.py
+        stdin: "{{ skb_osv_input | to_json }}"
+      register: skb_osv_result
+      changed_when: "'osv: updated' in skb_osv_result.stdout"
+      failed_when: false
+      no_log: true
+
+    # The script prints status lines only (never a secret), so its output is
+    # safe to show; the task above is no_log because its stdin is secret.
+    - name: Show the OSV provisioner result
+      debug:
+        msg: "{{ (skb_osv_result.stdout_lines | default([])) + (skb_osv_result.stderr_lines | default([])) }}"
+
+    - name: Fail if the OSV source could not be applied
+      fail:
+        msg: "Enabling the OSV vulnerability source failed (rc={{ skb_osv_result.rc | default('?') }}), see the lines above"
+      when: (skb_osv_result.rc | default(1)) != 0

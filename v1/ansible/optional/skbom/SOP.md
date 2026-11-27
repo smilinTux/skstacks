@@ -196,6 +196,13 @@ skbom:
   BACKUP_KEEP_DAYS: 7                       # BACKUP_NUM_KEEP is accepted as a fallback
   LOG_MAX_SIZE: 10m
   LOG_MAX_FILES: 3
+  OSV_ENABLED: true                         # false: leave Dependency-Track's vulnerability sources alone
+  ADMIN_USERNAME: admin                     # the Dependency-Track account the OSV step logs in as
+  ADMIN_PASSWORD: ""                        # its password (set once in the UI; the first login forces a change). Secret. Unset: OSV is not applied
+  OSV_ECOSYSTEMS: ""                        # google.osv.enabled: "Go;npm;PyPI;..." or a list; default Go;npm;PyPI;Maven;crates.io;Alpine;Debian;Ubuntu;NuGet;Packagist;RubyGems;Wolfi
+  OSV_ALIAS_SYNC: true                      # google.osv.alias.sync.enabled
+  OSV_WAIT_SECONDS: 600                     # how long to wait for the apiserver /health before the OSV step
+  PROVISIONER_IMAGE: ""                     # throwaway container for the OSV step, default python:3.13.15-alpine@sha256:...
   AUTHENTIK_TILE: true                      # false opts out of the portal tile
   AUTHENTIK_TILE_SLUG: ""                   # default skbom[-env]
   AUTHENTIK_TILE_NAME: "SKBom (Dependency-Track)"
@@ -230,6 +237,8 @@ served by `apiserver` once it is up; this role does not reproduce it.
 | Deploy fails: "the Postgres data on disk ... is major N" | The fail-closed Postgres major guard: `POSTGRES_IMAGE` is another major than the data in `POSTGRES_PATH`. Pin it back to the on-disk major, or follow README "Upgrading Postgres to 18" (dump and restore). |
 | Deploy fails: "OIDC_ENABLED is true but OIDC_ISSUER and/or OIDC_CLIENT_ID is empty" | Set both together, or leave `OIDC_ENABLED` false. |
 | Stack never schedules (services stuck pending) | No node carries the `skbom=true` label the default `PLACEMENT_CONSTRAINTS` requires. `docker node update --label-add skbom=true <node>`. |
+| Deploy fails at "Enable the OSV vulnerability source": "login ... refused" | `skbom.ADMIN_PASSWORD` is not the current password of the Dependency-Track `admin` account, or the forced first-login password change was never done in the UI. Fix the vault value and rerun with `--tags osv`. |
+| Projects show zero vulnerabilities though they have hundreds of components | Only NVD is enabled, and NVD matches CPEs while Trivy SBOMs carry purls. Set `ADMIN_PASSWORD` so the role enables OSV, then wait for the first mirror (hours, see README "Vulnerability sources"). |
 | `apiserver` healthcheck fails for several minutes after a fresh deploy | Expected on first boot: schema migrations run before `/health` answers `UP`. `HEALTH_CHECK_START_PERIOD` (default `90s`) and the deploy script's own `HEALTH_WAIT_SECONDS` (default 600) both account for this; a slow start is a warning, not a failed deploy. |
 | Frontend loads but every API call 404s/CORS-errors | `frontend.FRONTEND_IMAGE`'s `API_BASE_URL` must equal this same host (the role sets it to `https://<skbom host>` by default; check for a `HOSTNAME` override that does not match what the browser is actually loading the SPA from). |
 | A node still can't be reached after `DATA_NODE` is set | Check the three data paths actually point under that node's local disk, and that the vault's `DATA_NODE` spelling matches the inventory hostname exactly (case-sensitive). |
