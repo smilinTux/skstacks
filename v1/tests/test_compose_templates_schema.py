@@ -229,6 +229,17 @@ def _bool_filter(value):
     return bool(value)
 
 
+class MandatoryRefused(Exception):
+    """A template's own `| mandatory(msg)` guard refused the context."""
+
+
+def _mandatory_filter(value, msg=None):
+    # Ansible's mandatory: raise msg on an undefined value, pass anything else.
+    if isinstance(value, jinja2.Undefined):
+        raise MandatoryRefused(msg or "Mandatory variable not defined.")
+    return value
+
+
 def make_environment():
     env = jinja2.Environment(
         undefined=jinja2.ChainableUndefined,
@@ -236,6 +247,7 @@ def make_environment():
         extensions=["jinja2.ext.do"],
     )
     env.filters["bool"] = _bool_filter
+    env.filters["mandatory"] = _mandatory_filter
     env.filters["to_json"] = lambda v: json.dumps(v)
     env.filters["to_yaml"] = lambda v: yaml.safe_dump(v)
     env.filters["to_nice_yaml"] = lambda v, indent=2, **_: yaml.safe_dump(v, indent=indent, default_flow_style=False)
@@ -353,11 +365,20 @@ def pytest_generate_tests(metafunc):
     metafunc.parametrize("case", argvalues, ids=ids)
 
 
-def test_compose_template_schema_and_swarm(case):
+def test_compose_template_schema_and_swarm(case, request):
     template, env_name, ctx = case
 
     try:
         rendered = render(template, env_name, ctx)
+    except MandatoryRefused as exc:
+        # One flag flipped alone can need a companion key the generic context
+        # cannot know (skvector.UI_HOST_ENABLED needs its api key): the guard
+        # refusing it is the template working. The flipped path is covered by
+        # the role's own tests and the render gate's set pass. The baseline
+        # must never be refused.
+        if request.node.callspec.id.endswith("/baseline"):
+            pytest.fail(f"{template}: baseline refused for env={env_name}: {exc}")
+        pytest.skip(f"{template}: template guard refused this single-flag case: {exc}")
     except Exception as exc:
         pytest.fail(f"{template}: render raised for env={env_name} ctx={ctx}: {exc}")
 
