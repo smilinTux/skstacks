@@ -55,9 +55,25 @@ VIP back (`nopreempt`), so the VIP does not flap.
   hand-off of about a second. A node that is not ready within
   `skha.restart_settle_seconds` fails the handler and stops the rollout there
   (for example, a manager with no Traefik worker stays FAULT), so the next
-  manager is not restarted while no node can take the VIP. The check runs
-  only when the config changes. The default wait is the slowest check's
-  `interval * rise + timeout` plus 15 s (30 s for the default check).
+  manager is not restarted while no node can take the VIP. The default wait
+  is the slowest check's `interval * rise + timeout` plus 15 s (30 s for the
+  default check).
+- **Every deploy ends with a state check on every manager**, changed or not
+  (`src/keepalived/verify_keepalived.yml`). A manager in FAULT, or with
+  keepalived not active, is restarted once and given the same wait to report
+  MASTER or BACKUP. Still FAULT (or not active) fails the play on that host,
+  and the message names it. FAULT while another manager answers on the VIP
+  only warns, as in the handler (a manager with no Traefik worker). Not
+  exactly one MASTER after the wait also only warns, since a split can be
+  transient. This catches a manager left in FAULT by an earlier failed
+  rollout, which a rerun with no config change would otherwise report as
+  success. It is skipped in check mode (shell tasks do not run there).
+- **On a failed rollout, the recap can blame the wrong host.** The restart
+  handler is one `run_once` task that delegates to each manager in turn, so
+  when a manager does not become ready, the failure is counted against the
+  `run_once` host (usually the first manager) in the PLAY RECAP. The stderr
+  of the failing task names the node that is actually stuck
+  (`keepalived on <host> not MASTER/BACKUP ...`). Read that, not the recap.
 - **Gate names are validated.** `vip_gate_checks` must be a list, and every
   name in it (including the default `[traefik]`) must match a `health_checks`
   entry, or the deploy stops before touching any node.
