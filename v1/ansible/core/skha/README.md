@@ -59,7 +59,7 @@ VIP back (`nopreempt`), so the VIP does not flap.
   is the slowest check's `interval * rise + timeout` plus 15 s (30 s for the
   default check).
 - **Every deploy ends with a state check on every manager**, changed or not
-  (`src/keepalived/verify_keepalived.yml`). A manager in FAULT, or with
+  (`tasks/verify_keepalived.yml`). A manager in FAULT, or with
   keepalived not active, is restarted once and given the same wait to report
   MASTER or BACKUP. Still FAULT (or not active) fails the play on that host,
   and the message names it. FAULT while another manager answers on the VIP

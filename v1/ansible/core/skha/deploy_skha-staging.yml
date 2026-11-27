@@ -371,7 +371,7 @@
       ansible.builtin.meta: flush_handlers
 
     - name: Verify keepalived state on every manager
-      ansible.builtin.include_tasks: "{{ playbook_dir }}/src/keepalived/verify_keepalived.yml"
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/tasks/verify_keepalived.yml"
 
   handlers:
     # One manager at a time, and the next one only after this one reports

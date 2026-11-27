@@ -3,7 +3,7 @@
 The restart handler runs only when the rendered config changes, so a manager
 stuck in FAULT (or with keepalived stopped) after an earlier failed rollout
 stayed that way on a rerun with no change, and the play reported success.
-Every deploy now ends with src/keepalived/verify_keepalived.yml on every
+Every deploy now ends with tasks/verify_keepalived.yml on every
 manager: read the state, restart once on FAULT or not active, wait with
 retries/until, and fail naming the host if it is still FAULT. The second half
 runs that file with ansible-playbook on three local hosts and a fake
@@ -18,7 +18,7 @@ import yaml
 
 SKHA = pathlib.Path(__file__).resolve().parents[1] / "ansible/core/skha"
 PLAYBOOKS = sorted(SKHA.glob("deploy_skha-*.yml"))
-VERIFY = SKHA / "src/keepalived/verify_keepalived.yml"
+VERIFY = SKHA / "tasks/verify_keepalived.yml"
 
 
 def block():
@@ -42,7 +42,7 @@ def test_playbook_flushes_handlers_then_verifies_every_manager(path):
     assert tasks[flush]["ansible.builtin.meta"] == "flush_handlers"
     assert verify == flush + 1 == len(tasks) - 1
     inc = tasks[verify]
-    assert inc["ansible.builtin.include_tasks"].endswith("/src/keepalived/verify_keepalived.yml")
+    assert inc["ansible.builtin.include_tasks"].endswith("/tasks/verify_keepalived.yml")
     assert "run_once" not in inc and "when" not in inc
 
 
