@@ -4,7 +4,7 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
-## Unreleased (v2.26.36)
+## skstacks-v2.26.36 - 2026-11-27
 
 ### skpods: optional identity domain for per-user WebID hosts
 
@@ -127,6 +127,13 @@ Each entry says what an instance must do, if anything.
   UI first; Dependency-Track forces that at the first login) and redeploy skbom, or run it with
   `--tags osv`; override `OSV_ECOSYSTEMS` if the default list is not what the estate scans.
   Set `OSV_ENABLED: false` to opt out. Tests: `v1/tests/test_skbom_osv.py`.
+
+### Image updates (skmon)
+
+- Loki 3.7.9 to 3.7.10 and Grafana 13.3.0 to 13.3.1 (#550), tag plus multi-arch index digest in
+  `pins.yml`, the skmon compose defaults and the v1 service catalog. Grafana 13.3.1 is CVE fixes;
+  Loki 3.7.10 disables Multipath TCP on listeners by default. No config key removed or renamed.
+  **Instance action:** none beyond the normal redeploy of skmon.
 
 
 ## skstacks-v2.26.35 - 2026-11-27
