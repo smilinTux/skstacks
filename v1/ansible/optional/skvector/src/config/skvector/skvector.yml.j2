@@ -124,7 +124,6 @@ services:
         - "traefik.http.routers.skvector-ui{{ _sfx }}.entrypoints=websecure"
         - "traefik.http.routers.skvector-ui{{ _sfx }}.tls=true"
         - "traefik.http.routers.skvector-ui{{ _sfx }}.tls.certresolver=main"
-        - "traefik.http.routers.skvector-ui{{ _sfx }}.tls.options=intermediate@file"
         - "traefik.http.routers.skvector-ui{{ _sfx }}.middlewares={{ _ui_chain }}"
         - "traefik.http.routers.skvector-ui{{ _sfx }}.service=skvector{{ _sfx }}"
 {% endif %}

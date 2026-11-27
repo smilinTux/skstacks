@@ -112,7 +112,7 @@ def test_on_read_only_renders_ui_router(env):
     assert m[f"{r}.entrypoints"] == "websecure"
     assert m[f"{r}.tls"] == "true"
     assert m[f"{r}.tls.certresolver"] == "main"
-    assert m[f"{r}.tls.options"] == "intermediate@file"
+    assert f"{r}.tls.options" not in m  # Traefik default TLS options, as every router (#463)
     assert m[f"{r}.service"] == f"skvector{s}"
     # forward auth FIRST, then the key, then the existing body buffering and
     # the main router's no-error-pages chain (the dashboard reads JSON errors).
@@ -128,7 +128,7 @@ def test_on_leaves_main_and_grpc_routers_untouched(env):
     added = [l for l in on if l not in off]
     assert [l for l in off if l not in on] == []
     assert all(f"skvector-ui{sfx(env)}." in l or f"skvector{sfx(env)}-ui-apikey." in l for l in added), added
-    assert len(added) == 8
+    assert len(added) == 7
 
 
 def test_on_read_only_never_carries_the_full_key():
