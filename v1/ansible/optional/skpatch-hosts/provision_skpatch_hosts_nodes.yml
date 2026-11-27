@@ -483,6 +483,8 @@
 
             [Service]
             Type=oneshot
+            # bounded: a wedged daemon must not hang the unit (and so the timer)
+            TimeoutStartSec=120
             ExecStart=/usr/local/sbin/skpatch-netbird-keepup
         - name: skpatch-netbird-keepup.timer
           content: |
@@ -525,6 +527,7 @@
         - /etc/systemd/system/skpatch-netbird-keepup.timer
         - /etc/systemd/system/skpatch-netbird-keepup.service
         - /usr/local/sbin/skpatch-netbird-keepup
+        - /var/lib/skpatch-netbird-keepup
       register: skp_keepup_removed
       when: not (skp_netbird_keepup | bool)
 

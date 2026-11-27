@@ -842,17 +842,23 @@ Set the host var `skpatch_hosts_netbird_keepup: true` (default false) and
 provisioning installs `/usr/local/sbin/skpatch-netbird-keepup` (from
 `src/skpatch-hosts/skpatch-netbird-keepup.sh`) with
 `skpatch-netbird-keepup.service` and a `.timer` that runs it every 5 minutes.
-It does nothing unless netbird is installed, `netbird status --json` reports
-`NeedsLogin` or `Idle`, and the active profile does not set
-`"DisableAutoConnect": true`; then it runs `timeout 60 netbird up --no-browser`
-and logs to the journal (`journalctl -u skpatch-netbird-keepup`).
+It does nothing unless netbird is installed, the daemon status is `NeedsLogin`
+or `Idle` (`daemonStatus` from `timeout 20 netbird status --json`; clients
+older than 0.67 print `Daemon status: X` as text instead, which is read too),
+and the active profile does not set `"DisableAutoConnect": true`; then it runs
+`timeout 60 netbird up --no-browser` and logs to the journal
+(`journalctl -u skpatch-netbird-keepup`). The unit has `TimeoutStartSec=120`,
+so a wedged daemon cannot hang it and stop the timer.
 
 - Only for peers enrolled with a setup key. On an SSO-enrolled peer
-  `netbird up` just prints a login URL, so leave the var off there.
+  `netbird up` just prints a login URL, so leave the var off there. If it does
+  print one, the script logs one warning (without the URL) and skips runs for
+  6 hours (`/var/lib/skpatch-netbird-keepup/backoff-until`; delete it to retry
+  at once).
 - A plain `netbird down` is undone within 5 minutes. To keep a peer down, run
   `netbird up --disable-auto-connect` before `netbird down`, or turn the var off.
 - Turning the var off (or `skpatch_hosts_provision_state=absent`) stops the
-  timer and removes the units and the script.
+  timer and removes the units, the script and its backoff state.
 
 ## Maintenance pause
 

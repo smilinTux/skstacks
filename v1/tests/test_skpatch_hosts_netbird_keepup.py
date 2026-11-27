@@ -10,6 +10,7 @@ calls, with fake profiles under SKP_NETBIRD_ROOT."""
 import json
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -22,20 +23,34 @@ SHELLS = [s for s in ("sh", "dash", "bash") if shutil.which(s)]
 PROFILE = {"ManagementURL": {"Host": "skmesh.example.test:443"}, "DisableAutoConnect": False}
 
 
-def run(tmp, shell, status, files=None, netbird=True):
+LEGACY_NEEDS_LOGIN = ("Daemon status: NeedsLogin\n\nRun UP command to log in with SSO (interactive login):\n\n"
+                      " netbird up \n\nMore info: https://docs.netbird.io/how-to/register-machines-using-setup-keys\n\n")
+DEVICE_FLOW = ("Please do the SSO login in your browser.\nIf your browser didn't open automatically, use this URL"
+               " to log in:\n\nhttps://idp.example.test/device?user_code=ABCD-EFGH\n")
+
+
+def run(tmp, shell, status, files=None, netbird=True, json_out=None, plain_out=None, up_out="Connected"):
+    """json_out: what `status --json` prints (default: the compact one-line JSON
+    real clients print, with no trailing newline); plain_out: plain `status`."""
     root = tmp / "root"
     root.mkdir(parents=True, exist_ok=True)
     bindir = tmp / "bin"
     bindir.mkdir(exist_ok=True)
     calls = tmp / "calls"
     if netbird:
-        out = tmp / "status.json"
-        out.write_text(json.dumps({"daemonStatus": status, "management": {"connected": status == "Connected"}},
-                                  indent=2))
+        if json_out is None:
+            json_out = json.dumps({"daemonStatus": status, "management": {"connected": status == "Connected"}},
+                                  separators=(",", ":"))
+        (tmp / "status.json").write_text(json_out)
+        (tmp / "status.txt").write_text(plain_out if plain_out is not None else f"Daemon status: {status}\n")
+        (tmp / "up.txt").write_text(up_out + "\n")
         nb = bindir / "netbird"
         nb.write_text(f'#!/bin/sh\necho "$*" >> {calls}\n'
-                      f'[ "$1 $2" = "status --json" ] && cat {out}\n'
-                      f'[ "$1" = up ] && echo "Connected"\nexit 0\n')
+                      f'case "$*" in\n'
+                      f'  "status --json") cat {tmp / "status.json"} ;;\n'
+                      f'  status) cat {tmp / "status.txt"} ;;\n'
+                      f'  up*) cat {tmp / "up.txt"} ;;\n'
+                      f'esac\nexit 0\n')
         nb.chmod(0o755)
     for rel, data in (files or {}).items():
         f = root / rel
@@ -140,3 +155,61 @@ def test_playbook_installs_the_timer_only_on_opted_in_hosts_and_removes_it_other
     # the timer is stopped before its unit file goes
     stop = next(t for t in tasks if "systemctl disable --now skpatch-netbird-keepup.timer" in str(t.get("shell", "")))
     assert tasks.index(stop) < tasks.index(removes)
+
+
+def test_compact_json_without_a_trailing_newline_is_parsed(tmp_path, shell):
+    js = '{"peers":{"total":0},"daemonStatus":"NeedsLogin","management":{"url":"https://skmesh.example.test:443"}}'
+    assert not js.endswith("\n")
+    assert run(tmp_path, shell, "NeedsLogin", DEFAULT, json_out=js)[0] == ["up --no-browser"]
+
+
+def test_pretty_json_is_parsed_too(tmp_path, shell):
+    js = json.dumps({"daemonStatus": "Idle"}, indent=2)
+    assert run(tmp_path, shell, "Idle", DEFAULT, json_out=js)[0] == ["up --no-browser"]
+
+
+def test_a_pre_0_67_client_printing_plain_text_needs_login_is_handled(tmp_path, shell):
+    # older clients print the NeedsLogin banner as plain text even with --json
+    assert run(tmp_path, shell, "NeedsLogin", DEFAULT, json_out=LEGACY_NEEDS_LOGIN)[0] == ["up --no-browser"]
+
+
+def test_json_without_daemon_status_falls_back_to_plain_status(tmp_path, shell):
+    ups, _ = run(tmp_path, shell, "Idle", DEFAULT, json_out='{"management":{"connected":false}}',
+                 plain_out="Daemon status: Idle\n")
+    assert ups == ["up --no-browser"]
+    calls = (tmp_path / "calls").read_text().splitlines()
+    assert calls[:2] == ["status --json", "status"]
+    ups, _ = run(tmp_path / "b", shell, "Connected", DEFAULT, json_out='{"management":{"connected":true}}',
+                 plain_out="OS: linux/amd64\nManagement: Connected\n")
+    assert ups == []
+
+
+def test_a_login_url_backs_off_for_six_hours_and_is_never_logged(tmp_path, shell):
+    ups, out = run(tmp_path, shell, "NeedsLogin", DEFAULT, up_out=DEVICE_FLOW)
+    assert ups == ["up --no-browser"]
+    assert "WARNING" in out and "needs SSO" in out
+    assert "http" not in out and "ABCD-EFGH" not in out
+    until = int((tmp_path / "root/var/lib/skpatch-netbird-keepup/backoff-until").read_text())
+    assert 21600 - 60 <= until - int(time.time()) <= 21600
+    # the next runs inside the window do nothing, not even a status call
+    (tmp_path / "calls").unlink()
+    assert run(tmp_path, shell, "NeedsLogin", DEFAULT, up_out=DEVICE_FLOW) == ([], "")
+    assert not (tmp_path / "calls").exists()
+
+
+def test_an_expired_or_garbled_backoff_is_ignored(tmp_path, shell):
+    for i, text in enumerate([str(int(time.time()) - 1), "garbage", ""]):
+        files = {**DEFAULT, "var/lib/skpatch-netbird-keepup/backoff-until": text}
+        assert run(tmp_path / str(i), shell, "NeedsLogin", files)[0] == ["up --no-browser"]
+
+
+def test_status_calls_are_bounded_and_the_unit_has_a_start_timeout():
+    text = SCRIPT.read_text()
+    assert "timeout 20 netbird status --json" in text and "timeout 20 netbird status " in text
+    tasks = _tasks()
+    units = next(t for t in tasks if "copy" in t and "loop" in t and t.get("when") == "skp_netbird_keepup | bool")
+    service = {u["name"]: u["content"] for u in units["loop"]}["skpatch-netbird-keepup.service"]
+    assert "TimeoutStartSec=120" in service
+    removes = next(t for t in tasks if t.get("file", {}).get("state") == "absent"
+                   and "/usr/local/sbin/skpatch-netbird-keepup" in t.get("loop", []))
+    assert "/var/lib/skpatch-netbird-keepup" in removes["loop"]
