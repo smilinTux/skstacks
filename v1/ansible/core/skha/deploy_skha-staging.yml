@@ -364,6 +364,15 @@
       debug:
         msg: "{{ skha_status.stdout_lines | default(['Status check completed']) }}"
 
+    # The restart handler runs only for managers whose config changed. Run it
+    # now, then check every manager, so one left in FAULT by an earlier
+    # rollout is restarted or reported even when nothing changed.
+    - name: Run the keepalived restart handler before the state check
+      ansible.builtin.meta: flush_handlers
+
+    - name: Verify keepalived state on every manager
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/src/keepalived/verify_keepalived.yml"
+
   handlers:
     # One manager at a time, and the next one only after this one reports
     # MASTER or BACKUP. Its gate checks start failed (init_fail), so until
