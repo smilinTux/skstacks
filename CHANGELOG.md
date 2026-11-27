@@ -4,6 +4,26 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
+## Unreleased
+
+### skpods: no trash and no version history, so a delete really deletes (also on external storage)
+
+- A Solid `DELETE` means the resource is gone, but `files_trashbin` (on by default) copied every
+  deleted file into the account's local `files_trashbin`. On a pod whose storage is an external
+  mount (S3 today, WebDAV later) that kept a copy on this server's disk after the user deleted
+  it from the storage they chose (seen on pods-dev 2026-11-27: a Solid `DELETE` on the S3 pod
+  returned 204 and the file appeared in `data/<user>/files_trashbin`). `files_trashbin` is now
+  in the default `DISABLE_APPS` list and out of the default `ENABLE_APPS` list. Before it
+  disables the app the deploy runs `occ trashbin:cleanup --all-users`, so no trashed file is
+  left on disk unreachable; if the cleanup fails the play stops and the app stays on.
+  `files_versions` stays off (it was already in the default list; it also keeps versions of
+  external files on local disk). An app named in `ENABLE_APPS` is now never disabled by
+  `DISABLE_APPS`, so `ENABLE_APPS: [..., files_trashbin]` keeps the old behaviour without the
+  deploy emptying the trash each run.
+  **Instance action**: none for most. The next skpods deploy empties every account's trash and
+  disables it. To keep the trash, add `files_trashbin` to `skpods.ENABLE_APPS` before deploying.
+  Tests: `v1/tests/test_skpods_trash_versions.py`.
+
 ## skstacks-v2.26.36 - 2026-11-27
 
 ### deploy pre-pull: a refused image the node already holds no longer blocks the deploy; skfence error-pages pinned to its build node

@@ -104,7 +104,7 @@ from the very first start.
 | `PLACEMENT_CONSTRAINTS` | `[]` | Extra swarm constraints for every service. |
 | `THEME` | `skpods` | `skpods` brands the engine as skpods.id (login, titles, links, logo, dark UI); `none` restores the stock look. See [Branding](#branding). |
 | `SKELETON` | `skpods` | `skpods`: new accounts start with a welcome note and pod folders instead of the stock files, and stock files are removed from existing accounts. `stock` restores the upstream defaults. See [New accounts](#new-accounts). |
-| `ENABLE_APPS` | `files_pdfviewer`, `files_trashbin`, `text`, `twofactor_totp`, `skpods`, and `files_antivirus` with `ANTIVIRUS` | Shipped apps to enable. See [Files](#files). |
+| `ENABLE_APPS` | `files_pdfviewer`, `text`, `twofactor_totp`, `skpods`, and `files_antivirus` with `ANTIVIRUS` | Shipped apps to enable. An app listed here is never disabled by `DISABLE_APPS`. See [Files](#files). |
 | `NEXTCLOUD_SHARING` | `false` | `false` turns off Nextcloud shares and public links so pod data is shared only through Solid ACLs. See [Files](#files). |
 | `ANTIVIRUS` | `true` | Runs a `clamav` service in the stack and enables `files_antivirus` (shipped in the engine image): uploads with a virus are refused. See [Antivirus](#antivirus). |
 | `CLAMAV_IMAGE`, `CLAMAV_PATH`, `CLAMAV_MEMORY_LIMIT`, `CLAMAV_MEMORY_RESERVATION` | pinned digest, `/var/data/runtime/skpods-<env>/clamav`, `2G`, `512M` | ClamAV service. |
@@ -113,7 +113,7 @@ from the very first start.
 | `DEFAULT_QUOTA` | `10 GB` | Storage per account (`files` `default_quota`). Per-user overrides stay as set. |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_AUTHTYPE`, `SMTP_USER`, `SMTP_PASSWORD`, `MAIL_FROM`, `MAIL_DOMAIN` | unset, `465`, `ssl`, `LOGIN` | Outgoing mail (password reset). Without `SMTP_HOST` the "Forgot password?" link is hidden. |
 | `DB_DUMP_PATH`, `DB_DUMP_KEEP_DAYS`, `DB_DUMP_FREQUENCY` | `<APP_PATH>/database-dump`, `7`, `1d` | The `pgdump` service's consistent Postgres dumps, for skbackup. See [Backups](#backups). |
-| `DISABLE_APPS` | built-in list | Default Nextcloud apps to disable (best effort; always-enabled apps are skipped). |
+| `DISABLE_APPS` | built-in list (includes `files_trashbin` and `files_versions`) | Default Nextcloud apps to disable (best effort; always-enabled apps are skipped). |
 | `DEFAULT_PHONE_REGION`, `MAINTENANCE_WINDOW_START`, `TZ` | `US`, `1`, `UTC` | Nextcloud housekeeping. |
 | `PHP_MEMORY_LIMIT`, `PHP_UPLOAD_LIMIT` | `512M`, `1G` | PHP limits. |
 | `NEXTCLOUD_MEMORY_LIMIT`, `POSTGRES_MEMORY_LIMIT`, `REDIS_MEMORY_LIMIT`, `CRON_MEMORY_LIMIT` | `1536M`, `512M`, `128M`, `512M` | Container limits. |
@@ -151,8 +151,9 @@ cannot be disabled. The role adds:
 
 - `text`: `.md` and plain text open in the browser (and the owner can edit them). Pod files such as `.ttl` and `.acl` still only download.
 - `files_pdfviewer`: PDFs open in the browser. Images and video already preview (`viewer`).
-- `files_trashbin`: a deleted file goes to the owner's trash. It leaves the pod at once, as Solid expects.
-- Version history (`files_versions`) stays off: apps write often (every chat message is a write).
+- No trash (`files_trashbin` off): a delete, from Files or a Solid `DELETE`, removes the file for good. With the trash on, Nextcloud copies each deleted file into the account's local `files_trashbin`, also when the pod is an external mount (S3, WebDAV), so the file would stay on this server after the user deleted it from the storage they chose. The deploy empties every account's trash (`occ trashbin:cleanup --all-users`) before it disables the app. Listing `files_trashbin` in `ENABLE_APPS` keeps it on (and its trash untouched).
+- Version history (`files_versions`) stays off: apps write often (every chat message is a write), and versions are kept in the local `files_versions` whatever storage the file is on.
+- Quota: `DEFAULT_QUOTA` (and a per-user quota) is enforced only on pods stored on this server. Nextcloud does not count or limit an external mount, so a pod on S3 needs a quota at the storage (for Garage, `garage bucket set-quotas <bucket> --max-size <size>`).
 - Nextcloud sharing is off (`shareapi_enabled=no`): shares and public links would reach pod data without the pod's ACLs. Share through Solid instead. `NEXTCLOUD_SHARING: true` turns it back on.
 
 ## New accounts
