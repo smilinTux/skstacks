@@ -191,6 +191,33 @@
       tags:
         - compose
 
+    # The 503 fallback router (src/config/skmesh/traefik-unavailable.yml.j2)
+    # goes into the top level of every fence dynamic/ directory present here
+    # (skfence and/or skfenceha), never a subdirectory (the fences refuse
+    # to deploy while one exists). No fence directory: nothing is written.
+    - name: Find the Traefik dynamic config directories (skfence, skfenceha)
+      stat:
+        path: "/var/data/config/{{ item }}-{{ env }}/dynamic"
+      loop:
+        - skfence
+        - skfenceha
+      register: skmesh_fence_dynamic_dirs
+      tags:
+        - traefik
+
+    - name: Render the {{ app }} 503 fallback router into each Traefik dynamic directory
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/traefik-unavailable.yml.j2"
+        dest: "/var/data/config/{{ item.item }}-{{ env }}/dynamic/{{ app }}-{{ env }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      loop: "{{ skmesh_fence_dynamic_dirs.results | selectattr('stat.exists') | selectattr('stat.isdir') | list }}"
+      loop_control:
+        label: "{{ item.item }}"
+      tags:
+        - traefik
+
     - name: Create docker-compose.yml symlink
       file:
         src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"

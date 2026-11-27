@@ -131,6 +131,28 @@ the relay through Traefik, and logins fail. Put the operators' and the peers' us
 ranges in `sksec.ALLOWLIST_CIDRS`. Peers already connected keep their WireGuard
 tunnels.
 
+## 503 while a backend is down (Traefik fallback router)
+
+While a skmesh service has no running task (a redeploy, a crash loop, a node
+drain), Swarm drops its Traefik labels and the skmesh host falls through to the
+fence's priority-1 catch-all, which answers 403. A NetBird client maps a 403 on
+GetServerKey to gRPC PermissionDenied, leaves its retry loop and stays in
+`NeedsLogin` until someone runs `netbird up` on it by hand.
+
+So the playbook also renders `src/config/skmesh/traefik-unavailable.yml.j2` to
+`/var/data/config/<fence>-<env>/dynamic/skmesh-<env>.yml` for each fence
+(`skfence`, `skfenceha`) whose dynamic directory exists on the manager. It is one
+file-provider router for the whole skmesh host at priority 2 (above the
+catch-alls, below every skmesh label router) to a load balancer with no servers,
+so the host answers **503** whenever no label router matches. Clients map that to
+Unavailable and keep retrying. Nothing changes while the services run, and the
+dashboard path answers 503 instead of the catch-all 403 while it is down. No
+fence directory on the manager: nothing is written (deploy the fence first, then
+skmesh). Removing skmesh does not delete the file; remove it by hand.
+
+The peer-side safety net for peers that already went to `NeedsLogin` is
+skpatch-hosts' opt-in `skpatch_hosts_netbird_keepup` timer.
+
 ## TURN / STUN
 
 Set `skmesh.DEPLOY_COTURN: true` to run coturn as part of this stack;
