@@ -173,6 +173,17 @@
         group: root
         state: link
 
+    - name: Pre-pull the stack images (a registry refusal must not take a running service down)
+      include_tasks:
+        file: ../../shared/tasks/prepull_images.yml
+        apply:
+          tags:
+            - deploy
+            - prepull
+      tags:
+        - deploy
+        - prepull
+
     - name: Deploy {{ app }} swarm stack
       shell: /bin/bash /var/data/deploy_{{ app }}-{{ env }}
       register: shell_output

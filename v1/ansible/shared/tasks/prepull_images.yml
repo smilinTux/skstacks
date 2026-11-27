@@ -1,0 +1,167 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# Shared task: pull every image a stack uses on the nodes that can run it, BEFORE
+# `docker stack deploy`, and fail the play if an image cannot be pulled.
+#
+# Why: `docker stack deploy` changes the service spec first and only then do the
+# nodes pull. A registry that refuses a pull (a transient `denied` from ghcr was
+# seen on a nor sksso deploy, 2026-11-27) leaves every new task at 0/1 while the
+# old spec is already gone: `docker service rollback` restores nothing, because
+# PreviousSpec is the new spec. Pulling first moves that failure in front of the
+# deploy, where nothing running has been touched. A node that already holds a
+# digest-pinned image is not asked the registry at all, so a registry outage
+# does not block a redeploy of what is already local.
+#
+# Caller contract: include this file in a play on the selected manager, after the
+# stack file is rendered and immediately before the task that runs the deploy
+# script. `app` and `env` as usual; nothing else is required.
+#
+# Knobs (all optional, all set in group_vars, the vault, or with -e):
+#   skstacks_prepull_images        true   false switches the whole step off
+#   skstacks_prepull_retries       4      pull attempts per image per node
+#   skstacks_prepull_delay         10     seconds; attempt N waits N x delay
+#                                          before the next try (10, 20, 30 s)
+#   skstacks_prepull_placement     true   false pulls every image on every Ready,
+#                                          active node instead of honouring each
+#                                          service's deploy.placement.constraints
+#   skstacks_prepull_compose       ""     path of the stack file on the manager;
+#                                          default: /var/data/config/<app>-<env>/
+#                                          <app>.yml, else .../docker-compose.yml
+#
+# Nodes are reached through the inventory (`delegate_to`), so a swarm node is
+# pulled on only when its inventory name is its Swarm hostname (the same rule the
+# skmon agent guard enforces). A swarm node the inventory does not know is
+# reported and left alone: the play cannot pull there, and says so.
+- name: Pre-pull the stack's images on the nodes that will run them
+  when:
+    - skstacks_prepull_images | default(true) | bool
+    - not ansible_check_mode
+  block:
+    - name: Find the stack file for the pre-pull
+      stat:
+        path: "{{ item }}"
+      register: prepull_compose_stat
+      loop: >-
+        {{ [skstacks_prepull_compose] if (skstacks_prepull_compose | default('', true)) != ''
+           else ['/var/data/config/' ~ app ~ '-' ~ env ~ '/' ~ app ~ '.yml',
+                 '/var/data/config/' ~ app ~ '-' ~ env ~ '/docker-compose.yml'] }}
+      tags: [deploy, prepull]
+
+    - name: Select the stack file for the pre-pull
+      set_fact:
+        prepull_compose_path: >-
+          {{ (prepull_compose_stat.results | selectattr('stat.exists') | map(attribute='item') | list + [''])[0] }}
+      tags: [deploy, prepull]
+
+    - name: Say that there is no stack file to pre-pull from
+      debug:
+        msg: "No stack file found for {{ app }}-{{ env }} ({{ prepull_compose_stat.results | map(attribute='item') | join(', ') }}); the pre-pull is skipped."
+      when: prepull_compose_path == ''
+      tags: [deploy, prepull]
+
+    - name: Pre-pull the stack's images
+      when: prepull_compose_path != ''
+      tags: [deploy, prepull]
+      block:
+        - name: Read the stack file
+          slurp:
+            src: "{{ prepull_compose_path }}"
+          register: prepull_compose_raw
+
+        - name: Read every swarm node (hostname, role, labels, state)
+          shell: |
+            set -o pipefail
+            docker node ls -q | xargs docker node inspect
+          args:
+            executable: /bin/bash
+          register: prepull_node_inspect
+          changed_when: false
+
+        - name: Work out which node needs which image
+          command: "{{ ansible_playbook_python }} {{ playbook_dir }}/../../shared/src/prepull_plan.py"
+          args:
+            stdin: >-
+              {{ {'compose': (prepull_compose_raw.content | b64decode | from_yaml),
+                  'nodes': (prepull_node_inspect.stdout | from_json),
+                  'respect_placement': (skstacks_prepull_placement | default(true) | bool)} | to_json }}
+          delegate_to: localhost
+          become: false
+          register: prepull_plan_raw
+          changed_when: false
+
+        - name: Keep the pre-pull plan
+          set_fact:
+            prepull_plan: "{{ prepull_plan_raw.stdout | from_json }}"
+            prepull_reachable: "{{ (prepull_plan_raw.stdout | from_json).nodes.keys() | list | intersect(groups['all'] | default([])) }}"
+
+        - name: Report what the pre-pull will not cover
+          debug:
+            msg: >-
+              {{ (['Swarm node(s) not in the inventory under their Swarm hostname, images NOT pre-pulled there: '
+                   ~ (prepull_plan.nodes.keys() | list | difference(prepull_reachable) | join(', '))]
+                  if (prepull_plan.nodes.keys() | list | difference(prepull_reachable) | length) > 0 else [])
+                 + (['No eligible node for service(s): ' ~ (prepull_plan.unplaced | join(', '))]
+                    if prepull_plan.unplaced | length > 0 else [])
+                 + (prepull_plan.skipped | map('string') | list) }}
+          when: >-
+            (prepull_plan.nodes.keys() | list | difference(prepull_reachable) | length) > 0
+            or prepull_plan.unplaced | length > 0
+            or prepull_plan.skipped | length > 0
+
+        - name: Pull the images on every node that will run them (retry with backoff)
+          command:
+            argv: >-
+              {{ ['/bin/bash', '-c', prepull_pull_script, 'prepull',
+                  (skstacks_prepull_retries | default(4) | int | string),
+                  (skstacks_prepull_delay | default(10) | int | string)]
+                 + prepull_plan.nodes[item] }}
+          vars:
+            prepull_pull_script: |
+              retries=$1; delay=$2; shift 2
+              status=0
+              for image in "$@"; do
+                # A digest-pinned image already on this node needs no registry.
+                case "$image" in
+                  *@sha256:*) if docker image inspect "$image" >/dev/null 2>&1; then echo "present: $image"; continue; fi ;;
+                esac
+                ok=0
+                for attempt in $(seq 1 "$retries"); do
+                  if err=$(docker pull --quiet "$image" 2>&1 >/dev/null); then ok=1; echo "pulled: $image"; break; fi
+                  echo "pull failed (attempt $attempt of $retries): $image: $(printf '%s' "$err" | tail -n 1)" >&2
+                  if [ "$attempt" -lt "$retries" ]; then sleep $(( delay * attempt )); fi
+                done
+                if [ "$ok" -ne 1 ]; then echo "PREPULL_FAILED $image" >&2; status=1; fi
+              done
+              exit "$status"
+          loop: "{{ prepull_reachable }}"
+          delegate_to: "{{ item | default(inventory_hostname) }}"
+          register: prepull_results
+          failed_when: false
+          changed_when: false
+
+        - name: Stop before the deploy when an image cannot be pulled
+          fail:
+            msg: >-
+              Image pre-pull failed, so the stack deploy was NOT run and the running
+              services are untouched. {{ failed_nodes | length }} node(s) could not
+              pull: {% for r in failed_nodes %}{{ r.item }} ({{ r.stderr_lines | select('match', 'PREPULL_FAILED') | map('regex_replace', '^PREPULL_FAILED ', '') | join(', ') }}){{ ', ' if not loop.last }}{% endfor %}.
+              Check the registry and the nodes' access to it (docker pull on the node,
+              the node's docker login), then rerun. To deploy anyway, set
+              skstacks_prepull_images: false.
+          vars:
+            failed_nodes: "{{ prepull_results.results | selectattr('rc', 'defined') | rejectattr('rc', 'equalto', 0) | list }}"
+          when: (prepull_results.results | selectattr('rc', 'defined') | rejectattr('rc', 'equalto', 0) | list | length) > 0

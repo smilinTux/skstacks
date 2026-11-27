@@ -320,6 +320,17 @@
         - deploy
         - postgres-major
 
+    - name: Pre-pull the stack images (a registry refusal must not take a running service down)
+      include_tasks:
+        file: ../../shared/tasks/prepull_images.yml
+        apply:
+          tags:
+            - deploy
+            - prepull
+      tags:
+        - deploy
+        - prepull
+
     - name: Deploy {{ app }} stack
       # env_file contents are read by `docker stack deploy` into the
       # service spec, so a changed password or setting rolls the services
