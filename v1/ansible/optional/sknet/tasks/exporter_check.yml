@@ -30,6 +30,10 @@
       {%- for e in sknet_check_exporters -%}
       {%- if e.state not in ['present', 'absent'] -%}{%- set _ = out.append(e.name ~ ': sknet_state must be present or absent, got ' ~ e.state) -%}{%- endif -%}
       {%- if e.state == 'present' -%}
+      {%- for k in ['site', 'role'] -%}
+      {%- set v = e[k] | default('', true) -%}
+      {%- if v and not (v is string and v is match(sknet_re_label)) -%}{%- set _ = out.append(e.name ~ ': sknet_' ~ k ~ ' must be a lowercase label (letters, digits, dot, dash), got "' ~ v ~ '"') -%}{%- endif -%}
+      {%- endfor -%}
       {%- if not (e.address is match(sknet_re_ipv4)) -%}{%- set _ = out.append(e.name ~ ': sknet_export_address must be an IPv4 literal, got "' ~ e.address ~ '"') -%}{%- endif -%}
       {%- if e.interfaces is string or e.interfaces is mapping or e.interfaces is not sequence or e.interfaces | length == 0 -%}
       {%- set _ = out.append(e.name ~ ': sknet_interfaces must be a non-empty list') -%}

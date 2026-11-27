@@ -380,6 +380,19 @@ def test_vault_is_loaded_by_the_play(host):
     assert "ntop/ntopng:7.0.2" in host.unit_text()
 
 
+def test_vault_networks_become_named_local_networks(host):
+    host.ok()
+    assert " -m " not in host.exec_start()
+    host.set_vault({"NETWORKS": {"192.0.2.0/24": "site a lan", "198.51.100.0/24": {"name": "mesh", "site": "mesh"}}})
+    host.ok()
+    assert host.exec_start().rstrip().endswith(" -m 192.0.2.0/24=site_a_lan,198.51.100.0/24=mesh")
+
+
+def test_bad_vault_networks_are_refused(host):
+    host.set_vault({"NETWORKS": {"192.0.2.0/24": "x;rm -rf /"}})
+    assert "NETWORKS" in host.refused()
+
+
 # --- the allowlist chain ------------------------------------------------------
 
 def test_chain_accepts_only_the_listed_sources_then_drops(host):

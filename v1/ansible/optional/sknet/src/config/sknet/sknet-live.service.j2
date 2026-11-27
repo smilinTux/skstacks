@@ -35,7 +35,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStartPre=-{{ sknet_l_docker }} rm -f sknet-live
-ExecStart={{ sknet_l_docker }} run --rm --name sknet-live --network host --memory {{ sknet_l_mem }} --memory-swap {{ sknet_l_mem }} --cap-drop ALL --security-opt no-new-privileges --log-opt max-size=10m --log-opt max-file=3{% for c in sknet_l_caps %} --cap-add {{ c }}{% endfor %} -v {{ sknet_l_data }}/ntopng:/var/lib/ntopng {{ sknet_l_image }}{% for i in sknet_l_ifaces %} -i {{ i }}{% endfor %} -w {{ sknet_l_bind }}:{{ sknet_l_port }} -l 1 -d /var/lib/ntopng -x {{ sknet_l_max_hosts }} -X {{ sknet_l_max_flows }}
+ExecStart={{ sknet_l_docker }} run --rm --name sknet-live --network host --memory {{ sknet_l_mem }} --memory-swap {{ sknet_l_mem }} --cap-drop ALL --security-opt no-new-privileges --log-opt max-size=10m --log-opt max-file=3{% for c in sknet_l_caps %} --cap-add {{ c }}{% endfor %} -v {{ sknet_l_data }}/ntopng:/var/lib/ntopng {{ sknet_l_image }}{% for i in sknet_l_ifaces %} -i {{ i }}{% endfor %} -w {{ sknet_l_bind }}:{{ sknet_l_port }} -l 1 -d /var/lib/ntopng -x {{ sknet_l_max_hosts }} -X {{ sknet_l_max_flows }}{{ (' -m ' ~ (sknet_l_networks | join(','))) if sknet_l_networks else '' }}
 ExecStop=-{{ sknet_l_docker }} stop --time 20 sknet-live
 Restart=on-failure
 RestartSec=10

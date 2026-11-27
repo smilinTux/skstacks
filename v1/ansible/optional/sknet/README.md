@@ -92,6 +92,26 @@ ansible-playbook -i shared/sknet_exporters.ini \
 
 The host plays read the same environment's vault (`prod`, or `-e env=<env>`); an empty `sknet: {}` block is enough for them. Full procedure, verification and troubleshooting: [docs/operations.md](./docs/operations.md) and [SOP.md](./SOP.md).
 
+## Views per estate
+
+Akvorado has no dashboards to build: every view is the Visualize page with a set of
+dimensions and a filter, and the URL is the bookmark. The deploy prepares the labels
+and filters:
+
+- **Exporter site and role** (`sknet_site`, `sknet_role` hostvars): which estate saw the
+  traffic. Group by `ExporterSite`.
+- **Network attributes** (`NETWORKS` values as maps): which estate each address belongs
+  to. Group by `SrcNetSite` then `DstNetSite` for a Sankey of traffic between estates, or
+  by `SrcNetName`/`DstNetName` for the subnets.
+- **Shared saved filters** (the filter box's saved list, for every user): `Edge/Internet`
+  when an exporter has an internet interface, `Interface class/<class>` for each class in
+  use, `Seen at/<site>` for each exporter site, `Estate/<site>` for each network site, then
+  the vault's `SAVED_FILTERS`. They are rebuilt at each console start; a filter dropped
+  from the config disappears.
+
+ntopng gets the same subnet names as its local networks, so hosts show which network
+they are in.
+
 ## Prerequisites
 
 - A swarm node with **AVX2** (ClickHouse 26.6 and later) and local disk for `DATA_DIR`. ClickHouse and Kafka never go on NFS or `/var/data`.
@@ -120,7 +140,8 @@ The vault holds one `sknet:` block, merged over `vars/defaults.yml`; set only wh
 | `NETFLOW_PORT` / `IPFIX_PORT` | `2055` / `4739` | Inlet UDP ports, host mode on `DATA_NODE`; must differ |
 | `FLOW_SOURCES` | required | IPv4 literals allowed to send flows; must contain every exporter address; empty refuses the deploy |
 | `STATIC_EXPORTERS` | `{}` | Fallback exporter metadata: name to `{sknet_export_address, sknet_interfaces}` |
-| `NETWORKS` | `{}` | CIDR to name map for Akvorado network naming |
+| `NETWORKS` | `{}` | CIDR to a plain name, or to `{name, site, role, region, tenant}` (lowercase labels): `SrcNetName`, `DstNetSite` and so on in the console, `site` being the estate. Also named local networks in ntopng (`-m`, spaces become `_`). See [Views](#views-per-estate) |
+| `SAVED_FILTERS` | `[]` | Extra shared console filters, a list of `{description, content}` (one line each), added after the built-in ones |
 | `GEOIP_ENABLED` | `false` | Adds a `geoip` directory under `DATA_DIR`; you supply the database files |
 | `FLOW_TTL_DAYS` | `30` | Raw and 1 minute tables (1 to 3650); decide before first start |
 | `FLOW_AGG_TTL_DAYS` | `90` | 5 minute table; the hourly table keeps 4 times as long (at most 365) |
@@ -140,6 +161,7 @@ The vault holds one `sknet:` block, merged over `vars/defaults.yml`; set only wh
 | `sknet_interfaces` | exporters, deploy | List of `{name, index, class, speed_mbps, description}`; name 1 to 15 characters of `A-Za-z0-9_.-`; index integer 100 to 65535 unique per host; class `lan`, `mesh`, `estate-link` or `internet` |
 | `sknet_collector` | exporters | IPv4 literal of the collector; names refused; public addresses refused unless `sknet_allow_public_collector: true` |
 | `sknet_export_address` | exporters, deploy | The address the collector sees as source; feeds `FLOW_SOURCES` checks and static metadata |
+| `sknet_site`, `sknet_role` | deploy | Optional lowercase labels (`a-z0-9.-`): the estate the exporter sits in and its role (for example `edge`, `cloud`). They become `ExporterSite` and `ExporterRole`. Also accepted in `STATIC_EXPORTERS` entries |
 | `sknet_<env>_networks` | deploy | Overlay networks with their subnets (default `sknet-<env>` on 172.16.67/68/69.0/24 plus `cloud-public-<env>`). Override when your subnet registry already uses those: a duplicate overlay subnet leaves the Swarm allocator unable to place any task |
 | `sknet_state` | exporters, live | `present` (default) or `absent` |
 | `sknet_netflow_port` | exporters | Refused unless it equals the vault's `NETFLOW_PORT` |
