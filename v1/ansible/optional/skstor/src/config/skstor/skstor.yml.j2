@@ -28,9 +28,6 @@ version: '3.8'
 # host-local, so if Swarm ever reschedules this replicas=1 service onto a
 # different manager, a named volume would silently start it on an empty
 # volume on the new host instead of the data on shared storage.
-# Exception: the metadata db, which must not sit on NFS in production.
-# skstor.META_PATH/META_NODE put it on one node's local disk and pin the
-# service there (README "Storage layout", docs/runbooks/skstor.md).
 
 networks:
   skstor-{{ env }}:
@@ -38,7 +35,9 @@ networks:
   cloud-public-{{ env }}:
     external: true
 
-{# Node-local metadata (README "Storage layout"): META_PATH is the host
+{# Exception to the shared-tree rule above: the metadata db, which must
+   not sit on NFS in production (docs/runbooks/skstor.md).
+   Node-local metadata (README "Storage layout"): META_PATH is the host
     side of the metadata bind mount. META_NODE pins the service to the node
     that holds it; META_SNAPSHOT_INTERVAL (default 6h once META_NODE is set)
     makes Garage snapshot that db onto the shared tree. All unset, this file
