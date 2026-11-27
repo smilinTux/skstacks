@@ -215,6 +215,24 @@
       loop: "{{ skmesh_fence_dynamic_dirs.results | selectattr('stat.exists') | selectattr('stat.isdir') | list }}"
       loop_control:
         label: "{{ item.item }}"
+      register: skmesh_fallback_render
+      tags:
+        - traefik
+
+    # skfenceha's dynamic/ is shared NFS: the write above wakes the file watch
+    # only on this manager, so every other manager's traefik-worker (maybe the
+    # VIP holder) would keep the old config. A local touch on each manager
+    # gives its watch the event (skfenceha README: "touch the changed files on
+    # each manager").
+    - name: Touch the 503 fallback router on every manager (skfenceha shared NFS)
+      file:
+        path: "/var/data/config/skfenceha-{{ env }}/dynamic/{{ app }}-{{ env }}.yml"
+        state: touch
+      delegate_to: "{{ item }}"
+      loop: "{{ groups[target_manager_group | default('swarm_managers')] | default([]) }}"
+      when: >-
+        skmesh_fallback_render.results | default([]) | selectattr('changed')
+        | map(attribute='item.item') | select('equalto', 'skfenceha') | list | length > 0
       tags:
         - traefik
 

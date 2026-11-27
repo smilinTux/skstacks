@@ -145,10 +145,19 @@ So the playbook also renders `src/config/skmesh/traefik-unavailable.yml.j2` to
 file-provider router for the whole skmesh host at priority 2 (above the
 catch-alls, below every skmesh label router) to a load balancer with no servers,
 so the host answers **503** whenever no label router matches. Clients map that to
-Unavailable and keep retrying. Nothing changes while the services run, and the
-dashboard path answers 503 instead of the catch-all 403 while it is down. No
-fence directory on the manager: nothing is written (deploy the fence first, then
-skmesh). Removing skmesh does not delete the file; remove it by hand.
+Unavailable and keep retrying. Nothing changes while the services run. The
+fallback carries no middlewares (no `default@file` chain, no error pages), so a
+down dashboard shows Traefik's bare "no available server" 503 instead of the
+catch-all's 403 page. No fence directory on the manager: nothing is written
+(deploy the fence first, then skmesh). Removing skmesh does not delete the file;
+remove it by hand.
+
+On skfenceha the `dynamic/` directory is shared NFS, and a write from one manager
+does not wake the file watch on the others. When the skfenceha copy changes, the
+play therefore touches it on every manager in the target manager group
+(`target_manager_group`, default `swarm_managers`), so each traefik-worker loads
+it, the VIP holder included. The fences reserve the name `skmesh-<env>.yml`: an
+`EXTRA_DYNAMIC_FILES` entry with that `dest` is refused.
 
 The peer-side safety net for peers that already went to `NeedsLogin` is
 skpatch-hosts' opt-in `skpatch_hosts_netbird_keepup` timer.

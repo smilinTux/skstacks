@@ -95,3 +95,45 @@ def test_playbook_renders_the_fallback_into_each_present_fence_dynamic_dir(envna
     assert tpl["template"]["dest"] == "/var/data/config/{{ item.item }}-{{ env }}/dynamic/{{ app }}-{{ env }}.yml"
     assert stat["register"] in tpl["loop"] and "stat.exists" in tpl["loop"]
 
+
+
+@pytest.mark.parametrize("envname", ["dev", "prod"])
+def test_skfenceha_fallback_is_touched_on_every_manager(envname):
+    # skfenceha's dynamic/ is shared NFS: a write on one manager wakes only that
+    # manager's file watch, so each manager must see a local touch
+    play = yaml.safe_load((SKMESH / f"deploy_skmesh-{envname}.yml").read_text())
+    tasks = [t for p in play if isinstance(p, dict) for t in p.get("tasks", [])]
+    tpl = next(t for t in tasks if "template" in t and "traefik-unavailable" in t["template"]["src"])
+    touch = next(t for t in tasks if t.get("file", {}).get("state") == "touch"
+                 and "{{ app }}-{{ env }}.yml" in t["file"]["path"])
+    assert tasks.index(tpl) < tasks.index(touch)
+    assert touch["file"]["path"] == "/var/data/config/skfenceha-{{ env }}/dynamic/{{ app }}-{{ env }}.yml"
+    assert touch["delegate_to"] == "{{ item }}"
+    assert touch["loop"] == "{{ groups[target_manager_group | default('swarm_managers')] | default([]) }}"
+    # only when the skfenceha copy changed this run
+    assert tpl["register"] in touch["when"] and "'skfenceha'" in touch["when"]
+
+
+def _touch_when(results):
+    play = yaml.safe_load((SKMESH / "deploy_skmesh-prod.yml").read_text())
+    tasks = [t for p in play if isinstance(p, dict) for t in p.get("tasks", [])]
+    when = next(t for t in tasks if t.get("file", {}).get("state") == "touch")["when"]
+    env = jinja2.Environment()
+    env.filters["default"] = lambda v, d=None: d if v is None else v
+    return env.compile_expression(when.strip())(skmesh_fallback_render={"results": results})
+
+
+def test_touch_condition_fires_only_for_a_changed_skfenceha_copy():
+    assert _touch_when([{"changed": True, "item": {"item": "skfenceha"}}])
+    assert not _touch_when([{"changed": False, "item": {"item": "skfenceha"}}])
+    assert not _touch_when([{"changed": True, "item": {"item": "skfence"}}])
+    assert not _touch_when([])
+
+
+@pytest.mark.parametrize("fence", ["skfence", "skfenceha"])
+@pytest.mark.parametrize("envname", ["dev", "staging", "prod"])
+def test_fallback_file_name_is_reserved_against_extra_dynamic_files(fence, envname):
+    play = yaml.safe_load((ANSIBLE / f"core/{fence}/deploy_{fence}-{envname}.yml").read_text())
+    tasks = [t for p in play if isinstance(p, dict) for t in p.get("tasks", []) + p.get("pre_tasks", [])]
+    extra = next(t for t in tasks if "extra_dynamic_reserved" in t.get("vars", {}))
+    assert "skmesh-{{ env }}.yml" in extra["vars"]["extra_dynamic_reserved"]

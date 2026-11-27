@@ -104,7 +104,8 @@ skfenceha:
   the playbook's own directory, which is the framework checkout.
 - `dest` must be a plain file name ending `.yml` or `.yaml` (no `/`), and may
   not shadow a framework-owned file (`routers.yml`, `services.yml`,
-  `middlewares.yml`, `tls.yml`, `sksec.yml`). Every entry is checked before
+  `middlewares.yml`, `tls.yml`, `sksec.yml`, skfenceha's `certs-generated.yml`,
+  and `skmesh-<env>.yml`, which the skmesh playbook renders). Every entry is checked before
   anything is written; a bad entry fails the run.
 - `acme` (default false) only exists on skfenceha, where the ACME master
   reads `dynamic_acme/`; set it when the ACME master needs to see the router

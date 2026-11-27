@@ -205,6 +205,8 @@
           - middlewares.yml
           - tls.yml
           - sksec.yml
+          # rendered by the skmesh playbook (its 503 fallback router)
+          - "skmesh-{{ env }}.yml"
       tags:
         - config
         - dynamic
