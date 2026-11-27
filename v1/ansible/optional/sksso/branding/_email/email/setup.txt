@@ -1,0 +1,7 @@
+{% load i18n %}{% autoescape off %}{% trans '[[ e.name ]] test email' %}
+
+{% trans 'Email delivery for [[ e.name ]] sign-in is set up and working. No action is needed.' %}
+
+[[ e.name ]][% if e.support_line | default("") %]
+[[ e.support_line ]][% endif %]
+{% endautoescape %}

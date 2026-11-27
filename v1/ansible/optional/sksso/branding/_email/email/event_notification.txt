@@ -1,0 +1,13 @@
+{% load i18n %}{% autoescape off %}{{ title }}
+
+{{ body }}
+{% if link %}
+{{ link.label|default:'' }}: {{ link.target }}
+{% endif %}{% if key_value %}
+{% for key, value in key_value.items %}{{ key }}: {{ value }}
+{% endfor %}{% endif %}
+{% if source %}{% blocktrans with name=source.from %}Sent by the [[ e.name ]] notification rule {{ name }}.{% endblocktrans %}{% else %}{% trans 'You receive this because notifications are enabled for your [[ e.name ]] account.' %}{% endif %}
+
+[[ e.name ]][% if e.support_line | default("") %]
+[[ e.support_line ]][% endif %]
+{% endautoescape %}

@@ -2,7 +2,8 @@
 # on shared storage so Authentik serves it. Authentik reads logo, favicon and
 # flow background from media/public/<pack>/ and email templates from
 # custom-templates/. A pack may omit templates/ and nextcloud-theming.sh (the
-# skworld pack has neither); both are skipped when absent. This only copies files; applying them to the database is
+# skworld pack has no nextcloud-theming.sh); both are skipped when absent. A pack
+# with email.yml also gets the shared email set (branding/_email, see below). This only copies files; applying them to the database is
 # the idempotent helper rendered next to the deploy script
 # (/var/data/<app>-<env>/apply-branding), run once after the stack is up.
 # See README "Branding".
@@ -75,6 +76,83 @@
     group: root
     mode: '0644'
   when: (sksso_branding_optional.results | selectattr('item', 'equalto', 'templates') | first).stat.exists
+
+# Shared email set (branding/_email): when the pack has email.yml, render every
+# Authentik email (reset, invitation, account confirmation, email sign-in code,
+# notification, test) with the pack's brand values into custom-templates/email/,
+# where they override Authentik's stock email/*.html. apply_email.py, rendered
+# alongside, points the stages and notification transports at them; it runs from
+# the apply-email-branding helper (the skworld and nam apply-branding call it).
+- name: Check whether the pack ships email brand values
+  stat:
+    path: "{{ sksso_branding_src }}/email.yml"
+  register: sksso_branding_email
+  delegate_to: localhost
+  become: false
+
+- name: Render the shared branded email set
+  when: sksso_branding_email.stat.exists
+  block:
+    - name: Make a scratch dir for the rendered email set
+      tempfile:
+        state: directory
+        suffix: sksso-email
+      register: sksso_email_tmp
+      delegate_to: localhost
+      become: false
+      changed_when: false
+
+    - name: Render the email templates from the pack's email.yml
+      command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ playbook_dir }}/branding/_email/render.py"
+          - "{{ sksso_branding_src }}/email.yml"
+          - "{{ sksso_email_tmp.path }}"
+      delegate_to: localhost
+      become: false
+      changed_when: false
+
+    - name: Create the email template dir
+      file:
+        path: "/var/data/{{ app }}-{{ env }}/custom-templates/email"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Copy the rendered email templates
+      copy:
+        src: "{{ sksso_email_tmp.path }}/email/"
+        dest: "/var/data/{{ app }}-{{ env }}/custom-templates/email/"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Copy apply_email.py next to the pack media
+      copy:
+        src: "{{ sksso_email_tmp.path }}/apply_email.py"
+        dest: "/var/data/{{ app }}-{{ env }}/media/public/{{ sksso.branding }}/apply_email.py"
+        owner: "{{ sksso.authentik_uid | default(1000) }}"
+        group: "{{ sksso.authentik_uid | default(1000) }}"
+        mode: '0644'
+
+    - name: Install the apply-email-branding helper
+      copy:
+        src: "{{ playbook_dir }}/branding/_email/apply-email-branding.sh"
+        dest: "/var/data/{{ app }}-{{ env }}/apply-email-branding"
+        owner: root
+        group: root
+        mode: '0755'
+  always:
+    - name: Remove the email scratch dir
+      file:
+        path: "{{ sksso_email_tmp.path }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      changed_when: false
+      when: sksso_email_tmp.path is defined
 
 - name: Install the branding helpers next to the deploy script
   copy:

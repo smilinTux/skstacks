@@ -123,14 +123,49 @@ sksso:
 Two packs ship: `nam` (below) and `skworld`. An instance can bring its own (see
 "Instance packs" below). A pack is optional parts only: the
 media dir is required, `templates/` and `nextcloud-theming.sh` are copied only when
-the pack has them.
+the pack has them, and a pack with `email.yml` gets the shared email set below.
+
+### Emails (`branding/_email`, every pack)
+
+Every email Authentik sends comes from one shared set of templates, so all of
+them look the same and none of them says "authentik": password reset,
+invitation, account confirmation, email sign-in code (email MFA), event
+notification and the SMTP test email. Each brand only supplies values in
+`<pack>/email.yml` (`e.name`, the text `mark` in the header square, colours,
+fonts, footer, an optional `support_line` and `invite_intro`, and the subjects).
+The layout is tables and inline styles with no images, since mail clients strip
+SVG and block remote images.
+
+On deploy, when the pack has `email.yml`, the role runs `branding/_email/render.py`
+on the controller. It writes `custom-templates/email/*.html|txt`, which override
+Authentik's stock `email/*.html` including `email/base.html`, so any stock
+template is covered as well. It also writes `media/public/<pack>/apply_email.py`
+and installs the `apply-email-branding [pack] [stack]` helper next to `deploy`.
+That helper (the skworld and nam `apply-branding` run it last) is idempotent and:
+
+- points email stages at the shared templates by what they send (recovery, invite,
+  confirmation) and sets the subjects from `email.yml`. Any other stage keeps its
+  template, and "authentik" in its subject is replaced;
+- does the same for email sign-in (authenticator email) stages;
+- points email notification transports at `email/event_notification.html`, and
+  replaces the stock "authentik Notification: " subject prefix with
+  `notification_prefix`. A custom prefix is kept;
+- renames flow titles that still say "authentik" to `e.name`.
+
+It never touches email server settings, providers, flow logic or policies. An
+invitation sent from the admin UI ("Send via email") uses `email/invitation.html`
+and Authentik's own subject "You have been invited to <host>". Preview: render with
+`render.py <pack>/email.yml <dir>`. Rollback: delete `custom-templates/email/` and
+set the stages back to `email/password_reset.html`, which is the stock template
+again once the override is gone.
 
 ### `branding: skworld`
 
 `sksso.branding: skworld` copies `branding/skworld/media/` (logo, favicon, orange
-`skworld.css`, `apply_branding.py`) to `/var/data/sksso-<env>/media/public/skworld/`
-and installs `apply-branding` next to `deploy`. Run `apply-branding [stack]` once
-after the stack is up (idempotent). It:
+`skworld.css`, `apply_branding.py`) to `/var/data/sksso-<env>/media/public/skworld/`,
+renders the shared email set from `skworld/email.yml`, and installs `apply-branding`
+next to `deploy`. Run
+`apply-branding [stack]` once after the stack is up (idempotent). It:
 
 - sets the default brand: title (env `SKWORLD_BRAND_TITLE`, default "SKWorld"),
   logo, favicon and custom CSS (orange accent, and the "Powered by authentik"
@@ -142,28 +177,28 @@ after the stack is up (idempotent). It:
   `example/flows-recovery-email-verification.yaml` in-process (an existing flow is
   never overwritten), and sets it as the brand's recovery flow;
 - points the identification stage(s) of the brand's login flow at that flow, so the
-  login page shows "Forgot password?".
+  login page shows "Forgot password?";
+- runs `apply-email-branding skworld` (see "Emails" above). Out of the box the
+  recovery email's subject is "authentik" and its template names authentik.
 
 Recovery email is sent through sksso's global email settings
-(`AUTHENTIK_EMAIL__*` in `sksso.env`, `sksso.email_from`); the skworld pack ships no
-email templates. Rollback: clear the brand's logo, favicon, custom CSS and recovery
-flow in the admin UI, and clear `recovery_flow` on the identification stage.
+(`AUTHENTIK_EMAIL__*` in `sksso.env`, `sksso.email_from`). Rollback: clear the
+brand's logo, favicon, custom CSS and recovery flow in the admin UI, clear
+`recovery_flow` on the identification stage, and roll the emails back as above.
 
 ### `branding: nam`
 
 `sksso.branding: nam` copies the NAM brand pack (`branding/nam/`) to shared
 storage on every deploy: logo, favicon, flow background and `nam.css` to
-`/var/data/sksso-<env>/media/public/nam/`, and the branded email templates
-(`nam_invite.html` for invitations and enrollment, `nam_recovery.html` for
-password recovery, each with a `.txt` twin) to `custom-templates/`. The role
+`/var/data/sksso-<env>/media/public/nam/`, and renders the shared email set from
+`nam/email.yml` (NAM wording for invitations in `invite_intro`). The role
 also installs two helpers next to `deploy`:
 
 - `apply-branding [stack]` writes the brand into Authentik (idempotent, run
   once after the stack is up): default brand title, logo, favicon, flow
-  background, custom CSS, dark UI theme, the two email stages' template and
-  subject, and the "Welcome to authentik!" flow titles. It never touches
-  providers, flow logic or policies. Rollback: set the brand fields back to
-  `/static/dist/assets/...` defaults and the stages to `email/password_reset.html`.
+  background, custom CSS and dark UI theme, then runs `apply-email-branding nam`.
+  It never touches providers, flow logic or policies. Rollback: set the brand
+  fields back to `/static/dist/assets/...` defaults, and the emails as above.
 - `nextcloud-theming [stack] [media-dir]` runs `occ theming:config` (name,
   slogan, color, logo, favicon, background) on the node hosting
   `skhub-<env>_nextcloud`. No redeploy.
@@ -186,8 +221,9 @@ sksso:
 ```
 
 The directory has the same layout as a shipped pack: `media/` (required),
-`apply-branding.sh` (required), and optional `templates/` and
-`nextcloud-theming.sh`. A relative `branding_dir` is resolved against the
+`apply-branding.sh` (required), and optional `templates/`, `email.yml` (copy
+`branding/skworld/email.yml` and change the values; run
+`apply-email-branding <pack>` after the stack is up) and `nextcloud-theming.sh`. A relative `branding_dir` is resolved against the
 instance's inventory dir (`inventory_dir`, e.g. `envs/prod/`), never against the
 framework checkout, the same rule as skfence `EXTRA_DYNAMIC_FILES`.
 `sksso.branding` must be a plain name (letters, digits, `.`, `_`, `-`). Empty
