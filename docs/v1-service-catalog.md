@@ -71,7 +71,7 @@ tag yet.
 | [sksso](#sksso) | optional | Authentik OIDC identity provider | Authentik `2024.4.2` | none | `sso[-env].<cluster or bare>.<domain>` | `sksso-<env>/media`, `runtime/sksso-<env>/postgres` | `postgres_user/_password`, `authentik_secret_key`, `CLUSTERNAME`, `DOMAIN` | `csrf_extra_origins` ([]) | pending |
 | [skstor](#skstor) | optional | Garage S3-compatible object storage | Garage `v2.4.1` (digest-pinned) | none (consumed by skhub/skform/skbackup) | `skstor[-env].<cluster>.<domain>`, S3 API `:3900` | `skstor-<env>/{meta,data}` | `rpc_secret`, `CLUSTERNAME`, `DOMAIN` | `REPLICATION_FACTOR` (1), `db_engine` (sqlite) | v2.18.0 |
 | [sksync](#sksync) | optional | Syncthing continuous file sync | Syncthing `2.0.13` (hardcoded) | none | `sksync[-env].<cluster>.<domain>`, `:22000` tcp/udp | `sksync-<env>/sync-data` | `SYNCWALLET`, `ENCRYPTION_TOKEN`, `UUID`, `TZ` | none | v2.16.0 |
-| [skvector](#skvector) | optional | Qdrant vector database | Qdrant `v1.17.0` | none | `skvector[-env].<cluster>.<domain>` (HTTP+gRPC) | `skvector-<env>/{storage,snapshots}` | `CLUSTERNAME`, `DOMAIN` | `QDRANT_API_KEY` (unset = no auth) | v2.12.0 |
+| [skvector](#skvector) | optional | Qdrant vector database | Qdrant `v1.17.0` | none | `skvector[-env].<cluster>.<domain>` (HTTP+gRPC) | `skvector-<env>/{storage,snapshots}` | `CLUSTERNAME`, `DOMAIN` | `QDRANT_API_KEY` (unset = no auth), `QDRANT_READ_ONLY_API_KEY`, `UI_HOST_ENABLED` (false, SSO web UI host `skvector-ui[-env]`), `UI_KEY_MODE` (read_only) | v2.12.0 |
 | [skwhoami](#skwhoami) | optional | traefik/whoami echo/test service | traefik/whoami `v1.12.0` | none | 3x `skwhoami0{1,2,3}[-env].<cluster>.<domain>` | none (stateless) | `CLUSTERNAME`, `DOMAIN` | none | v2.19.0 |
 | [skwrit](#skwrit) | optional | Matter engine worker (drafting with gates, release, publishing to Nextcloud) | per-site image, digest-pinned; optional nextcloud-mcp `0.218.0` | skflow (calls it), skhub | none (internal overlay, port 8080) | none (external state volume) | `SKWRIT_IMAGE`, `NEXTCLOUD_URL` | `NEXTCLOUD_MCP_ENABLED` (false), `STACK_NAME`, `WORKER_SERVICE` | pending |
 | [skbackup](#skbackup) | optional (host-level) | Snapshots, per-app copies, dump hooks, restic offsite, restore tests, alerts on the storage host | sanoid + rsync + restic (host packages) | a storage host in an inventory group (default `storage_hosts`), ideally ZFS | none (no web UI, no swarm stack) | `/etc/<short_name>`, `/var/lib/<short_name>` on the storage host | `data_target`; `offsite.repository` + `offsite.password` when offsite is on | every tier toggle, `branding` (white-label) | v2.23.0 (restic; the Duplicati app of v2.19.0 to v2.22.0 is retired) |
@@ -1411,6 +1411,9 @@ skvector:
   CLUSTERNAME: "<cluster>"
   DOMAIN: "example.com"
   # QDRANT_API_KEY: "changeme"   # unset = no authentication at all
+  # QDRANT_READ_ONLY_API_KEY: "changeme-read-only"   # optional second, read-only key
+  # UI_HOST_ENABLED: false        # true: SSO web UI host skvector-ui[-env].<cluster>.<domain>
+  # UI_KEY_MODE: read_only        # key Traefik injects on the UI host: read_only or full
 ```
 
 **Deploy**: `deploy_skvector-<env>.yml`, standard invocation.
@@ -1420,7 +1423,9 @@ skvector:
 **Gotchas**: with `QDRANT_API_KEY` unset, the instance runs with **no
 authentication**. Set it unless the overlay network is the only thing
 reaching it. gRPC is on a separate router/port (`:6334`) from the HTTP API
-(`:6333`).
+(`:6333`). The optional web UI host (`UI_HOST_ENABLED`) puts the Qdrant
+dashboard behind Authentik forward auth with the key injected by Traefik; see
+the role README "Web UI behind SSO" before turning it on.
 
 ### skwrit
 

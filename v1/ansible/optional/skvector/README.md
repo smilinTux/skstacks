@@ -82,6 +82,66 @@ The value replaces the chain, it is not appended: keep
 `skvector[-env]-buffering` in the HTTP chain when you override it (for example
 `skvector-buffering,crowdsec-bouncer@file,default@file` on prod).
 
+## Web UI behind SSO
+
+The Qdrant web UI (`/dashboard`) keeps an API key in the browser and sends it
+as an `api-key` header on every REST call to its own origin (`/collections`
+and so on). To open it from the Authentik portal already signed in, turn on a
+second host that Traefik fronts with SSO and that injects the key itself:
+
+```yaml
+skvector:
+  QDRANT_READ_ONLY_API_KEY: "<random, from the vault>"   # Qdrant read-only key
+  UI_HOST_ENABLED: true
+  # UI_KEY_MODE: read_only    # default; full injects QDRANT_API_KEY instead
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `QDRANT_READ_ONLY_API_KEY` | empty | Renders `QDRANT__SERVICE__READ_ONLY_API_KEY` (Qdrant `service.read_only_api_key`). A request with this key can read but not write. Usable on its own by read-only clients. |
+| `UI_HOST_ENABLED` | `false` | Adds router `skvector-ui[-env]` on `Host(skvector-ui[-env].<cluster>.<domain>)` to the same 6333 service. The main `skvector[-env]` router and the gRPC router are not touched. Off renders the compose file exactly as before. |
+| `UI_KEY_MODE` | `read_only` | `read_only` injects `QDRANT_READ_ONLY_API_KEY`; `full` injects `QDRANT_API_KEY`. The deploy stops with a clear message when the key for the mode is empty. |
+| `UI_SSO_MIDDLEWARE` | `authentik@file` | Forward-auth middleware on the UI router. It can name another forward-auth middleware but cannot be turned off (`none`/`false` stops the deploy). |
+
+The UI router chain is `<UI_SSO_MIDDLEWARE>,skvector[-env]-ui-apikey,skvector[-env]-buffering,default-no-error-pages@file`:
+
+- `authentik@file` (core/skfenceha) is attached EXPLICITLY. The UI host never
+  relies on the domain-wide forward-auth catch-all, so it stays behind SSO even
+  where the catch-all is off. Forward auth runs first, so an unauthenticated
+  request is redirected to sign in before the key is ever added.
+- `skvector[-env]-ui-apikey` sets `headers.customRequestHeaders.api-key`.
+  Traefik SETS the header (Go `Header.Set`), which replaces any `api-key` the
+  client sent, so a user cannot pick another key through this host.
+- `default-no-error-pages@file`, as on the main router: the dashboard reads
+  Qdrant's JSON errors (a 403 on a write with the read-only key, a 404 for a
+  missing collection), which the error-pages middleware would replace with HTML.
+
+When the UI host is on, the portal tile opens
+`https://skvector-ui[-env].<cluster>.<domain>/dashboard#/collections`;
+otherwise it opens the main host as before. The tile group stays
+`AUTHENTIK_TILE_GROUP` (default `skadmin`).
+
+Security notes:
+
+- The injected key is a Traefik label on the `qdrant` service. Anyone who can
+  read the service spec (swarm managers, `docker service inspect`, Portainer)
+  or the Traefik API and dashboard can read it. That is why `read_only` is the
+  default: a leaked read-only key can read vectors and payloads but not change
+  or delete them. Use `full` only when the admins who get the UI should also
+  write, and treat that label like the main key.
+- Anyone who passes SSO on the UI host acts with the injected key. Grant the
+  UI host (the tile group and the forward-auth application binding) to admin
+  groups only, never to "any signed-in user".
+- Programmatic clients keep using `skvector[-env].<cluster>.<domain>` with
+  their own key; do not point them at the UI host.
+
+Rotating the injected key: set a new `QDRANT_READ_ONLY_API_KEY` (or
+`QDRANT_API_KEY` in `full` mode) in the vault and redeploy skvector. The env
+file and the label change in the same deploy; Qdrant restarts with the new key
+and the old one stops working. Update any read-only client that used the old
+key first. To turn the UI host off, set `UI_HOST_ENABLED: false` and redeploy:
+the router, the header middleware and the label carrying the key go away.
+
 ## Resource limits
 
 The service limits and reservations come from the instance vault; unset keys

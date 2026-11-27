@@ -87,6 +87,20 @@ Each entry says what an instance must do, if anything.
   already in `NeedsLogin` need one `netbird up`; to automate that on setup-key peers, set
   `skpatch_hosts_netbird_keepup: true` for them and rerun provisioning.
 
+### skvector: optional web UI host behind SSO
+
+- New, off by default: `skvector.UI_HOST_ENABLED: true` adds a router on
+  `skvector-ui[-env].<cluster>.<domain>` that sends every request through Authentik forward auth
+  (`authentik@file`, attached explicitly, not left to the catch-all) and then injects the Qdrant
+  `api-key` header, so the portal tile opens the dashboard
+  (`/dashboard#/collections`) already signed in. `UI_KEY_MODE` picks the key: `read_only`
+  (default, the new `QDRANT_READ_ONLY_API_KEY`, rendered as `QDRANT__SERVICE__READ_ONLY_API_KEY`)
+  or `full` (`QDRANT_API_KEY`). The main and gRPC routers are unchanged, and with the keys unset
+  the stack renders exactly as before. The key sits in a Traefik label, so grant the UI host to
+  admin groups only (role README "Web UI behind SSO").
+  **Instance action:** none. To use it, set `QDRANT_READ_ONLY_API_KEY` and `UI_HOST_ENABLED` in
+  the vault and redeploy skvector (the tile follows).
+
 ## skstacks-v2.26.35 - 2026-11-27
 
 ### sksso: one shared branded email set for every Authentik email (#467)
