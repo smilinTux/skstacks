@@ -25,6 +25,8 @@ node), `skstor.GARAGE_S3_REGION` (default `garage`), `skstor.CPU_LIMIT`,
 `skstor.db_engine` (default `sqlite`; see "Storage layout" below),
 `skstor.meta_dir` / `skstor.data_dir` (default the bind-mount paths Garage
 sees inside the container, `/var/lib/garage/meta` and `/var/lib/garage/data`),
+`skstor.META_NODE`, `skstor.META_PATH`, `skstor.META_SNAPSHOT_INTERVAL` (node-local
+metadata, see "Storage layout" below),
 `skstor.TRAEFIK_MIDDLEWARES` (the web router's whole middleware chain, default
 `default-no-error-pages@file`, so S3 clients get Garage's own XML errors; see "Router middleware overrides" in
 `docs/v1-service-catalog.md`).
@@ -43,11 +45,30 @@ password/inventory) for the other environments.
 
 ## Storage layout
 
-Metadata and data bind-mount onto `/var/data/skstor-<env>/{meta,data}` on
-this instance's shared filesystem (NFS, matching every other v1 service and
-this framework's own `/var/data` requirement) -- not a named Docker volume,
+By default metadata and data bind-mount onto `/var/data/skstor-<env>/{meta,data}`
+on this instance's shared filesystem (NFS, matching every other v1 service and
+this framework's own `/var/data` requirement), not a named Docker volume,
 which would be host-local and strand data on whichever manager this
 replicas=1 service last ran on after a Swarm reschedule.
+
+**Production: keep the metadata db off NFS.** Garage's metadata db (sqlite or
+lmdb) needs real file locking and fast fsync. On NFS a rescheduled task can
+find the old task's lock (`Error: Unable to open metadata db: database error:
+Sqlite: timed out waiting for connection`, exit 1) and slow fsyncs make the
+`garage status` healthcheck time out (exit 137, unhealthy), so the service
+restarts in a loop. Put the db on one node's local disk:
+
+| Key | Default | Notes |
+|---|---|---|
+| `skstor.META_NODE` | empty | Swarm node (inventory name = swarm hostname) that holds the metadata. Pins the service there (`node.hostname == <node>`) and the deploy creates `META_PATH` on it. Required when `META_PATH` is outside `/var/data`; the deploy fails closed otherwise. |
+| `skstor.META_PATH` | `/var/data/skstor-<env>/meta` | Host side of the metadata bind mount, for example `/opt/skstor-<env>/meta` on local disk. |
+| `skstor.META_SNAPSHOT_INTERVAL` | `6h` with `META_NODE`, else empty | Garage `metadata_auto_snapshot_interval`. Snapshots go to `/var/data/skstor-<env>/meta-snapshots` (shared tree), so losing the node does not lose buckets and keys. Set `""` to turn off. |
+
+Data blocks stay on `/var/data/skstor-<env>/data` (shared); they are plain
+files written once, which NFS handles. With `META_NODE` set the service
+no longer fails over to another node: if that node is down, Garage is down
+until it is back or you recover the metadata elsewhere (framework
+`docs/runbooks/skstor.md`).
 
 `skstor.db_engine` defaults to `sqlite`, not Garage's own default
 `lmdb`. Per Garage's docs
@@ -55,13 +76,13 @@ replicas=1 service last ran on after a Swarm reschedule.
 LMDB "is prone to database corruption after an unclean shutdown (e.g. a
 process kill or a power outage)", while "Sqlite ... does not have the
 issues listed above for LMDB" (slower, but this is a single-writer instance,
-not a high-throughput cluster). A Swarm reschedule of this service is
-exactly the kind of unclean shutdown LMDB warns about, and LMDB's
-memory-mapped storage is a well-known bad combination with network
-filesystems generally. Set `skstor.db_engine: lmdb` and point
-`skstor.meta_dir` at a node-local bind mount (plus a Swarm placement
-constraint pinning this service to that node) if you want LMDB's speed and
-accept losing failover-transparency for metadata.
+not a high-throughput cluster). Keep sqlite unless you have measured a need
+for LMDB; with `META_NODE` and snapshots in place it is an operator choice.
+
+Moving an existing instance's metadata to local disk needs the service
+stopped while the db is copied: follow `docs/runbooks/skstor.md` (framework
+root), never just flip the vars on a running instance (Garage would start on
+an empty dir and look like a new cluster).
 
 ## One-time bootstrap (per instance, after the first deploy)
 

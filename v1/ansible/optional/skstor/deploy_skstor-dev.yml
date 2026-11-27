@@ -134,6 +134,33 @@
         mode: "0770"
       delegate_to: "{{ skstor_meta_node if skstor_meta_node | length > 0 else inventory_hostname }}"
 
+    - name: Look for a Garage node key in the metadata directory
+      stat:
+        path: "{{ skstor_meta_path }}/node_key"
+      register: skstor_meta_key
+      delegate_to: "{{ skstor_meta_node if skstor_meta_node | length > 0 else inventory_hostname }}"
+
+    - name: Look for a Garage node key in the default shared metadata directory
+      stat:
+        path: "/var/data/{{ app }}-{{ env }}/meta/node_key"
+      register: skstor_shared_meta_key
+      when: skstor_meta_path != '/var/data/' ~ app ~ '-' ~ env ~ '/meta'
+
+    - name: Refuse to start Garage on an empty META_PATH while the old metadata exists
+      # Flipping META_PATH without copying the db would start Garage with a
+      # new node id and no buckets or keys, and the layout bootstrap below
+      # would then assign a fresh layout over it. Copy the db first
+      # (docs/runbooks/skstor.md, "Move the metadata to local disk").
+      assert:
+        that:
+          - skstor_meta_key.stat.exists or not (skstor_shared_meta_key.stat.exists | default(false))
+        fail_msg: >-
+          {{ skstor_meta_path }} on {{ skstor_meta_node | default(inventory_hostname, true) }}
+          has no node_key but /var/data/{{ app }}-{{ env }}/meta does: this
+          instance's metadata has not been moved yet. Stop the service and
+          copy it first (framework docs/runbooks/skstor.md).
+        quiet: true
+
     - name: Create the {{ app }} metadata snapshot directory (shared tree)
       file:
         path: "/var/data/{{ app }}-{{ env }}/meta-snapshots"

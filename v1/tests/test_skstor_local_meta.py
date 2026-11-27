@@ -172,3 +172,40 @@ def test_playbook_defaults_match_the_templates(env_name):
     assert "'6h' if" in facts["skstor_meta_snapshot_interval"]
     for tpl in (COMPOSE, GARAGE_TOML):
         assert "default('6h' if meta_node else '')" in tpl.read_text()
+
+
+def _eval_empty_meta_guard(meta_has_key, shared_has_key):
+    _, tasks = _play_tasks("prod")
+    that = _named(tasks, "Refuse to start Garage on an empty META_PATH")["assert"]["that"]
+    # Ansible's undefined chains (a skipped register has no "stat" key) and
+    # `default` catches it; ChainableUndefined models that.
+    env = jinja2.Environment(undefined=jinja2.ChainableUndefined)
+    ctx = {"skstor_meta_key": {"stat": {"exists": meta_has_key}}}
+    if shared_has_key is None:  # the stat task was skipped (default path)
+        ctx["skstor_shared_meta_key"] = {"skipped": True, "changed": False}
+    else:
+        ctx["skstor_shared_meta_key"] = {"stat": {"exists": shared_has_key}}
+    return all(env.compile_expression(cond)(**ctx) for cond in that)
+
+
+@pytest.mark.parametrize("meta_has_key,shared_has_key,ok", [
+    (True, None, True),     # default path, existing instance
+    (False, None, True),    # default path, first install
+    (True, True, True),     # moved: local copy present, old copy kept as backup
+    (False, False, True),   # first install straight onto local disk
+    (False, True, False),   # vars flipped, db not copied: refuse
+])
+def test_empty_meta_path_guard(meta_has_key, shared_has_key, ok):
+    assert _eval_empty_meta_guard(meta_has_key, shared_has_key) is ok
+
+
+@pytest.mark.parametrize("env_name", ENVS)
+def test_empty_meta_guard_runs_before_the_stack_deploy(env_name):
+    _, tasks = _play_tasks(env_name)
+    names = [t.get("name", "") for t in tasks]
+    guard = names.index(next(n for n in names if n.startswith("Refuse to start Garage on an empty META_PATH")))
+    deploy = names.index("Deploy {{ app }} stack")
+    assert guard < deploy
+    key_stat = _named(tasks, "Look for a Garage node key in the metadata directory")
+    assert key_stat["stat"]["path"] == "{{ skstor_meta_path }}/node_key"
+    assert "skstor_meta_node" in key_stat["delegate_to"]
