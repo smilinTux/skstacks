@@ -11,6 +11,28 @@
 {%- set _constraints = skvector.placement_constraints | default([]) | list -%}
 {%- set _pin = 'node.hostname == ' ~ _data_node -%}
 {%- set _constraints = _constraints + ([_pin] if (_data_node and _pin not in _constraints) else []) -%}
+{#- Optional SSO web UI host (README "Web UI behind SSO"). Off by default, and
+    off renders exactly as before. When on, a second router on
+    skvector-ui[-env].<domain> sends every request through forward auth and
+    then injects the Qdrant api-key, so the dashboard opens signed in. -#}
+{%- set _sfx = '' if env == 'prod' else '-' ~ env -%}
+{%- set _ui_enabled = (skvector.UI_HOST_ENABLED | default(false) | string | lower) in ('true', 'yes', '1', 'on') -%}
+{%- if _ui_enabled -%}
+  {%- set _ui_mode = skvector.UI_KEY_MODE | default('read_only', true) | string | trim | lower -%}
+  {%- if _ui_mode not in ('read_only', 'full') -%}
+    {{- _skvector_ui_fail | mandatory("skvector.UI_KEY_MODE must be read_only or full, got '" ~ _ui_mode ~ "'") -}}
+  {%- endif -%}
+  {%- set _ui_key_var = 'QDRANT_READ_ONLY_API_KEY' if _ui_mode == 'read_only' else 'QDRANT_API_KEY' -%}
+  {%- set _ui_key = skvector[_ui_key_var] | default('', true) | string | trim -%}
+  {%- if not _ui_key -%}
+    {{- _skvector_ui_fail | mandatory("skvector.UI_HOST_ENABLED with UI_KEY_MODE " ~ _ui_mode ~ " needs skvector." ~ _ui_key_var ~ " set in the vault") -}}
+  {%- endif -%}
+  {%- set _ui_sso = skvector.UI_SSO_MIDDLEWARE | default('authentik@file', true) | string | trim -%}
+  {%- if (_ui_sso | lower) in ('none', 'false') -%}
+    {{- _skvector_ui_fail | mandatory("skvector.UI_SSO_MIDDLEWARE cannot be turned off: the UI host injects an API key and must stay behind SSO") -}}
+  {%- endif -%}
+  {%- set _ui_chain = [_ui_sso, 'skvector' ~ _sfx ~ '-ui-apikey', 'skvector' ~ _sfx ~ '-buffering', 'default-no-error-pages@file'] | join(',') -%}
+{%- endif -%}
 # Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
 #
 # This program is free software: you can redistribute it and/or modify
@@ -90,6 +112,22 @@ services:
 
         # === TRAEFIK: SERVICES ===
         - "traefik.http.services.skvector{% if env != 'prod' %}-{{ env }}{% endif %}.loadbalancer.server.port=6333"
+{% if _ui_enabled %}
+
+        # === TRAEFIK: WEB UI HOST behind SSO (skvector.UI_HOST_ENABLED) ===
+        # Forward auth runs first, so nothing reaches the key injection or
+        # Qdrant without an SSO session. customRequestHeaders SETS the header,
+        # which replaces any api-key the client sent. "$" is doubled because
+        # docker stack deploy interpolates the compose file.
+        - "traefik.http.middlewares.skvector{{ _sfx }}-ui-apikey.headers.customRequestHeaders.api-key={{ _ui_key | replace('$', '$$') }}"
+        - "traefik.http.routers.skvector-ui{{ _sfx }}.rule=Host(`skvector-ui{{ _sfx }}.{{ _base_domain }}`)"
+        - "traefik.http.routers.skvector-ui{{ _sfx }}.entrypoints=websecure"
+        - "traefik.http.routers.skvector-ui{{ _sfx }}.tls=true"
+        - "traefik.http.routers.skvector-ui{{ _sfx }}.tls.certresolver=main"
+        - "traefik.http.routers.skvector-ui{{ _sfx }}.tls.options=intermediate@file"
+        - "traefik.http.routers.skvector-ui{{ _sfx }}.middlewares={{ _ui_chain }}"
+        - "traefik.http.routers.skvector-ui{{ _sfx }}.service=skvector{{ _sfx }}"
+{% endif %}
 
         # === TRAEFIK: gRPC ROUTER (for high-performance batch operations) ===
         - "traefik.http.routers.skvector{% if env != 'prod' %}-{{ env }}{% endif %}-grpc.rule=Host(`skvector{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`) && PathPrefix(`/qdrant.`)"
