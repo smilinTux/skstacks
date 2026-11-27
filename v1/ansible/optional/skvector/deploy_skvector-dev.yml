@@ -152,7 +152,8 @@
         dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
         owner: root
         group: root
-        mode: '0644'
+        # 0640: with UI_HOST_ENABLED the compose file carries the injected api-key label.
+        mode: '0640'
       tags:
         - compose
 
