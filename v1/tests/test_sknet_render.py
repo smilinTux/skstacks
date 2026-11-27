@@ -508,6 +508,65 @@ def test_networks_map_names_the_cidrs(tmp_path):
     assert nets["192.0.2.0/24"]["name"] == "site-a-lan"
 
 
+def test_networks_take_estate_attributes(tmp_path):
+    out = ok(tmp_path, BASE | {"NETWORKS": {
+        "192.0.2.0/24": {"name": "site-a-lan", "site": "site-a", "role": "lan"},
+        "198.51.100.0/24": "plain-name"}})
+    nets = akvorado(out)["outlet"]["networks"]["networks"]
+    assert nets["192.0.2.0/24"] == {"name": "site-a-lan", "site": "site-a", "role": "lan"}
+    assert nets["198.51.100.0/24"] == {"name": "plain-name"}
+    filters = akvorado(out)["console"]["database"]["saved-filters"]
+    assert {"description": "Estate/site-a", "content": "SrcNetSite = 'site-a' OR DstNetSite = 'site-a'"} in filters
+
+
+@pytest.mark.parametrize("nets", [
+    {"192.0.2.0/24": {"site": "a"}},                          # no name
+    {"192.0.2.0/24": {"name": "x", "colour": "blue"}},        # unknown attribute
+    {"192.0.2.0/24": {"name": "x", "site": "Site A"}},        # not a lowercase label
+    {"192.0.2.0/33": "x"},                                    # not a CIDR
+])
+def test_bad_network_attributes_are_refused(tmp_path, nets):
+    assert "NETWORKS" in fails(tmp_path, BASE | {"NETWORKS": nets})
+
+
+def test_no_exporter_classifiers_or_site_filters_without_sites(inv_out):
+    core = akvorado(inv_out)["outlet"]["core"]
+    assert "exporter-classifiers" not in core
+    filters = akvorado(inv_out)["console"]["database"]["saved-filters"]
+    assert not [f for f in filters if f["description"].startswith(("Seen at/", "Estate/"))]
+
+
+def test_interface_classes_give_shared_saved_filters(inv_out):
+    filters = akvorado(inv_out)["console"]["database"]["saved-filters"]
+    assert filters[0] == {"description": "Edge/Internet", "content": "InIfBoundary = external"}
+    for c in ("estate-link", "internet", "lan", "mesh"):
+        assert {"description": f"Interface class/{c}", "content": f"InIfConnectivity = '{c}'"} in filters
+
+
+def test_exporter_site_and_role_become_classifiers_and_filters(tmp_path):
+    exp = {"gw-inv-a": EXPORTERS["gw-inv-a"] | {"sknet_site": "site-a", "sknet_role": "edge"},
+           "site-inv-b": EXPORTERS["site-inv-b"] | {"sknet_role": "cloud"}}
+    out = ok(tmp_path, BASE | {"FLOW_SOURCES": INV_SOURCES}, exporters=exp)
+    rules = akvorado(out)["outlet"]["core"]["exporter-classifiers"]
+    assert rules == ['Exporter.Name == "gw-inv-a" && ClassifySite("site-a") && ClassifyRole("edge")',
+                     'Exporter.Name == "site-inv-b" && ClassifyRole("cloud")']
+    filters = akvorado(out)["console"]["database"]["saved-filters"]
+    assert {"description": "Seen at/site-a", "content": "ExporterSite = 'site-a'"} in filters
+
+
+def test_bad_exporter_site_is_refused(tmp_path):
+    exp = {"gw-inv-a": EXPORTERS["gw-inv-a"] | {"sknet_site": "Site A"}}
+    assert "sknet_site" in fails(tmp_path, BASE | {"FLOW_SOURCES": ["192.0.2.20"]}, exporters=exp)
+
+
+def test_vault_saved_filters_are_added_and_checked(tmp_path):
+    mine = {"description": "Mine/SSH", "content": "DstPort = 22"}
+    out = ok(tmp_path / "a", BASE | {"SAVED_FILTERS": [mine]})
+    assert akvorado(out)["console"]["database"]["saved-filters"][-1] == mine
+    assert "SAVED_FILTERS" in fails(tmp_path / "b", BASE | {"SAVED_FILTERS": [{"description": "no content"}]})
+    assert "SAVED_FILTERS" in fails(tmp_path / "c", BASE | {"SAVED_FILTERS": {"a": "b"}})
+
+
 def test_geoip_is_off_by_default_and_optional_when_on(base_out, tmp_path):
     assert "geoip" not in akvorado(base_out)["outlet"]
     out = ok(tmp_path, BASE | {"GEOIP_ENABLED": True})
@@ -715,6 +774,7 @@ def test_default_allow_cidrs_and_ports_are_the_documented_ones():
     assert (DEFAULTS["NETFLOW_PORT"], DEFAULTS["IPFIX_PORT"], DEFAULTS["FLOW_TTL_DAYS"], DEFAULTS["DISK_BUDGET_GB"]) \
         == (2055, 4739, 30, 20)
     assert DEFAULTS["FLOW_SOURCES"] == [] and DEFAULTS["GEOIP_ENABLED"] is False and DEFAULTS["NETWORKS"] == {}
+    assert DEFAULTS["SAVED_FILTERS"] == []
     assert DEFAULTS["HOSTNAME"] == "sknet" and DEFAULTS["LIVE_HOSTNAME"] == "sknet-live"
 
 

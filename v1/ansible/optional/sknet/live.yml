@@ -28,6 +28,7 @@
 #   sknet_live_memory_max     default 512M. Applied to the container (docker --memory, swap included)
 #                             and to the unit (MemoryMax); always rendered
 #   sknet_state               present (default) or absent
+# The vault's NETWORKS (the same map the console uses) become ntopng's named local networks (-m).
 # Optional hostvars: sknet_live_max_hosts and sknet_live_max_flows (16384 each, ntopng -x and -X),
 # sknet_live_cap_add (capabilities the container keeps, everything else is dropped; default
 # NET_RAW NET_ADMIN SETUID SETGID CHOWN DAC_OVERRIDE FOWNER), sknet_live_data_dir
@@ -115,6 +116,16 @@
         sknet_l_chain: SKNET-LIVE
         sknet_l_purge: "{{ sknet_live_purge_data | default(false) | bool }}"
         sknet_l_image: "{{ (sknet | default({})).NTOPNG_IMAGE | default(sknet_defaults.NTOPNG_IMAGE, true) }}"
+        # The vault's NETWORKS as ntopng local networks with their names
+        # (-m cidr=name,...): the same subnet names the console shows.
+        sknet_l_networks: >-
+          {%- set out = [] -%}
+          {%- set nets = (sknet | default({})).NETWORKS | default({}, true) -%}
+          {%- for k, v in (nets.items() if nets is mapping else []) -%}
+          {%- set n = ((v.name | default('', true)) if v is mapping else v) | string | replace(' ', '_') -%}
+          {%- set _ = out.append((k | string) ~ (('=' ~ n) if n else '')) -%}
+          {%- endfor -%}
+          {{ out }}
       tags: [config]
 
     - name: Refuse an unknown sknet_state
@@ -131,6 +142,16 @@
           - sknet_l_image is match('^[^ ]+(:[^ :/]+|@sha256:[0-9a-f]{64})$')
           - not (sknet_l_image is match('.*:(latest|stable)$'))
         fail_msg: "{{ inventory_hostname }}: NTOPNG_IMAGE must be pinned by version tag or digest, never latest or stable (got {{ sknet_l_image }})."
+        quiet: true
+      when: sknet_l_state == 'present'
+      tags: [config]
+
+    - name: Refuse NETWORKS that ntopng cannot take
+      assert:
+        that:
+          - (sknet | default({})).NETWORKS | default({}, true) is mapping
+          - sknet_l_networks | reject('match', '^[0-9./]+(=[A-Za-z0-9][A-Za-z0-9._-]*)?$') | list | length == 0
+        fail_msg: "{{ inventory_hostname }}: sknet.NETWORKS must map IPv4 CIDRs to plain names (got {{ sknet_l_networks | join(', ') }})."
         quiet: true
       when: sknet_l_state == 'present'
       tags: [config]

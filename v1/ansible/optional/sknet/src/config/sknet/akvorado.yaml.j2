@@ -96,11 +96,22 @@ outlet:
 {% endfor %}
 {% endfor %}
       - ClassifyInternal()
-{% if skn.NETWORKS | default({}, true) %}
+{% set tagged = sknet_exporters | selectattr('site') | list + (sknet_exporters | rejectattr('site') | selectattr('role') | list) %}
+{% if tagged %}
+    exporter-classifiers:
+      # One rule per tagged exporter (hostvars sknet_site, the estate, and
+      # sknet_role): ExporterSite and ExporterRole in the console.
+{% for e in tagged %}
+      - {{ ((['Exporter.Name == ' ~ (e.name | to_json)] + (['ClassifySite(' ~ (e.site | to_json) ~ ')'] if e.site else []) + (['ClassifyRole(' ~ (e.role | to_json) ~ ')'] if e.role else [])) | join(' && ')) | to_json }}
+{% endfor %}
+{% endif %}
+{% if sknet_networks %}
   networks:
+    # NETWORKS: SrcNetName/DstNetName, and SrcNetSite/DstNetSite (the estate),
+    # Role, Region and Tenant where set.
     networks:
-{% for cidr, name in skn.NETWORKS.items() %}
-      {{ cidr }}: {name: {{ name | to_json }}}
+{% for n in sknet_networks %}
+      {{ n.cidr }}: {{ n | dict2items | rejectattr('key', 'equalto', 'cidr') | items2dict | to_json }}
 {% endfor %}
 {% endif %}
 {% if skn.GEOIP_ENABLED | default(false) | bool %}
@@ -123,6 +134,31 @@ console:
   # "external" exists only where an exporter has an internet-class interface.
   homepage-top-widgets-filter: {{ ('InIfBoundary = external' if has_internet else '') | to_json }}
   homepage-graph-filter: {{ ('InIfBoundary = external' if has_internet else '') | to_json }}
+{% set ns = namespace(f=[]) %}
+{% if has_internet %}
+{% set ns.f = ns.f + [{'description': 'Edge/Internet', 'content': 'InIfBoundary = external'}] %}
+{% endif %}
+{% for c in sknet_exporters | map(attribute='interfaces') | flatten | map(attribute='class') | unique | sort %}
+{% set ns.f = ns.f + [{'description': 'Interface class/' ~ c, 'content': "InIfConnectivity = '" ~ c ~ "'"}] %}
+{% endfor %}
+{% for x in sknet_exporters | map(attribute='site') | select | unique | sort %}
+{% set ns.f = ns.f + [{'description': 'Seen at/' ~ x, 'content': "ExporterSite = '" ~ x ~ "'"}] %}
+{% endfor %}
+{% for x in sknet_networks | selectattr('site', 'defined') | map(attribute='site') | unique | sort %}
+{% set ns.f = ns.f + [{'description': 'Estate/' ~ x, 'content': "SrcNetSite = '" ~ x ~ "' OR DstNetSite = '" ~ x ~ "'"}] %}
+{% endfor %}
+{% for f in skn.SAVED_FILTERS | default([], true) %}
+{% set ns.f = ns.f + [{'description': f.description | string, 'content': f.content | string}] %}
+{% endfor %}
+{% if ns.f %}
+  database:
+    # Shared saved filters for every user, rebuilt on each console start
+    # (Akvorado drops builtin filters no longer listed here).
+    saved-filters:
+{% for f in ns.f %}
+      - {description: {{ f.description | to_json }}, content: {{ f.content | to_json }}}
+{% endfor %}
+{% endif %}
   auth:
 {% if sknet_auth_mode == 'authentik' %}
     # The login comes from the Authentik forward-auth headers. With no header

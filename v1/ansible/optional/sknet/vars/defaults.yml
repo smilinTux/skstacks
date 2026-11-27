@@ -79,8 +79,14 @@ sknet_defaults:
   # group: a map of exporter name to {sknet_export_address, sknet_interfaces},
   # the same shape as the inventory hostvars.
   STATIC_EXPORTERS: {}
-  # CIDR -> name, for Akvorado's network naming.
+  # CIDR -> name, or CIDR -> {name, site, role, region, tenant}, for Akvorado's
+  # network attributes (SrcNetName, DstNetSite, ...). `site` is the estate the
+  # subnet belongs to. The same names label ntopng's local networks.
   NETWORKS: {}
+  # Extra shared saved filters in the console, a list of {description, content}
+  # (Akvorado filter language). Added to the ones built from the interface
+  # classes, the exporter sites and the network sites.
+  SAVED_FILTERS: []
   GEOIP_ENABLED: false
 
   # Retention. Every TTL derives from these two knobs. FLOW_TTL_DAYS is the raw
@@ -141,6 +147,9 @@ sknet_defaults:
 
 # Patterns the validation tasks use. Core Jinja only (no ipaddr filter).
 sknet_re_ipv4: '^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])[.]){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$'
+# Exporter and network site/role/region/tenant labels: lowercase, so they match
+# Akvorado's normalised classifier values and the saved filters built from them.
+sknet_re_label: '^[a-z0-9][a-z0-9.-]{0,62}$'
 sknet_re_cidr: '^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])[.]){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])$'
 # Interface name: becomes a systemd instance, `softflowd -i <index>:<name>` and an ntopng `-i <name>`,
 # so no colon, at sign, slash or space; the kernel limit is 15 characters.

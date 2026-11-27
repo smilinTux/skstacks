@@ -27,7 +27,8 @@
 #   sknet_chain          the router middleware chain (allowlist first)
 #   sknet_gate_mw        the headers middleware that adds the gate secret, sknet-<env>-gate
 #   sknet_gate_constraints   the gate's placement constraints
-#   sknet_exporters      active exporters: name, address, interfaces (ints normalised)
+#   sknet_exporters      active exporters: name, address, site, role, interfaces (ints normalised)
+#   sknet_networks       NETWORKS as a list of {cidr, name, site, role, region, tenant}
 #   sknet_flow_sources   FLOW_SOURCES, the port allowlist's sources
 - name: Refuse a missing sknet vault block
   assert:
@@ -235,13 +236,53 @@
     - sknet_live_upstream not in (sknet_live_ok | from_yaml)
   tags: [config]
 
+- name: Normalise the NETWORKS map
+  # A value is a plain name or a map of Akvorado network attributes (name plus
+  # any of site, role, region, tenant). sknet_networks is a list of
+  # {cidr, name, ...} in the map's order.
+  set_fact:
+    sknet_networks: >-
+      {%- set out = [] -%}
+      {%- for k, v in (skn.NETWORKS.items() if skn.NETWORKS is mapping else []) -%}
+      {%- set _ = out.append({'cidr': k | string} | combine(v if v is mapping else {'name': v})) -%}
+      {%- endfor -%}
+      {{ out }}
+  tags: [config]
+
+- name: Check the NETWORKS map
+  set_fact:
+    sknet_network_problems: >-
+      {%- set out = [] -%}
+      {%- for n in sknet_networks -%}
+      {%- if not (n.cidr is match(sknet_re_cidr)) -%}{%- set _ = out.append(n.cidr ~ ': not an IPv4 CIDR') -%}{%- endif -%}
+      {%- if not (n.name is defined and n.name is string and n.name is match('^[A-Za-z0-9][A-Za-z0-9 ._-]*$')) -%}{%- set _ = out.append(n.cidr ~ ': name must be a plain name (letters, digits, space, dot, dash, underscore)') -%}{%- endif -%}
+      {%- for k in n.keys() if k not in ['cidr', 'name'] -%}
+      {%- if k not in ['site', 'role', 'region', 'tenant'] -%}{%- set _ = out.append(n.cidr ~ ': unknown attribute ' ~ k ~ ' (name, site, role, region, tenant)') -%}
+      {%- elif not (n[k] is string and n[k] is match(sknet_re_label)) -%}{%- set _ = out.append(n.cidr ~ ': ' ~ k ~ ' must be a lowercase label (letters, digits, dot, dash)') -%}{%- endif -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+  tags: [config]
+
 - name: Refuse a bad NETWORKS map
   assert:
     that:
       - skn.NETWORKS is mapping
-      - skn.NETWORKS | dict2items | map(attribute='key') | map('string') | reject('match', sknet_re_cidr) | list | length == 0
-      - skn.NETWORKS | dict2items | map(attribute='value') | map('string') | reject('match', '^[A-Za-z0-9][A-Za-z0-9 ._-]*$') | list | length == 0
-    fail_msg: "sknet.NETWORKS must map IPv4 CIDRs to plain names (letters, digits, space, dot, dash, underscore)."
+      - sknet_network_problems | length == 0
+    fail_msg: "sknet.NETWORKS must map IPv4 CIDRs to a plain name or to {name, site, role, region, tenant}: {{ sknet_network_problems | join('; ') }}"
+    quiet: true
+  tags: [config]
+
+- name: Refuse a bad SAVED_FILTERS list
+  assert:
+    that:
+      - skn.SAVED_FILTERS is sequence and skn.SAVED_FILTERS is not string and skn.SAVED_FILTERS is not mapping
+      - skn.SAVED_FILTERS | reject('mapping') | list | length == 0
+      - skn.SAVED_FILTERS | selectattr('description', 'undefined') | list | length == 0
+      - skn.SAVED_FILTERS | selectattr('content', 'undefined') | list | length == 0
+      - skn.SAVED_FILTERS | map(attribute='description') | map('string') | reject('match', '^[^\\n\\r]{1,120}$') | list | length == 0
+      - skn.SAVED_FILTERS | map(attribute='content') | map('string') | reject('match', '^[^\\n\\r]{1,1000}$') | list | length == 0
+    fail_msg: "sknet.SAVED_FILTERS must be a list of {description, content}, each one line (description up to 120 characters)."
     quiet: true
   tags: [config]
 
@@ -252,7 +293,7 @@
     sknet_inv_exporters: >-
       {%- set out = [] -%}
       {%- for h in groups['sknet_exporter_hosts'] | default([]) -%}
-      {%- set _ = out.append({'name': h, 'address': hostvars[h].sknet_export_address | default('', true) | string, 'state': hostvars[h].sknet_state | default('present', true) | string, 'interfaces': hostvars[h].sknet_interfaces | default([], true)}) -%}
+      {%- set _ = out.append({'name': h, 'address': hostvars[h].sknet_export_address | default('', true) | string, 'state': hostvars[h].sknet_state | default('present', true) | string, 'site': hostvars[h].sknet_site | default('', true), 'role': hostvars[h].sknet_role | default('', true), 'interfaces': hostvars[h].sknet_interfaces | default([], true)}) -%}
       {%- endfor -%}
       {{ out }}
   tags: [config]
@@ -275,7 +316,7 @@
       {%- else -%}
       {%- set out = [] -%}
       {%- for n, v in skn.STATIC_EXPORTERS.items() -%}
-      {%- set _ = out.append({'name': n | string, 'address': (v.sknet_export_address | default('', true) | string) if v is mapping else '', 'state': (v.sknet_state | default('present', true) | string) if v is mapping else 'present', 'interfaces': (v.sknet_interfaces | default([], true)) if v is mapping else []}) -%}
+      {%- set _ = out.append({'name': n | string, 'address': (v.sknet_export_address | default('', true) | string) if v is mapping else '', 'state': (v.sknet_state | default('present', true) | string) if v is mapping else 'present', 'site': (v.sknet_site | default('', true)) if v is mapping else '', 'role': (v.sknet_role | default('', true)) if v is mapping else '', 'interfaces': (v.sknet_interfaces | default([], true)) if v is mapping else []}) -%}
       {%- endfor -%}
       {{ out }}
       {%- endif -%}
@@ -324,7 +365,7 @@
       {%- for i in e.interfaces -%}
       {%- set _ = ifs.append({'name': i.name | string, 'index': i.index | int, 'class': i.class | string, 'speed': (i.speed_mbps | default(1000, true) | int), 'description': (i.description | default(i.name, true) | string)}) -%}
       {%- endfor -%}
-      {%- set _ = out.append({'name': e.name, 'address': e.address, 'interfaces': ifs}) -%}
+      {%- set _ = out.append({'name': e.name, 'address': e.address, 'site': e.site | default('', true) | string, 'role': e.role | default('', true) | string, 'interfaces': ifs}) -%}
       {%- endfor -%}
       {{ out }}
   tags: [config]
