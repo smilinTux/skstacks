@@ -30,8 +30,8 @@ db_engine = "{{ skstor.db_engine | default('sqlite') }}"
 {% set meta_snapshot_interval = skstor.META_SNAPSHOT_INTERVAL | default('6h' if meta_node else '') | string %}
 {% if meta_snapshot_interval %}
 # Metadata snapshots (skstor.META_SNAPSHOT_INTERVAL, default 6h once
-# skstor.META_NODE pins the db to one node's local disk). Garage keeps the
-# two newest; they land on the shared tree (/var/data/skstor-<env>/
+# skstor.META_NODE pins the db to one node's local disk). Each snapshot is
+# <timestamp>/db.sqlite on the shared tree (/var/data/skstor-<env>/
 # meta-snapshots, see skstor.yml.j2) so losing that node does not lose the
 # bucket and key records. Recovery: README "Storage layout".
 metadata_snapshots_dir = "/var/lib/garage/meta-snapshots"

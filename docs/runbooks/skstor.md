@@ -94,10 +94,10 @@ The bucket and key records live in the metadata db; the objects live in
      old `/var/data/skstor-<env>/meta/` (or a `meta.bak-*`): they change only on a
      layout change, so the migration copy is still valid unless you changed the
      layout since;
-   - copy the newest snapshot from `/var/data/skstor-<env>/meta-snapshots/`
-     to `<local>/db.sqlite` (for lmdb, into `<local>/db.lmdb/` as
-     `data.mdb`). See Garage's "Recovering from failures" doc, section on
-     metadata snapshots.
+   - each snapshot is a directory `/var/data/skstor-<env>/meta-snapshots/<UTC timestamp>/`
+     holding only the db (`db.sqlite` for sqlite). Copy the newest one's
+     `db.sqlite` to `<local>/db.sqlite`. For lmdb, see Garage's
+     "Recovering from failures" doc on metadata snapshots.
 3. Set `skstor.META_NODE` to the new node, deploy, and run the step 7 checks.
    Objects written after the snapshot have blocks in `data/` but no entry in
    the db, so they are lost; run `garage repair --yes blocks` afterwards so
