@@ -426,7 +426,7 @@
       shell: |
         set -o pipefail
         LOG=$(docker service logs --raw --since "{{ skai_deploy_started.stdout | default('10m', true) }}" "{{ app }}-{{ env }}_provision" 2>&1 | tail -n 50)
-        if printf '%s\n' "$LOG" | grep -q '^RECONCILED$'; then
+        if grep -q '^RECONCILED$' <<<"$LOG"; then
           printf '%s\n' "$LOG" | grep -E '^(GROUP_CREATED|TOOLS_|PRESET_|RECONCILED)' | tail -n 20
           exit 0
         fi
@@ -447,6 +447,25 @@
       when: ska_corpora | length > 0
       tags: [deploy, presets]
 
+    - name: Resolve the portal tile access (who may sign in)
+      # app-groups: the application is bound to the global admin group,
+      # ADMIN_GROUP and USERS_GROUP (default skai-users); only members get in.
+      # The same group and binding are in sksso's skai blueprint, which also
+      # holds the members (sksso.SKAI_USERS). AUTHENTIK_TILE_GROUP (default
+      # skadmin) stays an additive legacy binding.
+      include_tasks: ../../shared/tasks/sso_access_resolve.yml
+      vars:
+        sso_access_slug: "{{ skai.AUTHENTIK_TILE_SLUG | default(app, true) }}"
+        sso_access_cfg:
+          SSO_ACCESS: app-groups
+          SSO_PROVIDER: own
+          SSO_USERS_GROUP: "{{ ska_users_group }}"
+          SSO_ADMINS_GROUP: "{{ ska_admin_group }}"
+        sso_access_legacy_groups: "{{ [skai.AUTHENTIK_TILE_GROUP | default('skadmin', true)] }}"
+      tags:
+        - config
+        - authentik
+
     - name: Create or update the skai portal tile in Authentik
       # On by default (AUTHENTIK_TILE: true). The tile slug is the OIDC client
       # id, so with AUTH_MODE oidc the sksso blueprint's Application and this
@@ -460,16 +479,7 @@
           slug: "{{ skai.AUTHENTIK_TILE_SLUG | default(app, true) }}"
           name: "{{ skai.AUTHENTIK_TILE_NAME | default('SKAI', true) }}"
           launch_url: "https://{{ ska_host }}"
-          group: "{{ skai.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
-          # app-groups: the application is bound to the global admin group,
-          # ADMIN_GROUP and USERS_GROUP (default skai-users); only members get in. The
-          # same group and binding are in sksso's skai blueprint, which also
-          # holds the members (sksso.SKAI_USERS).
-          sso:
-            SSO_ACCESS: app-groups
-            SSO_PROVIDER: own
-            SSO_USERS_GROUP: "{{ ska_users_group }}"
-            SSO_ADMINS_GROUP: "{{ ska_admin_group }}"
+          access: "{{ sso_access }}"
           icon: "{{ skai.AUTHENTIK_TILE_ICON | default('fa://fa-robot', true) }}"
           open_in_new_tab: "{{ skai.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
           description: "{{ skai.AUTHENTIK_TILE_DESCRIPTION | default('Answer engine: chat, web search and the knowledge base', true) }}"
