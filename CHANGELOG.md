@@ -4,6 +4,24 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
+## Unreleased (v2.26.35)
+
+### sknet: views per estate
+
+- Exporter hostvars `sknet_site` (the estate) and `sknet_role` become Akvorado exporter
+  classifiers, so the console can group by `ExporterSite` and `ExporterRole`.
+- `NETWORKS` values may now be a map `{name, site, role, region, tenant}` as well as a plain
+  name, giving `SrcNetSite`/`DstNetSite` (estate to estate) and the other network attributes.
+  Labels are lowercase; a bad attribute refuses the deploy.
+- The console gets shared saved filters for every user: `Edge/Internet`,
+  `Interface class/<class>`, `Seen at/<site>`, `Estate/<site>`, plus the new vault list
+  `SAVED_FILTERS` (`{description, content}`).
+- ntopng gets the same subnet names as named local networks (`-m`).
+- **Instance action:** none required. To use it, tag the exporters, give `NETWORKS` sites,
+  redeploy the stack, and rerun `live.yml` for the ntopng names. An instance whose vault uses
+  map values cannot go back to v2.26.34 (that deploy refuses them).
+
+
 ## skstacks-v2.26.34 - 2026-11-26
 
 ### skfenceha: NFS client source ports stay off host-mode 993 (#540)
