@@ -152,7 +152,8 @@
         dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
         owner: root
         group: root
-        mode: '0644'
+        # 0640: with UI_HOST_ENABLED the compose file carries the injected api-key label.
+        mode: '0640'
       tags:
         - compose
 
@@ -234,7 +235,10 @@
           enabled: "{{ skvector.AUTHENTIK_TILE | default(true) | bool }}"
           slug: "{{ skvector.AUTHENTIK_TILE_SLUG | default(app, true) }}"
           name: "{{ skvector.AUTHENTIK_TILE_NAME | default('SKVector (Qdrant)', true) }}"
-          launch_url: "https://skvector{{ '' if env == 'prod' else '-' + env }}.{{ skvector.DOMAIN if (skvector.CLOUDFLARED | default(false)) else (skvector.CLUSTERNAME ~ '.' ~ skvector.DOMAIN) }}"
+          # With skvector.UI_HOST_ENABLED the tile opens the SSO web UI host
+          # (api-key injected by Traefik) on the dashboard; README "Web UI behind SSO".
+          launch_url: >-
+            https://skvector{{ '-ui' if (skvector.UI_HOST_ENABLED | default(false) | bool) else '' }}{{ '' if env == 'prod' else '-' + env }}.{{ skvector.DOMAIN if (skvector.CLOUDFLARED | default(false)) else (skvector.CLUSTERNAME ~ '.' ~ skvector.DOMAIN) }}{{ '/dashboard#/collections' if (skvector.UI_HOST_ENABLED | default(false) | bool) else '' }}
           group: "{{ skvector.AUTHENTIK_TILE_GROUP | default('skadmin', true) }}"
           icon: "{{ skvector.AUTHENTIK_TILE_ICON | default('fa://fa-database', true) }}"
           icon_file: "{{ skvector.AUTHENTIK_TILE_ICON_FILE | default('icon.png', true) }}"

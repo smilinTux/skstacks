@@ -4,7 +4,21 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
-## Unreleased
+## Unreleased (v2.26.37)
+
+### skvector: optional web UI host behind SSO
+
+- New, off by default: `skvector.UI_HOST_ENABLED: true` adds a router on
+  `skvector-ui[-env].<cluster>.<domain>` that sends every request through Authentik forward auth
+  (`authentik@file`, attached explicitly, not left to the catch-all) and then injects the Qdrant
+  `api-key` header, so the portal tile opens the dashboard
+  (`/dashboard#/collections`) already signed in. `UI_KEY_MODE` picks the key: `read_only`
+  (default, the new `QDRANT_READ_ONLY_API_KEY`, rendered as `QDRANT__SERVICE__READ_ONLY_API_KEY`)
+  or `full` (`QDRANT_API_KEY`). The main and gRPC routers are unchanged, and with the keys unset
+  the stack renders exactly as before. The key sits in a Traefik label, so grant the UI host to
+  admin groups only (role README "Web UI behind SSO").
+  **Instance action:** none. To use it, set `QDRANT_READ_ONLY_API_KEY` and `UI_HOST_ENABLED` in
+  the vault and redeploy skvector (the tile follows).
 
 ### skpods: no trash and no version history, so a delete really deletes (also on external storage)
 

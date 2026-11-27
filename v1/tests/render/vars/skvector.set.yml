@@ -1,9 +1,5 @@
-# Second render pass: merged over skvector.example.yml to drive the optional
-# placement and local-data knobs down their "set" path. Fake values only.
+# The "set" pass: the optional SSO web UI host on (read_only key), fake values only.
 skvector:
-  placement_constraints: ["node.role == worker"]
-  DATA_NODE: render-worker3
-  STORAGE_PATH: /var/lib/skvector-render/storage
-  SNAPSHOTS_PATH: /var/lib/skvector-render/snapshots
-  TRAEFIK_MIDDLEWARES: crowdsec-bouncer@file,default@file
-  TRAEFIK_MIDDLEWARES_GRPC: crowdsec-bouncer@file,default@file
+  QDRANT_READ_ONLY_API_KEY: example-qdrant-read-only-key-not-a-secret
+  UI_HOST_ENABLED: true
+  UI_KEY_MODE: read_only

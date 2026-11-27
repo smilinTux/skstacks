@@ -25,7 +25,7 @@ import re
 
 import yaml
 
-from test_compose_templates_schema import build_cases, discover_compose_templates, render
+from test_compose_templates_schema import MandatoryRefused, build_cases, discover_compose_templates, render
 
 ANSIBLE = pathlib.Path(__file__).resolve().parents[1] / "ansible"
 ENVS = ["dev", "staging", "prod"]
@@ -46,7 +46,15 @@ def _violations(template):
     out = []
     for label, ctx in build_cases(template):
         for env_name in ENVS:
-            doc = yaml.safe_load(render(template, env_name, ctx)) or {}
+            try:
+                doc = yaml.safe_load(render(template, env_name, ctx)) or {}
+            except MandatoryRefused:
+                # The template's own guard refused a single-flag case (skvector's
+                # UI host without its key); test_compose_templates_schema fails a
+                # refused baseline, so nothing is lost here.
+                if label == "baseline":
+                    raise
+                continue
             for name, svc in (doc.get("services") or {}).items():
                 policy = ((svc or {}).get("deploy") or {}).get("restart_policy") or {}
                 if "max_attempts" in policy and (template.parent.name, name) not in ONE_SHOT:
