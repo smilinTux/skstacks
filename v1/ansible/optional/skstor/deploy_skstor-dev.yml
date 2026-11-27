@@ -66,6 +66,34 @@
         - networks
         - config
 
+    - name: Resolve the {{ app }} metadata location (README "Storage layout")
+      # META_PATH is the host side of Garage's metadata bind mount, META_NODE
+      # the node it lives on (the stack is pinned there), and
+      # META_SNAPSHOT_INTERVAL how often Garage snapshots the db onto the
+      # shared tree (default 6h once META_NODE is set). Unset = the db on
+      # /var/data as before.
+      set_fact:
+        skstor_meta_node: "{{ skstor.META_NODE | default('', true) | string }}"
+        skstor_meta_path: "{{ skstor.META_PATH | default('/var/data/' ~ app ~ '-' ~ env ~ '/meta', true) | string }}"
+        skstor_meta_snapshot_interval: "{{ skstor.META_SNAPSHOT_INTERVAL | default('6h' if (skstor.META_NODE | default('', true)) else '') | string }}"
+
+    - name: Fail closed on a local metadata path without a pinned node
+      # A META_PATH outside /var/data is one node's local disk: without
+      # META_NODE swarm could start Garage on another node with an empty
+      # metadata dir, which looks like a brand new cluster (no layout, no
+      # buckets, no keys) while the data blocks sit orphaned. Same rule as
+      # skaegis DATA_NODE.
+      assert:
+        that:
+          - (skstor_meta_node | length > 0) or skstor_meta_path.startswith('/var/data/')
+          - skstor_meta_node is match('^[A-Za-z0-9][A-Za-z0-9.-]*$') or skstor_meta_node | length == 0
+        fail_msg: >-
+          skstor.META_PATH ({{ skstor_meta_path }}) is outside /var/data but
+          skstor.META_NODE is empty, or META_NODE ({{ skstor_meta_node }}) is
+          not a plain host name. Set META_NODE to the swarm node (its
+          inventory name and swarm hostname) that holds META_PATH.
+        quiet: true
+
   tasks:
     - name: Deploying {{ app }}
       debug:
@@ -92,8 +120,28 @@
       loop:
         - { path: "/var/data/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
         - { path: "/var/data/{{ app }}-{{ env }}/data", owner: "1000", group: "1000", mode: "0770" }
-        - { path: "/var/data/{{ app }}-{{ env }}/meta", owner: "1000", group: "1000", mode: "0770" }
         - { path: "/var/data/config/{{ app }}-{{ env }}", owner: "root", group: "root", mode: "0755" }
+
+    - name: Create the {{ app }} metadata directory
+      # On META_NODE when it is set (local disk there), else from this
+      # manager (the shared tree). Never touches the old /var/data meta dir
+      # once META_PATH moves: that copy stays as the migration backup.
+      file:
+        path: "{{ skstor_meta_path }}"
+        state: directory
+        owner: "1000"
+        group: "1000"
+        mode: "0770"
+      delegate_to: "{{ skstor_meta_node if skstor_meta_node | length > 0 else inventory_hostname }}"
+
+    - name: Create the {{ app }} metadata snapshot directory (shared tree)
+      file:
+        path: "/var/data/{{ app }}-{{ env }}/meta-snapshots"
+        state: directory
+        owner: "1000"
+        group: "1000"
+        mode: "0770"
+      when: skstor_meta_snapshot_interval | length > 0
 
     - name: Copy {{ app }} config files except templates
       copy:

@@ -35,13 +35,24 @@ networks:
   cloud-public-{{ env }}:
     external: true
 
+{# Node-local metadata (README "Storage layout"): META_PATH is the host
+    side of the metadata bind mount. META_NODE pins the service to the node
+    that holds it; META_SNAPSHOT_INTERVAL (default 6h once META_NODE is set)
+    makes Garage snapshot that db onto the shared tree. All unset, this file
+    renders exactly as before. #}
+{% set meta_node = skstor.META_NODE | default('', true) | string %}
+{% set meta_path = skstor.META_PATH | default('/var/data/skstor-' ~ env ~ '/meta', true) | string %}
+{% set meta_snapshot_interval = skstor.META_SNAPSHOT_INTERVAL | default('6h' if meta_node else '') | string %}
 services:
   garage:
     image: dxflrs/garage:{{ skstor.GARAGE_IMAGE_REF | default('v2.5.0@sha256:677e5b758e4425a325b811c425c026bf35a4bf42f7ddbaa773de3f4fd779a5a5') }}
     env_file: /var/data/config/skstor-{{ env }}/skstor.env
     volumes:
       - /var/data/config/skstor-{{ env }}/garage.toml:/etc/garage.toml:ro
-      - /var/data/skstor-{{ env }}/meta:/var/lib/garage/meta
+      - {{ meta_path }}:/var/lib/garage/meta
+{% if meta_snapshot_interval %}
+      - /var/data/skstor-{{ env }}/meta-snapshots:/var/lib/garage/meta-snapshots
+{% endif %}
       - /var/data/skstor-{{ env }}/data:/var/lib/garage/data
     networks:
       cloud-public-{{ env }}: {}
@@ -58,6 +69,11 @@ services:
     deploy:
       mode: replicated
       replicas: 1
+{% if meta_node %}
+      placement:
+        constraints:
+          - node.hostname == {{ meta_node }}
+{% endif %}
       resources:
         limits:
           cpus: '{{ skstor.CPU_LIMIT | default("0.50") }}'
