@@ -11,11 +11,12 @@ import json
 import pathlib
 import subprocess
 import sys
-import threading
 
 import jinja2
 import pytest
 import yaml
+
+import http_test_server
 
 OPT = pathlib.Path(__file__).resolve().parents[1] / "ansible/optional"
 SKSSO = OPT / "sksso"
@@ -198,10 +199,9 @@ class FakeWindmill(http.server.BaseHTTPRequestHandler):
 def windmill():
     FakeWindmill.state = {"oauths": None, "users": {"fwe": [
         {"email": "old@example.com", "username": "old", "is_admin": False, "operator": True}]}, "posts": []}
-    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeWindmill)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    srv = http_test_server.start(http_test_server.ThreadingHTTPServer(("127.0.0.1", 0), FakeWindmill))
     yield f"http://127.0.0.1:{srv.server_port}", FakeWindmill.state
-    srv.shutdown()
+    http_test_server.stop(srv)
 
 
 OAUTHS = {"authentik": {"id": "skflow-windmill", "secret": SECRET, "display_name": "SKWorld SSO",

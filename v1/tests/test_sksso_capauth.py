@@ -13,11 +13,12 @@ import json
 import pathlib
 import subprocess
 import sys
-import threading
 
 import jinja2
 import pytest
 import yaml
+
+import http_test_server
 
 SKSSO = pathlib.Path(__file__).resolve().parents[1] / "ansible/optional/sksso"
 PROVISIONER = SKSSO / "src/sksso/capauth_provision.py"
@@ -333,15 +334,14 @@ def fake_authentik():
             def log_message(self, *a):
                 pass
 
-        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        srv = http_test_server.start(http_test_server.ThreadingHTTPServer(("127.0.0.1", 0), Handler))
         servers.append(srv)
         fake.url = f"http://127.0.0.1:{srv.server_address[1]}"
         return fake
 
     yield start
     for srv in servers:
-        srv.shutdown()
+        http_test_server.stop(srv)
 
 
 FP = "0123456789ABCDEF0123456789ABCDEF01234567"
