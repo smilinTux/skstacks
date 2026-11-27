@@ -71,7 +71,7 @@ def test_create_opens_in_new_tab_by_default(role):
 @pytest.mark.parametrize("role", ROLES)
 def test_redeploy_restores_drifted_flag(role):
     mod = _load(role)
-    api = FakeApi(mod, existing_app={"slug": "v", "name": "v", "provider": 1,
+    api = FakeApi(mod, existing_app={"pk": "app-pk", "slug": "v", "name": "v", "provider": 1,
                                      "meta_launch_url": "v", "open_in_new_tab": False})
     mod.provision(api, _cfg())
     assert api.app_writes == [("PATCH", {"open_in_new_tab": True})]
@@ -80,7 +80,7 @@ def test_redeploy_restores_drifted_flag(role):
 @pytest.mark.parametrize("role", ROLES)
 def test_redeploy_leaves_matching_app_alone(role):
     mod = _load(role)
-    api = FakeApi(mod, existing_app={"slug": "v", "name": "v", "provider": 1,
+    api = FakeApi(mod, existing_app={"pk": "app-pk", "slug": "v", "name": "v", "provider": 1,
                                      "meta_launch_url": "v", "open_in_new_tab": True})
     mod.provision(api, _cfg())
     assert api.app_writes == []
