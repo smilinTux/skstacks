@@ -1,0 +1,424 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+---
+# sknet exporter host play: softflowd, one systemd instance per monitored
+# interface, exporting NetFlow v9 to the sknet collector (Akvorado's inlet on
+# DATA_NODE, UDP NETFLOW_PORT). NOT a swarm deploy: it runs against the hosts of
+# the instance-private inventory group sknet_exporter_hosts (or the group named
+# by sknet_exporter_hosts_group), for example
+#   ansible-playbook -i <exporters ini> exporters.yml [-l <host>]
+# The same hostvars feed the swarm deploy's static interface metadata, and both
+# plays refuse bad ones with the same rules (tasks/exporter_check.yml).
+#
+# Hostvars:
+#   sknet_interfaces       list of {name, index (100 to 65535, unique per host), class
+#                          (lan|mesh|estate-link|internet), speed_mbps, description}
+#   sknet_collector        IPv4 literal of the collector (private unless
+#                          sknet_allow_public_collector: true)
+#   sknet_export_address   the address the collector sees as source (checked here,
+#                          used by the deploy for FLOW_SOURCES)
+#   sknet_state            present (default) or absent
+# The play loads the instance vault like the deploy plays (select_vault_file; env
+# prod, or -e env=<env>) and sends to its NETFLOW_PORT (default 2055). Optional
+# hostvars: sknet_netflow_port (refused unless it equals the vault's port; the inlet
+# listens on exactly one), sknet_softflowd_max_flows (32768),
+# sknet_softflowd_maxlife (60 s), sknet_softflowd_memory_max (128M),
+# sknet_softflowd_cpu_quota (10%), sknet_etc_dir (/etc/sknet), sknet_unit_dir
+# (/etc/systemd/system). Play variable allow_package_install (default true).
+#
+# What lands on the host: /etc/systemd/system/sknet-softflowd@.service, one
+# /etc/sknet/softflowd-<interface>.env per interface, and the instances enabled
+# and started. Instances present on the host but not listed are stopped,
+# disabled and their env removed. The distro's own softflowd.service is stopped,
+# disabled and masked (a marker records that, so absent can unmask it), so a
+# flow never leaves twice. softflowd comes from apt only when missing and when
+# allow_package_install is true; any other package manager fails with a message.
+# state absent removes everything above and leaves the package installed.
+#
+# softflowd's forced interface index, `-i <index>:<name>`, exists in 1.0.0
+# (Ubuntu 22.04), 1.1.0 (24.04) and 1.1.1 (checked against the upstream
+# sources and man pages), so no version gate is needed.
+- hosts: "{{ sknet_exporter_hosts_group | default('sknet_exporter_hosts') }}"
+  become: true
+  gather_facts: false
+  vars:
+    # The vault is per environment: run with -e env=staging for another one.
+    env: prod
+    app: sknet
+    service_name: sknet
+    service_type: optional
+  pre_tasks:
+    - name: Load the sknet defaults
+      include_vars: "{{ playbook_dir }}/vars/defaults.yml"
+      tags: [config]
+
+    - name: Select the sknet vault file
+      # Same selection as the deploy plays and skmon's agent play: the inlet's
+      # NETFLOW_PORT lives in the vault, so the exporters read it from there.
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+      when: (sknet_state | default('present', true)) == 'present'
+      tags: [config]
+
+    - name: Check that the sknet vault file exists
+      stat:
+        path: "{{ vault_file_path }}"
+      register: sknet_x_vault_stat
+      become: false
+      delegate_to: localhost
+      when: (sknet_state | default('present', true)) == 'present'
+      tags: [config]
+
+    - name: Refuse a missing sknet vault
+      fail:
+        msg: >-
+          {{ inventory_hostname }}: no sknet vault at {{ vault_file_path }}. The exporters send to the
+          inlet's NETFLOW_PORT, which the vault holds; without it they could silently use the wrong
+          port. Create the vault (an empty `sknet: {}` block is enough for the default port), set
+          skstacks_vault_dir if it lives outside the framework tree, or pick the environment with -e env=<env>.
+      when: (sknet_state | default('present', true)) == 'present' and not sknet_x_vault_stat.stat.exists
+      tags: [config]
+
+    - name: Load the sknet vault
+      include_vars: "{{ vault_file_path }}"
+      when: (sknet_state | default('present', true)) == 'present'
+      no_log: true
+      tags: [config]
+
+    - name: Derive this exporter's settings
+      set_fact:
+        sknet_x_state: "{{ sknet_state | default('present', true) | string }}"
+        sknet_x_etc: "{{ (sknet_etc_dir | default('/etc/sknet', true) | string) | regex_replace('/+$', '') }}"
+        sknet_x_unit_dir: "{{ (sknet_unit_dir | default('/etc/systemd/system', true) | string) | regex_replace('/+$', '') }}"
+        sknet_x_collector: "{{ sknet_collector | default('', true) | string }}"
+        sknet_x_interfaces: "{{ sknet_interfaces | default([], true) }}"
+        sknet_x_memory_max: "{{ sknet_softflowd_memory_max | default('128M', true) }}"
+        sknet_x_cpu_quota: "{{ sknet_softflowd_cpu_quota | default('10%', true) }}"
+        sknet_x_max_flows: "{{ sknet_softflowd_max_flows | default(32768, true) | int }}"
+        sknet_x_maxlife: "{{ sknet_softflowd_maxlife | default(60, true) | int }}"
+      tags: [config]
+
+    - name: Derive the NetFlow port
+      set_fact:
+        sknet_x_port: "{{ (sknet | default({})).NETFLOW_PORT | default(sknet_defaults.NETFLOW_PORT, true) }}"
+      tags: [config]
+
+    - name: Refuse a per-host port that differs from the vault's NETFLOW_PORT
+      # The inlet listens on one port; an exporter sending elsewhere is silently lost (UDP).
+      assert:
+        that:
+          - sknet_netflow_port is not defined or (sknet_netflow_port | string) == (sknet_x_port | string)
+        fail_msg: >-
+          {{ inventory_hostname }}: sknet_netflow_port {{ sknet_netflow_port | default('') }} differs from the
+          vault's NETFLOW_PORT {{ sknet_x_port }} (the port the inlet listens on). Exporters follow the
+          vault: remove the hostvar, or change NETFLOW_PORT in the vault and redeploy the stack.
+        quiet: true
+      when: sknet_x_state == 'present'
+      tags: [config]
+
+    - name: Refuse an unknown sknet_state
+      assert:
+        that:
+          - sknet_x_state in ['present', 'absent']
+        fail_msg: "{{ inventory_hostname }}: sknet_state must be present or absent (got '{{ sknet_x_state }}')."
+        quiet: true
+      tags: [config]
+
+    - name: Check this exporter's settings
+      include_tasks: "{{ playbook_dir }}/tasks/exporter_guards.yml"
+      when: sknet_x_state == 'present'
+      tags: [config]
+
+    - name: Check the export address against the vault FLOW_SOURCES
+      # Warnings only: the swarm deploy is what refuses, and an exporter rolled out first is normal.
+      # The collector's port allowlist drops flows from an address that is not listed.
+      debug:
+        msg: >-
+          WARNING: {{ inventory_hostname }}: sknet_export_address {{ sknet_export_address | default('') }} is not in
+          FLOW_SOURCES ({{ ((sknet | default({})).FLOW_SOURCES | default([], true)) | join(', ') or 'empty' }}). The collector's
+          firewall drops flows from an unlisted address, silently. Add it to FLOW_SOURCES and redeploy the stack.
+      when:
+        - sknet_x_state == 'present'
+        - (sknet_export_address | default('', true) | string) not in ((sknet | default({})).FLOW_SOURCES | default([], true) | map('string') | list)
+      tags: [config]
+
+    - name: Ask which source address this host uses to reach the collector
+      command: "ip -4 route get {{ sknet_x_collector }}"
+      register: sknet_x_route
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: sknet_x_state == 'present'
+      tags: [config]
+
+    - name: Compare the route source with the export address
+      # Warning only. `ip route get` prints "... src <address> ..."; no output (no ip, no route) skips it.
+      vars:
+        sknet_x_rsrc: "{{ (sknet_x_route.stdout | default('') | regex_findall('src ([0-9.]+)') | first) | default('', true) }}"
+      debug:
+        msg: >-
+          WARNING: {{ inventory_hostname }}: the route to the collector {{ sknet_x_collector }} leaves from
+          {{ sknet_x_rsrc }}, not from sknet_export_address {{ sknet_export_address | default('') }}. The collector
+          sees the route source, so its FLOW_SOURCES allowlist and the static metadata must name that address
+          (or fix the route, or set the right sknet_export_address).
+      when:
+        - sknet_x_state == 'present'
+        - sknet_x_rsrc != ''
+        - sknet_x_rsrc != (sknet_export_address | default('', true) | string)
+      tags: [config]
+
+  tasks:
+    # --- the package --------------------------------------------------------------
+
+    - name: Gather the package manager fact
+      setup:
+        gather_subset:
+          - min
+      when: sknet_x_state == 'present'
+
+    - name: Look for softflowd
+      shell: command -v softflowd
+      args:
+        executable: /bin/sh
+      register: sknet_x_which
+      changed_when: false
+      failed_when: false
+      when: sknet_x_state == 'present'
+
+    - name: Refuse a missing softflowd that this play may not install here
+      fail:
+        msg: >-
+          {{ inventory_hostname }} has no softflowd. This play installs it with apt only, and only
+          when allow_package_install is true (package manager here: {{ ansible_pkg_mgr | default('unknown') }},
+          allow_package_install: {{ allow_package_install | default(true) }}). Install the softflowd
+          package by hand (version 1.0.0 or later), or run the play with a host on apt and
+          allow_package_install true.
+      when: >-
+        sknet_x_state == 'present' and sknet_x_which.rc != 0
+        and (ansible_pkg_mgr | default('') != 'apt' or not (allow_package_install | default(true) | bool))
+
+    - name: Install softflowd
+      command: apt-get -o DPkg::Lock::Timeout=60 install -y softflowd
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+      when: sknet_x_state == 'present' and sknet_x_which.rc != 0
+
+    - name: Find the softflowd binary
+      shell: command -v softflowd
+      args:
+        executable: /bin/sh
+      register: sknet_x_found
+      changed_when: false
+      when: sknet_x_state == 'present'
+
+    - name: Remember the softflowd path
+      set_fact:
+        sknet_x_binary: "{{ sknet_x_found.stdout | trim }}"
+      when: sknet_x_state == 'present'
+
+    # `-N` (no promiscuous mode) exists from softflowd 1.1.0 (Ubuntu 24.04);
+    # 1.0.0 (22.04) refuses the whole command line with "invalid option -- 'N'".
+    # Ask the binary instead of guessing from the distro. On 1.0.0 the device is
+    # opened promiscuous: no effect on a tun or WireGuard device, and on a
+    # switched Ethernet port it only adds the frames the switch floods.
+    - name: Ask softflowd whether it knows -N
+      shell: "{{ sknet_x_binary }} -h 2>&1 || true"
+      args:
+        executable: /bin/sh
+      register: sknet_x_help
+      changed_when: false
+      when: sknet_x_state == 'present'
+
+    - name: Remember the no-promiscuous flag
+      set_fact:
+        sknet_x_nopromisc: "{{ '-N' if (sknet_x_help.stdout is search('(?m)^\\s+-N\\s')) else '' }}"
+      when: sknet_x_state == 'present'
+
+    # --- the distro's own service -------------------------------------------------
+
+    - name: Ask systemd about the distro softflowd service
+      command: systemctl is-enabled softflowd.service
+      register: sknet_x_distro
+      changed_when: false
+      failed_when: false
+      when: sknet_x_state == 'present'
+
+    - name: Create the sknet config directory
+      file:
+        path: "{{ sknet_x_etc }}"
+        state: directory
+        mode: "0755"
+      when: sknet_x_state == 'present'
+
+    - name: Stop, disable and mask the distro softflowd service
+      # It would export from default.conf next to our instances. The marker tells
+      # state absent that this play masked it.
+      command: "systemctl {{ item }} softflowd.service"
+      loop: [stop, disable, mask]
+      when: >-
+        sknet_x_state == 'present'
+        and (sknet_x_distro.stdout | trim) not in ['', 'masked', 'masked-runtime', 'not-found']
+
+    - name: Record that the distro softflowd service was masked
+      copy:
+        content: "The distro softflowd.service was masked by sknet exporters.yml. state absent unmasks it.\n"
+        dest: "{{ sknet_x_etc }}/.distro-softflowd-masked"
+        mode: "0644"
+      when: >-
+        sknet_x_state == 'present'
+        and (sknet_x_distro.stdout | trim) not in ['', 'masked', 'masked-runtime', 'not-found']
+
+    # --- the unit and one env file per interface ----------------------------------
+
+    - name: Write the softflowd instance unit
+      template:
+        src: "{{ playbook_dir }}/src/config/sknet/softflowd@.service.j2"
+        dest: "{{ sknet_x_unit_dir }}/sknet-softflowd@.service"
+        mode: "0644"
+      register: sknet_x_unit
+      when: sknet_x_state == 'present'
+
+    - name: Write one env file per interface
+      copy:
+        content: |
+          # sknet softflowd instance {{ item.name }}, rendered by exporters.yml. Do not edit on the host.
+          SKNET_IFACE={{ item.name }}
+          SKNET_IFINDEX={{ item.index | int }}
+          SKNET_COLLECTOR={{ sknet_x_collector }}
+          SKNET_PORT={{ sknet_x_port | int }}
+          SKNET_OPTIONS="-m {{ sknet_x_max_flows }} -t maxlife={{ sknet_x_maxlife }} -t expint=10 -t general=30 -t tcp=60 -t udp=30"
+          SKNET_BPF="not (udp and dst host {{ sknet_x_collector }} and dst port {{ sknet_x_port | int }})"
+        dest: "{{ sknet_x_etc }}/softflowd-{{ item.name }}.env"
+        mode: "0644"
+      loop: "{{ sknet_x_interfaces }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: sknet_x_envs
+      when: sknet_x_state == 'present'
+
+    # --- instances that are no longer wanted (and everything, when absent) --------
+
+    - name: Find the instances on the host
+      find:
+        paths:
+          - "{{ sknet_x_etc }}"
+          - "{{ sknet_x_unit_dir }}/multi-user.target.wants"
+        patterns:
+          - "softflowd-*.env"
+          - "sknet-softflowd@*.service"
+        file_type: any
+      register: sknet_x_existing
+
+    - name: Work out the stale instances
+      set_fact:
+        sknet_x_stale: >-
+          {{ sknet_x_existing.files | map(attribute='path') | map('basename')
+             | map('regex_replace', '^(?:softflowd-(.*)[.]env|sknet-softflowd@(.*)[.]service)$', '\1\2') | unique
+             | reject('in', (sknet_x_interfaces | map(attribute='name') | list) if sknet_x_state == 'present' else []) | list }}
+
+    - name: Stop and disable the stale instances
+      command: "systemctl {{ item.0 }} sknet-softflowd@{{ item.1 }}.service"
+      loop: "{{ ['stop', 'disable'] | product(sknet_x_stale) | list }}"
+      loop_control:
+        label: "{{ item.0 }} {{ item.1 }}"
+
+    - name: Remove the stale instances' env files
+      file:
+        path: "{{ sknet_x_etc }}/softflowd-{{ item }}.env"
+        state: absent
+      loop: "{{ sknet_x_stale }}"
+
+    # --- start the wanted instances -----------------------------------------------
+
+    - name: Reload systemd when the unit changed
+      command: systemctl daemon-reload
+      when: sknet_x_state == 'present' and sknet_x_unit.changed
+
+    - name: Ask which instances are enabled and running
+      command: "systemctl {{ item.0 }} sknet-softflowd@{{ item.1.name }}.service"
+      loop: "{{ ['is-enabled', 'is-active'] | product(sknet_x_interfaces) | list }}"
+      loop_control:
+        label: "{{ item.0 }} {{ item.1.name }}"
+      register: sknet_x_state_check
+      changed_when: false
+      failed_when: false
+      when: sknet_x_state == 'present'
+
+    - name: Work out what each instance needs
+      set_fact:
+        sknet_x_todo: >-
+          {%- set out = [] -%}
+          {%- for r in sknet_x_state_check.results -%}
+          {%- set name = r.item[1].name -%}
+          {%- set cfg_changed = sknet_x_unit.changed or (sknet_x_envs.results | selectattr('item.name', 'equalto', name) | map(attribute='changed') | first) -%}
+          {%- if r.item[0] == 'is-enabled' and (r.stdout | trim) != 'enabled' -%}{%- set _ = out.append(['enable', name]) -%}{%- endif -%}
+          {%- if r.item[0] == 'is-active' -%}
+          {%- if (r.stdout | trim) != 'active' -%}{%- set _ = out.append(['start', name]) -%}
+          {%- elif cfg_changed -%}{%- set _ = out.append(['restart', name]) -%}{%- endif -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {{ out }}
+      when: sknet_x_state == 'present'
+
+    - name: Enable, start or restart the instances
+      command: "systemctl {{ item.0 }} sknet-softflowd@{{ item.1 }}.service"
+      loop: "{{ sknet_x_todo }}"
+      loop_control:
+        label: "{{ item.0 }} {{ item.1 }}"
+      when: sknet_x_state == 'present'
+
+    # --- state absent: what is left after the loop above removed every instance --
+
+    - name: Check for the distro service marker
+      stat:
+        path: "{{ sknet_x_etc }}/.distro-softflowd-masked"
+      register: sknet_x_marker
+      when: sknet_x_state == 'absent'
+
+    - name: Unmask the distro softflowd service this play masked
+      command: systemctl unmask softflowd.service
+      when: sknet_x_state == 'absent' and sknet_x_marker.stat.exists
+
+    - name: Remove the marker and the unit
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ sknet_x_etc }}/.distro-softflowd-masked"
+        - "{{ sknet_x_unit_dir }}/sknet-softflowd@.service"
+      register: sknet_x_removed
+      when: sknet_x_state == 'absent'
+
+    - name: Remove the sknet config directory when it is empty
+      # rmdir, never file state absent: that would delete files an operator put there.
+      command: "rmdir {{ sknet_x_etc }}"
+      register: sknet_x_rmdir
+      changed_when: sknet_x_rmdir.rc == 0
+      failed_when: false
+      when: sknet_x_state == 'absent'
+
+    - name: Reload systemd after removals
+      command: systemctl daemon-reload
+      when: >-
+        (sknet_x_state == 'absent' and (sknet_x_removed.changed or (sknet_x_stale | length) > 0))
+        or (sknet_x_state == 'present' and (sknet_x_stale | length) > 0)
+
+    - name: Say what was done
+      debug:
+        msg: >-
+          {{ inventory_hostname }}: {{
+          ('sknet exporter removed (units, env files and the distro-service mask); the softflowd package is left installed.')
+          if sknet_x_state == 'absent' else
+          ('exporting ' ~ (sknet_x_interfaces | map(attribute='name') | join(', ')) ~ ' to ' ~ sknet_x_collector ~ ':' ~ (sknet_x_port | int)
+           ~ (' (stale instances removed: ' ~ (sknet_x_stale | join(', ')) ~ ')' if sknet_x_stale | length > 0 else '')) }}

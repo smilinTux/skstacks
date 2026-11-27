@@ -1,0 +1,58 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# sknet exporter metadata check, shared by the swarm deploy (tasks/validate.yml)
+# and the exporter host play (exporters.yml), so both refuse the same hostvars
+# for the same reasons. Input: sknet_check_exporters, a list of
+# {name, address, state, interfaces}. Output: sknet_exporter_problems, a list
+# of messages (empty when everything is fine). set_fact only: no host access.
+# Rules for an exporter whose state is present: the address is an IPv4 literal,
+# the interface list is non-empty, every interface has a name of 1 to 15
+# characters, an integer index from 100 to 65535 that is unique on the exporter
+# (softflowd keeps the index in 16 bits), and a class from sknet_interface_classes.
+- name: Check every exporter's address and interfaces
+  set_fact:
+    sknet_exporter_problems: >-
+      {%- set out = [] -%}
+      {%- for e in sknet_check_exporters -%}
+      {%- if e.state not in ['present', 'absent'] -%}{%- set _ = out.append(e.name ~ ': sknet_state must be present or absent, got ' ~ e.state) -%}{%- endif -%}
+      {%- if e.state == 'present' -%}
+      {%- for k in ['site', 'role'] -%}
+      {%- set v = e[k] | default('', true) -%}
+      {%- if v and not (v is string and v is match(sknet_re_label)) -%}{%- set _ = out.append(e.name ~ ': sknet_' ~ k ~ ' must be a lowercase label (letters, digits, dot, dash), got "' ~ v ~ '"') -%}{%- endif -%}
+      {%- endfor -%}
+      {%- if not (e.address is match(sknet_re_ipv4)) -%}{%- set _ = out.append(e.name ~ ': sknet_export_address must be an IPv4 literal, got "' ~ e.address ~ '"') -%}{%- endif -%}
+      {%- if e.interfaces is string or e.interfaces is mapping or e.interfaces is not sequence or e.interfaces | length == 0 -%}
+      {%- set _ = out.append(e.name ~ ': sknet_interfaces must be a non-empty list') -%}
+      {%- else -%}
+      {%- set seen = [] -%}
+      {%- for i in e.interfaces -%}
+      {%- if i is not mapping -%}{%- set _ = out.append(e.name ~ ': every sknet_interfaces entry must be a map') -%}
+      {%- else -%}
+      {%- if not ((i.name | default('', true) | string) is match(sknet_re_ifname)) -%}{%- set _ = out.append(e.name ~ ': interface name must be 1 to 15 characters of letters, digits and _.-, got "' ~ (i.name | default('', true)) ~ '"') -%}{%- endif -%}
+      {%- if not ((i.index | default('', true) | string) is match('^[0-9]+$') and (i.index | int) >= 100 and (i.index | int) <= 65535) -%}{%- set _ = out.append(e.name ~ ': interface ' ~ (i.name | default('?')) ~ ' index must be an integer from 100 to 65535, got "' ~ (i.index | default('')) ~ '"') -%}
+      {%- elif (i.index | int) in seen -%}{%- set _ = out.append(e.name ~ ': interface index ' ~ i.index ~ ' is used twice') -%}
+      {%- else -%}{%- set _ = seen.append(i.index | int) -%}{%- endif -%}
+      {%- if (i.class | default('', true) | string) not in sknet_interface_classes -%}{%- set _ = out.append(e.name ~ ': interface ' ~ (i.name | default('?')) ~ ' class must be one of ' ~ (sknet_interface_classes | join(', ')) ~ ', got "' ~ (i.class | default('')) ~ '"') -%}{%- endif -%}
+      {%- if i.speed_mbps is defined and not ((i.speed_mbps | string) is match('^[1-9][0-9]*$')) -%}{%- set _ = out.append(e.name ~ ': interface ' ~ (i.name | default('?')) ~ ' speed_mbps must be a positive integer') -%}{%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+  tags: [config]
+

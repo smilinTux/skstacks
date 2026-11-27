@@ -1,0 +1,17 @@
+# Public, obviously fake example vault for the real-Ansible render gate
+# (v1/tests/render/render_playbooks.py). example.test and RFC 5737 addresses
+# only; GATE_SECRET is an obviously fake dummy.
+sknet:
+  CLUSTERNAME: render
+  DOMAIN: example.test
+  DATA_NODE: render-node-1
+  GATE_SECRET: "DUMMY-DUMMY-DUMMY-DUMMY-DUMMY-DUMMY-DUMMY"
+  FLOW_SOURCES:
+    - "192.0.2.10"
+  STATIC_EXPORTERS:
+    gw-example:
+      sknet_export_address: "192.0.2.10"
+      sknet_interfaces:
+        - { name: eth0, index: 101, class: lan, speed_mbps: 1000, description: "Example LAN" }
+        - { name: wt0, index: 102, class: mesh }
+        - { name: wg-site, index: 103, class: estate-link }

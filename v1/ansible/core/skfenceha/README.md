@@ -86,6 +86,30 @@ service is global). A deploy that changes it restarts each worker in turn
 (host-mode ports, so expect a brief connection reset per node); a live
 `docker service update --limit-cpu` does the same.
 
+**Mail entrypoints (`MAIL_ENTRYPOINTS`)**: `skfenceha.MAIL_ENTRYPOINTS: true`
+adds plain TCP entrypoints `smtp` (25), `submissions` (465), `submission`
+(587), `imap` (143) and `imaps` (993) to every worker, published in host mode
+like 80/443, and a `skmail-proxy-v2` TCP serversTransport (PROXY protocol v2)
+to `dynamic/services.yml`. They exist for skmail with `skmail.VIA_TRAEFIK`,
+which routes its mail ports through them so mail answers on every worker. The
+skmail README ("Behind Traefik (PROXY protocol)") has the deploy order: skmail
+first, because a worker cannot bind a port skmail still publishes in host
+mode on the same node. Static configuration: the deploy restarts each worker
+in turn. Default `false`: nothing renders differently.
+
+**NFS and port 993.** The kernel NFS client takes its source ports from
+`sunrpc.min_resvport`..`max_resvport` (665-1023), and 993 is inside that
+range. If an NFS mount (`/var/data`) connects first after a reboot, it can own
+993, and the worker on that node then loops on "bind 0.0.0.0:993: address
+already in use" (no process shows, because it is a kernel socket). The deploy
+therefore runs `shared/tasks/nfs_resvport_guard.yml` on every manager. It sets
+`max_resvport` just below the lowest published port inside the range (992 with
+`MAIL_ENTRYPOINTS`) in `/etc/modprobe.d/sunrpc.conf` (the setting that holds at
+boot, since sunrpc loads after systemd-sysctl) and in
+`/etc/sysctl.d/96-sunrpc-resvport.conf`, and sets the live value. A socket
+already holding the port is reported; remount the share or reboot that node
+to free it. Run it alone with `--tags sunrpc`.
+
 **Traefik image (`TRAEFIK_IMAGE`)**: `skfenceha.TRAEFIK_IMAGE` pins the
 image for both `traefik-acme` and `traefik-worker` (they move together;
 default `traefik:v3.7.19@sha256:...`). A separate `skfence.TRAEFIK_IMAGE`

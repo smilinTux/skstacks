@@ -1,0 +1,81 @@
+# Run inside Authentik: ak shell < apply_email.py   (rendered by branding/_email/render.py)
+# Points every email Authentik sends at the shared [[ e.name ]] templates in
+# /templates/email/ and replaces "authentik" in the subjects. Idempotent; only
+# template and subject fields change, never email server settings or flow logic.
+import json
+import re
+
+from authentik.events.models import NotificationTransport, TransportMode
+from authentik.flows.models import Flow
+from authentik.stages.email.models import EmailStage
+
+BRAND = [[ e.name | tojson ]]
+SUBJECTS = json.loads([[ {"recovery": e.subject_recovery, "invite": e.subject_invite, "confirm": e.subject_confirm} | tojson | tojson ]])
+OTP_SUBJECT = [[ e.subject_otp | tojson ]]
+PREFIX = [[ e.notification_prefix | tojson ]]
+TEMPLATES = {
+    "recovery": "email/password_reset.html",
+    "invite": "email/invitation.html",
+    "confirm": "email/account_confirmation.html",
+}
+
+
+def kind(stage):
+    """What an email stage sends, from its template or the flows it is bound to."""
+    t = (stage.template or "").lower()
+    if "invit" in t or "invite" in stage.name.lower():
+        return "invite"
+    if "confirmation" in t:
+        return "confirm"
+    if "recovery" in t or "password_reset" in t:
+        return "recovery"
+    if Flow.objects.filter(flowstagebinding__stage=stage, designation="recovery").exists():
+        return "recovery"
+    return None
+
+
+for s in EmailStage.objects.all():
+    k = kind(s)
+    if k is None:
+        if "authentik" in (s.subject or "").lower():
+            s.subject = re.sub("authentik", BRAND, s.subject, flags=re.I)
+            s.save()
+        print("stage kept", s.name, s.template)
+        continue
+    if s.template != TEMPLATES[k] or s.subject != SUBJECTS[k]:
+        s.template = TEMPLATES[k]
+        s.subject = SUBJECTS[k]
+        s.save()
+    print("stage ok", s.name, k, s.template)
+
+try:
+    from authentik.stages.authenticator_email.models import AuthenticatorEmailStage
+except ImportError:  # older Authentik without email sign-in codes
+    AuthenticatorEmailStage = None
+if AuthenticatorEmailStage is not None:
+    for s in AuthenticatorEmailStage.objects.all():
+        if s.template != "email/email_otp.html" or s.subject != OTP_SUBJECT:
+            s.template = "email/email_otp.html"
+            s.subject = OTP_SUBJECT
+            s.save()
+        print("otp stage ok", s.name)
+
+for t in NotificationTransport.objects.filter(mode=TransportMode.EMAIL):
+    changed = False
+    if hasattr(t, "email_template") and t.email_template != "email/event_notification.html":
+        t.email_template = "email/event_notification.html"
+        changed = True
+    # replace the stock "authentik Notification: " prefix, keep a custom one
+    if hasattr(t, "email_subject_prefix") and (
+        not t.email_subject_prefix.strip() or "authentik" in t.email_subject_prefix.lower()
+    ):
+        t.email_subject_prefix = PREFIX
+        changed = True
+    if changed:
+        t.save()
+    print("transport ok", t.name, repr(getattr(t, "email_subject_prefix", "")))
+
+for f in Flow.objects.filter(title__icontains="authentik"):
+    f.title = re.sub("authentik", BRAND, f.title, flags=re.I)
+    f.save()
+    print("flow title", f.slug, "->", f.title)

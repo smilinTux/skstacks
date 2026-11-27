@@ -6,3 +6,16 @@ http:
       loadBalancer:
         servers:
           - url: "http://skfenceha-{{ env }}_error-pages:8080"
+{% if (skfenceha.MAIL_ENTRYPOINTS | default(false) | string | lower) in ["true", "yes", "1", "on"] %}
+
+# skfenceha.MAIL_ENTRYPOINTS: the PROXY protocol v2 transport the skmail TCP
+# services use (label loadbalancer.serverstransport=skmail-proxy-v2@file),
+# so docker-mailserver sees each client's real IP instead of the worker's
+# overlay address. TCP loadBalancer.proxyProtocol is deprecated since
+# Traefik v3.5.2; the transport is its replacement.
+tcp:
+  serversTransports:
+    skmail-proxy-v2:
+      proxyProtocol:
+        version: 2
+{% endif %}

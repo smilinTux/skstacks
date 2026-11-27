@@ -301,7 +301,7 @@ services:
     # Config (with the shared secret) and the entrypoint script are rendered
     # files, so no secret sits in the service spec. Starts as root to read the
     # TLS key; turnserver drops to nobody (proc-user). See README "TURN / STUN".
-    image: {{ skmesh.COTURN_IMAGE | default('coturn/coturn:4.19.1-trixie@sha256:81f69dc7cb672eb73ab3414afbb199637c37ab8069919d1c6caaed96ff16fb88') }}
+    image: {{ skmesh.COTURN_IMAGE | default('coturn/coturn:4.19.2-trixie@sha256:ccdbc51e6f072130b0fc9eebda21f8d026d0a25581746c52557e887818011a3f') }}
     user: "0:0"
     entrypoint: ["/bin/sh", "/coturn-run.sh"]
     networks:

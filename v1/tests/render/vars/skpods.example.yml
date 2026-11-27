@@ -1,0 +1,9 @@
+# Public, obviously fake example vault for the real-Ansible render gate
+# (v1/tests/render/render_playbooks.py). Minimal: only what the deploy
+# needs to render. example.test only; no real secrets.
+skpods:
+  CLUSTERNAME: render
+  DOMAIN: example.test
+  NEXTCLOUD_IMAGE: "registry.example.test/skpods/skpods-nextcloud:35.0.3-solid-0000000@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  ADMIN_PASSWORD: example-admin-password-not-a-secret
+  DB_PASSWORD: example-db-password-not-a-secret

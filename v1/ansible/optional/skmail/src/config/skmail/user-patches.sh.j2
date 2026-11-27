@@ -142,6 +142,85 @@ if [ -f /etc/postfix/main.cf ]; then
 fi
 {% endif %}
 
+{% set _via_traefik = (skmail.VIA_TRAEFIK | default(false) | string | lower) in ["true", "yes", "1", "on"] %}
+{% if _via_traefik %}
+{% set _proxy_default_net = {'prod': '172.16.200.0/24', 'staging': '172.16.201.0/24', 'dev': '172.16.202.0/24'} %}
+{% set _trusted = skmail.PROXY_TRUSTED_NETWORKS | default([_proxy_default_net.get(env, '172.16.200.0/24')], true) %}
+{% set _trusted = [_trusted] if _trusted is string else _trusted %}
+# =============================================================================
+# PROXY PROTOCOL LISTENERS (skmail.VIA_TRAEFIK)
+# =============================================================================
+# Traefik's TCP routers forward 25/465/587/143/993 to the proxy-only ports
+# below with a PROXY protocol v2 header, so Postfix and Dovecot see the real
+# client IP (SPF, RBLs, postscreen, auth logs, Dovecot auth penalties). This
+# is docker-mailserver's "separate ports for PROXY protocol" layout
+# (examples/tutorials/mailserver-behind-proxy): the standard ports stay
+# plain, unpublished, for clients on the overlay that speak no PROXY.
+# The port map matches _proxy_ports in skmail.yml.j2.
+# Idempotent: a service already in master.cf is left alone.
+if [ -z "$(postconf -M 12525/inet 2>/dev/null)" ]; then
+    echo "Adding Postfix PROXY protocol listeners 12525, 10587, 10465..."
+    postconf -Mf smtp/inet | sed -e 's/^smtp /12525 /' >> /etc/postfix/master.cf
+    postconf -Mf submission/inet | sed -e 's/^submission /10587 /' >> /etc/postfix/master.cf
+    postconf -Mf submissions/inet | sed -e 's/^submissions /10465 /' >> /etc/postfix/master.cf
+    # postscreen on 12525 hands accepted connections to its own smtpd pass
+    # service (not the shared "smtpd" one used by port 25), so the relay
+    # decision for proxied mail runs with the empty mynetworks below.
+    postconf -Mf smtpd/pass | sed -e 's/^smtpd /smtpd-proxyprotocol /' >> /etc/postfix/master.cf
+    postconf -P \
+        12525/inet/postscreen_upstream_proxy_protocol=haproxy \
+        12525/inet/syslog_name=postfix/smtpd-proxyprotocol \
+        10587/inet/smtpd_upstream_proxy_protocol=haproxy \
+        10587/inet/syslog_name=postfix/submission-proxyprotocol \
+        10465/inet/smtpd_upstream_proxy_protocol=haproxy \
+        10465/inet/syslog_name=postfix/submissions-proxyprotocol \
+        12525/inet/smtpd_service_name=smtpd-proxyprotocol \
+        smtpd-proxyprotocol/pass/mynetworks= \
+        smtpd-proxyprotocol/pass/syslog_name=postfix/smtpd-proxyprotocol \
+        10587/inet/mynetworks= \
+        10465/inet/mynetworks=
+    # On these listeners the client address comes from the PROXY header,
+    # which anything on the Traefik overlay can write. An empty mynetworks
+    # means no claimed address (127.0.0.1 included) is trusted to relay:
+    # every relay on them needs SASL auth (permit_sasl_authenticated).
+    # Tested on docker-mailserver 17.0.0: a PROXY v2 header claiming
+    # 127.0.0.1 relayed to an outside domain (250) with only the postscreen
+    # -o, and is refused (554 Relay access denied) with the pass service.
+    # Two postscreen services (25 and 12525) share one cache through the
+    # proxymap service instead of both locking the btree file directly.
+    postconf 'postscreen_cache_map = proxy:btree:$data_directory/postscreen_cache'
+fi
+
+# Dovecot: proxy-only IMAP listeners. haproxy_trusted_networks is the
+# overlay Traefik connects from (skmail.PROXY_TRUSTED_NETWORKS, default the
+# framework's cloud-public-{{ env }} subnet). A conf.d file, not dovecot.cf,
+# so an instance's own dovecot.cf override is never overwritten.
+cat > /etc/dovecot/conf.d/95-skmail-proxy-protocol.conf <<'SKMAIL_DOVECOT_PROXY'
+# Managed by skmail user-patches.sh (skmail.VIA_TRAEFIK).
+haproxy_trusted_networks = {{ _trusted | join(' ') }}
+service imap-login {
+  inet_listener imap-proxyprotocol {
+    port = 10143
+    haproxy = yes
+  }
+  inet_listener imaps-proxyprotocol {
+    port = 10993
+    ssl = yes
+    haproxy = yes
+  }
+}
+SKMAIL_DOVECOT_PROXY
+
+# The overlay Traefik connects from must never be in mynetworks: a client on
+# it would relay without auth on the plain ports. PERMIT_DOCKER=container
+# (skmail.env) only adds the container's own /32; this catches an override.
+{% for _net in _trusted %}
+if postconf -h mynetworks | grep -qF '{{ _net }}'; then
+    echo "WARNING: {{ _net }} (PROXY trusted network) is in Postfix mynetworks; remove it (PERMIT_DOCKER, postfix-main.cf)"
+fi
+{% endfor %}
+
+{% endif %}
 # Reload Postfix configuration if running
 if pgrep -x "master" >/dev/null 2>&1; then
     echo "Reloading Postfix configuration..."

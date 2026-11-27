@@ -1,0 +1,368 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+version: '3.8'
+
+# sknet: network flow visibility. Akvorado (AGPL-3.0, upstream github.com/
+# akvorado/akvorado) used unchanged: flows arrive as NetFlow v9 / IPFIX on the
+# inlet's UDP ports, pass through Kafka (KRaft, one node) and are stored in
+# ClickHouse; the console is the web UI. The upstream compose cannot be stack
+# deployed as it is (it uses `extends` and `depends_on`), so this is it
+# flattened: no depends_on (restart_policy retries until Kafka, ClickHouse and
+# the orchestrator answer), labels under deploy, one overlay network, nothing
+# published except the inlet's UDP ports (host mode, so the exporter's source
+# address survives; tasks/port_allowlist.yml firewalls them to FLOW_SOURCES).
+# Everything stateful is pinned to DATA_NODE with its data on local disk under
+# DATA_DIR (never NFS). The gate (Caddy) is the only service on the shared
+# cloud-public network: it fronts the console and, when LIVE_UPSTREAM is set,
+# an ntopng that runs on a host (the live play). Configs
+# are Swarm configs named after their content, so a changed file rolls the
+# service. Opt-in: nothing renders unless this playbook runs.
+{#- Swarm config helper: `swarm_config(key)` names a config after the sha256 of
+    its rendered content. The play passes sknet_config_names (key -> first 12
+    hex digits of that hash) and writes each config to the file below before
+    `docker stack deploy`. #}
+{% macro swarm_config(key) -%}
+name: "sknet_{{ env }}_{{ key }}_{{ sknet_config_names[key] }}"
+    file: "/var/data/config/sknet-{{ env }}/configs/{{ key }}"
+{%- endmacro %}
+{#- Docker secret helper, same naming rule: the play writes each secret to the
+    file below (0600) before `docker stack deploy`. #}
+{% macro swarm_secret(key) -%}
+name: "sknet_{{ env }}_{{ key }}_{{ sknet_secret_names[key] }}"
+    file: "/var/data/config/sknet-{{ env }}/secrets/{{ key }}"
+{%- endmacro %}
+{% set data = sknet_data_dir | default('/var/lib/sknet-' ~ env, true) %}
+{% set node_constraint = ['node.hostname == ' ~ (sknet_data_node | default('', true))] %}
+{% set router = sknet_router | default('sknet', true) %}
+{% set live_router = sknet_live_router | default('sknet-live', true) %}
+{% set tls_options = skn.TLS_OPTIONS | default('none', true) %}
+{% set gate_constraints = sknet_gate_constraints | default([], true) %}
+{% set gate_mw = sknet_gate_mw | default('sknet-' ~ env ~ '-gate', true) %}
+{% set chain = (sknet_chain | default([], true)) + [gate_mw] %}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "{{ skn.LOG_MAX_SIZE | default('10m', true) }}"
+    max-file: "{{ skn.LOG_MAX_FILES | default('3', true) }}"
+
+# stop-first everywhere: one replica each, and the inlet's host-mode UDP ports
+# and the data volumes cannot be held by two tasks at once.
+x-deploy: &deploy
+  mode: replicated
+  replicas: 1
+  update_config:
+    order: stop-first
+  restart_policy:
+    condition: any
+    delay: 10s
+
+networks:
+  sknet-{{ env }}:
+    external: true
+  cloud-public-{{ env }}:
+    external: true
+
+services:
+  kafka:
+    # Single-node KRaft, the same settings as upstream's compose. The heap is
+    # capped well under the container limit: the broker is only a buffer
+    # between the inlet and ClickHouse.
+    image: {{ skn.KAFKA_IMAGE | default('apache/kafka:4.3.1', true) }}
+    environment:
+      - "KAFKA_NODE_ID=1"
+      - "KAFKA_PROCESS_ROLES=controller,broker"
+      - "KAFKA_CONTROLLER_QUORUM_VOTERS=1@localhost:9093"
+      - "KAFKA_LISTENERS=CLIENT://:9092,CONTROLLER://:9093"
+      - "KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CLIENT:PLAINTEXT,CONTROLLER:PLAINTEXT"
+      - "KAFKA_ADVERTISED_LISTENERS=CLIENT://kafka:9092"
+      - "KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER"
+      - "KAFKA_INTER_BROKER_LISTENER_NAME=CLIENT"
+      - "KAFKA_DELETE_TOPIC_ENABLE=true"
+      - "KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1"
+      - "KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1"
+      - "KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1"
+      - "KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR=1"
+      - "KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR=1"
+      - "KAFKA_LOG_DIRS=/var/lib/kafka/data"
+      - "KAFKA_HEAP_OPTS=-Xms256m -Xmx448m"
+    volumes:
+      - {{ data }}/kafka:/var/lib/kafka/data
+    healthcheck:
+      # Plain TCP to the local listener. Swarm DNS does not answer for the
+      # service name until a task is healthy, so a check (or a quorum voter)
+      # that resolves "kafka" deadlocks the broker. The controller votes on
+      # localhost for the same reason; clients still use kafka:9092.
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/9092' || exit 1"]
+      interval: 30s
+      timeout: 20s
+      retries: 5
+      start_period: 90s
+    networks:
+      - sknet-{{ env }}
+    logging: *logging
+    deploy:
+      <<: *deploy
+      placement:
+        constraints: {{ node_constraint | tojson }}
+      resources:
+        limits:
+          cpus: '1.00'
+          memory: {{ skn.KAFKA_MEMORY_LIMIT | default('704M', true) }}
+        reservations:
+          memory: 256M
+      labels:
+        - "com.skt.app=sknet"
+        - "com.skt.env={{ env }}"
+
+  clickhouse:
+    # Needs AVX2 on the node (ClickHouse 26.6+). Reached only over the overlay.
+    image: {{ skn.CLICKHOUSE_IMAGE | default('clickhouse/clickhouse-server:26.8', true) }}
+    environment:
+      - "CLICKHOUSE_INIT_TIMEOUT=60"
+      - "CLICKHOUSE_SKIP_USER_SETUP=1"
+    volumes:
+      - {{ data }}/clickhouse:/var/lib/clickhouse
+    configs:
+      - source: clickhouse-lowmem
+        target: /etc/clickhouse-server/config.d/lowmem.xml
+      - source: clickhouse-logs
+        target: /etc/clickhouse-server/config.d/akvorado.xml
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "wget", "-T", "1", "--spider", "--no-proxy", "http://127.0.0.1:8123/ping"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    networks:
+      - sknet-{{ env }}
+    logging: *logging
+    deploy:
+      <<: *deploy
+      placement:
+        constraints: {{ node_constraint | tojson }}
+      resources:
+        limits:
+          cpus: '2.00'
+          memory: {{ skn.CLICKHOUSE_MEMORY_LIMIT | default('1536M', true) }}
+        reservations:
+          memory: 512M
+      labels:
+        - "com.skt.app=sknet"
+        - "com.skt.env={{ env }}"
+
+  orchestrator:
+    # Creates the Kafka topic, provisions ClickHouse and serves every other
+    # Akvorado service its configuration.
+    image: {{ skn.AKVORADO_IMAGE | default('quay.io/akvorado/akvorado:2026.10.1', true) }}
+    command: ["orchestrator", "/etc/akvorado/akvorado.yaml"]
+    configs:
+      - source: akvorado-yaml
+        target: /etc/akvorado/akvorado.yaml
+    networks:
+      - sknet-{{ env }}
+    logging: *logging
+    deploy:
+      <<: *deploy
+      placement:
+        constraints: {{ node_constraint | tojson }}
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: {{ skn.ORCHESTRATOR_MEMORY_LIMIT | default('192M', true) }}
+        reservations:
+          memory: 64M
+      labels:
+        - "com.skt.app=sknet"
+        - "com.skt.env={{ env }}"
+
+  inlet:
+    # Receives NetFlow v9 / IPFIX and writes it to Kafka without parsing it.
+    # Host-mode UDP: the source address is the exporter's identity, which the
+    # ingress routing mesh would rewrite. The container ports stay 2055/4739;
+    # NETFLOW_PORT / IPFIX_PORT only change what the node listens on.
+    image: {{ skn.AKVORADO_IMAGE | default('quay.io/akvorado/akvorado:2026.10.1', true) }}
+    command: ["inlet", "http://orchestrator:8080"]
+    ports:
+      - { target: 2055, published: {{ sknet_netflow_port | default(2055, true) }}, protocol: udp, mode: host }
+      - { target: 4739, published: {{ sknet_ipfix_port | default(4739, true) }}, protocol: udp, mode: host }
+    networks:
+      - sknet-{{ env }}
+    logging: *logging
+    deploy:
+      <<: *deploy
+      placement:
+        constraints: {{ node_constraint | tojson }}
+      resources:
+        limits:
+          cpus: '1.00'
+          memory: {{ skn.INLET_MEMORY_LIMIT | default('160M', true) }}
+        reservations:
+          memory: 64M
+      labels:
+        - "com.skt.app=sknet"
+        - "com.skt.env={{ env }}"
+
+  outlet:
+    # Reads Kafka, adds interface names (static metadata, no SNMP), networks
+    # and optional GeoIP, and inserts into ClickHouse.
+    image: {{ skn.AKVORADO_IMAGE | default('quay.io/akvorado/akvorado:2026.10.1', true) }}
+    command: ["outlet", "http://orchestrator:8080"]
+    environment:
+      - "AKVORADO_CFG_OUTLET_METADATA_CACHEPERSISTFILE=/run/akvorado/metadata.cache"
+      - "AKVORADO_CFG_OUTLET_FLOW_STATEPERSISTFILE=/run/akvorado/flow.state"
+    volumes:
+      - {{ data }}/outlet:/run/akvorado
+{% if skn.GEOIP_ENABLED | default(false) | bool %}
+      - {{ data }}/geoip:/usr/share/GeoIP:ro
+{% endif %}
+    stop_grace_period: 30s
+    networks:
+      - sknet-{{ env }}
+    logging: *logging
+    deploy:
+      <<: *deploy
+      placement:
+        constraints: {{ node_constraint | tojson }}
+      resources:
+        limits:
+          cpus: '1.00'
+          memory: {{ skn.AKVORADO_MEMORY_LIMIT | default('512M', true) }}
+        reservations:
+          memory: 128M
+      labels:
+        - "com.skt.app=sknet"
+        - "com.skt.env={{ env }}"
+
+  console:
+    # The web UI. It trusts the login header Authentik's forward auth sets, so
+    # it publishes no port and is NOT on the shared cloud-public network: it is
+    # reachable only over sknet-<env>, from the gate below (which forwards a
+    # request only when Traefik added the secret header). Keep nothing else on
+    # sknet-<env>: anything attached there can forge that login header.
+    image: {{ skn.AKVORADO_IMAGE | default('quay.io/akvorado/akvorado:2026.10.1', true) }}
+    command: ["console", "http://orchestrator:8080"]
+    environment:
+      - "AKVORADO_CFG_CONSOLE_DATABASE_DSN=/run/akvorado/console.sqlite"
+    volumes:
+      - {{ data }}/console:/run/akvorado
+    networks:
+      - sknet-{{ env }}
+    logging: *logging
+    deploy:
+      <<: *deploy
+      placement:
+        constraints: {{ node_constraint | tojson }}
+      resources:
+        limits:
+          cpus: '1.00'
+          memory: {{ skn.CONSOLE_MEMORY_LIMIT | default('256M', true) }}
+        reservations:
+          memory: 64M
+      labels:
+        - "com.skt.app=sknet"
+        - "com.skt.env={{ env }}"
+
+  gate:
+    # The only sknet service on the shared cloud-public network, and so the only
+    # one Traefik can route to. Both routers (console host and live host) point
+    # here; Traefik adds the X-Sknet-Gate header (the GATE_SECRET vault key)
+    # after the allowlist and sign-in, and the Caddyfile answers 403 to any
+    # request without it, so a container that reaches the gate directly over
+    # cloud-public gets nothing. It then proxies the console host to the
+    # console over sknet-<env> and the live host to LIVE_UPSTREAM. It is not
+    # pinned to DATA_NODE: it needs only a route to the console and ntopng.
+    image: {{ skn.PROXY_IMAGE | default('caddy:2.11.9-alpine', true) }}
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
+    secrets:
+      - source: gate
+        target: sknet_gate
+        mode: 0400
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/_sknet_health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - sknet-{{ env }}
+      - cloud-public-{{ env }}
+    logging: *logging
+    deploy:
+      <<: *deploy
+{% if gate_constraints | length > 0 %}
+      placement:
+        constraints: {{ gate_constraints | tojson }}
+{% endif %}
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: {{ skn.PROXY_MEMORY_LIMIT | default('64M', true) }}
+        reservations:
+          memory: 16M
+      labels:
+        - "com.skt.app=sknet"
+        - "com.skt.env={{ env }}"
+        - "traefik.enable=true"
+        - "traefik.swarm.network=cloud-public-{{ env }}"
+        # The address gate for every sknet router, whatever the sign-in mode.
+        - "traefik.http.middlewares.{{ sknet_allow_mw | default('sknet-' ~ env ~ '-allow', true) }}.ipallowlist.sourcerange={{ skn.ALLOW_CIDRS | default([], true) | join(',') }}"
+        # Depth 0: judge the direct remote address Traefik sees (no X-Forwarded-For
+        # trust). Real client addresses need host-mode Traefik entrypoints.
+        - "traefik.http.middlewares.{{ sknet_allow_mw | default('sknet-' ~ env ~ '-allow', true) }}.ipallowlist.ipstrategy.depth=0"
+        # The secret request header the Caddyfile requires (last in both chains).
+        - "traefik.http.middlewares.{{ gate_mw }}.headers.customrequestheaders.X-Sknet-Gate={{ skn.GATE_SECRET }}"
+        - "traefik.http.routers.{{ router }}.rule=Host(`{{ sknet_host }}`)"
+        - "traefik.http.routers.{{ router }}.entrypoints=websecure"
+        - "traefik.http.routers.{{ router }}.tls=true"
+        - "traefik.http.routers.{{ router }}.tls.certresolver=main"
+{% if tls_options != 'none' %}
+        - "traefik.http.routers.{{ router }}.tls.options={{ tls_options }}"
+{% endif %}
+        - "traefik.http.routers.{{ router }}.middlewares={{ chain | join(',') }}"
+        - "traefik.http.routers.{{ router }}.service={{ router }}"
+        - "traefik.http.services.{{ router }}.loadbalancer.server.port=8080"
+{% if sknet_live_enabled | default(false) | bool %}
+        - "traefik.http.routers.{{ live_router }}.rule=Host(`{{ sknet_live_host }}`)"
+        - "traefik.http.routers.{{ live_router }}.entrypoints=websecure"
+        - "traefik.http.routers.{{ live_router }}.tls=true"
+        - "traefik.http.routers.{{ live_router }}.tls.certresolver=main"
+{% if tls_options != 'none' %}
+        - "traefik.http.routers.{{ live_router }}.tls.options={{ tls_options }}"
+{% endif %}
+        - "traefik.http.routers.{{ live_router }}.middlewares={{ chain | join(',') }}"
+        - "traefik.http.routers.{{ live_router }}.service={{ live_router }}"
+        - "traefik.http.services.{{ live_router }}.loadbalancer.server.port=8080"
+{% endif %}
+{% if sknet_secret_names | default({}) %}
+
+secrets:
+{% for key in sknet_secret_names %}
+  {{ key }}:
+    {{ swarm_secret(key) }}
+{% endfor %}
+{% endif %}
+{% if sknet_config_names | default({}) %}
+
+configs:
+{% for key in sknet_config_names %}
+  {{ key }}:
+    {{ swarm_config(key) }}
+{% endfor %}
+{% endif %}

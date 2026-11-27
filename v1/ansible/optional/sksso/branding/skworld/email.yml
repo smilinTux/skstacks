@@ -1,0 +1,27 @@
+# Brand values for the shared email set in branding/_email (see README "Branding").
+# Every Authentik email (password reset, invitation, account confirmation,
+# email sign-in code, notifications, test email) is rendered from these.
+e:
+  name: SKWorld
+  mark: SK
+  tagline: ""
+  accent: "#E0561F"
+  accent_text: "#ffffff"
+  header_bg: "#1b1512"
+  header_text: "#ffffff"
+  page_bg: "#f6f2ef"
+  card_border: "#eadfd8"
+  heading: "#1b1512"
+  text: "#2a211c"
+  muted: "#6f625b"
+  link: "#B8441A"
+  font: "'Public Sans','Segoe UI',Roboto,Helvetica,Arial,sans-serif"
+  footer: SKWorld
+  support_line: ""
+  invite_intro: ""
+  # subjects the apply step writes to the email stages and notification transports
+  subject_recovery: "SKWorld: reset your password"
+  subject_invite: "Welcome to SKWorld: set up your account"
+  subject_confirm: "SKWorld: confirm your account"
+  subject_otp: "SKWorld: your sign-in code"
+  notification_prefix: "SKWorld: "

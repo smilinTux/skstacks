@@ -1,0 +1,8 @@
+[% import "_macros.j2" as m with context %]{% extends "email/base.html" %}{% load i18n %}{% load humanize %}
+{% block content %}
+[[ m.h1("{% trans '" ~ e.name ~ " test email' %}") ]]
+[[ m.p("{% trans 'Email delivery for " ~ e.name ~ " sign-in is set up and working.' %}") ]]
+{% endblock %}
+{% block sub_content %}
+[[ m.note("{% trans 'No action is needed.' %}") ]]
+{% endblock %}

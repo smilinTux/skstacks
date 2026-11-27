@@ -1,0 +1,258 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# Account features of the nextcloud engine: storage quota, outgoing mail,
+# upload scanning, owner-only pod roots and each account's Readme.md.
+# Runs after engine_nextcloud.yml and skeleton_nextcloud.yml (needs
+# skp_nc_node and skp_nc_container, and the skpods and files_antivirus apps
+# from the engine image).
+
+- name: Set the default storage quota per account
+  shell: |
+    set -euo pipefail
+    C="{{ skp_nc_container.stdout | trim }}"
+    want="{{ skpods.DEFAULT_QUOTA | default('10 GB', true) }}"
+    got=$(docker exec -u www-data "$C" php occ config:app:get files default_quota 2>/dev/null || true)
+    [ "$got" = "$want" ] && { echo "quota already $want"; exit 0; }
+    docker exec -u www-data "$C" php occ config:app:set files default_quota --value="$want" >/dev/null
+    echo "quota set to $want"
+  args:
+    executable: /bin/bash
+  delegate_to: "{{ skp_nc_node.stdout | trim }}"
+  register: skp_quota
+  changed_when: "'quota set' in skp_quota.stdout"
+  tags:
+    - config
+    - features
+
+- name: Apply the vault mail settings (password reset, notifications)
+  # Same idempotent helper as skhub (config:import from stdin, never argv;
+  # compares the password by sha256 only; prints key names, never values).
+  shell: |
+    set -euo pipefail
+    docker exec -i -u www-data "{{ skp_nc_container.stdout | trim }}" php -r "$SKP_MAIL_PHP"
+  args:
+    executable: /bin/bash
+    stdin: >-
+      {{ {'system': {
+          'mail_smtpmode': 'smtp',
+          'mail_sendmailmode': 'smtp',
+          'mail_smtphost': skpods.SMTP_HOST | string,
+          'mail_smtpport': skpods.SMTP_PORT | default(465, true) | int,
+          'mail_smtpsecure': skpods.SMTP_SECURE | default('ssl', true) | string,
+          'mail_smtpauth': true,
+          'mail_smtpauthtype': skpods.SMTP_AUTHTYPE | default('LOGIN', true) | string,
+          'mail_smtpname': skpods.SMTP_USER | string,
+          'mail_smtppassword': skpods.SMTP_PASSWORD | string,
+          'mail_from_address': skpods.MAIL_FROM | string,
+          'mail_domain': skpods.MAIL_DOMAIN | string,
+      }} | to_json }}
+  environment:
+    SKP_MAIL_PHP: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../skhub/files/nextcloud-mail-config.php') }}"
+  delegate_to: "{{ skp_nc_node.stdout | trim }}"
+  register: skp_mail
+  changed_when: skp_mail.stdout is search('^CHANGED', multiline=True)
+  when: skpods.SMTP_HOST | default('', true) | length > 0
+  no_log: true
+  tags:
+    - config
+    - features
+    - mail
+
+- name: Report the mail settings result (key names only)
+  debug:
+    msg: "{{ skp_mail.stdout | default('mail not configured (skpods.SMTP_HOST unset): Forgot password is hidden') }}"
+  tags:
+    - config
+    - features
+    - mail
+
+- name: Hide "Forgot password?" while no mail is configured
+  # Without mail the reset link fails quietly; lost_password_link=disabled
+  # hides it. Removed again once SMTP_HOST is set.
+  shell: |
+    set -euo pipefail
+    C="{{ skp_nc_container.stdout | trim }}"
+    got=$(docker exec -u www-data "$C" php occ config:system:get lost_password_link 2>/dev/null || true)
+    {% if skpods.SMTP_HOST | default('', true) | length > 0 %}
+    [ "$got" = "disabled" ] || { echo "reset link already shown"; exit 0; }
+    docker exec -u www-data "$C" php occ config:system:delete lost_password_link >/dev/null
+    echo "reset link shown"
+    {% else %}
+    [ "$got" = "disabled" ] && { echo "reset link already hidden"; exit 0; }
+    docker exec -u www-data "$C" php occ config:system:set lost_password_link --value=disabled >/dev/null
+    echo "reset link hidden"
+    {% endif %}
+  args:
+    executable: /bin/bash
+  delegate_to: "{{ skp_nc_node.stdout | trim }}"
+  register: skp_reset_link
+  changed_when: "'already' not in skp_reset_link.stdout"
+  tags:
+    - config
+    - features
+    - mail
+
+- name: Point files_antivirus at the stack's clamd
+  # Uploads with a virus are refused. Background scans of files already
+  # stored only log (av_infected_action only_log) unless overridden.
+  shell: |
+    set -euo pipefail
+    C="{{ skp_nc_container.stdout | trim }}"
+    n=0
+    set_av() {
+      got=$(docker exec -u www-data "$C" php occ config:app:get files_antivirus "$1" 2>/dev/null || true)
+      [ "$got" = "$2" ] && return 0
+      docker exec -u www-data "$C" php occ config:app:set files_antivirus "$1" --value="$2" >/dev/null
+      n=$((n+1))
+    }
+    set_av av_mode daemon
+    set_av av_host clamav
+    set_av av_port 3310
+    set_av av_stream_max_length "{{ (skpods.CLAMD_STREAM_MAX_LENGTH_MB | default(100, true) | int) * 1048576 }}"
+    set_av av_max_file_size "{{ skpods.ANTIVIRUS_MAX_FILE_SIZE | default(-1, true) }}"
+    set_av av_infected_action "{{ skpods.ANTIVIRUS_INFECTED_ACTION | default('only_log', true) }}"
+    echo "antivirus settings changed: $n"
+  args:
+    executable: /bin/bash
+  delegate_to: "{{ skp_nc_node.stdout | trim }}"
+  register: skp_av
+  changed_when: "'changed: 0' not in skp_av.stdout"
+  when: skp_antivirus | bool
+  tags:
+    - config
+    - features
+    - antivirus
+
+- name: Wait for clamd to answer before files_antivirus is enabled
+  # files_antivirus refuses every file write when it cannot reach its
+  # scanner, so the app is only turned on once clamd replies (a first start
+  # downloads the signatures: allow several minutes).
+  shell: |
+    set -euo pipefail
+    C="{{ skp_nc_container.stdout | trim }}"
+    docker exec "$C" php -r '$s=@fsockopen("clamav",3310,$e,$m,5); if(!$s) exit(1); fwrite($s,"zPING\0"); $r=fread($s,16); exit(trim($r,"\0\n")==="PONG"?0:1);'
+  args:
+    executable: /bin/bash
+  delegate_to: "{{ skp_nc_node.stdout | trim }}"
+  register: skp_clamd_ping
+  until: skp_clamd_ping.rc == 0
+  retries: 60
+  delay: 10
+  changed_when: false
+  when: skp_antivirus | bool
+  tags:
+    - config
+    - features
+    - antivirus
+
+- name: Enable files_antivirus (settings above already point it at clamd)
+  shell: |
+    set -euo pipefail
+    C="{{ skp_nc_container.stdout | trim }}"
+    enabled=$(docker exec -u www-data "$C" php occ app:list --enabled)
+    if grep -q '^  - files_antivirus:' <<<"$enabled"; then
+      echo "files_antivirus already enabled"
+    else
+      docker exec -u www-data "$C" php occ app:enable files_antivirus >/dev/null
+      echo "files_antivirus enabled"
+    fi
+  args:
+    executable: /bin/bash
+  delegate_to: "{{ skp_nc_node.stdout | trim }}"
+  register: skp_av_enable
+  changed_when: "'already' not in skp_av_enable.stdout"
+  when: skp_antivirus | bool
+  tags:
+    - config
+    - features
+    - antivirus
+
+- name: Make existing pod roots owner-only
+  # Engine images before the owner-only root ACL wrote a root .acl that let
+  # anyone list the pod root. This removes exactly that stock public block
+  # (nothing else) from each account's solid/.acl; inbox/ and public/ keep
+  # their own ACLs and the profile stays public.
+  shell: |
+    set -euo pipefail
+    C="{{ skp_nc_container.stdout | trim }}"
+    docker exec -i -u www-data "$C" php <<'EOS'
+    <?php
+    $data = trim(shell_exec('php /var/www/html/occ config:system:get datadirectory'));
+    $re = '/# The homepage is readable by the public\R<#public>\R\s*a acl:Authorization;\R\s*acl:agentClass foaf:Agent;\R\s*acl:accessTo <\.\/>;\R\s*acl:mode acl:Read\.\R\R?/';
+    $users = [];
+    foreach (glob($data . '/*/files/solid/.acl') ?: [] as $acl) {
+        $old = file_get_contents($acl);
+        $new = preg_replace($re, '', $old, 1, $count);
+        if ($count === 1 && $new !== null) {
+            file_put_contents($acl, $new);
+            $users[] = basename(dirname($acl, 3));
+        }
+    }
+    foreach ($users as $u) {
+        shell_exec('php /var/www/html/occ files:scan --quiet ' . escapeshellarg('--path=/' . $u . '/files/solid') . ' 2>&1');
+        echo "owner-only root: $u\n";
+    }
+    if (!$users) echo "no pod roots changed\n";
+    EOS
+  args:
+    executable: /bin/bash
+  delegate_to: "{{ skp_nc_node.stdout | trim }}"
+  register: skp_root_acl
+  changed_when: "'owner-only root:' in skp_root_acl.stdout"
+  tags:
+    - config
+    - features
+    - acl
+
+- name: Give every account its own Readme.md
+  # The skpods app writes Readme.md (the account's WebID, pod address and
+  # links) on first login; this covers accounts that existed before it and
+  # never overwrites. The earlier static welcome note is removed only when
+  # byte-identical to the shipped copy.
+  shell: |
+    set -euo pipefail
+    C="{{ skp_nc_container.stdout | trim }}"
+    docker exec -i -u www-data "$C" bash -s <<'EOS'
+    set -euo pipefail
+    data=$(php occ config:system:get datadirectory)
+    old_sha=3f8120469c058c9cbc5ed3e6b85e8e51aaa2d8a626165640e56d2b74f1efe906
+    for f in "$data"/*/files/"Welcome to your pod.md"; do
+      [ -f "$f" ] || continue
+      if [ "$(sha256sum "$f" | cut -d' ' -f1)" = "$old_sha" ]; then
+        uid=$(basename "$(dirname "$(dirname "$f")")")
+        rm -f "$f"
+        php occ files:scan --quiet --path="/$uid/files" >/dev/null
+        echo "removed old welcome: $uid"
+      fi
+    done
+    php occ skpods:readme --all
+    EOS
+  args:
+    executable: /bin/bash
+  delegate_to: "{{ skp_nc_node.stdout | trim }}"
+  register: skp_readme
+  changed_when: skp_readme.stdout is search('(removed old welcome|[Ww]rote|[Cc]reated)')
+  tags:
+    - config
+    - features
+    - readme
+
+- name: Show the account feature results
+  debug:
+    msg: "{{ (skp_root_acl.stdout_lines | default([])) + (skp_readme.stdout_lines | default([])) }}"
+  tags:
+    - config
+    - features

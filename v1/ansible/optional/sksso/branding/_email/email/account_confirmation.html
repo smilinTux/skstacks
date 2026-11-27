@@ -1,0 +1,11 @@
+[% import "_macros.j2" as m with context %]{% extends "email/base.html" %}{% load i18n %}{% load humanize %}
+{% block content %}
+[[ m.h1("{% trans 'Confirm your " ~ e.name ~ " account' %}") ]]
+[[ m.p("{% blocktrans with name=user.name|default:user.username %}Hi {{ name }},{% endblocktrans %}") ]]
+[[ m.p("{% trans 'Thanks for signing up. Confirm your email address with the button below to finish creating your account.' %}") ]]
+[[ m.button("{{ url }}", "{% trans 'Confirm my account' %}") ]]
+{% endblock %}
+{% block sub_content %}
+[[ m.fallback("{{ url }}") ]]
+[[ m.note("{% if expires %}{% blocktrans with expires=expires|timeuntil %}This link is valid for {{ expires }}. {% endblocktrans %}{% endif %}{% trans 'If you did not sign up, you can ignore this email.' %}") ]]
+{% endblock %}

@@ -1,0 +1,102 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# sknet live host guards (live.yml), run for one host whose sknet_state is present.
+# Needs the sknet_l_* facts the play derives and the sknet_re_* patterns (vars/defaults.yml).
+# Refuses before anything on the host is touched. Interface names follow the same
+# rule as the exporters (sknet_re_ifname).
+- name: Refuse an empty or malformed interface list
+  assert:
+    that:
+      - sknet_l_ifaces is sequence and sknet_l_ifaces is not string and sknet_l_ifaces is not mapping
+      - sknet_l_ifaces | length > 0
+      - sknet_l_ifaces | length <= 8
+      - sknet_l_ifaces | reject('match', sknet_re_ifname) | list | length == 0
+      - sknet_l_ifaces | unique | list | length == sknet_l_ifaces | length
+    fail_msg: >-
+      {{ inventory_hostname }}: sknet_live_interfaces must be a list of 1 to 8 distinct interface names (1 to 15
+      characters of letters, digits and _.-), got {{ sknet_l_ifaces }}. ntopng captures only the interfaces
+      it is given.
+    quiet: true
+
+- name: Refuse a bind address that is not an IPv4 literal
+  assert:
+    that:
+      - sknet_l_bind is match(sknet_re_ipv4)
+    fail_msg: >-
+      {{ inventory_hostname }}: sknet_live_bind must be an IPv4 literal such as 192.0.2.30 (got "{{ sknet_l_bind }}").
+      A name is not accepted, and ntopng's own login is disabled, so the address decides who can reach it.
+    quiet: true
+
+- name: Refuse the wildcard bind address
+  assert:
+    that:
+      - sknet_l_bind != '0.0.0.0'
+    fail_msg: >-
+      {{ inventory_hostname }}: sknet_live_bind 0.0.0.0 would expose ntopng, which has its login disabled,
+      on every interface. Bind to the one private address the SSO proxy reaches.
+    quiet: true
+
+- name: Refuse a public bind address
+  assert:
+    that:
+      - sknet_l_bind is match(sknet_re_private_v4) or (sknet_live_allow_public_bind | default(false) | bool)
+    fail_msg: >-
+      {{ inventory_hostname }}: sknet_live_bind {{ sknet_l_bind }} is a public address and ntopng's login is
+      disabled. Bind to a private (RFC 1918, RFC 6598 shared, loopback or documentation) address, or set
+      sknet_live_allow_public_bind: true on this host if the allowlist alone must protect it.
+    quiet: true
+
+- name: Refuse an empty or malformed source allowlist
+  assert:
+    that:
+      - sknet_l_sources is sequence and sknet_l_sources is not string and sknet_l_sources is not mapping
+      - sknet_l_sources | length > 0
+      - (sknet_l_sources | map('string') | reject('match', sknet_re_ipv4) | reject('match', sknet_re_cidr) | list | length) == 0
+      - (sknet_l_sources | map('string') | select('search', '/') | map('regex_replace', '^.*/', '') | map('int') | select('lt', 8) | list | length) == 0
+    fail_msg: >-
+      {{ inventory_hostname }}: sknet_live_allow_sources must be a non-empty list of IPv4 literals or CIDRs
+      (prefix /8 or longer), got {{ sknet_l_sources }}. ntopng's login is disabled, so this list is the access control.
+    quiet: true
+
+- name: Refuse a bad memory limit
+  assert:
+    that:
+      - sknet_l_mem is match('^[1-9][0-9]*[MG]$')
+    fail_msg: "{{ inventory_hostname }}: sknet_live_memory_max must look like 512M or 1G (got \"{{ sknet_l_mem }}\")."
+    quiet: true
+
+- name: Refuse bad host and flow caps
+  assert:
+    that:
+      - (sknet_l_max_hosts | string) is match('^[1-9][0-9]*$')
+      - (sknet_l_max_flows | string) is match('^[1-9][0-9]*$')
+    fail_msg: "{{ inventory_hostname }}: sknet_live_max_hosts and sknet_live_max_flows must be positive integers."
+    quiet: true
+
+- name: Refuse bad capability names
+  assert:
+    that:
+      - sknet_l_caps | reject('match', '^[A-Z_]+$') | list | length == 0
+    fail_msg: "{{ inventory_hostname }}: sknet_live_cap_add must be capability names such as NET_RAW (got {{ sknet_l_caps }})."
+    quiet: true
+
+- name: Refuse an unsafe data directory
+  assert:
+    that:
+      - sknet_l_data is match('^/[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+$')
+      - ('..' not in sknet_l_data.split('/'))
+    fail_msg: >-
+      {{ inventory_hostname }}: sknet_live_data_dir must be an absolute path of at least two components without
+      spaces (got "{{ sknet_l_data }}").
+    quiet: true

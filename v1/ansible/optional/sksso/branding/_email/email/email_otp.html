@@ -1,0 +1,10 @@
+[% import "_macros.j2" as m with context %]{% extends "email/base.html" %}{% load i18n %}{% load humanize %}
+{% block content %}
+[[ m.h1("{% trans 'Your " ~ e.name ~ " sign-in code' %}") ]]
+[[ m.p("{% blocktrans with name=user.name|default:user.username %}Hi {{ name }},{% endblocktrans %}") ]]
+[[ m.p("{% trans 'Enter this code to finish signing in:' %}") ]]
+<tr><td align="center" style="padding:8px 0 28px 0;"><span style="display:inline-block;padding:14px 28px;background-color:[[ e.page_bg ]];border:1px solid [[ e.card_border ]];border-radius:8px;font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;font-size:28px;font-weight:700;letter-spacing:6px;color:[[ e.heading ]];">{{ token }}</span></td></tr>
+{% endblock %}
+{% block sub_content %}
+[[ m.note("{% blocktrans with expires=expires|timeuntil %}The code is valid for {{ expires }}. If you did not try to sign in, ignore this email and consider changing your password.{% endblocktrans %}") ]]
+{% endblock %}

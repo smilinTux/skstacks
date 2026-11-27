@@ -1,0 +1,25 @@
+# Brand values for the shared email set in branding/_email (see README "Branding").
+e:
+  name: NAM
+  mark: NAM
+  tagline: Native Asset Management
+  header_muted: "#C3D1DA"
+  accent: "#00B4A0"
+  accent_text: "#0D1A24"
+  header_bg: "#0D1A24"
+  header_text: "#ffffff"
+  page_bg: "#eef3f5"
+  card_border: "#dbe5ea"
+  heading: "#0D1A24"
+  text: "#1c2b36"
+  muted: "#5d7080"
+  link: "#00796b"
+  font: "Inter,'Segoe UI','Helvetica Neue',Arial,sans-serif"
+  footer: "Native Asset Management, the NAM team"
+  support_line: "Questions? Just reply to this email and a person will help."
+  invite_intro: "Native Asset Management (NAM) is a private membership association. One sign in gives you access to SKHub, our NAM Nextcloud where documents and matters live, and the other NAM apps you have been given."
+  subject_recovery: "NAM - reset your password"
+  subject_invite: "Welcome to NAM - set up your account"
+  subject_confirm: "NAM - confirm your account"
+  subject_otp: "NAM - your sign-in code"
+  notification_prefix: "NAM: "

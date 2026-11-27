@@ -4,7 +4,29 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
-## Unreleased (v2.26.33)
+## Unreleased (v2.26.36)
+
+### Overlays: no stack joins an implicit default network; new swarms use 10.200.0.0/16
+
+- Swarm creates a `<stack>_default` overlay for any service that names no network, and takes its
+  subnet from the swarm's address pool. Docker's default pool is 10.0.0.0/8, which overlaps the
+  estate LANs and meshes: on nam, `skfenceha-prod_default` got 10.0.0.0/24, the nam LAN itself.
+- skfenceha `traefik-certs-watch` gets its own `internal` overlay `certs-watch` with a pinned
+  subnet (172.16.209.0/28 prod, .16/28 staging, .32/28 dev; `skfenceha.CERTS_WATCH_SUBNET`
+  overrides it). It still reaches nothing, as before, and Swarm refuses the `none` network.
+  skmail in host-port mode (no `VIA_TRAEFIK`) joins `cloud-public-<env>` for egress. Neither one
+  uses an implicit default network any more.
+- New test rule (`test_compose_templates_schema.py`): every rendered swarm service lists its
+  networks, unless the stack declares its own `default` network with an explicit subnet. Services
+  with `network_mode` (plain compose stacks behind a VPN container) are exempt.
+- v2 `swarm-init` and skbloom's single-node bootstrap pass `--default-addr-pool 10.200.0.0/16`
+  (mask 24; `swarm_default_addr_pool` / `swarm_default_addr_pool_mask` override it). Only
+  `swarm init` can set the pool. An existing swarm keeps 10.0.0.0/8, and the rule above is what
+  protects it.
+- Instance action: redeploy skfenceha (and skmail where it runs without `VIA_TRAEFIK`). Then
+  remove the now-unused network on a manager: `docker network rm skfenceha-<env>_default`
+  (and `skmail-<env>_default`). An empty leftover network does no harm, but its subnet stays
+  reserved until it is removed.
 
 ### skembed: CPU embedding service with an OpenAI-compatible API (new role)
 
@@ -89,6 +111,249 @@ the admin group and that group, so only members can sign in. Tests:
 unless you deploy skai: set `sksso.SKAI_OIDC_ENABLED: true`, `SKAI_USERS` and
 `SKAI_OIDC_CLIENT_SECRET` (same value as `skai.OIDC_CLIENT_SECRET`), `SKAI_HOST` only when skai is not on its default host;
 redeploy sksso before skai.
+
+## skstacks-v2.26.35 - 2026-11-27
+
+### sksso: one shared branded email set for every Authentik email (#467)
+
+- Every email the SSO sends now uses one shared, branded layout and none mentions "authentik":
+  password reset, invitation, account confirmation, email sign-in code, event notification and
+  the SMTP test email. The set lives in `branding/_email/` (HTML plus text twin each, and an
+  override of `email/base.html` so any stock template is covered); a brand pack only supplies
+  values in `<pack>/email.yml` (shipped for `skworld` and `nam`). `apply-email-branding` points
+  the email stages and notification transports at the shared templates, replaces the stock
+  "authentik Notification: " subject prefix and renames flow titles that still say "authentik".
+  The per-pack `*_recovery.*` and `nam_invite.*` templates are replaced by the shared set.
+  **Instance action:** redeploy sksso (the `apply-branding` helper calls `apply-email-branding`
+  last), then restart the worker with a forced update so Django's template cache picks up the
+  overrides. An instance pack that ships its own recovery templates copies `email.yml` and
+  changes the values.
+
+### Image updates (Renovate)
+
+- openbao 2.7.3 (skvault, openbao), coturn 4.19 (skturn) and 4.19.2 (skmesh), cloudflared
+  2026.11.2, newt 1.20.1 (pangolin exposure), n8n 2.49.5 (skorch, same major).
+  **Instance action:** none beyond the normal redeploy of the stacks you run.
+
+### sknet: views per estate
+
+- Exporter hostvars `sknet_site` (the estate) and `sknet_role` become Akvorado exporter
+  classifiers, so the console can group by `ExporterSite` and `ExporterRole`.
+- `NETWORKS` values may now be a map `{name, site, role, region, tenant}` as well as a plain
+  name, giving `SrcNetSite`/`DstNetSite` (estate to estate) and the other network attributes.
+  Labels are lowercase; a bad attribute refuses the deploy.
+- The console gets shared saved filters for every user: `Edge/Internet`,
+  `Interface class/<class>`, `Seen at/<site>`, `Estate/<site>`, plus the new vault list
+  `SAVED_FILTERS` (`{description, content}`).
+- ntopng gets the same subnet names as named local networks (`-m`).
+- **Instance action:** none required. To use it, tag the exporters, give `NETWORKS` sites,
+  redeploy the stack, and rerun `live.yml` for the ntopng names. An instance whose vault uses
+  map values cannot go back to v2.26.34 (that deploy refuses them).
+
+### skmesh: the IdP manager keeps access once a tile binds the application
+
+- NetBird looks up users through the `skmesh-idp-manager` service account with a
+  `client_credentials` token request. Authentik grants that only to a user the application
+  admits, so once the portal tile bound SKMesh to a group (skadmin by default) the request
+  failed with `invalid_grant`. Every NetBird SSO login that needs an account lookup then failed
+  ("unable to get authentik token, statusCode 400", then "JWT already used"): a device whose login
+  expired could no longer log in, and `/api/users` answered 500. When the application already
+  has bindings, the provisioner now binds the service account itself to it (added only, matched
+  client-side; with policy mode `any` it admits nobody else). An application with no binding at
+  all stays open to every signed-in user and gets none (a first binding would close it to
+  everyone else); once a tile binds it, the next skmesh deploy adds the service account.
+  **Instance action:** redeploy skmesh after the tile has bound the application, or add a user
+  binding for `skmesh-idp-manager` on the SKMesh application by hand.
+
+
+## skstacks-v2.26.34 - 2026-11-26
+
+### skfenceha: NFS client source ports stay off host-mode 993 (#540)
+
+- With `skfenceha.MAIL_ENTRYPOINTS: true` the traefik-worker publishes 993 in host mode on every
+  manager, and 993 lies inside the kernel RPC client's reserved source-port range (665-1023).
+  After a reboot an NFS socket to `/var/data` could take it first, and the worker then looped on
+  "address already in use". The skfenceha deploys now include
+  `shared/tasks/nfs_resvport_guard.yml`, which lowers `sunrpc.max_resvport` below the lowest
+  guarded port (992 for 993) in `/etc/modprobe.d/sunrpc.conf` and `/etc/sysctl.d`, sets the live
+  value, and reports an RPC socket already sitting on a guarded port (that one needs a remount or
+  reboot). **Instance action:** none; run the skfenceha deploy (alone: `--tags sunrpc`).
+
+### sknet: exporters work with softflowd 1.0.0 (Ubuntu 22.04)
+
+- `exporters.yml` passed `-N` (no promiscuous mode) to every softflowd, but 1.0.0, the Ubuntu
+  22.04 package, does not have it and exits on the whole command line ("invalid option -- 'N'"),
+  so every exporter on a 22.04 host restarted forever. The play now asks `softflowd -h` and
+  passes `-N` only where the binary lists it (1.1.0 and later). On 1.0.0 the device is opened
+  promiscuous, which changes nothing on tun or WireGuard devices and adds only flooded frames on
+  a switched Ethernet port. The release gate lab runs 24.04, which is why it passed there.
+  **Instance action:** on 22.04 exporters, rerun `exporters.yml` after the repin.
+- Docs: the role's `subnet` defaults (172.16.67-69.0/24) are only defaults. An instance whose
+  subnet registry already uses them overrides `sknet_<env>_networks`; a duplicate overlay
+  subnet leaves the Swarm allocator unable to place any task ("could not find local network
+  state").
+
+
+## skstacks-v2.26.33 - 2026-11-23
+
+### sknet: network flow visibility (Akvorado), new optional role
+
+- New optional role `sknet`: Akvorado (2026.10.1, unchanged upstream) as a flattened Swarm stack
+  with Kafka (KRaft, one node) and ClickHouse, deployed by `deploy_sknet-<env>.yml`. Every
+  stateful service is pinned to `sknet.DATA_NODE` with its data on local disk under `DATA_DIR`
+  (default `/var/lib/sknet-<env>`, never `/var/data`). The inlet publishes NetFlow v9 (2055) and
+  IPFIX (4739) UDP in host mode, protected by an iptables allowlist (`sknet-<env>-fw.service`,
+  chain `SKNET-<ENV>`) built from `FLOW_SOURCES`. The console is routed through Traefik with an
+  `sknet-<env>-allow` ipAllowList (`ALLOW_CIDRS`, default the RFC 1918 ranges) on every
+  router, always, plus Authentik forward auth (`AUTH_MODE: authentik`, or `allowlist` for the
+  address gate alone). Interface names come from static exporter metadata (inventory group
+  `sknet_exporter_hosts` hostvars, else vault `STATIC_EXPORTERS`); no SNMP.
+- The `gate` service (pinned Caddy, always deployed) is the only sknet service on the shared
+  `cloud-public-<env>` network; the console is on the private `sknet-<env>` network only. Traefik
+  adds an `X-Sknet-Gate` request header on both routers (the `sknet-<env>-gate` headers
+  middleware, value from the new vault key `GATE_SECRET`), and the gate answers 403 to any
+  request without it, strips it before proxying, and answers 404 for `/debug` on the console
+  host. The secret reaches the gate as a Docker secret. The gate stays off the hosts of
+  inventory group `sknet_live_hosts` by default (`PROXY_PLACEMENT_CONSTRAINTS` overrides).
+  `LIVE_UPSTREAM` adds the live host to the gate (an ntopng running on a host); unset, the gate
+  has no live host block.
+- Retention derives from `FLOW_TTL_DAYS` (raw, 1m) and `FLOW_AGG_TTL_DAYS` (5m, hourly 4x, at most
+  365). ClickHouse `keep_free_space_bytes` comes from `MIN_FREE_GB`. The allowlist uses ipStrategy
+  depth 0 and `AUTH_MODE: allowlist` is refused with `CLOUDFLARED`. Default memory limits total
+  3.4 GB. New overlay subnets 172.16.67.0/24 (prod), .68 (staging), .69 (dev) in
+  `shared/networks`; catalog row and section; render vars `sknet.{example,set,with.sksso}.yml`.
+- `sknet` exporter host play `exporters.yml` (hosts `sknet_exporter_hosts`, or the group named by
+  `sknet_exporter_hosts_group`): softflowd as one `sknet-softflowd@<interface>` systemd instance per
+  `sknet_interfaces` entry (`-i <index>:<name>` forced ifindex,
+  `-n <sknet_collector>:<NETFLOW_PORT> -v 9 -T full`; the port is read from the instance vault like
+  the deploy plays, and a differing `sknet_netflow_port` hostvar is refused), env file per instance
+  under `/etc/sknet`, modest `MemoryMax` and `CPUQuota`. The collector must be an IPv4 literal and
+  private unless `sknet_allow_public_collector: true`; instances no longer listed are stopped,
+  disabled and removed; the distro `softflowd.service` is masked; softflowd is installed with apt
+  only when missing and `allow_package_install` is true; `sknet_state: absent` removes it all and
+  leaves the package. The play warns (never fails) when `sknet_export_address` is not in the
+  vault's `FLOW_SOURCES` or differs from the source address of the route to the collector.
+  The interface hostvar rules (IPv4 export address, index 100 to 65535 and unique, class) now live in
+  `tasks/exporter_check.yml`, shared with the swarm deploy.
+- `sknet` live host play `live.yml` (hosts `sknet_live_hosts`, or the group named by
+  `sknet_live_hosts_group`): ntopng Community 7.0 as the vault's pinned `NTOPNG_IMAGE`, run by
+  `sknet-live.service` (`docker run --network host`, `-i` per `sknet_live_interfaces` entry,
+  `-w <sknet_live_bind>:3000`, ntopng login disabled with `-l 1` because the SSO proxy and the
+  allowlist front it, capabilities dropped to the set ntopng needs, never `--privileged`).
+  `sknet_live_memory_max` (default `512M`, always rendered) caps the container (`--memory`) and the
+  unit (`MemoryMax`). `sknet_live_bind` must be an IPv4 literal (`0.0.0.0` refused, public refused
+  unless `sknet_live_allow_public_bind: true`) and `sknet_live_allow_sources` (IPv4 or CIDR) must be
+  non-empty. Its own iptables chain `SKNET-LIVE` accepts tcp 3000 from those sources only and is
+  re-applied at boot by `sknet-live-fw.service`. Docker must already be installed (the play fails
+  clearly if not). `sknet_state: absent` removes the units, container, chain and hook, keeps the
+  image, and keeps the data dir unless `sknet_live_purge_data: true`. The interface name rule is now
+  the shared `sknet_re_ifname`.
+- **Instance action:** none until the role is used. To use it: add a `sknet:` vault block
+  (`DATA_NODE`, `FLOW_SOURCES` and the new vault key `GATE_SECRET` are required, and either the
+  exporter inventory or `STATIC_EXPORTERS`). `GATE_SECRET` is a random string of at least 32
+  characters (letters, digits, dash, underscore; for example `openssl rand -hex 32`): the deploy
+  refuses to run without it. Choose `FLOW_TTL_DAYS` before the first start (ClickHouse sizes its
+  partitions from it), then run `deploy_sknet-<env>.yml`. `DATA_NODE` must also be a host name in
+  the deploy's inventory. To use the live view, run `live.yml` first, set `LIVE_UPSTREAM`, and
+  deploy with the live hosts in the inventory.
+
+### skha: node labels follow the VIP (`skha.vip_node_labels`)
+
+- Fixes services with host-published ports (skmail) being unreachable after a VIP failover: the
+  VIP moved to another manager, but the `mail-vip` label (and so skmail) stayed behind, and the
+  mail ports on the VIP refused every connection. Nothing in the framework moved that label,
+  although the skmail README said one was expected to.
+- New `skha.vip_node_labels` (list, default empty). On every MASTER transition `skha_notify.sh`
+  runs `skha_vip_labels.sh`, which adds each label to the new VIP holder and removes it from
+  every other node; Swarm then moves the pinned service. The deploy also syncs it once on the
+  current VIP holder. README "Services with host-published ports follow the VIP".
+- **Instance action:** an estate running skmail sets `skha.vip_node_labels: [mail-vip]` and
+  redeploys skha. skmail's data must be on storage every manager can reach.
+
+### skmail: mail through Traefik with PROXY protocol v2 (`skmail.VIA_TRAEFIK`)
+
+- Mail can now fail over with Traefik instead of following the VIP. New
+  `skfenceha.MAIL_ENTRYPOINTS` (default `false`) adds `smtp`/`submissions`/`submission`/`imap`/
+  `imaps` entrypoints (25/465/587/143/993, host mode like 80/443) to every traefik-worker and a
+  `skmail-proxy-v2` TCP serversTransport (PROXY protocol v2) to `dynamic/services.yml`. New
+  `skmail.VIA_TRAEFIK` (default `false`) drops skmail's host ports and its `mail-vip` placement
+  constraint (manager placement stays), joins `cloud-public-<env>`, and labels one `HostSNI(*)`
+  TCP passthrough router per port. Still one replica; TLS stays in docker-mailserver.
+- docker-mailserver gets separate PROXY-only listeners (Postfix 12525/10587/10465, Dovecot
+  10143/10993, from `user-patches.sh`), the layout its "mail server behind a proxy" tutorial
+  recommends, so Postfix and Dovecot log and check the real client IP and the standard ports
+  stay plain for clients on the overlay. New `skmail.PROXY_TRUSTED_NETWORKS` (Dovecot
+  `haproxy_trusted_networks`, default the `cloud-public-<env>` subnet). Uses the TCP
+  serversTransport, not the TCP `loadBalancer.proxyProtocol` label Traefik deprecated in v3.5.2.
+  With both vars unset nothing renders differently. README "Behind Traefik (PROXY protocol)";
+  render fixtures `skmail.set.yml`, `skfenceha.set.yml`.
+- **Instance action:** none to stay on host ports. To move: deploy skmail with
+  `VIA_TRAEFIK: true` FIRST (it releases 25/465/587/143/993 on the VIP node), then skfenceha with
+  `MAIL_ENTRYPOINTS: true`; the reverse order leaves a worker unable to bind its ports. Expect mail
+  downtime for one skmail start. Then drop the `mail` entry from `skha.health_checks` and
+  `mail-vip` from `skha.vip_node_labels`. Fail2ban bans no longer take effect (see the README).
+
+### skgit: `ENABLE_INTERNAL_SIGNIN` knob (SSO-only web sign-in)
+
+- New optional `skgit.ENABLE_INTERNAL_SIGNIN` renders Forgejo's `[service] ENABLE_INTERNAL_SIGNIN`.
+  With `AUTH_MODE: oidc`, `false` hides the username and password form so the login page offers SSO
+  only. SSH keys, access tokens, runners and existing accounts are unaffected. Unset renders nothing
+  (Forgejo default `true`). README "Registration and anonymous read"; tests
+  `v1/tests/test_skgit_service_section.py`. **Instance action**: none unless you want SSO-only sign-in.
+
+### skpods: skpods.id branding (`THEME`)
+
+- The nextcloud engine now ships as skpods.id: a theme folder (`files/theme/skpods`) and theming
+  settings replace the upstream name, titles, footer, help and client links, logo and favicon, and
+  restyle the login and guest pages (dark aurora background, glass card), the signed-in header and
+  the Solid consent screen. Self-hosted OFL fonts; dark UI enforced. New `skpods.THEME`
+  (`skpods` default, `none` for the stock look); `--tags theme` re-applies it. README "Branding".
+  **Instance action**: none (redeploy picks it up); set `THEME: none` to keep the stock look.
+- New accounts start with a skpods skeleton (welcome note, `solid/private/{documents,notes,photos}`,
+  `solid/public/shared`) and no stock files or Templates folder; the deploy removes stock files from
+  existing accounts when they are byte-identical to the image's copy. New `skpods.SKELETON`
+  (`skpods` default, `stock`); `--tags skeleton`. README "New accounts". **Instance action**: none.
+- Files: `.md`, text and PDFs open in the browser (`text`, `files_pdfviewer`), deletes go to the
+  trash (`files_trashbin`), and Nextcloud sharing is off so pod data is shared only through Solid
+  ACLs. New `skpods.ENABLE_APPS` and `skpods.NEXTCLOUD_SHARING` (default `false`). README "Files".
+  **Instance action**: none; set `NEXTCLOUD_SHARING: true` if you relied on Nextcloud shares.
+- Accounts: each account gets its own `Readme.md` (WebID, pod address, links) from the new `skpods`
+  app in the engine image; pod roots are owner-only (new pods, and existing ones migrated by removing
+  exactly the old public block); `twofactor_totp` enabled; `DEFAULT_QUOTA` (10 GB); `SMTP_*` mail
+  settings (reset link hidden without them); the last two upstream product strings renamed.
+- Antivirus: `clamav` service and `files_antivirus` (`ANTIVIRUS`, default on). Backups: `pgdump`
+  service writes daily `pg_dump` files to `<APP_PATH>/database-dump` for skbackup. README "Accounts
+  and sign-in", "Antivirus", "Backups". **Instance action**: pin an engine image that ships the
+  `skpods` and `files_antivirus` apps (the deploy fails without them), set `SMTP_*`, and register
+  `skpods-<env>` with skbackup.
+
+### templates: skpods-only instance config
+
+- `skstacks-config-template` gains a `skpods-prod` placeholder vault and a "Just want Solid pods?"
+  walkthrough: a private instance repo that runs only the skpods role. Its required keys are tied
+  to the skpods render-gate fixture by test, and `config-template-drift` now renders skpods too.
+- **Instance action:** none. Existing instance repos are unaffected.
+
+### skpods: new optional service for Solid pod hosting
+
+- New role `v1/ansible/optional/skpods` (`deploy_skpods-{dev,staging,prod}.yml`): Solid pods at
+  `https://pods[-<env>].<cluster>.<domain>`. One engine setting, `skpods.ENGINE`; only `nextcloud` is
+  implemented (a standalone, slim Nextcloud with Postgres, Redis and cron, most default apps
+  disabled, and the Solid app shipped inside an instance-built image pinned by digest).
+- The deploy sets and checks `overwriteprotocol`, `overwritehost`, `overwrite.cli.url`,
+  `trusted_domains` and `trusted_proxies` before it enables Solid (each pod's root ACL stores the
+  absolute WebID). The router carries only the role's own headers middleware: no CORS, error pages
+  or forward auth on any path.
+- `--tags seed [-e skpods_reset=true]` creates or resets users from `skpods.SEED_USERS`, and mints
+  Solid client credentials for users marked `client_credentials: true` into a 0600 file on the
+  controller. Optional `skpods.REGISTRY_LOGIN` logs the manager in to a private registry.
+- Networks: `skpods-prod` `172.16.184.0/24`, `skpods-staging` `172.16.185.0/24`, `skpods-dev`
+  `172.16.186.0/24`. **Instance action**: none unless you deploy it; then build an engine image,
+  add the `skpods` vault (README minimal snippet) and run the env playbook.
+
+### skpayment: idna 3.15 (security)
+
+- The skpayment runtime image pins `idna` 3.15 for its security fix (#527, `v1/ansible/optional/skpayment/image/requirements.txt`). **Instance action**: rebuild the skpayment image on your next skpayment deploy.
 
 ## skstacks-v2.26.32 - 2026-11-23
 

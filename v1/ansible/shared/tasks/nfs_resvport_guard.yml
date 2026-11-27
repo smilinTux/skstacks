@@ -1,0 +1,118 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# Keep the kernel NFS/RPC client off host-mode ports a service publishes.
+#
+# The kernel RPC client (NFS mounts, lockd) binds its source ports from the
+# reserved range sunrpc.min_resvport..max_resvport (665-1023 by default). A
+# kernel socket is not shown by `ss -l` or lsof, but it still owns the port,
+# so a container that publishes that port in host mode then fails with
+# "bind 0.0.0.0:<port>: address already in use" and swarm retries forever.
+# Seen 2026-11-25: after a manager rebooted, one of its nconnect NFS sockets
+# to the /var/data export took 993 before traefik-worker (IMAPS via
+# skfenceha.MAIL_ENTRYPOINTS) started.
+#
+# This lowers max_resvport to just below the lowest guarded port inside the
+# range. It writes the setting twice, because sunrpc is a module that usually
+# loads after systemd-sysctl has run (observed: sysctl at 4.0 s, sunrpc at
+# 5.0 s), so the modprobe option is what holds at boot and the sysctl.d file
+# keeps a later `sysctl --system` in line. The live value is set too; it only
+# affects new RPC connections, so an existing socket on a guarded port is
+# reported (remount the NFS share or reboot the node to free it).
+#
+# Inputs:
+#   nfs_resvport_guard_hosts: inventory hosts to apply it to (the nodes that
+#                             publish the ports)
+#   nfs_resvport_guard_ports: host-mode ports to protect (any list; ports
+#                             outside the RPC range are ignored)
+
+- name: Work out the sunrpc reserved-port ceiling
+  set_fact:
+    _nrg_in_range: "{{ nfs_resvport_guard_ports | map('int') | select('ge', 665) | select('le', 1023) | list | sort }}"
+
+- name: Name the ceiling and the reason
+  set_fact:
+    _nrg_max: "{{ ((_nrg_in_range | default([1024], true))[0] | int) - 1 }}"
+    _nrg_why: "Keep kernel NFS/RPC source ports off {{ _nrg_in_range | default([], true) | join(', ') }} (host-mode ports, see shared/tasks/nfs_resvport_guard.yml)."
+  when: _nrg_in_range | default([], true) | length > 0
+
+- name: Lower sunrpc.max_resvport below the guarded ports
+  when: _nrg_in_range | default([], true) | length > 0
+  block:
+    - name: Refuse a ceiling that leaves the RPC client too few ports
+      assert:
+        that:
+          - (_nrg_max | int) - 665 + 1 >= 64
+        fail_msg: "Guarded port {{ (_nrg_max | int) + 1 }} would leave sunrpc only {{ (_nrg_max | int) - 665 + 1 }} reserved ports (665-{{ _nrg_max }}). Publish that port elsewhere."
+        quiet: true
+
+    - name: Write the sunrpc module option (applies at boot)
+      copy:
+        dest: /etc/modprobe.d/sunrpc.conf
+        content: |
+          # {{ _nrg_why }}
+          options sunrpc max_resvport={{ _nrg_max }}
+        owner: root
+        group: root
+        mode: '0644'
+      delegate_to: "{{ item }}"
+      loop: "{{ nfs_resvport_guard_hosts }}"
+
+    - name: Write the sunrpc sysctl drop-in
+      copy:
+        dest: /etc/sysctl.d/96-sunrpc-resvport.conf
+        content: |
+          # {{ _nrg_why }}
+          sunrpc.max_resvport = {{ _nrg_max }}
+        owner: root
+        group: root
+        mode: '0644'
+      delegate_to: "{{ item }}"
+      loop: "{{ nfs_resvport_guard_hosts }}"
+
+    - name: Set the live value when sunrpc is loaded
+      shell: |
+        set -eu
+        f=/proc/sys/sunrpc/max_resvport
+        [ -w "$f" ] || { echo absent; exit 0; }
+        [ "$(cat "$f")" = "{{ _nrg_max }}" ] && { echo same; exit 0; }
+        echo "{{ _nrg_max }}" > "$f"
+        echo set
+      args:
+        executable: /bin/sh
+      register: _nrg_live
+      changed_when: _nrg_live.stdout == 'set'
+      delegate_to: "{{ item }}"
+      loop: "{{ nfs_resvport_guard_hosts }}"
+
+    - name: Find RPC client sockets already holding a guarded port
+      shell: |
+        ss -tanH state established '( {{ _nrg_in_range | default([], true) | map('regex_replace', '^(.*)$', 'sport = :\1') | join(' or ') }} )' \
+          | awk '$4 ~ /:(2049|111)$/ {print $3 " -> " $4}'
+      register: _nrg_held
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      delegate_to: "{{ item }}"
+      loop: "{{ nfs_resvport_guard_hosts }}"
+
+    - name: Report a guarded port held by an RPC client socket
+      debug:
+        msg: "WARNING {{ item.item }}: {{ item.stdout_lines | join('; ') }}. The service publishing that port cannot start there until the NFS connection is re-established (remount the share or reboot the node); the new ceiling keeps it from happening again."
+      when: item.stdout | default('') | length > 0
+      loop: "{{ _nrg_held.results }}"
+      loop_control:
+        label: "{{ item.item }}"

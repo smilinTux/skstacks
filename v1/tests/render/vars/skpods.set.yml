@@ -1,0 +1,41 @@
+# Second render pass: merged over skpods.example.yml to drive the optional
+# hooks down their "set" path (registry login, ingress override, data node,
+# seed users with client credentials). Fake values only.
+skpods:
+  HOST_PREFIX: pods
+  INGRESS_NETWORK: cloud-public-prod
+  DATA_NODE: node-a
+  APP_PATH: /srv/local/skpods
+  POSTGRES_PATH: /srv/local/skpods/postgres
+  REDIS_PATH: /srv/local/skpods/redis
+  MIDDLEWARES: "skpods-dev-headers,rate-limit@file"
+  TRUSTED_PROXIES: "192.0.2.0/24"
+  TLS_OPTIONS: modern@file
+  REGISTRY_LOGIN:
+    registry: registry.example.test
+    username: example-bot
+    password: example-registry-token-not-a-secret
+  DISABLE_APPS:
+    - activity
+    - dashboard
+  CREDENTIALS_OUT: /tmp/skpods-render-credentials.json
+  SEED_USERS:
+    - id: alice
+      display_name: Alice Example
+      password: example-alice-password
+    - id: robot
+      password: example-robot-password
+      client_credentials: true
+    - id: keeper
+      password: example-keeper-password
+      resettable: false
+      admin: true
+skpods_dev_networks:
+  - { name: skpods-dev, subnet: 172.16.186.0/24 }
+  - { name: cloud-public-prod, subnet: 172.16.200.0/24 }
+skpods_staging_networks:
+  - { name: skpods-staging, subnet: 172.16.185.0/24 }
+  - { name: cloud-public-prod, subnet: 172.16.200.0/24 }
+skpods_prod_networks:
+  - { name: skpods-prod, subnet: 172.16.184.0/24 }
+  - { name: cloud-public-prod, subnet: 172.16.200.0/24 }

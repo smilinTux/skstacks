@@ -67,12 +67,25 @@ FRIENDS = "My Friends Plex RSS Watchlist"
 # Stranger.Things.s01e01.2016.1080p.Rifftrax.6ch.2ch.AVC.mkv was collected
 # next to the real BluRay S01E01. Its riff track is tagged English, so neither
 # the language filters nor skstream-langguard can tell it apart.
+#
+# Fourth pattern: AUDIONEW / NEW AUDIO, a theater cam rip with a cleaner audio
+# track laid over it. cli_debrid drops CAM/TS/TELESYNC only through PTT's
+# "trash" flag, and PTT does not know this tag, so on nor (2026-11-24)
+# You.Can.See.Everything.2026.AUDIONEW.1080P was collected as a 1080p release.
+# The same pattern hard-drops the unambiguous cam/telesync/screener tags (HDCAM,
+# HQCAM, CAMRip, HDTS, TELESYNC, TELECINE, HDTC, DVDScr, SCREENER, PDVD) and
+# the C1NEM4 cam group, so a cam no longer depends on PTT alone: a library scan
+# found 32 cam files (Barbie, Furiosa x7, Venom, No Time to Die...) from the
+# 2026-09-29 import. A bare "CAM" or "TS" is not matched (Cam 2018 is a film,
+# and .ts is a file extension).
 DEFAULT_FILTER_OUT = [
     r"(?i)\b(rus|ru|rudub|ukr|ultradox|lostfilm|newstudio|hdrezka|alexfilm|jaskier|baibako"
     r"|coldfilm|ideafilm|dublyazh|viruseproject|megapeer|rutor|rutracker)\b|[А-Яа-яЁё]",
     r"(?i)\b3d[ ._-]+(blu-?ray|bd|h-?sbs|sbs|half|full|h?ou|tab)\b|\b(h-?sbs|bdmv|iso|complete[ ._-]?blu-?ray)\b"
     r"|\brarbg\.com\b",
     r"(?i)\briff[ ._-]?trax\b",
+    r"(?i)\b(audio[ ._-]?new|new[ ._-]?audio|h[dq][ ._-]?cam|cam[ ._-]?rip|hd[ ._-]?ts|ts[ ._-]?rip|tele[ ._-]?sync|tele[ ._-]?cine"
+    r"|hd[ ._-]?tc|(dvd|hd|web|bd)[ ._-]?scr|screener|pre[ ._-]?dvd|pdvd|c1nem4)\b",
 ]
 
 # Rank down, not drop, multi/dual-audio releases and the dub groups behind them.

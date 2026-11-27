@@ -1,0 +1,219 @@
+# Copyright (C) 2025 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# skpods: Solid pod hosting. One engine setting (skpods.ENGINE); today only
+# `nextcloud` exists: a standalone, slim Nextcloud whose only added app is
+# Solid, from an image the instance builds and pins (skpods.NEXTCLOUD_IMAGE).
+# See README.md (config knobs) and SOP.md (operating procedure).
+#
+# Seed / reset of test users: the same playbook, `--tags seed`, with
+# `-e skpods_reset=true` to wipe and recreate the resettable users.
+
+---
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+# Step 1: Select manager node with failover
+# Run on all hosts to ensure it executes even with -l limit
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+# Step 2: Deploy to selected manager
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skpods
+    env: staging
+    service_name: skpods
+    service_type: optional
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+      tags:
+        - always
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+      tags:
+        - always
+
+    - name: Define network variables from vault (required for idempotent deployment)
+      # IMPORTANT: Network subnets MUST match shared/networks registry.
+      # skpods-<env> is new: 172.16.184.0/24 (prod), .185 (staging), .186
+      # (dev), free in the framework defaults when this role was added.
+      # The second entry is the Traefik ingress network. An instance whose
+      # Traefik only joins cloud-public-prod (a dev stack on a prod cluster)
+      # overrides both this list and skpods.INGRESS_NETWORK.
+      set_fact:
+        app_networks: "{{ skpods_staging_networks | default([
+          { 'name': 'skpods-staging', 'subnet': '172.16.185.0/24' },
+          { 'name': 'cloud-public-staging', 'subnet': '172.16.201.0/24' }
+        ]) }}"
+      tags:
+        - always
+        - networks
+
+    - name: Resolve skpods settings
+      set_fact:
+        skp_engine: "{{ skpods.ENGINE | default('nextcloud', true) | string | lower }}"
+        skp_theme: "{{ skpods.THEME | default('skpods', true) | string | lower }}"
+        skp_skeleton: "{{ skpods.SKELETON | default('skpods', true) | string | lower }}"
+        skp_cluster: "{{ skpods.CLUSTERNAME | default(cluster_name | default(''), true) }}"
+        skp_domain: "{{ skpods.DOMAIN | default(domain | default(''), true) }}"
+        skp_router: "skpods{{ '' if env == 'prod' else '-' + env }}"
+        skp_stack: "skpods-{{ env }}"
+        skp_ingress_network: "{{ skpods.INGRESS_NETWORK | default('cloud-public-' + env, true) }}"
+        skp_data_node: "{{ skpods.DATA_NODE | default('', true) | string }}"
+        skp_app_path: "{{ skpods.APP_PATH | default('/var/data/skpods-' + env, true) }}"
+        skp_pg_path: "{{ skpods.POSTGRES_PATH | default('/var/data/runtime/skpods-' + env + '/postgres', true) }}"
+        skp_redis_path: "{{ skpods.REDIS_PATH | default('/var/data/runtime/skpods-' + env + '/redis', true) }}"
+        skp_dump_path: "{{ skpods.DB_DUMP_PATH | default((skpods.APP_PATH | default('/var/data/skpods-' + env, true)) + '/database-dump', true) }}"
+        skp_clamav_path: "{{ skpods.CLAMAV_PATH | default('/var/data/runtime/skpods-' + env + '/clamav', true) }}"
+        skp_antivirus: "{{ skpods.ANTIVIRUS | default(true) | bool }}"
+        skp_admin_user: "{{ skpods.ADMIN_USER | default('skpods-admin', true) }}"
+        skp_first_install_wait: "{{ skpods.first_install_wait_seconds | default(1200, true) | int }}"
+      tags:
+        - always
+
+    - name: Resolve the public hostname and router middlewares
+      # <HOST_PREFIX>[-<env>].<cluster>.<domain>, e.g. pods-dev.<cluster>.<domain>.
+      # The router's middleware chain defaults to the role's own headers
+      # middleware ONLY: no CORS (the Solid app answers CORS itself), no
+      # error pages (they would replace Solid's 401/403 bodies and headers),
+      # no forward auth (Solid clients call /apps/solid/* and /.well-known/*
+      # cross-origin without an SSO session). See README "Traefik".
+      set_fact:
+        skp_host: "{{ skpods.HOSTNAME | default(skpods.HOST_PREFIX | default('pods', true) + ('' if env == 'prod' else '-' + env) + '.' + skp_cluster + '.' + skp_domain, true) }}"
+        skp_middlewares: "{{ skpods.MIDDLEWARES | default(skp_router + '-headers', true) }}"
+        skp_trusted_proxies: "{{ skpods.TRUSTED_PROXIES | default((app_networks | selectattr('name', 'equalto', skp_ingress_network) | map(attribute='subnet') | list) | join(' '), true) }}"
+      tags:
+        - always
+
+    - name: Check the skpods settings
+      assert:
+        that:
+          - skp_engine in ['nextcloud']
+          - skp_theme in ['skpods', 'none']
+          - skp_skeleton in ['skpods', 'stock']
+          - skp_cluster | length > 0
+          - skp_domain | length > 0
+          - skpods.NEXTCLOUD_IMAGE | default('') | string | length > 0
+          - "'@sha256:' in (skpods.NEXTCLOUD_IMAGE | default('') | string)"
+          - skpods.ADMIN_PASSWORD | default('', true) | length >= 16
+          - skpods.DB_PASSWORD | default('', true) | length >= 16
+          - skp_trusted_proxies | length > 0
+          - skp_ingress_network in (app_networks | map(attribute='name') | list)
+        fail_msg: >-
+          skpods: ENGINE must be one of [nextcloud] (got {{ skp_engine }}; the
+          rust engine is not implemented yet), CLUSTERNAME and DOMAIN must
+          resolve, NEXTCLOUD_IMAGE must be an image pinned by digest
+          (<repo>:<tag>@sha256:...), ADMIN_PASSWORD and DB_PASSWORD must be
+          set (16+ characters), and INGRESS_NETWORK ({{ skp_ingress_network }})
+          must be one of the networks in app_networks. THEME must be skpods
+          or none, SKELETON skpods or stock. See README.md.
+      tags:
+        - always
+
+    - name: Fail closed on a local data path without a pinned node
+      # Postgres/Redis data on a node-local path is only safe when the tasks
+      # are pinned to the node that holds it.
+      assert:
+        that:
+          - (skp_data_node | length > 0) or (skp_pg_path.startswith('/var/data/') and skp_redis_path.startswith('/var/data/') and skp_app_path.startswith('/var/data/'))
+        fail_msg: >-
+          skpods: APP_PATH, POSTGRES_PATH or REDIS_PATH is outside /var/data
+          (shared storage), so skpods.DATA_NODE must name the node that holds
+          it.
+      tags:
+        - always
+
+  tasks:
+    - name: Deploying {{ app }}
+      debug:
+        msg: "Running SKStacks deploy {{ app }} ({{ skp_engine }} engine) for https://{{ skp_host }}"
+
+    - name: Deploy the nextcloud engine
+      include_tasks: tasks/engine_nextcloud.yml
+      when: skp_engine == 'nextcloud'
+      tags:
+        - always
+
+    - name: Apply the skpods.id branding (nextcloud engine)
+      include_tasks: tasks/theme_nextcloud.yml
+      when: skp_engine == 'nextcloud'
+      tags:
+        - always
+
+    - name: Set up the new-account skeleton (nextcloud engine)
+      include_tasks: tasks/skeleton_nextcloud.yml
+      when: skp_engine == 'nextcloud'
+      tags:
+        - always
+
+    - name: Account features (quota, mail, antivirus, owner-only pod roots, Readme)
+      include_tasks: tasks/features_nextcloud.yml
+      when: skp_engine == 'nextcloud'
+      tags:
+        - always
+
+    - name: Seed or reset the test users (nextcloud engine)
+      # Runs on every deploy when skpods.SEED_USERS is set (idempotent:
+      # existing users keep their data). `--tags seed -e skpods_reset=true`
+      # wipes and recreates every user marked `resettable: true`.
+      include_tasks: tasks/seed_nextcloud.yml
+      when:
+        - skp_engine == 'nextcloud'
+        - (skpods.SEED_USERS | default([], true) | length) > 0
+      tags:
+        - seed
+
+    - name: Resolve the portal tile access (who sees the tile)
+      # The tile is a bookmark only: this decides who sees it in the portal,
+      # never who can reach the pod server. Default mode admin-only (skadmin).
+      include_tasks: ../../shared/tasks/sso_access_resolve.yml
+      vars:
+        sso_access_slug: "{{ skpods.AUTHENTIK_TILE_SLUG | default(skp_router, true) }}"
+        sso_access_cfg: "{{ skpods }}"
+        sso_access_legacy_groups: "{{ [skpods.AUTHENTIK_TILE_GROUP | default('', true)] }}"
+      tags:
+        - config
+        - authentik
+
+    - name: Create or update the skpods portal tile in Authentik
+      # On by default (AUTHENTIK_TILE: true); opt out per instance with
+      # AUTHENTIK_TILE: false. A bookmark to the pod server's login page:
+      # the tile does NOT put Authentik in front of the service (Solid
+      # clients must reach it without an SSO session).
+      include_tasks: ../../shared/tasks/authentik_portal_tile.yml
+      vars:
+        portal_tile:
+          enabled: "{{ skpods.AUTHENTIK_TILE | default(true) | bool }}"
+          slug: "{{ skpods.AUTHENTIK_TILE_SLUG | default(skp_router, true) }}"
+          name: "{{ skpods.AUTHENTIK_TILE_NAME | default('SKPods' + ('' if env == 'prod' else ' (' + env + ')'), true) }}"
+          launch_url: "https://{{ skp_host }}"
+          access: "{{ sso_access }}"
+          icon: "{{ skpods.AUTHENTIK_TILE_ICON | default('fa://fa-database', true) }}"
+          open_in_new_tab: "{{ skpods.AUTHENTIK_TILE_OPEN_IN_NEW_TAB | default(true) | bool }}"
+          description: "{{ skpods.AUTHENTIK_TILE_DESCRIPTION | default('Solid pods', true) }}"
+      tags:
+        - config
+        - authentik

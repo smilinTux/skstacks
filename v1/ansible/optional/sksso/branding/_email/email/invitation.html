@@ -1,0 +1,11 @@
+[% import "_macros.j2" as m with context %]{% extends "email/base.html" %}{% load i18n %}{% load humanize %}
+{% block content %}
+[[ m.h1("{% if user %}{% blocktrans with name=user.name|default:user.username %}Welcome to " ~ e.name ~ ", {{ name }}{% endblocktrans %}{% else %}{% trans 'You are invited to " ~ e.name ~ "' %}{% endif %}") ]]
+[% if e.invite_intro | default('') %][[ m.p(e.invite_intro) ]][% endif %]
+[[ m.p("{% if user %}{% blocktrans with username=user.username %}An account has been created for you. Your username is <strong>{{ username }}</strong>. Use the button below to choose your password and finish setting up.{% endblocktrans %}{% else %}{% trans 'Use the button below to create your account and get started.' %}{% endif %}") ]]
+[[ m.button("{{ url }}", "{% if user %}{% trans 'Set up my account' %}{% else %}{% trans 'Accept invitation' %}{% endif %}") ]]
+{% endblock %}
+{% block sub_content %}
+[[ m.fallback("{{ url }}") ]]
+[[ m.note("{% if expires %}{% blocktrans with expires=expires|date:'l, F j, Y, g:i A' %}This link works once and expires on {{ expires }} UTC. If it has expired, ask us for a fresh one. {% endblocktrans %}{% endif %}{% trans 'If you were not expecting this email, you can ignore it.' %}") ]]
+{% endblock %}
