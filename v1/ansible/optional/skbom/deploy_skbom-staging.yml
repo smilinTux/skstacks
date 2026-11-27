@@ -56,6 +56,9 @@
     skb_default_frontend_image: "dependencytrack/frontend:4.14.7@sha256:3ca8ca16bce633525a12b535803cc046a0870dfb6ea0c78904e9b130534bf696"
     skb_default_pg_image: "postgres:17.12-alpine@sha256:f9cf3e1f0066f0eb0c48707d864f0ac5941e9ff454a072077d97a4d278d07d73"
     skb_default_pg_backup_image: "postgres:17.12-bookworm@sha256:837bed18782820fe967067cb5328b02b0d9992c1be9a37ee0c9c492cfc03af3b"
+    # Ecosystems the OSV source mirrors (google.osv.enabled). Covers what Trivy
+    # reports for container images; override with skbom.OSV_ECOSYSTEMS.
+    skb_default_osv_ecosystems: "Go;npm;PyPI;Maven;crates.io;Alpine;Debian;Ubuntu;NuGet;Packagist;RubyGems;Wolfi"
   pre_tasks:
     - name: Select vault file based on domain and cluster
       import_tasks: ../../shared/tasks/select_vault_file.yml
@@ -89,7 +92,24 @@
         skb_tls_options: "{{ skbom.TLS_OPTIONS | default('none', true) }}"
         skb_router: "skbom{{ '' if env == 'prod' else '-' + env }}"
         skb_oidc_on: "{{ skbom.OIDC_ENABLED | default(false) | bool }}"
+        skb_osv_on: "{{ skbom.OSV_ENABLED | default(true) | bool }}"
+        # A string ("Go;npm") or a YAML list; empty or unset takes the default.
+        skb_osv_ecosystems: >-
+          {%- set raw = skbom.OSV_ECOSYSTEMS | default('', true) -%}
+          {%- set picked = raw if raw | length > 0 else skb_default_osv_ecosystems -%}
+          {{ ((picked | join(';')) if picked is not string else picked) | regex_replace(' *; *', ';') | trim | regex_replace(';+$', '') }}
       tags: [config]
+
+    - name: Refuse a malformed OSV ecosystem list
+      assert:
+        that:
+          - skb_osv_ecosystems is match('^[A-Za-z0-9._-]+(;[A-Za-z0-9._-]+)*$')
+        fail_msg: >-
+          ERROR: skbom.OSV_ECOSYSTEMS must be ecosystem names separated by
+          semicolons (for example "Go;npm;PyPI"), got "{{ skb_osv_ecosystems }}".
+        quiet: true
+      when: skb_osv_on | bool
+      tags: [config, osv]
 
     - name: Resolve the skbom sign-in settings
       # AUTH_MODE sso (default): Authentik forward auth (SSO_MIDDLEWARE,
@@ -344,6 +364,18 @@
     - name: Show deploy output
       debug: var=deploy_output.stdout_lines
       tags: [deploy]
+
+    - name: Enable the OSV vulnerability source (skbom.OSV_ENABLED, default on)
+      include_tasks:
+        file: tasks/osv_source.yml
+        apply:
+          tags:
+            - deploy
+            - osv
+      when: skb_osv_on | bool
+      tags:
+        - deploy
+        - osv
 
     - name: Create or update the skbom portal tile in Authentik
       # On by default (AUTHENTIK_TILE: true); opt out per instance with
