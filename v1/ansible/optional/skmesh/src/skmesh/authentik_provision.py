@@ -275,14 +275,22 @@ def provision(api, cfg):
     # client_credentials only succeeds for a user the application lets in. Once a
     # portal tile binds the application to a group (skadmin by default), the IdP
     # manager is shut out ("invalid_grant") and every NetBird SSO login that needs
-    # an account lookup fails (nor, 2026-11-14 to 2026-11-26). Bind the service
-    # account itself; with policy mode "any" this admits nobody else. Matched
-    # client-side and only ever added, like the portal tile script.
+    # an account lookup fails (nor, 2026-11-14 to 2026-11-26). So when the
+    # application is already restricted by bindings, bind the service account
+    # itself (policy mode "any" admits nobody else through it). When it has no
+    # binding at all it is open to every signed-in user, and a first binding
+    # would close it to everyone else (the release gate login proof caught
+    # exactly that), so nothing is added; once a tile restricts it, the next
+    # deploy adds the binding. Matched client-side and only ever added, like the
+    # portal tile script.
     app_pk = app["pk"]
-    bindings = api.get("/policies/bindings/", target=app_pk).get("results", [])
-    mine = [x for x in bindings if str(x.get("target")) == str(app_pk) and x.get("user") == user["pk"]]
+    bindings = [x for x in api.get("/policies/bindings/", target=app_pk).get("results", [])
+                if str(x.get("target")) == str(app_pk)]
+    mine = [x for x in bindings if x.get("user") == user["pk"]]
     if mine:
         print("service account application binding: present")
+    elif not bindings:
+        print("service account application binding: not needed (application is open)")
     else:
         order = max([x.get("order", 0) for x in bindings] + [0]) + 1
         api.call("POST", "/policies/bindings/", {"target": app_pk, "user": user["pk"], "order": order,

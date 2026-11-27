@@ -497,16 +497,24 @@ def test_provisioner_creates_everything_then_is_idempotent(fake_authentik):
 def test_provisioner_lets_its_service_account_into_a_group_bound_application(fake_authentik):
     """A portal tile binding the app to skadmin shut the IdP manager out (invalid_grant)."""
     fake = fake_authentik()
-    assert _provision(_cfg(fake)).returncode == 0
+    first = _provision(_cfg(fake))
+    assert first.returncode == 0, first.stderr
     app_pk = fake.objects["application"][0]["pk"]
     user_pk = fake.objects["user"][0]["pk"]
-    mine = [b for b in fake.bindings if b["target"] == app_pk and b.get("user") == user_pk]
-    assert len(mine) == 1 and mine[0]["enabled"] and not mine[0]["negate"]
-    # a group binding added later (the tile) and a rerun: still exactly one, the group one kept
+    # an unbound application is open to every signed-in user: a first binding would close it
+    assert "service account application binding: not needed" in first.stdout
+    assert fake.bindings == []
+    # the tile binds a group (restricting the app); the next deploy adds the service account
     fake.bindings.append({"pk": "tile", "target": app_pk, "group": "skadmin-pk", "order": 0})
     again = _provision(_cfg(fake))
     assert again.returncode == 0, again.stderr
-    assert "service account application binding: present" in again.stdout
+    assert "service account application binding: created" in again.stdout
+    mine = [b for b in fake.bindings if b["target"] == app_pk and b.get("user") == user_pk]
+    assert len(mine) == 1 and mine[0]["enabled"] and not mine[0]["negate"]
+    # a further rerun: still exactly one, the group one kept
+    third = _provision(_cfg(fake))
+    assert third.returncode == 0, third.stderr
+    assert "service account application binding: present" in third.stdout
     assert len([b for b in fake.bindings if b.get("user") == user_pk]) == 1
     assert any(b["pk"] == "tile" for b in fake.bindings)
 

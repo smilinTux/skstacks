@@ -49,10 +49,13 @@ Each entry says what an instance must do, if anything.
   admits, so once the portal tile bound SKMesh to a group (skadmin by default) the request
   failed with `invalid_grant`. Every NetBird SSO login that needs an account lookup then failed
   ("unable to get authentik token, statusCode 400", then "JWT already used"): a device whose login
-  expired could no longer log in, and `/api/users` answered 500. The provisioner now binds the
-  service account itself to the application (added only, matched client-side; with policy mode
-  `any` it admits nobody else). **Instance action:** redeploy skmesh, or add a user binding for
-  `skmesh-idp-manager` on the SKMesh application by hand.
+  expired could no longer log in, and `/api/users` answered 500. When the application already
+  has bindings, the provisioner now binds the service account itself to it (added only, matched
+  client-side; with policy mode `any` it admits nobody else). An application with no binding at
+  all stays open to every signed-in user and gets none (a first binding would close it to
+  everyone else); once a tile binds it, the next skmesh deploy adds the service account.
+  **Instance action:** redeploy skmesh after the tile has bound the application, or add a user
+  binding for `skmesh-idp-manager` on the SKMesh application by hand.
 
 
 ## skstacks-v2.26.34 - 2026-11-26
