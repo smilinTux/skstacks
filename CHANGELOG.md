@@ -87,6 +87,31 @@ Each entry says what an instance must do, if anything.
   already in `NeedsLogin` need one `netbird up`; to automate that on setup-key peers, set
   `skpatch_hosts_netbird_keepup: true` for them and rerun provisioning.
 
+### skbom: Dependency-Track enables the OSV vulnerability source
+
+- On an instance running Dependency-Track 4.14.7 only NVD was enabled. NVD matches components by
+  CPE and a Trivy CycloneDX SBOM carries package URLs (purls), so 100 projects with hundreds of
+  components each showed zero vulnerabilities. The OSV source matches by purl, but Dependency-Track
+  keeps its settings in its own database, not in the environment, so a fresh skbom never had it.
+  After the stack deploys, the role now waits for the apiserver `/health`, logs in as the
+  Dependency-Track admin from a throwaway container on the stack's overlay network, and sets
+  `vuln-source` / `google.osv.enabled` (a semicolon list of ecosystems) and
+  `google.osv.alias.sync.enabled` through `POST /api/v1/configProperty/aggregate`. It reads the
+  current values first and writes only what differs (`osv: unchanged` on a rerun). The password
+  reaches the container on stdin, every task that carries it is `no_log`, and the script prints
+  status lines only. New vault keys under `skbom:` (all optional): `ADMIN_PASSWORD` (the admin
+  account's password; without it the step says it was not applied and the deploy still passes),
+  `ADMIN_USERNAME` (default `admin`), `OSV_ENABLED` (default `true`), `OSV_ECOSYSTEMS` (string or
+  list; default `Go;npm;PyPI;Maven;crates.io;Alpine;Debian;Ubuntu;NuGet;Packagist;RubyGems;Wolfi`),
+  `OSV_ALIAS_SYNC` (default `true`), `OSV_WAIT_SECONDS` (600) and `PROVISIONER_IMAGE`. A malformed
+  ecosystem list fails the play before anything deploys. **The first OSV mirror takes hours**:
+  findings appear over the following hours, not at the end of the deploy. **Instance action**:
+  set `skbom.ADMIN_PASSWORD` in the skbom vault (change the default `admin` password once in the
+  UI first; Dependency-Track forces that at the first login) and redeploy skbom, or run it with
+  `--tags osv`; override `OSV_ECOSYSTEMS` if the default list is not what the estate scans.
+  Set `OSV_ENABLED: false` to opt out. Tests: `v1/tests/test_skbom_osv.py`.
+
+
 ## skstacks-v2.26.35 - 2026-11-27
 
 ### sksso: one shared branded email set for every Authentik email (#467)

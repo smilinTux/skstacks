@@ -146,6 +146,31 @@ local username/password login, which Dependency-Track keeps available
 side by side (same as most of its own documented deployments). Without
 `OIDC_ENABLED`, the app's own local admin login is the only path in.
 
+### Vulnerability sources (OSV, enabled by the role)
+Dependency-Track ships with NVD as its only enabled source. NVD matches components by CPE, and a Trivy
+CycloneDX SBOM carries package URLs (purls) and no CPEs, so with NVD alone every project shows zero
+vulnerabilities however many components it has (seen on 4.14.7: 100 projects, hundreds of components each,
+none matched). The OSV source matches by purl, so after the stack deploys the role enables it:
+`vuln-source` / `google.osv.enabled` set to a semicolon list of ecosystems and
+`google.osv.alias.sync.enabled` set to `true`, through the admin API
+(`POST /api/v1/configProperty/aggregate`). Dependency-Track keeps these in its database, not in the
+environment, so a fresh skbom loses them and the next deploy puts them back.
+
+- The step logs in as `ADMIN_USERNAME` (default `admin`) with `ADMIN_PASSWORD` from the vault, from a
+  throwaway container on the stack's overlay network, waiting up to `OSV_WAIT_SECONDS` for the apiserver
+  `/health` first. The password goes in on stdin, every task that carries it is `no_log`, and the script
+  prints status lines only. It reads the current settings and writes only what differs, so a rerun says
+  `osv: unchanged`.
+- Without `ADMIN_PASSWORD` the step says so and does nothing; the deploy does not fail. Dependency-Track
+  forces a password change at the very first `admin` login: do that once in the UI and put the new password
+  in the vault.
+- `OSV_ECOSYSTEMS` overrides the default list (`Go;npm;PyPI;Maven;crates.io;Alpine;Debian;Ubuntu;NuGet;Packagist;RubyGems;Wolfi`),
+  as a semicolon string or a YAML list. `OSV_ENABLED: false` skips the step.
+- **The first OSV mirror takes hours.** Dependency-Track downloads one advisory archive per ecosystem and
+  imports it on its own schedule, so right after the first deploy the projects still show no OSV findings.
+  Expect them to appear over the following hours, and do not rerun the deploy to "fix" that. The enabled
+  ecosystems show under Administration, Vulnerability Sources, Google OSV in the UI.
+
 ### Backups
 
 `postgres-db-backup` runs `pg_dumpall` every `BACKUP_FREQUENCY` (seconds,
@@ -271,6 +296,13 @@ skbom:
   BACKUP_KEEP_DAYS: 7                       # BACKUP_NUM_KEEP is accepted as a fallback
   LOG_MAX_SIZE: 10m
   LOG_MAX_FILES: 3
+  OSV_ENABLED: true                         # false: leave Dependency-Track's vulnerability sources alone
+  ADMIN_USERNAME: admin                     # the Dependency-Track account the OSV step logs in as
+  ADMIN_PASSWORD: ""                        # its password (set once in the UI; the first login forces a change). Secret. Unset: OSV is not applied
+  OSV_ECOSYSTEMS: ""                        # google.osv.enabled: "Go;npm;PyPI;..." or a list; default Go;npm;PyPI;Maven;crates.io;Alpine;Debian;Ubuntu;NuGet;Packagist;RubyGems;Wolfi
+  OSV_ALIAS_SYNC: true                      # google.osv.alias.sync.enabled
+  OSV_WAIT_SECONDS: 600                     # how long to wait for the apiserver /health before the OSV step
+  PROVISIONER_IMAGE: ""                     # throwaway container for the OSV step, default python:3.13.15-alpine@sha256:...
   AUTHENTIK_TILE: true                      # false opts out of the portal tile
   AUTHENTIK_TILE_SLUG: ""                   # default skbom[-env]
   AUTHENTIK_TILE_NAME: "SKBom (Dependency-Track)"
