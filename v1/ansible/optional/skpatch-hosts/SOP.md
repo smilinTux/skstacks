@@ -442,6 +442,7 @@ Symptom to check. Runbook ids are in Appendix A; known-error ids (KE-SKPATCH-n) 
 | Compliance reports `dashboard-only` | A dashboard system matches no inventory host: provision it, fix its name/address, or remove it from the dashboard. |
 | Provisioning warns "serves DNS and has a port 53 conflict", or compliance reports `dns-conflict` | On a resolver host, NetBird's DNS (or another process) can take port 53 before the DNS server. Run `netbird up --disable-dns` on that host, restart the DNS server, rerun the check (README "DNS server hosts and NetBird"). |
 | An upgrade or check fails on a resolver host right after a reboot | Check `ss -lnptu 'sport = :53'` on it: NetBird holding :53 means the DNS server never started. Same fix as the row above. |
+| A setup-key NetBird peer sits in `NeedsLogin` after its management server was briefly down (it got a 403 and stopped retrying) | Run `netbird up` on it. To make that automatic, set the host var `skpatch_hosts_netbird_keepup: true` and rerun provisioning; check it with `journalctl -u skpatch-netbird-keepup` (README "NetBird keep-up timer"). Not for SSO-enrolled peers: a journal WARNING "asks for an interactive login" means the peer needs SSO, so turn the var off for it. |
 | A host was skipped with "skpatch-hosts PAUSED" | Expected: host var `skpatch_hosts_paused` or `/etc/skpatch-hosts.paused`. Remove it and rerun to resume. |
 | A retired node still shows in the dashboard | Expected: registration never deletes. Remove it by hand once its history is no longer needed. |
 

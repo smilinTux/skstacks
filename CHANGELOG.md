@@ -6,6 +6,38 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased (v2.26.36)
 
+### Stack deploys pre-pull their images and stop before `docker stack deploy` if one cannot be pulled
+
+- `docker stack deploy` replaces the service spec before any node pulls the new image. On
+  2026-11-27 an sksso deploy moved Authentik to a new ghcr.io digest and every task pull on the
+  worker nodes was answered `denied`: server and worker sat at 0/1 and SSO was down for 8
+  minutes. The image existed and a manual `docker pull` worked right after, but
+  `docker service rollback` restored nothing because the stack deploy had already made
+  PreviousSpec the new spec. A new shared task, `v1/ansible/shared/tasks/prepull_images.yml`, now
+  runs immediately before the deploy script in all 121 stack-deploying playbook and task files
+  (every role that runs `docker stack deploy`). It reads the rendered stack file and the swarm
+  nodes, works out which Ready, active node can run which service, and pulls each image there
+  with up to 4 attempts and a growing wait (10, 20, 30 s). `deploy.placement.constraints` on
+  `node.id`, `node.hostname`, `node.role`, `node.platform.os/arch`, `node.labels.*` and
+  `engine.labels.*` are honoured; an unknown constraint over-pulls rather than under-pulls. A
+  digest-pinned image the node already holds is not asked of the registry at all, so a registry
+  outage does not block a redeploy of what is already local. If an image still cannot be pulled
+  the play fails with the node and image named, BEFORE the stack deploy, so every running
+  service is untouched. Nodes are reached through the inventory, so a swarm node is pre-pulled
+  only when its inventory name is its Swarm hostname (the rule the skmon agent guard already
+  enforces); a swarm node the inventory does not know is reported and skipped, never failed.
+  Knobs, all optional: `skstacks_prepull_images` (default `true`; `false` switches it off),
+  `skstacks_prepull_retries` (4), `skstacks_prepull_delay` (10 s; attempt N waits N times
+  this), `skstacks_prepull_placement` (`false` pulls every image on every Ready node) and
+  `skstacks_prepull_compose` (stack file path on the manager; default
+  `/var/data/config/<app>-<env>/<app>.yml`, else `docker-compose.yml` there). The task runs
+  under `--tags deploy` and `--tags prepull` and is skipped in `--check` mode.
+  **Instance action**: none required, it is on by default and needs no new variable. Expect a
+  deploy to spend a few seconds more per node on the pull step (longer the first time a large
+  image is fetched), and make sure each swarm host's inventory name is its Swarm hostname. Set
+  `skstacks_prepull_images: false` only to deploy deliberately past a failing registry. Tests:
+  `v1/tests/test_prepull_images.py`.
+
 ### Overlays: no stack joins an implicit default network; new swarms use 10.200.0.0/16
 
 - Swarm creates a `<stack>_default` overlay for any service that names no network, and takes its
@@ -27,6 +59,33 @@ Each entry says what an instance must do, if anything.
   remove the now-unused network on a manager: `docker network rm skfenceha-<env>_default`
   (and `skmail-<env>_default`). An empty leftover network does no harm, but its subnet stays
   reserved until it is removed.
+
+### skmesh: 503, not the catch-all 403, while a backend is down; skpatch-hosts NetBird keep-up timer
+
+- While a skmesh service has no running task, Swarm drops its Traefik labels and the skmesh host
+  fell through to the fence's priority-1 catch-all, which answers 403. A NetBird client maps a 403
+  on GetServerKey to PermissionDenied, leaves its retry loop and stays in `NeedsLogin` until a
+  manual `netbird up`. The skmesh playbooks now render `dynamic/skmesh-<env>.yml` into each fence
+  dynamic directory present on the manager (`skfence`, `skfenceha`): one file-provider router for
+  the skmesh host at priority 2 (above the catch-alls, below every skmesh label router) to a load
+  balancer with no servers, so Traefik answers 503 (gRPC Unavailable, retried). The skmesh compose
+  file and every other stack render unchanged. On skfenceha (shared NFS `dynamic/`) the play
+  touches the file on every manager in the target manager group on every run, so every
+  traefik-worker loads it; an unreachable manager never blocks the stack deploy and is named in a
+  WARNING after it. skfence and skfenceha reserve `skmesh-<env>.yml` against
+  `EXTRA_DYNAMIC_FILES`.
+- skpatch-hosts: new opt-in host var `skpatch_hosts_netbird_keepup` (default false) installs
+  `skpatch-netbird-keepup` with a systemd service and a 5 minute timer. When netbird reports
+  `NeedsLogin` or `Idle` and the active profile does not set `DisableAutoConnect`, it runs
+  `timeout 60 netbird up --no-browser` and logs to the journal. Setup-key peers only. If `up`
+  prints its login prompt ("Use this URL to log in", a peer that really needs SSO), it logs one warning without the URL and
+  skips runs for 6 hours.
+  **Instance action:** redeploy skmesh (after the fence, so its dynamic directory exists) with
+  every manager of the target manager group in the inventory, so the play can touch the
+  skfenceha copy on each of them; for any manager the post-deploy WARNING names, run `touch
+  /var/data/config/skfenceha-<env>/dynamic/skmesh-<env>.yml` on it by hand. Peers
+  already in `NeedsLogin` need one `netbird up`; to automate that on setup-key peers, set
+  `skpatch_hosts_netbird_keepup: true` for them and rerun provisioning.
 
 ### skembed: CPU embedding service with an OpenAI-compatible API (new role)
 

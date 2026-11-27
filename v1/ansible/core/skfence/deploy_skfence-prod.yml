@@ -205,6 +205,8 @@
           - middlewares.yml
           - tls.yml
           - sksec.yml
+          # rendered by the skmesh playbook (its 503 fallback router)
+          - "skmesh-{{ env }}.yml"
       tags:
         - config
         - dynamic
@@ -265,6 +267,17 @@
       include_tasks: ../../shared/tasks/create_networks.yml
       tags:
         - networks
+
+    - name: Pre-pull the stack images (a registry refusal must not take a running service down)
+      include_tasks:
+        file: ../../shared/tasks/prepull_images.yml
+        apply:
+          tags:
+            - deploy
+            - prepull
+      tags:
+        - deploy
+        - prepull
 
     - name: Deploy {{ app }} stack
       shell: |

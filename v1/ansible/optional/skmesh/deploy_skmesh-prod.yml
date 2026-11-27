@@ -191,6 +191,58 @@
       tags:
         - compose
 
+    # The 503 fallback router (src/config/skmesh/traefik-unavailable.yml.j2)
+    # goes into the top level of every fence dynamic/ directory present here
+    # (skfence and/or skfenceha), never a subdirectory (the fences refuse
+    # to deploy while one exists). No fence directory: nothing is written.
+    - name: Find the Traefik dynamic config directories (skfence, skfenceha)
+      stat:
+        path: "/var/data/config/{{ item }}-{{ env }}/dynamic"
+      loop:
+        - skfence
+        - skfenceha
+      register: skmesh_fence_dynamic_dirs
+      tags:
+        - traefik
+
+    - name: Render the {{ app }} 503 fallback router into each Traefik dynamic directory
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/traefik-unavailable.yml.j2"
+        dest: "/var/data/config/{{ item.item }}-{{ env }}/dynamic/{{ app }}-{{ env }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      loop: "{{ skmesh_fence_dynamic_dirs.results | selectattr('stat.exists') | selectattr('stat.isdir') | list }}"
+      loop_control:
+        label: "{{ item.item }}"
+      tags:
+        - traefik
+
+    # skfenceha's dynamic/ is shared NFS: the write above wakes the file watch
+    # only on this manager, so every other manager's traefik-worker (maybe the
+    # VIP holder) would keep the old config. A local touch on each manager
+    # gives its watch the event (skfenceha README: "touch the changed files on
+    # each manager"). Every run, not only when the template changed: a run that
+    # stopped after the template step must not leave the others unloaded.
+    # A manager that is down or refuses never blocks the stack deploy: the
+    # warning after the deploy lists it with the command to run by hand.
+    - name: Touch the 503 fallback router on every manager (skfenceha shared NFS)
+      file:
+        path: "/var/data/config/skfenceha-{{ env }}/dynamic/{{ app }}-{{ env }}.yml"
+        state: touch
+      delegate_to: "{{ item }}"
+      loop: "{{ groups[target_manager_group | default('swarm_managers')] | default([]) }}"
+      when: >-
+        skmesh_fence_dynamic_dirs.results | default([]) | selectattr('stat.exists')
+        | selectattr('stat.isdir') | map(attribute='item') | select('equalto', 'skfenceha')
+        | list | length > 0
+      register: skmesh_fallback_touch
+      ignore_unreachable: true
+      failed_when: false
+      changed_when: false
+      tags:
+        - traefik
+
     - name: Create docker-compose.yml symlink
       file:
         src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
@@ -240,6 +292,17 @@
         - deploy
         - postgres-major
 
+    - name: Pre-pull the stack images (a registry refusal must not take a running service down)
+      include_tasks:
+        file: ../../shared/tasks/prepull_images.yml
+        apply:
+          tags:
+            - deploy
+            - prepull
+      tags:
+        - deploy
+        - prepull
+
     - name: Deploy {{ app }} stack
       shell: |
         cd /var/data/{{ app }}-{{ env }}
@@ -252,6 +315,21 @@
       debug: var=deploy_output.stdout_lines
       tags:
         - deploy
+
+    - name: Warn about managers the 503 fallback router was not touched on
+      debug:
+        msg: >-
+          WARNING: the skmesh 503 fallback router was not touched on {{ skmesh_untouched | join(', ') }}
+          (unreachable or failed), so their traefik-worker may not have loaded it. On each of them run:
+          touch /var/data/config/skfenceha-{{ env }}/dynamic/{{ app }}-{{ env }}.yml
+      vars:
+        skmesh_untouched: >-
+          {{ skmesh_fallback_touch.results | default([]) | rejectattr('skipped', 'defined')
+             | rejectattr('state', 'defined') | map(attribute='item') | list }}
+      when: skmesh_untouched | length > 0
+      tags:
+        - deploy
+        - traefik
 
     # turnserver.conf and coturn-run.sh are bind mounts, so a changed file
     # leaves the service spec unchanged and the stack deploy keeps the old

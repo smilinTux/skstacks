@@ -1,0 +1,32 @@
+{%- if skmesh.CLOUDFLARED | default(false) -%}
+  {%- set _base_domain = skmesh.DOMAIN -%}
+{%- else -%}
+  {%- set _base_domain = skmesh.CLUSTERNAME ~ '.' ~ skmesh.DOMAIN -%}
+{%- endif -%}
+# Traefik file-provider config, rendered by the skmesh playbook into the
+# fence's dynamic/ directory. Managed by Ansible - do not edit manually.
+#
+# While a skmesh service has no running task, Swarm drops its Traefik labels,
+# so its routers vanish and the host falls through to the fence's priority-1
+# catch-all, which answers 403. A NetBird client maps a 403 on GetServerKey to
+# PermissionDenied and stops retrying for good (NeedsLogin until a manual
+# `netbird up`). This router answers 503 instead (a load balancer with no
+# servers), which clients map to Unavailable and retry.
+#
+# priority 2: above the catch-alls (1), below every skmesh label router (no
+# explicit priority, so Traefik uses the rule length, far above 2).
+# servers must be an explicit empty list: `loadBalancer: {}` is rejected and
+# makes Traefik drop the whole file provider's config.
+http:
+  routers:
+    skmesh-{{ env }}-unavailable:
+      rule: Host(`skmesh{% if env != 'prod' %}-{{ env }}{% endif %}.{{ _base_domain }}`)
+      entryPoints:
+        - websecure
+      service: skmesh-{{ env }}-unavailable
+      priority: 2
+      tls: {}
+  services:
+    skmesh-{{ env }}-unavailable:
+      loadBalancer:
+        servers: []

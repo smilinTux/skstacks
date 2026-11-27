@@ -14,6 +14,17 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 ---
+- name: Pre-pull the stack images (a registry refusal must not take a running service down)
+  include_tasks:
+    file: ../../../shared/tasks/prepull_images.yml
+    apply:
+      tags:
+        - deploy
+        - prepull
+  tags:
+    - deploy
+    - prepull
+
 # Deploys the stack: runs the rendered deploy script on the selected manager.
 # The overlay networks exist by now (shared/tasks/create_networks.yml, run by
 # the play before this file).

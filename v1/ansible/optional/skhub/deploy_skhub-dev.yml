@@ -700,6 +700,17 @@
     - name: Refuse a Nextcloud downgrade or skipped major version before deploying
       import_tasks: tasks/major_upgrade_guard.yml
 
+    - name: Pre-pull the stack images (a registry refusal must not take a running service down)
+      include_tasks:
+        file: ../../shared/tasks/prepull_images.yml
+        apply:
+          tags:
+            - deploy
+            - prepull
+      tags:
+        - deploy
+        - prepull
+
     - name: Deploy {{ app }} stack
       shell: |
         cd /var/data/{{ app }}-{{ env }}
