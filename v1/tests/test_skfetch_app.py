@@ -17,13 +17,14 @@ import json
 import pathlib
 import subprocess
 import sys
-import threading
 import xml.etree.ElementTree as ET
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 
 import jinja2
 import pytest
 import yaml
+
+import http_test_server
 
 ANSIBLE = pathlib.Path(__file__).resolve().parents[1] / "ansible"
 APP = ANSIBLE / "optional/skfetch"
@@ -418,9 +419,7 @@ def serve(fake):
             fake.posts.append((path, body))
             self._send(201, body)
 
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    return srv
+    return http_test_server.start(http_test_server.ThreadingHTTPServer(("127.0.0.1", 0), H))
 
 
 @pytest.fixture
@@ -438,7 +437,7 @@ def cluster(tmp_path):
     path.write_text(json.dumps(cfg))
     yield fakes, path
     for s in srvs.values():
-        s.shutdown()
+        http_test_server.stop(s)
 
 
 def run_wire(path):

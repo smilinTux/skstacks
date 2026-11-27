@@ -122,6 +122,8 @@ def test_dry_run_runs_no_subprocess(tmp_path, framework_root, instance_dir):
 @pytest.fixture
 def http_server(tmp_path):
     class Handler(http.server.BaseHTTPRequestHandler):
+        timeout = 5  # an idle client cannot park the handler in readline()
+
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
@@ -130,10 +132,15 @@ def http_server(tmp_path):
             pass
 
     server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    # A client reset between select() and accept() must not block accept()
+    # forever, or shutdown() below waits forever too.
+    server.socket.settimeout(0.5)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
     yield f"http://127.0.0.1:{server.server_port}"
     server.shutdown()
+    server.server_close()
+    t.join(10)
 
 
 def _inspect_json(desired: int) -> str:
