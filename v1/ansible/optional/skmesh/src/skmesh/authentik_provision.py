@@ -243,7 +243,7 @@ def provision(api, cfg):
     }
     if cfg.get("icon"):
         app_fields["meta_icon"] = cfg["icon"]
-    ensure(api, "/core/applications/", app_lookup, app_fields, "application", key="slug")
+    app = ensure(api, "/core/applications/", app_lookup, app_fields, "application", key="slug")
 
     # IdP manager service account: view users, nothing else.
     role = ensure(api, "/rbac/roles/",
@@ -278,7 +278,7 @@ def provision(api, cfg):
     # an account lookup fails (nor, 2026-11-14 to 2026-11-26). Bind the service
     # account itself; with policy mode "any" this admits nobody else. Matched
     # client-side and only ever added, like the portal tile script.
-    app_pk = api.call("GET", f"/core/applications/{cfg['app_slug']}/")["pk"]
+    app_pk = app["pk"]
     bindings = api.get("/policies/bindings/", target=app_pk).get("results", [])
     mine = [x for x in bindings if str(x.get("target")) == str(app_pk) and x.get("user") == user["pk"]]
     if mine:
