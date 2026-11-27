@@ -8,11 +8,16 @@
   register: swarm_state
   changed_when: false
 
+# The overlay pool. Docker's own default is 10.0.0.0/8, which overlaps estate
+# LANs and mesh ranges (nam's LAN is 10.0.0.0/24; meshes use 10.250-10.255).
+# Only `swarm init` can set it; an existing swarm keeps the pool it was born with.
 - name: Initialize Docker Swarm
   ansible.builtin.command: >
     docker swarm init
     --advertise-addr {{ swarm_manager_ip }}
     --listen-addr {{ swarm_manager_ip }}:2377
+    --default-addr-pool {{ swarm_default_addr_pool | default('10.200.0.0/16') }}
+    --default-addr-pool-mask-length {{ swarm_default_addr_pool_mask | default(24) }}
   when: swarm_state.stdout != 'active'
   register: swarm_init_result
 

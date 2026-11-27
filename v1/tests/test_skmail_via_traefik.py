@@ -55,7 +55,8 @@ def test_default_keeps_host_ports_and_mail_vip_pin():
     assert sorted(p["published"] for p in svc["ports"]) == sorted(MAIL_PORTS)
     assert all(p["mode"] == "host" for p in svc["ports"])
     assert "node.labels.mail-vip == true" in svc["deploy"]["placement"]["constraints"]
-    assert "networks" not in svc
+    # joins cloud-public explicitly (egress only), never the implicit default overlay
+    assert svc["networks"] == ["cloud-public-prod"]
     assert svc["deploy"]["labels"] == ["traefik.enable=false"]
 
 

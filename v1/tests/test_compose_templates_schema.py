@@ -299,8 +299,25 @@ def check_swarm(doc, errors):
         for net in referenced:
             if net not in top_networks:
                 errors.append(f"service {name}: network {net!r} used but not declared at top level")
+        uses_default = not referenced or "default" in referenced
+        # network_mode (service:<vpn>, host) is a plain-compose stack's own wiring, not a swarm overlay
+        if uses_default and not _default_network_pinned(doc) and not svc.get("network_mode"):
+            errors.append(
+                f"service {name}: joins the implicit stack default network, which Swarm allocates "
+                "from its 10.0.0.0/8 pool and can collide with an estate LAN (nam's skfenceha "
+                "default network took 10.0.0.0/24); list its networks explicitly"
+            )
 
         check_labels(name, "service", svc, "labels", errors)
+
+
+def _default_network_pinned(doc):
+    """True when the stack declares its own `default` network with an explicit subnet."""
+    default = (doc.get("networks") or {}).get("default") or {}
+    if default.get("external"):
+        return True
+    configs = ((default.get("ipam") or {}).get("config")) or []
+    return any(isinstance(c, dict) and c.get("subnet") for c in configs)
 
 
 def check_labels(service, where, container, key, errors):
