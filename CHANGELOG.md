@@ -4,7 +4,55 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
-## Unreleased (v2.26.36)
+## Unreleased (v2.26.37)
+
+### skvector: optional web UI host behind SSO
+
+- New, off by default: `skvector.UI_HOST_ENABLED: true` adds a router on
+  `skvector-ui[-env].<cluster>.<domain>` that sends every request through Authentik forward auth
+  (`authentik@file`, attached explicitly, not left to the catch-all) and then injects the Qdrant
+  `api-key` header, so the portal tile opens the dashboard
+  (`/dashboard#/collections`) already signed in. `UI_KEY_MODE` picks the key: `read_only`
+  (default, the new `QDRANT_READ_ONLY_API_KEY`, rendered as `QDRANT__SERVICE__READ_ONLY_API_KEY`)
+  or `full` (`QDRANT_API_KEY`). The main and gRPC routers are unchanged, and with the keys unset
+  the stack renders exactly as before. The key sits in a Traefik label, so grant the UI host to
+  admin groups only (role README "Web UI behind SSO").
+  **Instance action:** none. To use it, set `QDRANT_READ_ONLY_API_KEY` and `UI_HOST_ENABLED` in
+  the vault and redeploy skvector (the tile follows).
+
+
+## skstacks-v2.26.36 - 2026-11-27
+
+### deploy pre-pull: a refused image the node already holds no longer blocks the deploy; skfence error-pages pinned to its build node
+
+- The image pre-pull step (#548) asked the registry for every tag, so the error-pages image that
+  skfence and skfenceha build on the node (`<app>-<env>-error-pages:latest`, in no registry)
+  failed on every node and stopped the deploy. Found by the v2.26.36 release gate (skfence stage).
+  After the retries, a refused reference the node already holds now passes ("present locally,
+  registry refused"): the deploy uses that copy, as it did before the pre-pull existed. An image
+  the node lacks and cannot pull still stops the deploy.
+- skfence error-pages was placed on any manager although only the deploying manager builds it.
+  The playbooks now read that node's Swarm node ID and the stack file adds `node.id == <id>`
+  (skfenceha already pins it to the `traefik.acme.master` node).
+  **Instance action**: none. The next skfence deploy moves error-pages to the deploying manager.
+  Tests: `v1/tests/test_prepull_images.py`, `v1/tests/test_skfence_error_pages_placement.py`.
+
+### skpods: optional identity domain for per-user WebID hosts
+
+- New optional `skpods.IDENTITY_DOMAIN` (for example `skpods.id`) serves WebIDs at
+  `https://<user>.<IDENTITY_DOMAIN>/profile/card#me`. The deploy validates it as a lowercase
+  hostname (fails the play otherwise), requires `HOSTNAME` to be `pods.<IDENTITY_DOMAIN>` (the
+  engine treats that as the pods host), passes it to the engine as `SKPODS_IDENTITY_DOMAIN`, and
+  adds a second Traefik router `skpods[-<env>]-identity` for one-label subdomains
+  (`HostRegexp`, Traefik v3 syntax) at priority 3, below the main router (5) and above the edge
+  catch-alls (1). The new router sets no ACME resolver unless `skpods.IDENTITY_CERTRESOLVER`
+  names one (it must use DNS-01, which then gets `<domain>` plus `*.<domain>`). Unset, the
+  rendered files are unchanged.
+  **Instance action**: none unless you want user hosts. To use them, before the first user signs
+  in: set `IDENTITY_DOMAIN` and `HOSTNAME: pods.<IDENTITY_DOMAIN>`, publish DNS for
+  `pods.<domain>` and `*.<domain>`, give Traefik a `*.<domain>` certificate (or set
+  `IDENTITY_CERTRESOLVER`), and use an engine image that ships the identity-domain start hook.
+  Tests: `v1/tests/test_skpods_identity_domain.py`.
 
 ### Stack deploys pre-pull their images and stop before `docker stack deploy` if one cannot be pulled
 
@@ -87,19 +135,121 @@ Each entry says what an instance must do, if anything.
   already in `NeedsLogin` need one `netbird up`; to automate that on setup-key peers, set
   `skpatch_hosts_netbird_keepup: true` for them and rerun provisioning.
 
-### skvector: optional web UI host behind SSO
+### skembed: CPU embedding service with an OpenAI-compatible API (new role)
 
-- New, off by default: `skvector.UI_HOST_ENABLED: true` adds a router on
-  `skvector-ui[-env].<cluster>.<domain>` that sends every request through Authentik forward auth
-  (`authentik@file`, attached explicitly, not left to the catch-all) and then injects the Qdrant
-  `api-key` header, so the portal tile opens the dashboard
-  (`/dashboard#/collections`) already signed in. `UI_KEY_MODE` picks the key: `read_only`
-  (default, the new `QDRANT_READ_ONLY_API_KEY`, rendered as `QDRANT__SERVICE__READ_ONLY_API_KEY`)
-  or `full` (`QDRANT_API_KEY`). The main and gRPC routers are unchanged, and with the keys unset
-  the stack renders exactly as before. The key sits in a Traefik label, so grant the UI host to
-  admin groups only (role README "Web UI behind SSO").
-  **Instance action:** none. To use it, set `QDRANT_READ_ONLY_API_KEY` and `UI_HOST_ENABLED` in
-  the vault and redeploy skvector (the tile follows).
+New optional role `v1/ansible/optional/skembed`: Hugging Face text-embeddings-inference
+(`cpu-1.9.4`, pinned by index digest) serving one embedding model on CPU as a swarm service, with
+`POST /v1/embeddings` on the `skembed-<env>` overlay. The model comes from a local directory
+(`MODEL_PATH`, preferred, no network) or a Hugging Face repo id (`MODEL_ID`, `HF_TOKEN` from the
+vault). Healthcheck on `/health`, CPU and memory limits, placement constraints, an optional bearer
+`API_KEY` and an optional published port. Subnets `172.16.126-128.0/24`. Tests:
+`v1/tests/test_skembed_render.py`. **Instance action:** none unless you want it: pick the model, set
+`skembed.MODEL_PATH` (or `MODEL_ID` and `HF_TOKEN`) and `MODEL_NAME`, deploy before skcorpus and skai.
+
+### skcorpus: read-only corpus search tool server (new role)
+
+New optional role `v1/ansible/optional/skcorpus`: our own FastAPI OpenAPI tool server
+(`app/skcorpus.py`, sha256-pinned in the playbook, bind-mounted read-only into a digest-pinned
+Python runtime with only fastapi, uvicorn and httpx; `image/` builds it). Tools `corpus_list`,
+`corpus_search` (embed the query through skembed, search each configured Qdrant collection, merge by
+score), `corpus_get` (neighbouring chunks of a hit), `graph_entity` and `graph_neighbors` (FalkorDB).
+Read-only by construction: Qdrant search and scroll only (path allowlist), FalkorDB `GRAPH.RO_QUERY`
+only, Cypher constant with user input only as encoded parameters, corpora and collections from config
+only, hard limits, bearer token. Each corpus is also served alone at `/c/<name>/` with its own
+OpenAPI spec and no corpus argument (what skai registers); the all-corpora routes need
+`GLOBAL_ROUTES: true`. Collections may be Qdrant aliases. A corpus may name its own `embed_url`;
+with `EMBED_URL` set skembed is not needed. Coherence self-check: at startup and every
+`COHERENCE_INTERVAL_SECONDS` it samples points, re-embeds their text and reports the fraction
+with cosine above 0.99 on `/health` and `/metrics`; a corpus below its threshold (default 0.9)
+is degraded and its tool results carry a `warning`, but it keeps serving. Joins `skvector-<env>`,
+`skgraph-<env>` and (without `EMBED_URL`) `skembed-<env>`; subnets `172.16.123-125.0/24`. CI now installs fastapi and httpx for its app tests. Tests:
+`v1/tests/test_skcorpus_app.py`, `v1/tests/test_skcorpus_render.py`. **Instance action:** none
+unless you want it: set `skcorpus.API_TOKEN` (same value as `skai.CORPUS_TOKEN`), a read-only
+`QDRANT_API_KEY`, `FALKORDB_PASSWORD` and `CORPORA` (aliases where collections are rebuilt);
+check each corpus's `embed_model` against its collections and watch the first coherence result on
+`/health`; deploy after skembed, or set `EMBED_URL` to an existing endpoint instead.
+
+### skcorpus: read-only pgvector backend
+
+A corpus may set `backend: pgvector` and live in a Postgres table or view (`pg_relation`, default
+`docs_public`) instead of Qdrant: hybrid search through `pg_search_fn` (default
+`hybrid_search_docs_public`, vector plus BM25 with RRF), over-fetched and filtered to the corpus's
+`pg_filter_values` (on `pg_filter_column`, default `corpus`), or vector distance only with
+`pg_search_fn: ""`; `corpus_get` windows and the coherence check work the same; no graph. Every
+session is read-only (`SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY`, checked) with a
+`statement_timeout` (`PG_STATEMENT_TIMEOUT_MS`, 5000), and only fixed SELECT templates with bound
+values exist. The DSN is in the vault (`PG_DSNS`, keyed by the corpus's `pg_dsn_env`) and only in
+the 0600 env file; `PG_NETWORKS` adds the database's overlay. `image/` now pins psycopg 3.3.9.
+**Instance action:** none unless you want it: build `image/` and set `skcorpus.IMAGE` (the default
+image has no psycopg, the play refuses pgvector corpora on it), use a read-only role.
+
+### skai: answer engine with web search and corpus knowledge base (new role)
+
+New optional role `v1/ansible/optional/skai`: Open WebUI (`v0.13.4`, pinned by index digest), no
+Ollama and no LocalAI, configured from env only (`ENABLE_PERSISTENT_CONFIG=false`). Models from the
+OpenAI-compatible gateway (`GATEWAY_URL`, `GATEWAY_API_KEY`, `DEFAULT_MODEL`, `TASK_MODEL`); SearXNG
+web search (skpeek of the same env by default) with query generation; RAG embeddings through skembed
+with hybrid search and an optional external reranker; its own pgvector Postgres (bookworm) with a
+dump sidecar. Sign-in through Authentik OIDC with group based admin (`ADMIN_GROUP`, `USER_GROUPS`);
+in oidc mode the password sign-in endpoint is refused from outside. Every entry in `CORPORA` gets
+its own skcorpus tool server (`/c/<name>`, `TOOL_SERVER_CONNECTIONS`, admin only in the env) and
+its own model preset with a layered prompt (graph for connections, vectors for substance, quotes
+only when asked, always cite title, file_path and chunk_index). Per-corpus `allowed_groups`
+(default `[skai-users]`): a provision service in the stack creates the Open WebUI groups (filled
+from the OIDC groups claim) and grants each corpus's tool server and preset to its groups only,
+re-applying the grants after a restart. Sign-in is limited to the `USERS_GROUP` (default
+`skai-users`) and the admin groups (portal tile access mode app-groups). With `EMBED_URL` set,
+skembed is not needed.
+Optional voice (speaches: Whisper and Piper, pinned) behind `VOICE: false`. Portal tile with an icon.
+Subnets `172.16.120-122.0/24`. The README carries the full-gate stage plan. Tests:
+`v1/tests/test_skai_render.py`, `v1/tests/test_skai_provision.py`. **Instance action:** none unless
+you want it: fill the `skai` vault (secrets, gateway, `PROVISIONER_*`, `CORPUS_TOKEN`, `CORPORA`
+with one entry per corpus and its `allowed_groups`), enable the sksso client and list the members
+(below), deploy skembed (or set `EMBED_URL`), skcorpus, then skai.
+
+### sksso: optional OIDC client for skai
+
+`SKAI_OIDC_ENABLED` (default false) installs a blueprint with a confidential OIDC provider and the
+`skai` Application (the portal tile) with two strict redirect URIs, the client secret through `!Env`
+from `SKAI_OIDC_CLIENT_SECRET`, plus the group `skai-users` (`SKAI_USERS_GROUP`) with its members
+from `SKAI_USERS` (instance vars; the list is the membership) and bindings of the Application to
+the admin group and that group, so only members can sign in. Tests:
+`v1/tests/test_skai_oidc_sksso.py`. **Instance action:** none
+unless you deploy skai: set `sksso.SKAI_OIDC_ENABLED: true`, `SKAI_USERS` and
+`SKAI_OIDC_CLIENT_SECRET` (same value as `skai.OIDC_CLIENT_SECRET`), `SKAI_HOST` only when skai is not on its default host;
+redeploy sksso before skai.
+
+### skbom: Dependency-Track enables the OSV vulnerability source
+
+- On an instance running Dependency-Track 4.14.7 only NVD was enabled. NVD matches components by
+  CPE and a Trivy CycloneDX SBOM carries package URLs (purls), so 100 projects with hundreds of
+  components each showed zero vulnerabilities. The OSV source matches by purl, but Dependency-Track
+  keeps its settings in its own database, not in the environment, so a fresh skbom never had it.
+  After the stack deploys, the role now waits for the apiserver `/health`, logs in as the
+  Dependency-Track admin from a throwaway container on the stack's overlay network, and sets
+  `vuln-source` / `google.osv.enabled` (a semicolon list of ecosystems) and
+  `google.osv.alias.sync.enabled` through `POST /api/v1/configProperty/aggregate`. It reads the
+  current values first and writes only what differs (`osv: unchanged` on a rerun). The password
+  reaches the container on stdin, every task that carries it is `no_log`, and the script prints
+  status lines only. New vault keys under `skbom:` (all optional): `ADMIN_PASSWORD` (the admin
+  account's password; without it the step says it was not applied and the deploy still passes),
+  `ADMIN_USERNAME` (default `admin`), `OSV_ENABLED` (default `true`), `OSV_ECOSYSTEMS` (string or
+  list; default `Go;npm;PyPI;Maven;crates.io;Alpine;Debian;Ubuntu;NuGet;Packagist;RubyGems;Wolfi`),
+  `OSV_ALIAS_SYNC` (default `true`), `OSV_WAIT_SECONDS` (600) and `PROVISIONER_IMAGE`. A malformed
+  ecosystem list fails the play before anything deploys. **The first OSV mirror takes hours**:
+  findings appear over the following hours, not at the end of the deploy. **Instance action**:
+  set `skbom.ADMIN_PASSWORD` in the skbom vault (change the default `admin` password once in the
+  UI first; Dependency-Track forces that at the first login) and redeploy skbom, or run it with
+  `--tags osv`; override `OSV_ECOSYSTEMS` if the default list is not what the estate scans.
+  Set `OSV_ENABLED: false` to opt out. Tests: `v1/tests/test_skbom_osv.py`.
+
+### Image updates (skmon)
+
+- Loki 3.7.9 to 3.7.10 and Grafana 13.3.0 to 13.3.1 (#550), tag plus multi-arch index digest in
+  `pins.yml`, the skmon compose defaults and the v1 service catalog. Grafana 13.3.1 is CVE fixes;
+  Loki 3.7.10 disables Multipath TCP on listeners by default. No config key removed or renamed.
+  **Instance action:** none beyond the normal redeploy of skmon.
+
 
 ## skstacks-v2.26.35 - 2026-11-27
 

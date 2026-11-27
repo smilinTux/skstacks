@@ -19,6 +19,8 @@ import json
 import os
 import sys
 import threading
+
+import http_test_server
 from pathlib import Path
 
 TESTS = Path(__file__).resolve().parent
@@ -133,12 +135,12 @@ class Hook:
     """Records POSTs; `status` sets the HTTP status it answers with."""
 
     def __init__(self):
-        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        self.server = http_test_server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
         self.server.posts = []
         self.server.status = 200
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-        self.thread.start()
+        http_test_server.start(self.server)
+        self.thread = self.server._test_thread
 
     @property
     def posts(self) -> list[dict]:
@@ -148,8 +150,7 @@ class Hook:
         self.server.status = code
 
     def close(self) -> None:
-        self.server.shutdown()
-        self.server.server_close()
+        http_test_server.stop(self.server)
 
 
 def env_without_path() -> dict:

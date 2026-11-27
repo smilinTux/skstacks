@@ -460,7 +460,8 @@ def test_non_oidc_healthcheck_is_unchanged(base_out):
 def test_auth_mode_oidc_healthcheck_script_behaviour(tmp_path, status, body, want):
     import http.server
     import subprocess
-    import threading
+
+    import http_test_server
 
     class H(http.server.BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802
@@ -476,14 +477,13 @@ def test_auth_mode_oidc_healthcheck_script_behaviour(tmp_path, status, body, wan
         def log_message(self, *a):
             pass
 
-    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    srv = http_test_server.start(http_test_server.HTTPServer(("127.0.0.1", 0), H))
     try:
         script = _oidc_healthcheck(tmp_path)["test"][3].replace(
             "127.0.0.1:3001", f"127.0.0.1:{srv.server_port}")
         rc = subprocess.run(["node", "-e", script], timeout=20).returncode
     finally:
-        srv.shutdown()
+        http_test_server.stop(srv)
     assert rc == want
 
 

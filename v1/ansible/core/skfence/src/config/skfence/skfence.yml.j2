@@ -146,6 +146,9 @@ services:
       placement:
         constraints:
           - node.role == manager
+{% if skfence_build_node is defined and (skfence_build_node.stdout | default('') | trim) %}
+          - node.id == {{ skfence_build_node.stdout | trim }}
+{% endif %}
       restart_policy:
         condition: any
       resources:

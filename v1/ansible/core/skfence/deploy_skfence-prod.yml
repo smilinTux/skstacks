@@ -156,6 +156,16 @@
           dockerfile: Dockerfile
         force_source: "{{ force_rebuild_error_pages | default(false) }}"
 
+    # The image exists only on this node, so the stack file pins error-pages here
+    # (node.id). node.role == manager alone let Swarm place it on a manager that
+    # never built it, where it is refused and rescheduled, and the pre-pull step
+    # rightly fails on such a node.
+    - name: Read this node's Swarm node ID (error-pages runs where it was built)
+      command: docker info --format '{{ '{{' }}.Swarm.NodeID{{ '}}' }}'
+      register: skfence_build_node
+      changed_when: false
+      failed_when: skfence_build_node.rc != 0 or skfence_build_node.stdout | trim == ''
+
     - name: Process {{ app }} environment templates
       template:
         src: "{{ playbook_dir }}/src/config/{{ app }}/{{ item.src }}"

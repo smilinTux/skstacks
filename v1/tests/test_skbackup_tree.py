@@ -190,15 +190,15 @@ def test_vault_restic_options_and_set_overrides_reach_cli(tmp_path):
 @pytest.mark.parametrize("query", ["", "?rid=fake-run"])
 def test_healthcheck_success_and_failure_hide_url(tmp_path,query):
     import http.server
-    import threading
+
+    import http_test_server
     received=[]
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_POST(self):
             received.append(self.path)
             self.send_response(200);self.end_headers()
         def log_message(self,*args): pass
-    server=http.server.HTTPServer(('127.0.0.1',0),Handler)
-    worker=threading.Thread(target=server.serve_forever,daemon=True);worker.start()
+    server=http_test_server.start(http_test_server.HTTPServer(('127.0.0.1',0),Handler))
     try:
         env=tmp_path/'ping.env';env.write_text(f'HEALTHCHECKS_URL=http://127.0.0.1:{server.server_port}/opaque-test-token{query}\n')
         host=tree_host(tmp_path,HEALTHCHECKS_ENV_FILE=str(env))
@@ -207,7 +207,7 @@ def test_healthcheck_success_and_failure_hide_url(tmp_path,query):
         failed=host.run('sync')
         assert failed.returncode!=0 and received==['/opaque-test-token'+query,'/opaque-test-token/fail'+query]
         assert 'opaque-test-token' not in proc.stdout+proc.stderr+failed.stdout+failed.stderr
-    finally: server.shutdown();server.server_close();worker.join()
+    finally: http_test_server.stop(server)
 
 
 @needs_ansible
@@ -283,16 +283,16 @@ def test_per_dataset_daily_staleness_policy(tmp_path):
 def test_timer_termination_pings_failure_and_unmounts(tmp_path):
     import http.server
     import signal
-    import threading
     import time
+
+    import http_test_server
     from skbackup_support import BACKUP
     received=[]
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_POST(self):
             received.append(self.path);self.send_response(200);self.end_headers()
         def log_message(self,*args): pass
-    server=http.server.HTTPServer(('127.0.0.1',0),Handler)
-    worker=threading.Thread(target=server.serve_forever,daemon=True);worker.start()
+    server=http_test_server.start(http_test_server.HTTPServer(('127.0.0.1',0),Handler))
     env=tmp_path/'ping.env';env.write_text(f'HEALTHCHECKS_URL=http://127.0.0.1:{server.server_port}/opaque-test-token\n')
     host=tree_host(tmp_path,HEALTHCHECKS_ENV_FILE=str(env));snapshot_tree(host)
     ready=tmp_path/'ready'
@@ -312,7 +312,7 @@ def test_timer_termination_pings_failure_and_unmounts(tmp_path):
         assert 'opaque-test-token' not in stdout+stderr
     finally:
         if proc.poll() is None: os.killpg(proc.pid,signal.SIGKILL);proc.wait()
-        server.shutdown();server.server_close();worker.join()
+        http_test_server.stop(server)
 
 
 @needs_restic

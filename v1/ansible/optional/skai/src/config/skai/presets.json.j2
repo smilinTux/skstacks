@@ -1,0 +1,28 @@
+{#- One Open WebUI model preset per corpus: the base model, that corpus's own
+    skcorpus tool server ("server:skcorpus-<name>") and the answer-from-the-
+    corpus system prompt, plus the groups that may use each corpus. Read by
+    app/provision_presets.py (the provision service), which turns group names
+    into Open WebUI group ids. No secrets here. -#}
+{%- set out = [] -%}
+{%- set tools = {} -%}
+{%- for c in ska_corpora -%}
+{%- set title = c.title | default(c.name, true) | string -%}
+{%- set _ = out.append({
+  'id': 'corpus-' ~ c.name,
+  'base_model_id': c.base_model | default(ska_default_model, true) | string,
+  'name': title,
+  'meta': {
+    'description': c.description | default('Answers from the ' ~ title ~ ' knowledge base, with citations.', true) | string,
+    'toolIds': ['server:skcorpus-' ~ c.name],
+    'capabilities': {'citations': true},
+    'tags': [{'name': 'corpus'}]
+  },
+  'params': {
+    'system': (c.system_prompt | default(ska_default_corpus_prompt, true) | string) | replace('{corpus}', c.name) | replace('{title}', title),
+    'function_calling': 'native'
+  },
+  'allowed_groups': c.allowed_groups | default([ska_users_group], true) | map('string') | list
+}) -%}
+{%- set _ = tools.update({'skcorpus-' ~ c.name: c.allowed_groups | default([ska_users_group], true) | map('string') | list}) -%}
+{%- endfor -%}
+{{ {'presets': out, 'tool_servers': tools} | to_nice_json(indent=2) }}

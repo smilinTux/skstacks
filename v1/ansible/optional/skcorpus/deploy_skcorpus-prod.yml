@@ -1,0 +1,344 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# skcorpus: a read-only OpenAPI tool server (FastAPI, our code in app/) that
+# searches configured corpora: chunks in Qdrant collections (skvector) and an
+# optional FalkorDB graph (skgraph), with query embeddings from skembed. skai
+# registers it as a tool server. Internal only: no Traefik router, reached on
+# the skcorpus-<env> overlay with a bearer token. The app file is checked
+# against its pinned sha256 on the controller, copied to shared storage and
+# bind-mounted read-only into a digest-pinned Python image. See README.md.
+#
+# portal-tile: n/a (no Host() router; an API for skai, not a web UI).
+- import_playbook: ../../shared/meta/skstack-header.yml
+
+# Step 1: Select manager node with failover
+# Run on all hosts to ensure it executes even with -l limit
+- hosts: all
+  gather_facts: false
+  connection: local
+  run_once: true
+  tasks:
+    - name: Select manager node from manager group
+      import_tasks: ../../shared/tasks/select_manager_node.yml
+      vars:
+        target_group: "{{ target_manager_group | default('swarm_managers') }}"
+
+# Step 2: Deploy to selected manager
+- hosts: selected_manager_group
+  become: true
+  vars:
+    app: skcorpus
+    env: prod
+    service_name: skcorpus
+    service_type: optional
+    skc_default_image: "smilintux/skpayment-runtime:py3.11-20261123@sha256:79bd0222923e77f67c6dd4925ef51fc5623eaa5c58e5a4c9c9cbb90fae6731f5"
+    # sha256 of app/skcorpus.py; v1/tests/test_skcorpus_render.py keeps it
+    # equal to the file. A changed app without a changed pin stops the deploy.
+    skc_app_sha256: "cb738d27a3c04680a446e2ad8a81c24ed9db494ce13397f9e1fd1d0e8b7519a2"
+  pre_tasks:
+    - name: Select vault file based on domain and cluster
+      import_tasks: ../../shared/tasks/select_vault_file.yml
+
+    - name: Load vault file
+      include_vars: "{{ vault_file_path }}"
+      when: vault_file_path is defined
+
+    - name: Resolve the skcorpus settings
+      set_fact:
+        skc_image: "{{ skcorpus.IMAGE | default(skc_default_image, true) }}"
+        skc_corpora: "{{ skcorpus.CORPORA | default([], true) }}"
+        skc_qdrant_url: "{{ skcorpus.QDRANT_URL | default('http://skvector-' + env + '_qdrant:6333', true) | string }}"
+        skc_falkordb_host: "{{ skcorpus.FALKORDB_HOST | default('skgraph-' + env + '_falkordb', true) | string }}"
+        skc_falkordb_port: "{{ skcorpus.FALKORDB_PORT | default(6379, true) | string }}"
+        skc_embed_url: "{{ skcorpus.EMBED_URL | default('http://skembed-' + env + '_skembed:8080/v1', true) | string }}"
+        skc_max_k: "{{ skcorpus.MAX_K | default(20, true) | string }}"
+        skc_max_window: "{{ skcorpus.MAX_WINDOW | default(3, true) | string }}"
+        skc_max_graph_rows: "{{ skcorpus.MAX_GRAPH_ROWS | default(50, true) | string }}"
+        skc_max_text_chars: "{{ skcorpus.MAX_TEXT_CHARS | default(4000, true) | string }}"
+        # EMBED_URL set = an embeddings endpoint that already exists (skembed
+        # is then not needed and its overlay is not joined or created).
+        skc_embed_external: "{{ (skcorpus.EMBED_URL | default('', true) | string | length) > 0 }}"
+        skc_global_routes: "{{ skcorpus.GLOBAL_ROUTES | default(false) | bool }}"
+        skc_coherence_sample: "{{ skcorpus.COHERENCE_SAMPLE | default(32, true) | string }}"
+        skc_coherence_interval: "{{ skcorpus.COHERENCE_INTERVAL_SECONDS | default(3600) | string }}"
+        skc_coherence_min_cosine: "{{ skcorpus.COHERENCE_MIN_COSINE | default(0.99, true) | string }}"
+        skc_coherence_threshold: "{{ skcorpus.COHERENCE_THRESHOLD | default(0.9, true) | string }}"
+        skc_pg_statement_timeout_ms: "{{ skcorpus.PG_STATEMENT_TIMEOUT_MS | default(5000, true) | string }}"
+        skc_pg_networks: "{{ skcorpus.PG_NETWORKS | default([], true) }}"
+      tags: [config]
+
+    - name: Split the corpora by backend (qdrant is the default, pgvector opt-in)
+      set_fact:
+        skc_pg_corpora: "{{ skc_corpora | selectattr('backend', 'defined') | selectattr('backend', 'equalto', 'pgvector') | list }}"
+        skc_qdrant_corpora: "{{ (skc_corpora | rejectattr('backend', 'defined') | list) + (skc_corpora | selectattr('backend', 'defined') | rejectattr('backend', 'equalto', 'pgvector') | list) }}"
+      tags: [config]
+
+    - name: Validate the image pin
+      assert:
+        that:
+          - skc_image is search('@sha256:[0-9a-f]{64}$')
+        fail_msg: "ERROR: skcorpus.IMAGE must be pinned by digest (name:tag@sha256:<64 hex>), got {{ skc_image }}"
+        quiet: true
+      tags: [config]
+
+    - name: Validate the token and the endpoints
+      # API_TOKEN is the bearer token skai sends (skai.CORPUS_TOKEN, same value).
+      assert:
+        that:
+          - (skcorpus.API_TOKEN | default('') | string | length) >= 32
+          - skc_qdrant_url is match('^https?://[A-Za-z0-9._-]+(:[0-9]+)?(/.*)?$')
+          - skc_embed_url is match('^https?://[A-Za-z0-9._-]+(:[0-9]+)?(/.*)?$')
+          - skc_falkordb_host is match('^[A-Za-z0-9][A-Za-z0-9._-]*$')
+          - skc_falkordb_port is match('^[0-9]+$')
+          - skc_max_k is match('^[0-9]+$') and skc_max_window is match('^[0-9]+$')
+          - skc_max_graph_rows is match('^[0-9]+$') and skc_max_text_chars is match('^[0-9]+$')
+          - skc_coherence_sample is match('^[0-9]+$') and skc_coherence_interval is match('^[0-9]+$')
+          - skc_coherence_min_cosine is match('^(0(\.[0-9]+)?|1(\.0+)?)$')
+          - skc_coherence_threshold is match('^(0(\.[0-9]+)?|1(\.0+)?)$')
+          - skc_pg_statement_timeout_ms is match('^[0-9]+$')
+        fail_msg: >-
+          ERROR: skcorpus needs API_TOKEN (32+ chars, openssl rand -hex 32, the
+          same value as skai.CORPUS_TOKEN), QDRANT_URL and EMBED_URL http(s)
+          URLs, FALKORDB_HOST a host name, FALKORDB_PORT and the MAX_* limits
+          integers, COHERENCE_SAMPLE and COHERENCE_INTERVAL_SECONDS integers,
+          COHERENCE_MIN_COSINE and COHERENCE_THRESHOLD numbers from 0 to 1,
+          PG_STATEMENT_TIMEOUT_MS an integer.
+        quiet: true
+      tags: [config]
+
+    - name: Validate the corpora (a list; empty is allowed)
+      # Each corpus: name, collections (non-empty list of collection or alias
+      # names; not for backend pgvector, see the next check), embed_model, and
+      # optional backend, title, graph, description, embed_url,
+      # query_prefix, document_prefix, name_property, vector_name,
+      # allowed_groups (used by skai) and coherence_threshold.
+      # The app validates the same rules again at start.
+      assert:
+        that:
+          - skc_corpora is sequence and skc_corpora is not string
+          - skc_corpora | rejectattr('name', 'defined') | list | length == 0
+          - skc_corpora | map(attribute='name') | map('string') | reject('match', '^[A-Za-z0-9][A-Za-z0-9._-]*$') | list | length == 0
+          - skc_corpora | map(attribute='name') | list | unique | length == skc_corpora | length
+          - skc_corpora | selectattr('backend', 'defined') | map(attribute='backend') | reject('in', ['qdrant', 'pgvector']) | list | length == 0
+          - skc_qdrant_corpora | rejectattr('collections', 'defined') | list | length == 0
+          - skc_corpora | rejectattr('embed_model', 'defined') | list | length == 0
+          - skc_qdrant_corpora | map(attribute='collections') | map('length') | select('equalto', 0) | list | length == 0
+          - skc_qdrant_corpora | map(attribute='collections') | flatten | map('string') | reject('match', '^[A-Za-z0-9][A-Za-z0-9._-]*$') | list | length == 0
+          - skc_corpora | selectattr('embed_url', 'defined') | map(attribute='embed_url') | select | map('string') | reject('match', '^https?://[A-Za-z0-9._-]+(:[0-9]+)?(/.*)?$') | list | length == 0
+          - skc_corpora | selectattr('allowed_groups', 'defined') | map(attribute='allowed_groups') | reject('sequence') | list | length == 0
+          - skc_corpora | selectattr('allowed_groups', 'defined') | map(attribute='allowed_groups') | select('string') | list | length == 0
+        fail_msg: >-
+          ERROR: skcorpus.CORPORA must be a list of mappings, each with a unique
+          name (a plain token), collections (a non-empty list of plain
+          collection or alias names) and embed_model; embed_url, when set, an
+          http(s) URL; allowed_groups, when set, a list; backend, when set,
+          qdrant or pgvector.
+        quiet: true
+      tags: [config]
+
+    - name: Validate the pgvector corpora and their DSNs
+      # backend pgvector: pg_dsn_env names a key of skcorpus.PG_DSNS (vault;
+      # the DSN itself never goes in corpora.json), pg_filter_values is a
+      # non-empty list, no graph and no collections. The app checks the
+      # identifiers (pg_relation, pg_search_fn, pg_filter_column) again.
+      # The default image has no psycopg: build image/ and set IMAGE.
+      assert:
+        that:
+          - skcorpus.PG_DSNS | default({}, true) is mapping
+          - skcorpus.PG_DSNS | default({}, true) | dict2items | map(attribute='key') | map('string') | reject('match', '^[A-Z][A-Z0-9_]{0,59}_DSN$') | list | length == 0
+          - skcorpus.PG_DSNS | default({}, true) | dict2items | map(attribute='value') | map('string') | select('match', '^\\s*$') | list | length == 0
+          - skcorpus.PG_DSNS | default({}, true) | dict2items | map(attribute='value') | map('string') | select('search', '[\\r\\n]') | list | length == 0
+          - skc_pg_corpora | rejectattr('pg_dsn_env', 'defined') | list | length == 0
+          - skc_pg_corpora | map(attribute='pg_dsn_env') | map('string') | reject('in', skcorpus.PG_DSNS | default({}, true) | list) | list | length == 0
+          - skc_pg_corpora | rejectattr('pg_filter_values', 'defined') | list | length == 0
+          - skc_pg_corpora | map(attribute='pg_filter_values') | reject('sequence') | list | length == 0
+          - skc_pg_corpora | map(attribute='pg_filter_values') | select('string') | list | length == 0
+          - skc_pg_corpora | map(attribute='pg_filter_values') | map('length') | select('equalto', 0) | list | length == 0
+          - skc_pg_corpora | selectattr('graph', 'defined') | map(attribute='graph') | select | list | length == 0
+          - skc_pg_corpora | selectattr('collections', 'defined') | map(attribute='collections') | select | list | length == 0
+          - skc_pg_networks is sequence and skc_pg_networks is not string
+          - skc_pg_networks | map('string') | reject('match', '^[A-Za-z0-9][A-Za-z0-9._-]*$') | list | length == 0
+          - skc_pg_corpora | length == 0 or skc_image != skc_default_image
+        fail_msg: >-
+          ERROR: each backend pgvector corpus needs pg_dsn_env (a key of
+          skcorpus.PG_DSNS, upper case ending in _DSN, its value a one-line
+          DSN) and a non-empty pg_filter_values list, and takes no graph and
+          no collections; PG_NETWORKS is a list of existing network names.
+          pgvector needs psycopg, which the default image lacks: build image/
+          and set skcorpus.IMAGE to it.
+        quiet: true
+      tags: [config]
+
+    - name: Check the app file against its pinned sha256 (controller)
+      stat:
+        path: "{{ playbook_dir }}/app/skcorpus.py"
+        checksum_algorithm: sha256
+      delegate_to: localhost
+      become: false
+      register: skc_app_stat
+      tags: [app, config]
+
+    - name: Refuse an app file that does not match its pin
+      assert:
+        that:
+          - skc_app_stat.stat.exists | default(false)
+          - skc_app_stat.stat.checksum | default('') == skc_app_sha256
+        fail_msg: >-
+          ERROR: app/skcorpus.py does not hash to skc_app_sha256 in this
+          playbook. A framework change to the app must update the pin in all
+          three env playbooks.
+        quiet: true
+      tags: [app, config]
+
+    - name: Define network variables from vault (idempotent network creation)
+      # Subnets: skcorpus-prod 172.16.123.0/24, -staging .124, -dev .125. The
+      # service also joins skvector, skgraph and (unless EMBED_URL points at an
+      # existing endpoint) skembed; their subnets must match those roles' own
+      # playbooks.
+      set_fact:
+        app_networks: "{{ skcorpus.networks | default([
+          { 'name': 'skcorpus-prod', 'subnet': '172.16.123.0/24', 'driver': 'overlay', 'attachable': true },
+          { 'name': 'skvector-prod', 'subnet': '172.16.98.0/24', 'driver': 'overlay', 'attachable': true },
+          { 'name': 'skgraph-prod', 'subnet': '172.16.101.0/24', 'driver': 'overlay', 'attachable': true }
+        ] + ([] if skc_embed_external | bool else [
+          { 'name': 'skembed-prod', 'subnet': '172.16.126.0/24', 'driver': 'overlay', 'attachable': true }
+        ])) }}"
+      tags: [networks, config]
+
+  tasks:
+    - name: Deploying {{ app }}
+      debug:
+        msg: Running SKStacks deploy {{ app }} scripts...
+
+    - name: Create the {{ app }} directories (not recursive)
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - "/var/data/{{ app }}-{{ env }}"
+        - "/var/data/{{ app }}-{{ env }}/app"
+        - "/var/data/config/{{ app }}-{{ env }}"
+
+    - name: Install the pinned app code
+      copy:
+        src: "{{ playbook_dir }}/app/skcorpus.py"
+        dest: "/var/data/{{ app }}-{{ env }}/app/skcorpus.py"
+        owner: root
+        group: root
+        mode: '0644'
+      register: skcorpus_code
+      tags: [app]
+
+    - name: Process {{ app }} secrets env (root only)
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.env.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.env"
+        owner: root
+        group: root
+        mode: '0600'
+      no_log: true
+      register: skcorpus_env
+      tags: [templates]
+
+    - name: Process the {{ app }} corpora config
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/corpora.json.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/corpora.json"
+        owner: root
+        group: root
+        mode: '0644'
+      register: skcorpus_corpora
+      tags: [templates]
+
+    - name: Process {{ app }} shell env
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.sh.env.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.sh.env"
+        owner: root
+        group: root
+        mode: '0640'
+      tags: [templates]
+
+    - name: Process {{ app }} Docker Compose template
+      template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/{{ app }}.yml.j2"
+        dest: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      tags: [compose]
+
+    - name: Create docker-compose.yml symlink
+      file:
+        src: "/var/data/config/{{ app }}-{{ env }}/{{ app }}.yml"
+        dest: "/var/data/config/{{ app }}-{{ env }}/docker-compose.yml"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags: [compose]
+
+    - name: Process deploy script template
+      template:
+        src: "{{ playbook_dir }}/src/{{ app }}/deploy.j2"
+        dest: "/var/data/{{ app }}-{{ env }}/deploy"
+        owner: root
+        group: root
+        mode: '0755'
+      tags: [deploy-script]
+
+    - name: Create {{ app }} control script symlink
+      file:
+        src: "/var/data/{{ app }}-{{ env }}/deploy"
+        dest: "/var/data/deploy_{{ app }}-{{ env }}"
+        force: yes
+        owner: root
+        group: root
+        state: link
+      tags: [deploy-script]
+
+    - name: Ensure overlay networks exist from app_networks variable
+      include_tasks: ../../shared/tasks/create_networks.yml
+      tags: [networks]
+
+    - name: Pre-pull the stack images (a registry refusal must not take a running service down)
+      include_tasks:
+        file: ../../shared/tasks/prepull_images.yml
+        apply:
+          tags:
+            - deploy
+            - prepull
+      tags:
+        - deploy
+        - prepull
+
+    - name: Deploy {{ app }} stack
+      # The code, corpora.json and env are bind mounts / env_file: a changed
+      # file alone does not change the service spec, so the deploy script
+      # restarts an existing service when the play changed one of them.
+      shell: |
+        cd /var/data/{{ app }}-{{ env }}
+        RESTART={{ '1' if (skcorpus_code is changed or skcorpus_env is changed or skcorpus_corpora is changed) else '0' }} ./deploy
+      register: deploy_output
+      tags: [deploy]
+
+    - name: Show deploy output
+      debug: var=deploy_output.stdout_lines
+      tags: [deploy]

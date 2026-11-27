@@ -96,6 +96,8 @@ from the very first start.
 | `TRUSTED_PROXIES` | subnet of `INGRESS_NETWORK` | Nextcloud `trusted_proxies` (space separated). |
 | `MIDDLEWARES` | `skpods[-<env>]-headers` | The router's whole middleware chain. See [Traefik](#traefik) before changing it. |
 | `TLS_OPTIONS` | unset | Router `tls.options`. |
+| `IDENTITY_DOMAIN` | unset | Serve WebIDs at `https://<user>.<IDENTITY_DOMAIN>/profile/card#me` (for example `skpods.id`). Passed to the engine as `SKPODS_IDENTITY_DOMAIN` and adds a second Traefik router for `<user>.<IDENTITY_DOMAIN>`. Must be a lowercase hostname, and `HOSTNAME` must then be `pods.<IDENTITY_DOMAIN>`. **Permanent once pods exist**. See [Identity domain](#identity-domain). |
+| `IDENTITY_CERTRESOLVER` | unset | Traefik certificate resolver for the user-host router. Unset: no resolver, TLS uses a certificate Traefik already holds for `*.<IDENTITY_DOMAIN>`. Set: that resolver (it must use the DNS-01 challenge) is asked for `<IDENTITY_DOMAIN>` plus `*.<IDENTITY_DOMAIN>`. |
 | `DATA_NODE` | unset | Pin all services to this node (required when a path below is node-local). |
 | `APP_PATH` | `/var/data/skpods-<env>` | Nextcloud `html/`, `config/`, `data/` (pods live in each user's Files under `solid/`). |
 | `POSTGRES_PATH`, `REDIS_PATH` | `/var/data/runtime/skpods-<env>/{postgres,redis}` | Datastore paths. |
@@ -230,6 +232,35 @@ router is deliberately plain:
   `403` and `404` answers), so an IP-reputation or rate-limit middleware can
   lock real clients out; add one through `MIDDLEWARES` only with limits that
   allow that traffic.
+
+## Identity domain
+
+By default a WebID is `https://<host>/apps/solid/~<user>/profile/card#me`.
+With `IDENTITY_DOMAIN: skpods.id` (and `HOSTNAME: pods.skpods.id`) each user
+gets their own host instead: `https://<user>.skpods.id/profile/card#me`.
+
+- The deploy passes `SKPODS_IDENTITY_DOMAIN` to the engine. The engine image's
+  start hook sets the Solid app value `identityDomain`, adds `*.<domain>` to
+  `trusted_domains`, and its Apache rules serve `<user>.<domain>/profile/...`
+  (everything else on a user host redirects to `pods.<domain>`). The image
+  refuses an invalid value at start; the deploy refuses it first.
+- A second router, `skpods[-<env>]-identity`, matches one-label subdomains,
+  `HostRegexp(`^[a-z0-9-]+\.skpods\.id$`)`, with the same entrypoint,
+  middlewares, TLS options and service as the main router. It has priority 3:
+  Traefik picks the higher number, so `pods.<domain>` (also matched by the
+  regexp) stays on the main router (5), and user hosts still beat the edge's
+  per-domain catch-alls (1).
+- DNS: a wildcard record `*.<domain>` (and `pods.<domain>`) pointing at the
+  edge.
+- TLS: the user-host router sets no ACME resolver unless
+  `IDENTITY_CERTRESOLVER` is set, because the HTTP-01 and TLS-ALPN-01
+  challenges cannot issue a wildcard certificate. Give Traefik a certificate
+  for `*.<domain>` (for example a CDN origin certificate in its file
+  provider), or set `IDENTITY_CERTRESOLVER` to a DNS-01 resolver.
+- Treat the identity domain like the hostname: WebIDs are stored in each
+  pod's root `.acl`, so changing it after pods exist locks owners out.
+  Removing the setting alone does not turn user hosts off (the engine keeps
+  the stored value); see SOP "Identity domain".
 
 ## Seed and reset
 

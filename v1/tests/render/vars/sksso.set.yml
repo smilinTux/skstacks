@@ -30,6 +30,13 @@ sksso:
   SKGIT_OIDC_CLIENT_SECRET: example-skgit-oidc-secret-not-a-secret-0123456789
   SKGIT_OIDC_SOURCE_NAME: Example SSO
   SKGIT_OIDC_AUTHENTICATION_FLOW: capauth-authentication
+  SKAI_OIDC_ENABLED: true
+  SKAI_OIDC_CLIENT_SECRET: example-skai-oidc-secret-not-a-secret-0123456789
+  SKAI_HOST: ai.example.test
+  SKAI_APP_NAME: Example AI
+  SKAI_OIDC_AUTHENTICATION_FLOW: capauth-authentication
+  SKAI_USERS_GROUP: example-ai-users
+  SKAI_USERS: [example-user-a, example-user-b]
   # forward-auth catch-all: adopt a hand-made one by name, widen nothing
   FORWARD_AUTH_PROVIDER_NAME: Example domain forward auth
   FORWARD_AUTH_APP_SLUG: example-forward-auth

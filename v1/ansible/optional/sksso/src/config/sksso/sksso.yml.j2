@@ -241,7 +241,7 @@ services:
       - /var/data/config/{{ app }}-{{ env }}/custom/user_settings.py:/data/user_settings.py:ro
 {% endif %}
       - /var/data/{{ app }}-{{ env }}/custom-templates:/templates
-{% if (sksso.SKFLOW_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKSEC_WEB_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKPATCH_HOSTS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKAEGIS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKGIT_OIDC_ENABLED | default(false)) or ((sksso.FORWARD_AUTH_ENABLED | default(true) | string | lower) in ['true', 'yes', 'on', '1']) %}
+{% if (sksso.SKFLOW_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKSEC_WEB_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKPATCH_HOSTS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKAEGIS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKGIT_OIDC_ENABLED | default(false)) or ((sksso.FORWARD_AUTH_ENABLED | default(true) | string | lower) in ['true', 'yes', 'on', '1']) or (sksso.SKAI_OIDC_ENABLED | default(false)) %}
       - /var/data/config/{{ app }}-{{ env }}/blueprints:/blueprints/custom:ro
 {% endif %}
       - /etc/localtime:/etc/localtime:ro
@@ -290,7 +290,7 @@ services:
       - /var/data/config/{{ app }}-{{ env }}/custom/user_settings.py:/data/user_settings.py:ro
 {% endif %}
       - /var/data/{{ app }}-{{ env }}/custom-templates:/templates
-{% if (sksso.SKFLOW_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKSEC_WEB_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKPATCH_HOSTS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKAEGIS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKGIT_OIDC_ENABLED | default(false)) or ((sksso.FORWARD_AUTH_ENABLED | default(true) | string | lower) in ['true', 'yes', 'on', '1']) %}
+{% if (sksso.SKFLOW_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKSEC_WEB_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKPATCH_HOSTS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKAEGIS_OIDC_CLIENT_SECRET | default('', true) | string | length > 0) or (sksso.SKGIT_OIDC_ENABLED | default(false)) or ((sksso.FORWARD_AUTH_ENABLED | default(true) | string | lower) in ['true', 'yes', 'on', '1']) or (sksso.SKAI_OIDC_ENABLED | default(false)) %}
       - /var/data/config/{{ app }}-{{ env }}/blueprints:/blueprints/custom:ro
 {% endif %}
       - /etc/localtime:/etc/localtime:ro

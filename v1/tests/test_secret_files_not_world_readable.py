@@ -56,6 +56,7 @@ NOT_SECRET = {
     "skpulse.METRICS_BYPASS_SSO": "a boolean toggle for the opt-in /metrics router, not a secret ('bypass' contains 'pass')",
     "skp_bypass_middlewares": "the resolved value of BYPASS_TRAEFIK_MIDDLEWARES above, not a secret",
     "skp_metrics_bypass": "the resolved value of METRICS_BYPASS_SSO above, not a secret",
+    "ske_max_batch_tokens": "skembed's MAX_BATCH_TOKENS, a batch size in model tokens, not a secret ('tokens' contains 'token')",
 }
 
 # Env files proven to carry no secret, keyed by template path relative to

@@ -127,6 +127,9 @@ FAKE_STDOUT = {
     # sksso forward-auth preflight: a running server on a node, answering ok
     "sksso_fa_pf_node": "render-node-1",
     "sksso_fa_preflight": "preflight: ok (render stand-in)",
+    # skha post-deploy check: keepalived active, a BACKUP node, no local VIP
+    "skha_verify_before": "active backup none",
+    "skha_verify_after": "active backup none",
     "garage_replicas": "1/1",
     # skpayment: the controller-side app checkout (a fixture stand-in)
     "skpayment_app_src": str(FIXTURES / "skpayment-app" / "repo"),

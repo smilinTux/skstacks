@@ -24,7 +24,10 @@
 # PreviousSpec is the new spec. Pulling first moves that failure in front of the
 # deploy, where nothing running has been touched. A node that already holds a
 # digest-pinned image is not asked the registry at all, so a registry outage
-# does not block a redeploy of what is already local.
+# does not block a redeploy of what is already local. Any other reference the
+# registry refuses still passes when the node already holds it (an image built on
+# the node, such as skfence's error-pages, is never in a registry); only an image
+# the node does not have and cannot pull stops the deploy.
 #
 # Caller contract: include this file in a play on the selected manager, after the
 # stack file is rendered and immediately before the task that runs the deploy
@@ -144,7 +147,17 @@
                   echo "pull failed (attempt $attempt of $retries): $image: $(printf '%s' "$err" | tail -n 1)" >&2
                   if [ "$attempt" -lt "$retries" ]; then sleep $(( delay * attempt )); fi
                 done
-                if [ "$ok" -ne 1 ]; then echo "PREPULL_FAILED $image" >&2; status=1; fi
+                if [ "$ok" -ne 1 ]; then
+                  # The registry refused, but the node already holds this reference:
+                  # an image built on the node (skfence error-pages) or a tag pulled
+                  # earlier. The deploy uses that copy, exactly as it did before this
+                  # step existed, so a refusal here takes nothing down.
+                  if docker image inspect "$image" >/dev/null 2>&1; then
+                    echo "present locally, registry refused (deploy uses the local copy): $image"
+                    continue
+                  fi
+                  echo "PREPULL_FAILED $image" >&2; status=1
+                fi
               done
               exit "$status"
           loop: "{{ prepull_reachable }}"
