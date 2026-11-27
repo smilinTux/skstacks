@@ -4,7 +4,28 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
-## Unreleased (v2.26.35)
+## skstacks-v2.26.35 - 2026-11-27
+
+### sksso: one shared branded email set for every Authentik email (#467)
+
+- Every email the SSO sends now uses one shared, branded layout and none mentions "authentik":
+  password reset, invitation, account confirmation, email sign-in code, event notification and
+  the SMTP test email. The set lives in `branding/_email/` (HTML plus text twin each, and an
+  override of `email/base.html` so any stock template is covered); a brand pack only supplies
+  values in `<pack>/email.yml` (shipped for `skworld` and `nam`). `apply-email-branding` points
+  the email stages and notification transports at the shared templates, replaces the stock
+  "authentik Notification: " subject prefix and renames flow titles that still say "authentik".
+  The per-pack `*_recovery.*` and `nam_invite.*` templates are replaced by the shared set.
+  **Instance action:** redeploy sksso (the `apply-branding` helper calls `apply-email-branding`
+  last), then restart the worker with a forced update so Django's template cache picks up the
+  overrides. An instance pack that ships its own recovery templates copies `email.yml` and
+  changes the values.
+
+### Image updates (Renovate)
+
+- openbao 2.7.3 (skvault, openbao), coturn 4.19 (skturn) and 4.19.2 (skmesh), cloudflared
+  2026.11.2, newt 1.20.1 (pangolin exposure), n8n 2.49.5 (skorch, same major).
+  **Instance action:** none beyond the normal redeploy of the stacks you run.
 
 ### sknet: views per estate
 
