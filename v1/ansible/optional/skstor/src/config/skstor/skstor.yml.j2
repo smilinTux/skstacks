@@ -28,6 +28,9 @@ version: '3.8'
 # host-local, so if Swarm ever reschedules this replicas=1 service onto a
 # different manager, a named volume would silently start it on an empty
 # volume on the new host instead of the data on shared storage.
+# Exception: the metadata db, which must not sit on NFS in production.
+# skstor.META_PATH/META_NODE put it on one node's local disk and pin the
+# service there (README "Storage layout", docs/runbooks/skstor.md).
 
 networks:
   skstor-{{ env }}:
