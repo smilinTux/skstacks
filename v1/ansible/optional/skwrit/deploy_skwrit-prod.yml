@@ -145,6 +145,17 @@
         state: link
       tags: [deploy-script]
 
+    - name: Pre-pull the stack images (a registry refusal must not take a running service down)
+      include_tasks:
+        file: ../../shared/tasks/prepull_images.yml
+        apply:
+          tags:
+            - deploy
+            - prepull
+      tags:
+        - deploy
+        - prepull
+
     - name: Deploy {{ app }} stack
       # The secrets, the state volume and the engine overlay are external:
       # the deploy script stops with a clear message when one is missing.

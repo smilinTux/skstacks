@@ -4,6 +4,41 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
+## Unreleased (v2.26.36)
+
+### Stack deploys pre-pull their images and stop before `docker stack deploy` if one cannot be pulled
+
+- `docker stack deploy` replaces the service spec before any node pulls the new image. On
+  2026-11-27 an sksso deploy moved Authentik to a new ghcr.io digest and every task pull on the
+  worker nodes was answered `denied`: server and worker sat at 0/1 and SSO was down for 8
+  minutes. The image existed and a manual `docker pull` worked right after, but
+  `docker service rollback` restored nothing because the stack deploy had already made
+  PreviousSpec the new spec. A new shared task, `v1/ansible/shared/tasks/prepull_images.yml`, now
+  runs immediately before the deploy script in all 121 stack-deploying playbook and task files
+  (every role that runs `docker stack deploy`). It reads the rendered stack file and the swarm
+  nodes, works out which Ready, active node can run which service, and pulls each image there
+  with up to 4 attempts and a growing wait (10, 20, 30 s). `deploy.placement.constraints` on
+  `node.id`, `node.hostname`, `node.role`, `node.platform.os/arch`, `node.labels.*` and
+  `engine.labels.*` are honoured; an unknown constraint over-pulls rather than under-pulls. A
+  digest-pinned image the node already holds is not asked of the registry at all, so a registry
+  outage does not block a redeploy of what is already local. If an image still cannot be pulled
+  the play fails with the node and image named, BEFORE the stack deploy, so every running
+  service is untouched. Nodes are reached through the inventory, so a swarm node is pre-pulled
+  only when its inventory name is its Swarm hostname (the rule the skmon agent guard already
+  enforces); a swarm node the inventory does not know is reported and skipped, never failed.
+  Knobs, all optional: `skstacks_prepull_images` (default `true`; `false` switches it off),
+  `skstacks_prepull_retries` (4), `skstacks_prepull_delay` (10 s; attempt N waits N times
+  this), `skstacks_prepull_placement` (`false` pulls every image on every Ready node) and
+  `skstacks_prepull_compose` (stack file path on the manager; default
+  `/var/data/config/<app>-<env>/<app>.yml`, else `docker-compose.yml` there). The task runs
+  under `--tags deploy` and `--tags prepull` and is skipped in `--check` mode.
+  **Instance action**: none required, it is on by default and needs no new variable. Expect a
+  deploy to spend a few seconds more per node on the pull step (longer the first time a large
+  image is fetched), and make sure each swarm host's inventory name is its Swarm hostname. Set
+  `skstacks_prepull_images: false` only to deploy deliberately past a failing registry. Tests:
+  `v1/tests/test_prepull_images.py`.
+
+
 ## skstacks-v2.26.35 - 2026-11-27
 
 ### sksso: one shared branded email set for every Authentik email (#467)
