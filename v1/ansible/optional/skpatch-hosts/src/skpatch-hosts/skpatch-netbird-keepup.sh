@@ -14,8 +14,8 @@
 # `netbird down` (Idle) is undone within 5 min; to keep a peer down,
 # run `netbird up --disable-auto-connect` before `netbird down`, or turn the
 # host var off.
-# If `netbird up` prints a URL (a login or device-code prompt: the peer really
-# needs SSO), it logs one warning without the URL and skips runs for 6 hours
+# If `netbird up` prints its login prompt ("Use this URL to log in", the
+# device-code flow of a peer that really needs SSO), it logs one warning without the URL and skips runs for 6 hours
 # (BACKOFF_S) instead of dropping a fresh login URL into the journal every 5 min.
 # Output goes to the journal. Always exits 0.
 # SKP_NETBIRD_ROOT prefixes the config and state paths (tests only).
@@ -30,6 +30,8 @@ command -v netbird >/dev/null 2>&1 || exit 0
 now=$(date +%s)
 until_s=$(cat "$backoff" 2>/dev/null || echo 0)
 case "$until_s" in '' | *[!0-9]*) until_s=0 ;; esac
+# clock skew guard: a deadline further out than one backoff is not ours to honour
+[ $((until_s - now)) -gt "$BACKOFF_S" ] && until_s=0
 [ "$now" -lt "$until_s" ] && exit 0
 
 # netbird 0.67 and later: "daemonStatus" in --json (one compact line). Older
@@ -73,7 +75,8 @@ fi
 echo "skpatch-netbird-keepup: daemon is $state (profile '$name'), running netbird up"
 out=$(timeout 60 netbird up --no-browser 2>&1)
 rc=$?
-if printf '%s\n' "$out" | grep -Eqi 'https?://'; then
+# the prompt netbird (client/cmd/login.go openURL, v0.83.2) prints before the URL
+if printf '%s\n' "$out" | grep -qi 'use this URL to log in'; then
   mkdir -p "${backoff%/*}" && echo $((now + BACKOFF_S)) > "$backoff"
   echo "skpatch-netbird-keepup: WARNING netbird up asks for an interactive login (URL not logged): this peer needs SSO, not a setup key. Skipping runs for $((BACKOFF_S / 3600)) h; turn skpatch_hosts_netbird_keepup off for it"
   exit 0

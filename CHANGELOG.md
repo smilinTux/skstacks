@@ -38,19 +38,20 @@ Each entry says what an instance must do, if anything.
   the skmesh host at priority 2 (above the catch-alls, below every skmesh label router) to a load
   balancer with no servers, so Traefik answers 503 (gRPC Unavailable, retried). The skmesh compose
   file and every other stack render unchanged. On skfenceha (shared NFS `dynamic/`) the play
-  touches the file on every manager in the target manager group when it changes, so every
-  traefik-worker loads it. skfence and skfenceha reserve `skmesh-<env>.yml` against
+  touches the file on every manager in the target manager group on every run, so every
+  traefik-worker loads it; an unreachable manager never blocks the stack deploy and is named in a
+  WARNING after it. skfence and skfenceha reserve `skmesh-<env>.yml` against
   `EXTRA_DYNAMIC_FILES`.
 - skpatch-hosts: new opt-in host var `skpatch_hosts_netbird_keepup` (default false) installs
   `skpatch-netbird-keepup` with a systemd service and a 5 minute timer. When netbird reports
   `NeedsLogin` or `Idle` and the active profile does not set `DisableAutoConnect`, it runs
   `timeout 60 netbird up --no-browser` and logs to the journal. Setup-key peers only. If `up`
-  prints a login URL (a peer that really needs SSO), it logs one warning without the URL and
+  prints its login prompt ("Use this URL to log in", a peer that really needs SSO), it logs one warning without the URL and
   skips runs for 6 hours.
   **Instance action:** redeploy skmesh (after the fence, so its dynamic directory exists) with
   every manager of the target manager group in the inventory, so the play can touch the
-  skfenceha copy on each of them; if it ran without them, `touch
-  /var/data/config/skfenceha-<env>/dynamic/skmesh-<env>.yml` on each manager by hand. Peers
+  skfenceha copy on each of them; for any manager the post-deploy WARNING names, run `touch
+  /var/data/config/skfenceha-<env>/dynamic/skmesh-<env>.yml` on it by hand. Peers
   already in `NeedsLogin` need one `netbird up`; to automate that on setup-key peers, set
   `skpatch_hosts_netbird_keepup: true` for them and rerun provisioning.
 

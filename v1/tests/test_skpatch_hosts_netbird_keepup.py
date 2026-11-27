@@ -25,8 +25,10 @@ PROFILE = {"ManagementURL": {"Host": "skmesh.example.test:443"}, "DisableAutoCon
 
 LEGACY_NEEDS_LOGIN = ("Daemon status: NeedsLogin\n\nRun UP command to log in with SSO (interactive login):\n\n"
                       " netbird up \n\nMore info: https://docs.netbird.io/how-to/register-machines-using-setup-keys\n\n")
-DEVICE_FLOW = ("Please do the SSO login in your browser.\nIf your browser didn't open automatically, use this URL"
-               " to log in:\n\nhttps://idp.example.test/device?user_code=ABCD-EFGH\n")
+# what `netbird up --no-browser` prints for an SSO peer (client/cmd/login.go
+# openURL, v0.83.2), then it waits for the login until our timeout kills it
+DEVICE_FLOW = ("Use this URL to log in:\n\n"
+               "https://idp.example.test/device?user_code=ABCD-EFGH and enter the code ABCD-EFGH to authenticate.\n")
 
 
 def run(tmp, shell, status, files=None, netbird=True, json_out=None, plain_out=None, up_out="Connected"):
@@ -213,3 +215,20 @@ def test_status_calls_are_bounded_and_the_unit_has_a_start_timeout():
     removes = next(t for t in tasks if t.get("file", {}).get("state") == "absent"
                    and "/usr/local/sbin/skpatch-netbird-keepup" in t.get("loop", []))
     assert "/var/lib/skpatch-netbird-keepup" in removes["loop"]
+
+
+def test_a_url_without_the_login_prompt_does_not_back_off(tmp_path, shell):
+    up = "Connected\nMore info: https://docs.example.test/how-to/register-machines-using-setup-keys"
+    ups, out = run(tmp_path, shell, "NeedsLogin", DEFAULT, up_out=up)
+    assert ups == ["up --no-browser"] and "WARNING" not in out
+    assert not (tmp_path / "root/var/lib/skpatch-netbird-keepup/backoff-until").exists()
+
+
+def test_a_backoff_further_out_than_one_window_is_ignored(tmp_path, shell):
+    # clock skew guard: a deadline beyond now + BACKOFF_S cannot be one we wrote
+    far = str(int(time.time()) + 21600 + 3600)
+    files = {**DEFAULT, "var/lib/skpatch-netbird-keepup/backoff-until": far}
+    assert run(tmp_path, shell, "NeedsLogin", files)[0] == ["up --no-browser"]
+    near = str(int(time.time()) + 21600 - 60)
+    files = {**DEFAULT, "var/lib/skpatch-netbird-keepup/backoff-until": near}
+    assert run(tmp_path / "b", shell, "NeedsLogin", files) == ([], "")

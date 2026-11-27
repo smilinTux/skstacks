@@ -852,9 +852,9 @@ so a wedged daemon cannot hang it and stop the timer.
 
 - Only for peers enrolled with a setup key. On an SSO-enrolled peer
   `netbird up` just prints a login URL, so leave the var off there. If it does
-  print one, the script logs one warning (without the URL) and skips runs for
+  print its prompt ("Use this URL to log in"), the script logs one warning (without the URL) and skips runs for
   6 hours (`/var/lib/skpatch-netbird-keepup/backoff-until`; delete it to retry
-  at once).
+  at once; a deadline more than 6 hours out, from clock skew, is ignored).
 - A plain `netbird down` is undone within 5 minutes. To keep a peer down, run
   `netbird up --disable-auto-connect` before `netbird down`, or turn the var off.
 - Turning the var off (or `skpatch_hosts_provision_state=absent`) stops the

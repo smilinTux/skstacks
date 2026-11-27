@@ -98,36 +98,27 @@ def test_playbook_renders_the_fallback_into_each_present_fence_dynamic_dir(envna
 
 
 @pytest.mark.parametrize("envname", ["dev", "prod"])
-def test_skfenceha_fallback_is_touched_on_every_manager(envname):
+def test_skfenceha_fallback_is_touched_on_every_manager_every_run(envname):
     # skfenceha's dynamic/ is shared NFS: a write on one manager wakes only that
-    # manager's file watch, so each manager must see a local touch
+    # manager's file watch, so each manager must see a local touch. Behaviour
+    # under real ansible-playbook: test_skmesh_unavailable_503_touch.py
     play = yaml.safe_load((SKMESH / f"deploy_skmesh-{envname}.yml").read_text())
     tasks = [t for p in play if isinstance(p, dict) for t in p.get("tasks", [])]
     tpl = next(t for t in tasks if "template" in t and "traefik-unavailable" in t["template"]["src"])
     touch = next(t for t in tasks if t.get("file", {}).get("state") == "touch"
                  and "{{ app }}-{{ env }}.yml" in t["file"]["path"])
-    assert tasks.index(tpl) < tasks.index(touch)
+    deploy = next(t for t in tasks if t.get("name", "").startswith("Deploy {{ app }} stack"))
+    warn = next(t for t in tasks if "not touched" in t.get("name", ""))
+    assert tasks.index(tpl) < tasks.index(touch) < tasks.index(deploy) < tasks.index(warn)
     assert touch["file"]["path"] == "/var/data/config/skfenceha-{{ env }}/dynamic/{{ app }}-{{ env }}.yml"
     assert touch["delegate_to"] == "{{ item }}"
     assert touch["loop"] == "{{ groups[target_manager_group | default('swarm_managers')] | default([]) }}"
-    # only when the skfenceha copy changed this run
-    assert tpl["register"] in touch["when"] and "'skfenceha'" in touch["when"]
-
-
-def _touch_when(results):
-    play = yaml.safe_load((SKMESH / "deploy_skmesh-prod.yml").read_text())
-    tasks = [t for p in play if isinstance(p, dict) for t in p.get("tasks", [])]
-    when = next(t for t in tasks if t.get("file", {}).get("state") == "touch")["when"]
-    env = jinja2.Environment()
-    env.filters["default"] = lambda v, d=None: d if v is None else v
-    return env.compile_expression(when.strip())(skmesh_fallback_render={"results": results})
-
-
-def test_touch_condition_fires_only_for_a_changed_skfenceha_copy():
-    assert _touch_when([{"changed": True, "item": {"item": "skfenceha"}}])
-    assert not _touch_when([{"changed": False, "item": {"item": "skfenceha"}}])
-    assert not _touch_when([{"changed": True, "item": {"item": "skfence"}}])
-    assert not _touch_when([])
+    # never gated on the template having changed, never blocking, never "changed"
+    assert "register" not in tpl
+    assert "skmesh_fence_dynamic_dirs" in touch["when"] and "'skfenceha'" in touch["when"]
+    assert touch["ignore_unreachable"] is True and touch["failed_when"] is False
+    assert touch["changed_when"] is False
+    assert touch["register"] in warn["vars"]["skmesh_untouched"]
 
 
 @pytest.mark.parametrize("fence", ["skfence", "skfenceha"])

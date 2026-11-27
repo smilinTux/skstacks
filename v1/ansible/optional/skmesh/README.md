@@ -153,10 +153,12 @@ catch-all's 403 page. No fence directory on the manager: nothing is written
 remove it by hand.
 
 On skfenceha the `dynamic/` directory is shared NFS, and a write from one manager
-does not wake the file watch on the others. When the skfenceha copy changes, the
-play therefore touches it on every manager in the target manager group
+does not wake the file watch on the others. On every run the play therefore
+touches the skfenceha copy on every manager in the target manager group
 (`target_manager_group`, default `swarm_managers`), so each traefik-worker loads
-it, the VIP holder included. The fences reserve the name `skmesh-<env>.yml`: an
+it, the VIP holder included. A manager that is down or refuses does not stop the
+deploy: after the stack deploy the play prints a WARNING naming each manager it
+missed, with the `touch` command to run there by hand. The fences reserve the name `skmesh-<env>.yml`: an
 `EXTRA_DYNAMIC_FILES` entry with that `dest` is refused.
 
 The peer-side safety net for peers that already went to `NeedsLogin` is
