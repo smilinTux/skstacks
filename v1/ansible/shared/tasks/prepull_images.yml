@@ -29,6 +29,9 @@
 # the node, such as skfence's error-pages, is never in a registry); only an image
 # the node does not have and cannot pull stops the deploy.
 #
+# It first swaps in skpatch patched images (skpatch_image_overrides.yml), so
+# the pull fetches what will actually deploy.
+#
 # Caller contract: include this file in a play on the selected manager, after the
 # stack file is rendered and immediately before the task that runs the deploy
 # script. `app` and `env` as usual; nothing else is required.
@@ -49,6 +52,10 @@
 # pulled on only when its inventory name is its Swarm hostname (the same rule the
 # skmon agent guard enforces). A swarm node the inventory does not know is
 # reported and left alone: the play cannot pull there, and says so.
+- name: Swap in skpatch patched images before the pre-pull
+  include_tasks: skpatch_image_overrides.yml
+  tags: [deploy, prepull]
+
 - name: Pre-pull the stack's images on the nodes that will run them
   when:
     - skstacks_prepull_images | default(true) | bool
