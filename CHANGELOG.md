@@ -6,6 +6,47 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased (v2.26.38)
 
+### skrac: MeshCentral 1.3.1 to 1.3.2 (security fixes)
+
+- Default image is now `ghcr.io/ylianst/meshcentral:1.3.2` (upstream release 2026-11-25), pinned by
+  the multi-arch index digest as before. Trivy (0.76.2, `--severity CRITICAL,HIGH --ignore-unfixed`)
+  on the amd64 image: HIGH findings 119 (77 unique) before, 11 after, no CRITICAL either side.
+  The 11 left are npm packages upstream still bundles (undici, mariadb, mysql2, brace-expansion).
+- Upstream announces no breaking change. The security work in this release tightens what a
+  logged-in user may do: device rights are now checked on process, service, message, clipboard and
+  software commands, file download sharing permissions are enforced, `force2factor` is enforced on
+  the server, and the 2FA, SAML and OIDC login paths are hardened, so an action that used to slip
+  past a missing check can now be refused. Upstream also asks for Node 22.21.1 or newer (the image
+  carries its own).
+  Release notes: https://github.com/Ylianst/MeshCentral/releases/tag/1.3.2
+  **Instance action**: take a backup first (`skrac-backup once`), then redeploy skrac. If you set
+  `skrac.MESHCENTRAL_IMAGE` in the vault, move it to the new tag and digest. After the redeploy,
+  check that agents reconnect and that your admin and delegated users can still do their usual
+  tasks.
+
+### sknet: Kafka 4.3.1 to 4.3.2, now digest-pinned
+
+- Default `KAFKA_IMAGE` is `apache/kafka:4.3.2@sha256:852a0d49...` (patch release only; 4.4 is not
+  taken). It was tag-only before; the index digest is now part of the pin, and the existing
+  "refuse floating images" check already accepts it. Trivy on the amd64 image: HIGH 38 (34 unique)
+  and CRITICAL 1 before, HIGH 8 (7 unique) and CRITICAL 1 after. The remaining CRITICAL is
+  CVE-2026-111497 in `brotli-libs` (Alpine 3.24), fixed upstream in 1.2.1-r0 but not yet in the
+  Kafka image.
+  **Instance action**: redeploy sknet (the Kafka service restarts). If `sknet.KAFKA_IMAGE` is set in the vault,
+  move it to the new tag and digest.
+
+### Renovate now sees pins it was missing
+
+- The generic `v1/ansible` manager in `renovate.json` only matches `default('image')` when the
+  closing parenthesis follows the quote, so the common `default('image', true)` form was invisible
+  to it. A second, deliberately narrow regex manager now covers the named pins that matter for
+  CVEs: skrac `MESHCENTRAL_IMAGE` (and the three `deploy_skrac-*.yml` defaults), sknet
+  `KAFKA_IMAGE` (template and `vars/defaults.yml`), sksec `BOUNCER_IMAGE`, the certs-dumper
+  `DUMPER_IMAGE` in skfence and skfenceha, and the skwrit `NEXTCLOUD_MCP_IMAGE`. Schedule and
+  per-service grouping are unchanged. Other `, true` pins (skgym, skhome, sksec-web, the rest of
+  sknet) are still not tracked.
+  **Instance action**: none.
+
 ### skpatch: images with fixable OS-package CVEs deploy patched (Copacetic)
 
 - About 60 percent of the HIGH/CRITICAL findings across nor, NAM and gen are OS packages that

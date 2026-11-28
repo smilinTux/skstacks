@@ -131,7 +131,7 @@ The vault holds one `sknet:` block, merged over `vars/defaults.yml`; set only wh
 | `GATE_SECRET` | required | Random string of at least 32 characters (letters, digits, dash, underscore; `openssl rand -hex 32`). Traefik adds it as the `X-Sknet-Gate` header and the `gate` service refuses any request without it |
 | `DATA_DIR` | `/var/lib/sknet-<env>` | Local disk path on `DATA_NODE`; refused under `/var/data` |
 | `AKVORADO_IMAGE` | `quay.io/akvorado/akvorado:2026.10.1` | Pinned by tag or digest; floating tags refused |
-| `CLICKHOUSE_IMAGE` / `KAFKA_IMAGE` / `PROXY_IMAGE` | `clickhouse/clickhouse-server:26.8`, `apache/kafka:4.3.1`, `caddy:2.11.9-alpine` | Pinned |
+| `CLICKHOUSE_IMAGE` / `KAFKA_IMAGE` / `PROXY_IMAGE` | `clickhouse/clickhouse-server:26.8`, `apache/kafka:4.3.2@sha256:852a0d49…` (digest in `vars/defaults.yml`), `caddy:2.11.9-alpine` | Pinned |
 | `NTOPNG_IMAGE` | digest of the pinned ntopng build | Used by `live.yml`; Docker Hub publishes only a floating tag, so it is a digest |
 | `ALLOW_CIDRS` | RFC 1918 | The `sknet-<env>-allow` ipAllowList on every router; narrow it |
 | `AUTH_MODE` | `authentik` | `authentik` (allowlist plus SSO) or `allowlist` (refused with `CLOUDFLARED`) |

@@ -21,8 +21,8 @@ pytestmark = pytest.mark.skipif(shutil.which("ansible-playbook") is None, reason
 ROLE = rp.ANSIBLE / "optional" / "skrac"
 BASE = yaml.safe_load((rp.VARS / "skrac.example.yml").read_text())["skrac"]
 SET = yaml.safe_load((rp.VARS / "skrac.set.yml").read_text())["skrac"]
-IMAGE = ("ghcr.io/ylianst/meshcentral:1.3.1@sha256:"
-         "266b01942545829f11d53e6cecd5c2e48033d9edb48bbd3a9a569482ff1d050d")
+IMAGE = ("ghcr.io/ylianst/meshcentral:1.3.2@sha256:"
+         "a2eb6d93a415dac0d1e69f1d6f20dd4ace46b99de75d584559ed9cf223d51113")
 
 
 def render(tmp: Path, vault, env: str = "prod") -> tuple[dict, Path]:
