@@ -13,10 +13,10 @@
 #   2. runtime: start FROM the upstream image digest the role pinned, apt-get
 #      upgrade, purge the compilers and -dev packages upstream left behind
 #      (this also drops the linux-libc-dev kernel header findings), upgrade the
-#      SearXNG venv packages, take node and npm from the current Node 24 image
+#      SearXNG venv packages, take node from the current Node 24 image
 #      and replace /home/perplexica with the rebuilt application.
-# To publish (amd64), then pin the dated tag by index digest in
-# skseek_default_image (deploy_skseek-*.yml) and in skseek.yml.j2:
+# To publish (amd64), then pin the dated tag by digest as the default in
+# src/config/skseek/skseek.yml.j2 (skseek.IMAGE overrides it per instance):
 #   docker build -t smilintux/skseek-runtime:1.12.1-<yyyymmdd> image/
 #   docker push smilintux/skseek-runtime:1.12.1-<yyyymmdd>
 

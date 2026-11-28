@@ -42,7 +42,7 @@ def test_compose_is_valid_yaml_for_every_env(env_name):
 def test_image_is_pinned_by_digest():
     doc = render("prod")
     image = doc["services"]["skseek"]["image"]
-    assert image.startswith("itzcrazykns1337/perplexica:")
+    assert image.startswith("smilintux/skseek-runtime:")
     assert "@sha256:" in image
 
 
