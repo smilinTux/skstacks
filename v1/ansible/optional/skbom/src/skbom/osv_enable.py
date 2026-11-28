@@ -70,9 +70,9 @@ class Api:
         self.url = url.rstrip("/")
         self.token = None
 
-    def call(self, method, path, body=None, form=None, timeout=30):
+    def call(self, method, path, body=None, form=None, timeout=30, accept="application/json"):
         data = None
-        headers = {"Accept": "application/json"}
+        headers = {"Accept": accept}
         if form is not None:
             data = urllib.parse.urlencode(form).encode()
             headers["Content-Type"] = "application/x-www-form-urlencoded"
@@ -111,7 +111,8 @@ def run(cfg, sleep=time.sleep, now=time.monotonic, out=print):
     if not wait_healthy(api, int(cfg.get("wait_seconds", 600)), sleep, now):
         out("osv: the apiserver did not become healthy in time")
         return 1
-    status, body = api.call("POST", "/api/v1/user/login",
+    # The login answers with the JWT as text/plain; asking for JSON gets HTTP 406.
+    status, body = api.call("POST", "/api/v1/user/login", accept="text/plain",
                             form={"username": cfg.get("username", "admin"), "password": cfg["password"]})
     if status != 200 or not body.strip():
         out(f"osv: login as {cfg.get('username', 'admin')} refused (HTTP {status}): check skbom.ADMIN_PASSWORD, "

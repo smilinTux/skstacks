@@ -6,6 +6,17 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased (v2.26.37)
 
+### skbom: the OSV step can log in to Dependency-Track
+
+- The OSV provisioner added in v2.26.36 asked the Dependency-Track login for `application/json`.
+  The login answers only `text/plain` (the JWT), so Dependency-Track 4.14 refused it with HTTP 406
+  and every skbom deploy with `skbom.ADMIN_PASSWORD` set failed at "Enable the OSV vulnerability
+  source" after the stack itself was already deployed. Found on the nor rollout of v2.26.36. The
+  login now asks for `text/plain`; the other calls keep JSON. The test fake now answers 406 to a
+  JSON login, as the real server does.
+  **Instance action**: none. Redeploy skbom to apply the OSV source; the stack itself was not
+  affected by the failure.
+
 ### skpatch image scan: one shared Trivy DB for every estate (was a 3.3 GB copy each)
 
 - `skpatch-image-vulns@<estate>` gave every estate its own Trivy cache
