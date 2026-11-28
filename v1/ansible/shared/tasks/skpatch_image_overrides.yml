@@ -30,8 +30,10 @@
 #   skstacks_patched_images_skip   []     repositories never to swap, e.g.
 #                                          ['louislam/uptime-kuma']
 #
-# Patched images are built for linux/amd64 only. When any swarm node is not
-# x86_64 the swap is skipped for the whole stack and the play says so.
+# Patched images are built for linux/amd64 only. When any swarm node that can
+# run tasks (not drained) is not x86_64, the swap is skipped for the whole
+# stack and the play says so. A drained node (a manager-only tie-breaker,
+# for example) runs nothing and does not count.
 - name: Swap in skpatch patched images
   when:
     - skstacks_patched_images | default(true) | bool
@@ -62,7 +64,9 @@
         - name: Read the swarm node architectures
           shell: |
             set -o pipefail
-            docker node ls -q | xargs docker node inspect --format '{{ "{{" }} .Description.Platform.Architecture {{ "}}" }}' | sort -u
+            docker node ls -q | xargs docker node inspect \
+              --format '{{ "{{" }} .Spec.Availability {{ "}}" }} {{ "{{" }} .Description.Platform.Architecture {{ "}}" }}' \
+              | awk '$1 != "drain" {print $2}' | sort -u
           args:
             executable: /bin/bash
           register: skpatch_node_arch
