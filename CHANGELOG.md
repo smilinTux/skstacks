@@ -31,7 +31,6 @@ Each entry says what an instance must do, if anything.
   `rm -rf ~/.cache/skpatch-hosts/image-vulns/*/trivy` to drop the per-estate copies (the next
   run downloads the shared DB once).
 
-
 ## skstacks-v2.26.37 - 2026-11-28
 
 ### skvector: optional web UI host behind SSO
