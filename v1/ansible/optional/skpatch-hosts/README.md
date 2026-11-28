@@ -674,6 +674,9 @@ needs local docker for the user running the units):
 3. `systemctl --user daemon-reload && systemctl --user enable --now skpatch-image-vulns@<estate>.timer`,
    then `systemctl --user start skpatch-image-vulns@<estate>` once by hand
    (the first run downloads the Trivy DB and every image; give it time).
+   Every estate on the controller shares one Trivy DB,
+   `~/.cache/skpatch-hosts/image-vulns/trivy` (about 3.3 GB, `--trivy-cache`); scans on it
+   take turns, so estates whose timers overlap queue up rather than fail.
 
 **Silencing a known false positive.** Put the id in the ignore file named
 by `SKPW_IMAGE_IGNORE`, one rule per line, `#` for a comment and always a

@@ -6,6 +6,20 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased (v2.26.37)
 
+### skpatch image scan: one shared Trivy DB for every estate (was a 3.3 GB copy each)
+
+- `skpatch-image-vulns@<estate>` gave every estate its own Trivy cache
+  (`~/.cache/skpatch-hosts/image-vulns/<estate>/trivy`: vulnerability DB, Java DB and layer
+  cache, about 3.3 GB). A controller with three estates held three identical copies, about
+  10 GB, and filled a controller's root disk. The unit now passes
+  `--trivy-cache "$CACHE_DIRECTORY/trivy"`, one DB for all estates; per-estate directories keep
+  only their results. Scans on the shared DB take an exclusive lock and run one at a time
+  (Trivy's layer cache refuses a second process), so overlapping 06:15 timers queue instead of
+  failing. Without `--trivy-cache` (or `SKPW_TRIVY_CACHE`) the tool keeps the old layout.
+  **Instance action**: reinstall `tools/systemd/skpatch-image-vulns@.service` and the tool, then
+  `rm -rf ~/.cache/skpatch-hosts/image-vulns/*/trivy` to drop the per-estate copies (the next
+  run downloads the shared DB once).
+
 ### skvector: optional web UI host behind SSO
 
 - New, off by default: `skvector.UI_HOST_ENABLED: true` adds a router on
