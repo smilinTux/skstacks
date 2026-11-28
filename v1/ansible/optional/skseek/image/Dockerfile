@@ -26,6 +26,7 @@ FROM node:24-bookworm-slim@sha256:873f586f3794f52281bd039bf02c048a0be08fde619338
 # v1.12.1 (2025-12-31): the version the pinned upstream image was built from.
 ARG PERPLEXICA_COMMIT=3b8d8be6761949cf9034d6b3d9ec82a78115cb81
 ARG NEXT_VERSION=16.4.6
+ARG SHARP_VERSION=0.35.5
 # onnxruntime-node's install script tries to fetch the CUDA execution provider
 # (about 400 MB, 404 at the source today). The service runs on CPU on swarm nodes
 # without GPU libraries, so the CUDA provider was never usable; skip it.
@@ -42,6 +43,10 @@ RUN cp /src/package.json /src/yarn.lock /src/tsconfig.json /src/next.config.mjs 
  && cp -r /src/src /src/public /src/drizzle ./
 RUN yarn install --frozen-lockfile --network-timeout 600000 \
  && yarn add --exact "next@${NEXT_VERSION}" --network-timeout 600000
+# sharp is a transitive dependency (image handling); force the patched release.
+RUN node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync("package.json"));p.resolutions=Object.assign(p.resolutions||{},{sharp:process.argv[1]});fs.writeFileSync("package.json",JSON.stringify(p,null,2))' "$SHARP_VERSION" \
+ && yarn install --network-timeout 600000 \
+ && node -e 'console.log("sharp", require("sharp/package.json").version)'
 RUN mkdir -p /home/perplexica/data && yarn build
 
 FROM ${UPSTREAM}
@@ -56,10 +61,12 @@ RUN apt-get update && apt-get -y upgrade \
 RUN /usr/local/searxng/searx-pyenv/bin/pip install --no-cache-dir --upgrade certifi lxml anyio setuptools wheel \
  && /usr/local/searxng/searx-pyenv/bin/pip check || true
 
-# node and npm from the current Node 24 image (same Debian release as the upstream base).
-RUN rm -rf /usr/local/lib/node_modules /usr/local/include/node
+# node from the current Node 24 image (same Debian release as the upstream base).
+# npm, npx and corepack are removed: the entrypoint only runs `node server.js`, and
+# npm's bundled packages (undici, brace-expansion, tar, glob, ...) carried most of
+# the Node findings. yarn (/opt) stays for anyone who execs into the container.
+RUN rm -rf /usr/local/lib/node_modules /usr/local/include/node /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 COPY --from=builder /usr/local/bin/node /usr/local/bin/node
-COPY --from=builder /usr/local/lib/node_modules /usr/local/lib/node_modules
 
 # Replace the application with the rebuilt one; keep data/, uploads/ and entrypoint.sh.
 WORKDIR /home/perplexica
