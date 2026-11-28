@@ -9,4 +9,205 @@
 # shared/tasks/skpatch_image_overrides.yml swaps them into the rendered stack
 # file before the pre-pull, so nothing changes until a deploy runs.
 ---
-skpatch_patched_images: {}
+skpatch_patched_images:
+  "apache/kafka:4.3.1":
+    image: "ghcr.io/smilintux/skpatched:apache.kafka-4.3.1-skp44e565bebabd@sha256:b10643c5203072e3e3a5f54f3399e2ceba204775b214773a8cb875619d03f2a9"
+    # critical/high fixable: 1/38 upstream, 0/16 patched
+  "clamav/clamav:latest@sha256:45fe5149fbee5a46509c9848ef20d0c354b7b2323c9369f285939a37cf33422a":
+    image: "ghcr.io/smilintux/skpatched:clamav.clamav-latest-skp3ff122c90302@sha256:11e4a0ad978bef3222f83fe7b2f34f84c5776d078abe13cb964747ebb9a01c02"
+    # critical/high fixable: 0/7 upstream, 0/0 patched
+  "code.forgejo.org/forgejo/forgejo:17.0.2":
+    image: "ghcr.io/smilintux/skpatched:code.forgejo.org.forgejo.forgejo-17.0.2-skpe0a5eb9f2f66@sha256:893a2ffdfa11deba57eb3c373fd47c9d7d914bebdce1b6be98ee224b13bd9ad1"
+    # critical/high fixable: 0/7 upstream, 0/0 patched
+  "code.forgejo.org/forgejo/runner:13.2.1":
+    image: "ghcr.io/smilintux/skpatched:code.forgejo.org.forgejo.runner-13.2.1-skp2612926987b5@sha256:9485da02f4acd134bf782c938296b0406992603dd1fa487b3b72680eb510a3c6"
+    # critical/high fixable: 0/12 upstream, 0/2 patched
+  "coturn/coturn:4.19.2-trixie@sha256:ccdbc51e6f072130b0fc9eebda21f8d026d0a25581746c52557e887818011a3f":
+    image: "ghcr.io/smilintux/skpatched:coturn.coturn-4.19.2-trixie-skp1b1e20eae944@sha256:2f0a5de6442b96425fdeb4dc65ed6b1ca489609c93e976919e944695d68350b4"
+    # critical/high fixable: 4/88 upstream, 0/0 patched
+  "crowdsecurity/crowdsec:v1.6.11":
+    image: "ghcr.io/smilintux/skpatched:crowdsecurity.crowdsec-v1.6.11-skpbaa142ca385f@sha256:57920cd43d3ea084a518bdf0b79dc027626b3f21cf525011a7ea7c582632e1d5"
+    # critical/high fixable: 19/480 upstream, 17/435 patched
+  "dependencytrack/apiserver:4.14.7@sha256:a936a5560df5647db11942775941d5f9e3d84eac5dab7848fd3f2b2165cf0e7e":
+    image: "ghcr.io/smilintux/skpatched:dependencytrack.apiserver-4.14.7-skpc1348ccf87c7@sha256:727997235d5eedac348958bc044783154d80a4ae63e16d6641dbee78e8ed0d64"
+    # critical/high fixable: 0/58 upstream, 0/0 patched
+  "docker.io/library/redis:8.10.3@sha256:1f88291b4c57bdf249f02eb085a8669889b2d2954e91d4de5118a5da6b78dd53":
+    image: "ghcr.io/smilintux/skpatched:redis-8.10.3-skp94a63f5194e5@sha256:babd446dfcfb500995884a5436e9ada1c6adfca44a665a37dda5999cea09b05e"
+    # critical/high fixable: 0/2 upstream, 0/0 patched
+  "falkordb/falkordb:v4.18.8@sha256:bbebe3dc3fd109f9a88a48fc97cd146bf4301410872d4dd5d4a755c2d71e37a7":
+    image: "ghcr.io/smilintux/skpatched:falkordb.falkordb-v4.18.8-skp6688126aac69@sha256:e7db8f57e52cb9fc3d16eb9dc5505b9d30da4dcf9fdadf8bd86d86b63d17cf21"
+    # critical/high fixable: 5/61 upstream, 5/9 patched
+  "frooodle/s-pdf:3.5.0@sha256:f5a38801f2dd551c26d0089ee3ea48d86a565e3adb414cb31e974bc9562cb48a":
+    image: "ghcr.io/smilintux/skpatched:frooodle.s-pdf-3.5.0-skp987ffbc0a153@sha256:a6dc33670f70c382d85461183a49938a1f5db0e60825cc4faef3347c6b1438a8"
+    # critical/high fixable: 0/2 upstream, 0/0 patched
+  "ghcr.io/cbcoutinho/nextcloud-mcp-server:0.218.0@sha256:e9650d14dbdcf796ce1ef4de48f4505de89c84670bbf4722b3eeace00f57656c":
+    image: "ghcr.io/smilintux/skpatched:ghcr.io.cbcoutinho.nextcloud-mcp-server-0.218.0-skp0cfe4d7b3cba@sha256:7a61fcc94b20e476a2762d6330fe461e5c4b7d771c3eae5d6795366f073187ba"
+    # critical/high fixable: 5/43 upstream, 5/41 patched
+  "ghcr.io/duartesantos8/opengym-web:1.4.5@sha256:e621677554302a0e1745e3b8c90acddc7d7149e118c4d683d51c13aa88f47d27":
+    image: "ghcr.io/smilintux/skpatched:ghcr.io.duartesantos8.opengym-web-1.4.5-skp83b18074a1ce@sha256:cb692c9fae6aff424a4ddcf7393949d09cbdbea335a667002ecf2a5b3996550b"
+    # critical/high fixable: 0/7 upstream, 0/0 patched
+  "ghcr.io/flaresolverr/flaresolverr@sha256:c80ae007ce2ccdcd217a12426e4f039ef763ff90738c808d38810c3e59323767":
+    image: "ghcr.io/smilintux/skpatched:ghcr.io.flaresolverr.flaresolverr-latest-skpa21fc2ef2349@sha256:a81d1170cff0ec08b2b2aa7658fc133b16089334110f6d9cbdf265467eb9bdb5"
+    # critical/high fixable: 39/2758 upstream, 2/7 patched
+  "ghcr.io/goauthentik/server:2024.4.2":
+    image: "ghcr.io/smilintux/skpatched:ghcr.io.goauthentik.server-2024.4.2-skpc34525bfae9d@sha256:2134a3b9e19d7686ef4697c07b6f044e40c156909e010e42a7e671bfa845e9fd"
+    # critical/high fixable: 22/285 upstream, 8/140 patched
+  "ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.4@sha256:2538ea1c9640d3763b15af668039d24172d063b42337b0c27796fc2be180c78d":
+    image: "ghcr.io/smilintux/skpatched:ghcr.io.huggingface.text-embeddings-inference-cpu-1.9.4-skp5f16abd5d095@sha256:78503e59c5558b2f94c37658cddd2ffdf770df627bdbd994d0c384ff80cd9c9d"
+    # critical/high fixable: 4/18 upstream, 0/0 patched
+  "ghcr.io/immich-app/immich-machine-learning:v3.4.2":
+    image: "ghcr.io/smilintux/skpatched:ghcr.io.immich-app.immich-machine-learning-v3.4.2-skpcdc295af1eee@sha256:90c1775eb8952f27a896088ebd3c53ec59bb61ea7c0aaa2e9344d10d21c6cb24"
+    # critical/high fixable: 2/18 upstream, 2/14 patched
+  "ghcr.io/immich-app/immich-server:v3.4.2":
+    image: "ghcr.io/smilintux/skpatched:ghcr.io.immich-app.immich-server-v3.4.2-skp8822e2fc4089@sha256:6e639026faccf88e6291a49e0ad93ca5fc65e91768044eb828cd7191d707dadb"
+    # critical/high fixable: 2/137 upstream, 0/29 patched
+  "ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0":
+    image: "ghcr.io/smilintux/skpatched:ghcr.io.immich-app.postgres-14-vectorchord0.4.3-pgvectors0.2.0-skpefa47feb337b@sha256:f71dc6b094b60ba5293208f735d63f57c4cd762fc7ccdf3a1f225565bdf06356"
+    # critical/high fixable: 20/129 upstream, 4/56 patched
+  "ghcr.io/nextcloud-releases/aio-talk-recording:20261119_161514@sha256:b4223cfd039640ef38d3b5b63c0024f81ebfe7fab8c28d144cfe43a4309e7ad0":
+    image: "ghcr.io/smilintux/skpatched:ghcr.io.nextcloud-releases.aio-talk-recording-20261119_161514-skpd9ade6774f2a@sha256:535226c7c2c3efc3d9ba3ee3ad188b99ca2d44e4042ed781bfb6c7e6062ec0d2"
+    # critical/high fixable: 1/15 upstream, 1/5 patched
+  "ghcr.io/nextcloud-releases/aio-talk:latest@sha256:907ee720df0dd346c738bad2525945c4c408b2af0d21975a4c6cfb199edeed22":
+    image: "ghcr.io/smilintux/skpatched:ghcr.io.nextcloud-releases.aio-talk-latest-skp182dc377c9ed@sha256:c2a8ab4bb2186778cffa1d3f3411db825026927191f7d4f927e57d5deb04fa89"
+    # critical/high fixable: 1/74 upstream, 1/51 patched
+  "ghcr.io/nextcloud-releases/whiteboard:v2.1.2@sha256:fd714528ae29beb9e9ad56589c031f7c6c688979b5e0cfbba7bb546cf75a0e43":
+    image: "ghcr.io/smilintux/skpatched:ghcr.io.nextcloud-releases.whiteboard-v2.1.2-skp8e863c8ff7cb@sha256:01cabf0384b391d8b47e750e31625c7246fce2d146f9e56fbf7157e380521c1e"
+    # critical/high fixable: 1/58 upstream, 1/43 patched
+  "ghcr.io/open-webui/open-webui:v0.13.4@sha256:d5168bfbc28609eff5bea1b438dd864cf64d185cf6582c02244865e18385b901":
+    image: "ghcr.io/smilintux/skpatched:ghcr.io.open-webui.open-webui-v0.13.4-skp9f6fb1f4097a@sha256:b01a56fa21677daad873c06a9f26047d1dd1434da34d5b2a1338257cbcaf96b2"
+    # critical/high fixable: 11/167 upstream, 4/25 patched
+  "ghcr.io/opentofu/opentofu:1.13.9":
+    image: "ghcr.io/smilintux/skpatched:ghcr.io.opentofu.opentofu-1.13.9-skpcb8a08396e2a@sha256:f92725da62ca471615beb0cadab30fdb7c7543b2d896c1f5dc303aef1c98dbe3"
+    # critical/high fixable: 0/8 upstream, 0/6 patched
+  "ghcr.io/speaches-ai/speaches:0.8.3-cpu@sha256:21e3df06d842fb7802ab470dd77c25f0e8c0d22950e8d8c6ae886e851af53ef8":
+    image: "ghcr.io/smilintux/skpatched:ghcr.io.speaches-ai.speaches-0.8.3-cpu-skp80143f0ef48e@sha256:fd2f49fe93df03c86b19fbdb04a74f6748d8eaa095d81934a00473ada15c25ac"
+    # critical/high fixable: 8/77 upstream, 8/68 patched
+  "ghcr.io/theduffman85/crowdsec-web-ui:2026.11.12@sha256:5bc8a0bdb6350101bce07f1db55df9784b27f6f2ff49cc1316bd67988628558e":
+    image: "ghcr.io/smilintux/skpatched:ghcr.io.theduffman85.crowdsec-web-ui-2026.11.12-skpafc69d910925@sha256:8733770de313a776f8e9f5032f8502e694c4c51079770d7d4b9032792caedd55"
+    # critical/high fixable: 0/7 upstream, 0/6 patched
+  "ghcr.io/theduffman85/linux-update-dashboard:2026.11.6@sha256:b42cf73e707dbd3b8e7ab7ffdb7d4b7ae3b18f25450cd20145dea5e7f66e2840":
+    image: "ghcr.io/smilintux/skpatched:ghcr.io.theduffman85.linux-update-dashboard-2026.11.6-skp2c2778e7570e@sha256:b9f316ebe8a108fc8d03b4a64fda03b03387a328b28c4674f65f36792d45b890"
+    # critical/high fixable: 0/35 upstream, 0/33 patched
+  "ghcr.io/windmill-labs/windmill:1.882.0@sha256:c5d60c73d12ed2839a8598edfcbe29f13eb1062b8e2e7e8112b985b0fb24ebc8":
+    image: "ghcr.io/smilintux/skpatched:ghcr.io.windmill-labs.windmill-1.882.0-skp5b563c3529f7@sha256:5a4c08bcba32d47cfdb46a9cf8ed84ca15a31ae22fc5efbffdb707528749de85"
+    # critical/high fixable: 0/82 upstream, 0/6 patched
+  "ghcr.io/yatzin/homecenter:3.3.0@sha256:ddff09f855c5c040716e72a4f58da11fe346e2d4ef8f8e95eb27e9b4f700b092":
+    image: "ghcr.io/smilintux/skpatched:ghcr.io.yatzin.homecenter-3.3.0-skpbe586940e7ad@sha256:5facd88eda29acd49f772696adc1fe0da9344197b3fe2aa5b52a217e91195378"
+    # critical/high fixable: 0/15 upstream, 0/10 patched
+  "ghcr.io/ylianst/meshcentral:1.3.1@sha256:266b01942545829f11d53e6cecd5c2e48033d9edb48bbd3a9a569482ff1d050d":
+    image: "ghcr.io/smilintux/skpatched:ghcr.io.ylianst.meshcentral-1.3.1-skp6af2aa3b8151@sha256:12c4ee86b270a7e23a13a213caf079c71be3290b99d0ffdfb6b8a3941eeca60a"
+    # critical/high fixable: 0/119 upstream, 0/19 patched
+  "itzcrazykns1337/perplexica:latest@sha256:343d2a02858cc3c15bb35bf94b3249923f4eb5de16eb80d266eddfef6d84951d":
+    image: "ghcr.io/smilintux/skpatched:itzcrazykns1337.perplexica-latest-skp3673e7413512@sha256:7e8efe208704c82d896c3685c40c6d699e85a07e6e7642ccf437a0259abaa870"
+    # critical/high fixable: 32/910 upstream, 9/69 patched
+  "kometateam/kometa:v2.5.5@sha256:864cec57d099c71a26a5a5ce2784d34d9b53874c91269c3a12df3949eab96562":
+    image: "ghcr.io/smilintux/skpatched:kometateam.kometa-v2.5.5-skp08902252fcd7@sha256:01c5933b74e0466017445f738ded58991fe2589c6097f6b6a210bdf8da79c978"
+    # critical/high fixable: 1/125 upstream, 0/5 patched
+  "ldez/traefik-certs-dumper:v2.11.4@sha256:a34b27edf8e5e96a215035a6bfba00d769d2638f8444a5dd6dc27299d75f43c5":
+    image: "ghcr.io/smilintux/skpatched:ldez.traefik-certs-dumper-v2.11.4-skp2d20fd55e238@sha256:bb59b44e643e1b1792310dd0d503c417c15fe16c4da87a5976ed67c983d0ca72"
+    # critical/high fixable: 1/61 upstream, 0/22 patched
+  "louislam/uptime-kuma:2.5.12":
+    image: "ghcr.io/smilintux/skpatched:louislam.uptime-kuma-2.5.12-skp5481b91edb2c@sha256:da1adaed8f90b7a89101dbef2d568db8ac532f68772b2392bb51f0796f74e099"
+    # critical/high fixable: 10/699 upstream, 6/70 patched
+  "lscr.io/linuxserver/bookstack:v26.09-ls285":
+    image: "ghcr.io/smilintux/skpatched:lscr.io.linuxserver.bookstack-v26.09-ls285-skpd782d8dd0f02@sha256:b6eb086adb514f6d86125c37c2d61099dfc70cb708460982f104e245731c9faf"
+    # critical/high fixable: 127/191 upstream, 0/0 patched
+  "lscr.io/linuxserver/lidarr@sha256:d5707cfe084da21a3864c7ef0edd9c0543b5e26c79c551f84dad5ef8683af8c7":
+    image: "ghcr.io/smilintux/skpatched:lscr.io.linuxserver.lidarr-latest-skp2a1b4422bba3@sha256:7e9c5feb335f29d8a533c932aa27abc8c637b9091417fedc5583da36c19ef111"
+    # critical/high fixable: 10/191 upstream, 10/165 patched
+  "lscr.io/linuxserver/prowlarr@sha256:431d7efebcef466e56adaa40a7a2fa2b0e85159a037b8bf465eaadbf0cf5bedf":
+    image: "ghcr.io/smilintux/skpatched:lscr.io.linuxserver.prowlarr-latest-skp40cf88a790f0@sha256:000d02511d7ea06e7e8e378729ffbd998bebab16f33158bc1084958c69cd4b15"
+    # critical/high fixable: 10/172 upstream, 10/146 patched
+  "lscr.io/linuxserver/qbittorrent@sha256:05c1454f9a32967affc1f34f67f8cc0cc57dd805dca45489fe797095a6286556":
+    image: "ghcr.io/smilintux/skpatched:lscr.io.linuxserver.qbittorrent-latest-skpe92b247a8c5d@sha256:bc8ec8e59c4973df85f88fe38785a607b7d37363313fb1de28bf68c2d36d7259"
+    # critical/high fixable: 0/4 upstream, 0/0 patched
+  "lscr.io/linuxserver/radarr@sha256:ade5937813c6ae415b29db729386e53fea3ecf067a019849bafbe2d2a6ec02ba":
+    image: "ghcr.io/smilintux/skpatched:lscr.io.linuxserver.radarr-latest-skp4765cdacf55f@sha256:a2f30106b83b589df1f91dd3a8fb0512180b29a0ef51b0cb7ffb92bf00f04d35"
+    # critical/high fixable: 10/191 upstream, 10/165 patched
+  "lscr.io/linuxserver/sonarr@sha256:673dc4609a5672bc8e46069c86ffcea283a86b48d34a6c93d8da8c24a1b87571":
+    image: "ghcr.io/smilintux/skpatched:lscr.io.linuxserver.sonarr-latest-skp5636e8bf4b4b@sha256:828351a56eabd646b2f721f7bdbe539fb42995cde780000acd53043020249408"
+    # critical/high fixable: 0/63 upstream, 0/37 patched
+  "mrusse08/soularr@sha256:61ee506de5fb1447f3abd4a5a47e2537fad152ddf8c7e0392a36ef00b4f1c3d9":
+    image: "ghcr.io/smilintux/skpatched:mrusse08.soularr-latest-skp9830de084014@sha256:6722b7400e82bc32aff49e8fc1c92ff525b15dce5fbc1cf7fbf85fbe605ab27d"
+    # critical/high fixable: 16/639 upstream, 0/2 patched
+  "netbirdio/dashboard:v2.98.0@sha256:3e8a714e2966f96201b817657cf5b6e4304b947b88341fe99639214fb440ea9c":
+    image: "ghcr.io/smilintux/skpatched:netbirdio.dashboard-v2.98.0-skpb8dda8c897ef@sha256:647e668b8a91f23b48bc9fe0fb627f4d826ae9d7dae07f45593eb7f1d0ed7961"
+    # critical/high fixable: 0/7 upstream, 0/0 patched
+  "netbirdio/relay:0.83.2@sha256:1b27bbadef5ae7632c46c086c91a872dad7a024aaeb2e0ee7a99faeba23c859f":
+    image: "ghcr.io/smilintux/skpatched:netbirdio.relay-0.83.2-skpb195ab9d6dc1@sha256:cdc3fc2a8f1360d594d7d0a09f0cfe8b39e2136dd430a23b8c15fa4031a173c1"
+    # critical/high fixable: 0/6 upstream, 0/5 patched
+  "netbirdio/signal:0.83.2@sha256:075086a1b38cca814ec0699ec9aa509b6a0f078453f19ebac52934593fd5d6de":
+    image: "ghcr.io/smilintux/skpatched:netbirdio.signal-0.83.2-skp8625ca016015@sha256:723ab0bd5cdb4651bf11bae10fdc61314d73947fd03dda665b8d658f5f0b4200"
+    # critical/high fixable: 0/6 upstream, 0/5 patched
+  "nextcloud:35.0.2@sha256:786c102155d2717ba0f53a62b3fdd7a1354edc48e800b94dbe32294d9a5752a2":
+    image: "ghcr.io/smilintux/skpatched:nextcloud-35.0.2-skp8f195ff0df38@sha256:586e7996f9ef2dcdf0f6e364ca83edf85bae7fb9b13f5d86a551f36bab892c12"
+    # critical/high fixable: 7/162 upstream, 0/1 patched
+  "pgvector/pgvector:0.8.7-pg17-bookworm@sha256:b513c48566e4777cd3370451400000c78eda6a08131d68f4c31d4a76f27bd8fd":
+    image: "ghcr.io/smilintux/skpatched:pgvector.pgvector-0.8.7-pg17-bookworm-skpb50efebc3941@sha256:4057f7868b4f1046565eeb43c8cf2a4b671276c752ef687855fe31c6a65f7fb2"
+    # critical/high fixable: 1/31 upstream, 1/25 patched
+  "pgvector/pgvector:pg18@sha256:c29f30688a9ad961691bdf0ec1650717cc132a5814619d80f80463d6e4c42e47":
+    image: "ghcr.io/smilintux/skpatched:pgvector.pgvector-pg18-skp0cd3db8d526f@sha256:5726927ac2f56209e33c691aa6a3df5d5cb846bc78ca112ea9ddea7609929c80"
+    # critical/high fixable: 1/33 upstream, 1/25 patched
+  "plexinc/pms-docker:1.43.5.11079-b3b13e506@sha256:6d778d41daae68f89115aa87a44ae14a96b23e71a2093da173b5a9aac4091336":
+    image: "ghcr.io/smilintux/skpatched:plexinc.pms-docker-1.43.5.11079-b3b13e506-skp2e744712772e@sha256:66c68dcc02d64fcd81c7086e9c201d3048357fca3ca37ab7d84a8dc8f10193b6"
+    # critical/high fixable: 0/3 upstream, 0/0 patched
+  "postgres:14.25@sha256:c0e9c0e9bac7e4c1834b698217a03ee5c708de30d313c84a506972de0e24b059":
+    image: "ghcr.io/smilintux/skpatched:postgres-14.25-skpe30ffff1178e@sha256:4edabb47cf8e8a4ff1dd9254c160f10152127b3d90f5251f89937e40dab134c4"
+    # critical/high fixable: 1/84 upstream, 1/25 patched
+  "postgres:17.11":
+    image: "ghcr.io/smilintux/skpatched:postgres-17.11-skp9c80de7c2f78@sha256:93b46ca4d5dced17238e85aeb533250f0573e7b2835c57a2e334f15c204138da"
+    # critical/high fixable: 1/152 upstream, 1/25 patched
+  "postgres:17.12-alpine@sha256:f9cf3e1f0066f0eb0c48707d864f0ac5941e9ff454a072077d97a4d278d07d73":
+    image: "ghcr.io/smilintux/skpatched:postgres-17.12-alpine-skp072632b2bdb7@sha256:8fb4ea25f6fb3aa4d4f9d807441049822d414875f2a77f84914c8880fbf09957"
+    # critical/high fixable: 1/32 upstream, 1/25 patched
+  "postgres:17.12-bookworm@sha256:837bed18782820fe967067cb5328b02b0d9992c1be9a37ee0c9c492cfc03af3b":
+    image: "ghcr.io/smilintux/skpatched:postgres-17.12-bookworm-skp7314553b43c2@sha256:08ebee7926256f777a660e181bac2823c21502852723c2ca3af6b95ebd571cee"
+    # critical/high fixable: 1/31 upstream, 1/25 patched
+  "postgres:17.7-alpine@sha256:bb377b7239d2774ac8cc76f481596ce96c5a6b5e9d141f6d0a0ee371a6e7c0f2":
+    image: "ghcr.io/smilintux/skpatched:postgres-17.7-alpine-skpa271c4b0ca9f@sha256:11a170ccd436e15e01eb8fae31b0668a086bf7b7c42f3d9b3832f047a6babc7a"
+    # critical/high fixable: 3/76 upstream, 1/25 patched
+  "postgres:18.6@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42":
+    image: "ghcr.io/smilintux/skpatched:postgres-18.6-skp4225e0842985@sha256:1a0830c86ffd0e6c59855134419ecf23353f2e2c36ad95cc632760ce6ae29d52"
+    # critical/high fixable: 1/84 upstream, 1/25 patched
+  "postgres:18.7-alpine@sha256:0115267ab5a509022df9319c77be365cef335adb71556c75f60f5360ee247e71":
+    image: "ghcr.io/smilintux/skpatched:postgres-18.7-alpine-skpa20524ec0f75@sha256:c550f28950e9186851de2b535d7c7e4ef16c33df64c171dbc6c3316aea0b8d39"
+    # critical/high fixable: 1/32 upstream, 1/25 patched
+  "postgres:18.7-bookworm@sha256:194e55feb2597b1465dbee81cc9fd8d204566cd2eb42c8d22fd6c931a38781b1":
+    image: "ghcr.io/smilintux/skpatched:postgres-18.7-bookworm-skp6488190ae01f@sha256:d125fafd9a75c4310ab21f23f76a7b982e13e8e73672722eae021ab8a6bb2bdc"
+    # critical/high fixable: 1/31 upstream, 1/25 patched
+  "prodrigestivill/postgres-backup-local:18-debian-d257e5d@sha256:f70742ebe42b2277689b028d1fd15aa80f77cffa01da163cc9f85a6ff1866e7f":
+    image: "ghcr.io/smilintux/skpatched:prodrigestivill.postgres-backup-local-18-debian-d257e5d-skp929c3be905ba@sha256:4a672b79ecfdc6ac71cfd679c0f56e6f974e2a0193048e8d406fd18d1197872d"
+    # critical/high fixable: 20/232 upstream, 2/51 patched
+  "prompve/prometheus-pve-exporter:3.11.0@sha256:290756c34fd13e1d9972b8e64344d49a15ab99dd0053b29d9716f1ca4ae4c069":
+    image: "ghcr.io/smilintux/skpatched:prompve.prometheus-pve-exporter-3.11.0-skpd6910434a7f2@sha256:34c1b1a3fc319dd32a0894defd68dafa8e893f56bdb0cd98080d78496f257554"
+    # critical/high fixable: 0/9 upstream, 0/5 patched
+  "python:3.13.18-bookworm@sha256:cc55e4ded9c95f6ce2133b3d096db43f214d280c2a8af65d83e246c8fa7d168c":
+    image: "ghcr.io/smilintux/skpatched:python-3.13.18-bookworm-skp36d05ee58f82@sha256:c6f003c59c1a3ff177d86ad10e2d165d13546e15890e3c6b8fe2cda6005f740c"
+    # critical/high fixable: 2/203 upstream, 0/5 patched
+  "python:3.13.18-slim-bookworm@sha256:a5a7017efc5969e00ae2b91c8eb0631049a569652aa4ffc4501769049ae45c72":
+    image: "ghcr.io/smilintux/skpatched:python-3.13.18-slim-bookworm-skp1875de3904b0@sha256:3fb339c986b821cbf34bab0a03a499866207d97080449562bb9262c78ae6087b"
+    # critical/high fixable: 0/10 upstream, 0/5 patched
+  "qdrant/qdrant:v1.17.0@sha256:f1c7272cdac52b38c1a0e89313922d940ba50afd90d593a1605dbbc214e66ffb":
+    image: "ghcr.io/smilintux/skpatched:qdrant.qdrant-v1.17.0-skp9dd0999d38f0@sha256:f43f960eab74610e6b71fb0b4719c3ab3869d7671f119decaf05594ee090e62e"
+    # critical/high fixable: 10/138 upstream, 4/65 patched
+  "qmcgaw/gluetun@sha256:44a82caf5b866193bfdfe8ffffbb11b20ce8138a917466c2c9bff9a52861c1a5":
+    image: "ghcr.io/smilintux/skpatched:qmcgaw.gluetun-latest-skpc2c3a4a5c753@sha256:d761aef3abfbff8b0ac8451d8303c88365a89a151298a32342e0fb2392736236"
+    # critical/high fixable: 0/14 upstream, 0/7 patched
+  "slskd/slskd@sha256:d0963a3e5b16facd295bf4f2156dad0182f246b1b21a032cae12f5494c694843":
+    image: "ghcr.io/smilintux/skpatched:slskd.slskd-latest-skp5e0c20fc0088@sha256:38cec414f8f59d4825e2e14a7582926db9de730686d95d5a2fa367fdfb262847"
+    # critical/high fixable: 0/2 upstream, 0/0 patched
+  "smilintux/skmem-pg:pg17-bm25-age-20261123@sha256:766a9bdb31cfd60ce9678bf238b129990d097b361e014b4d40ee792b40642da9":
+    image: "ghcr.io/smilintux/skpatched:smilintux.skmem-pg-pg17-bm25-age-20261123-skp8632e43b7051@sha256:23007035af26f96dc46562db37560fd7b403609ba3e560c0198a77507ffda399"
+    # critical/high fixable: 1/31 upstream, 1/25 patched
+  "smilintux/skpayment-runtime:py3.11-20261123@sha256:79bd0222923e77f67c6dd4925ef51fc5623eaa5c58e5a4c9c9cbb90fae6731f5":
+    image: "ghcr.io/smilintux/skpatched:smilintux.skpayment-runtime-py3.11-20261123-skp841f0b04f57d@sha256:40f1c6806c4adbccbc71707e895f9ecd7e8af29d8bf7a99bda3a7d57da17635e"
+    # critical/high fixable: 0/5 upstream, 0/0 patched
+  "syncthing/syncthing:2.1.7@sha256:2b71da7c0d0a91a6ae5285ad079226fecc0a365d08b27720e1f7037b018f7546":
+    image: "ghcr.io/smilintux/skpatched:syncthing.syncthing-2.1.7-skp278caa4e1f71@sha256:96c9894bc0b6d81a377e9b1a2e94d1b0ab38781212b1456e631a1b2b2dfdc4cb"
+    # critical/high fixable: 1/6 upstream, 0/1 patched
+  "tecnativa/docker-socket-proxy:v0.5.0":
+    image: "ghcr.io/smilintux/skpatched:tecnativa.docker-socket-proxy-v0.5.0-skpe2b6c27a4fde@sha256:fc26c8ba3c614b8290f10adb20e35ee6b0be6ded01f55a37e2036f6ebd132b4e"
+    # critical/high fixable: 0/9 upstream, 0/0 patched
+  "tecnativa/docker-socket-proxy:v0.5.0@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459":
+    image: "ghcr.io/smilintux/skpatched:tecnativa.docker-socket-proxy-v0.5.0-skpe2b6c27a4fde@sha256:481d52bbe74b9dcd6eb8821bbf4e4ac82334c744d51896bf895a1295779d61bb"
+    # critical/high fixable: 0/9 upstream, 0/0 patched
