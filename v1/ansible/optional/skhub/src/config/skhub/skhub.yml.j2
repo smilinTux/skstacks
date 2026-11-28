@@ -32,7 +32,7 @@ version: "3.7"
 
 services:
   nextcloud:
-    image: {{ skhub.NEXTCLOUD_IMAGE | default('nextcloud:35.0.2@sha256:786c102155d2717ba0f53a62b3fdd7a1354edc48e800b94dbe32294d9a5752a2') }}
+    image: {{ skhub.NEXTCLOUD_IMAGE | default('nextcloud:35.0.3@sha256:f44180601f18e7664557232b4c5edb0eb4a82d649c05b93313f4e15909553d42') }}
     env_file: /var/data/config/skhub-{{ env }}/skhub.env
 {% if _internal_ingress_ip %}
     extra_hosts:
@@ -311,7 +311,7 @@ services:
       - skhub-{{ env }}
 
   redis:
-    image: {{ skhub.REDIS_IMAGE | default('redis:8.10.3-alpine@sha256:7958cfbb9d152f87dadfbc89f1b0b15938f0b81ff8982feb327476f4911935c3') }}
+    image: {{ skhub.REDIS_IMAGE | default('redis:8.12.0-alpine@sha256:5af80107c1eeecb484a2269b80a26d12bfa6521787da4663bd9f19f60a163483') }}
     # notify-keyspace-events Ex: required for Nextcloud file locking.
     # timeout 0 / tcp-keepalive 300: avoid "Redis went away" on long uploads.
     command: redis-server --notify-keyspace-events Ex --appendonly yes --timeout 0 --tcp-keepalive 300
@@ -373,7 +373,7 @@ services:
       start_period: 120s
 
   cron:
-    image: {{ skhub.NEXTCLOUD_IMAGE | default('nextcloud:35.0.2@sha256:786c102155d2717ba0f53a62b3fdd7a1354edc48e800b94dbe32294d9a5752a2') }}
+    image: {{ skhub.NEXTCLOUD_IMAGE | default('nextcloud:35.0.3@sha256:f44180601f18e7664557232b4c5edb0eb4a82d649c05b93313f4e15909553d42') }}
 {% if _internal_ingress_ip %}
     extra_hosts:
 {% for _h in _internal_hosts %}
@@ -442,7 +442,7 @@ services:
   # up within about a second (Nextcloud admin manual, Background jobs, "Webhook
   # workers"). cron.php keeps running every 5 minutes for everything else.
   webhook-worker:
-    image: {{ skhub.NEXTCLOUD_IMAGE | default('nextcloud:35.0.2@sha256:786c102155d2717ba0f53a62b3fdd7a1354edc48e800b94dbe32294d9a5752a2') }}
+    image: {{ skhub.NEXTCLOUD_IMAGE | default('nextcloud:35.0.3@sha256:f44180601f18e7664557232b4c5edb0eb4a82d649c05b93313f4e15909553d42') }}
 {% if _internal_ingress_ip %}
     extra_hosts:
 {% for _h in _internal_hosts %}
@@ -503,7 +503,7 @@ services:
       - redis
 
   notify_push:
-    image: {{ skhub.NEXTCLOUD_IMAGE | default('nextcloud:35.0.2@sha256:786c102155d2717ba0f53a62b3fdd7a1354edc48e800b94dbe32294d9a5752a2') }}
+    image: {{ skhub.NEXTCLOUD_IMAGE | default('nextcloud:35.0.3@sha256:f44180601f18e7664557232b4c5edb0eb4a82d649c05b93313f4e15909553d42') }}
     user: www-data
     entrypoint: /var/www/html/custom_apps/notify_push/bin/x86_64/notify_push /var/www/html/config/config.php
     env_file: /var/data/config/skhub-{{ env }}/notify_push.env
@@ -600,7 +600,7 @@ services:
     command: -concurrency 50 -enable-url-source -log-level info
 {% if skhub.enable_collabora | default(false) %}
   collabora:
-    image: {{ skhub.COLLABORA_IMAGE | default('collabora/code:26.04.6.1.1@sha256:95f29f1c0a1778999125f53f058d968fe0afb37c95e32ebfb9f3444140faebd2') }}
+    image: {{ skhub.COLLABORA_IMAGE | default('collabora/code:26.04.6.2.1@sha256:a2f5d4e88addd46033d8440f7a13b82f7e6fe444bf8c6b5a3eadc789f0b5342b') }}
     env_file: /var/data/config/skhub-{{ env }}/collabora.env
     networks:
       - skhub-{{ env }}
