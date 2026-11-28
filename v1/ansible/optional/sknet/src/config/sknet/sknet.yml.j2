@@ -81,7 +81,7 @@ services:
     # Single-node KRaft, the same settings as upstream's compose. The heap is
     # capped well under the container limit: the broker is only a buffer
     # between the inlet and ClickHouse.
-    image: {{ skn.KAFKA_IMAGE | default('apache/kafka:4.3.1', true) }}
+    image: {{ skn.KAFKA_IMAGE | default('apache/kafka:4.3.2@sha256:852a0d49fc4e656b022e7f23785411802c9a088c78a7c5e39f33969de9c227a7', true) }}
     environment:
       - "KAFKA_NODE_ID=1"
       - "KAFKA_PROCESS_ROLES=controller,broker"

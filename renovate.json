@@ -33,6 +33,27 @@
     },
     {
       "customType": "regex",
+      "description": "Named image pins the generic v1 manager above cannot see: Jinja default('image', true) with the trailing `, true` (skrac MeshCentral, sknet Kafka, sksec bouncer, skfence and skfenceha certs-dumper, skwrit nextcloud-mcp) and the plain YAML pins that mirror them (skrac skr_default_image, sknet vars/defaults.yml). Scoped to these files and variable names on purpose; widening it to every `, true` default is a separate decision.",
+      "managerFilePatterns": [
+        "/^v1/ansible/optional/skrac/deploy_skrac-[a-z]+\\.yml$/",
+        "/^v1/ansible/optional/skrac/src/config/skrac/skrac\\.yml\\.j2$/",
+        "/^v1/ansible/optional/sknet/src/config/sknet/sknet\\.yml\\.j2$/",
+        "/^v1/ansible/optional/sknet/vars/defaults\\.yml$/",
+        "/^v1/ansible/core/sksec/src/config/sksec/sksec\\.yml\\.j2$/",
+        "/^v1/ansible/core/skfence/src/config/skfence/skfence\\.yml\\.j2$/",
+        "/^v1/ansible/core/skfenceha/src/config/skfenceha/skfenceha\\.yml\\.j2$/",
+        "/^v1/ansible/optional/skwrit/deploy_skwrit-[a-z]+\\.yml$/",
+        "/^v1/ansible/optional/skwrit/src/config/skwrit/skwrit\\.yml\\.j2$/"
+      ],
+      "matchStrings": [
+        "(?:MESHCENTRAL_IMAGE|BOUNCER_IMAGE|DUMPER_IMAGE|NEXTCLOUD_MCP_IMAGE)\\s*\\|\\s*default\\(\\s*['\"](?<depName>[\\w.-]+(?:/[\\w.-]+)*):(?<currentValue>[\\w.-]+)(?:@(?<currentDigest>sha256:[a-f0-9]+))?['\"]",
+        "(?:skr_default_image|KAFKA_IMAGE)(?:\\s*\\|\\s*default\\(\\s*|:\\s*)['\"](?<depName>[\\w.-]+(?:/[\\w.-]+)*):(?<currentValue>[\\w.-]+)(?:@(?<currentDigest>sha256:[a-f0-9]+))?['\"]"
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
       "description": "v2 plain-YAML app manifests, compose/swarm-compose files, and the 2 skfence Jinja compose templates: literal image refs (v2 has no Jinja default() image pins today; the one bash-style ${VERSION:-latest} reference in v2/apps/skfence is not extractable by this pattern and is called out in docs/dependency-updates.md)",
       "managerFilePatterns": [
         "/^v2/.+\\.ya?ml$/",

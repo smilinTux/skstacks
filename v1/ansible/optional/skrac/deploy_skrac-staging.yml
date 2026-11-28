@@ -45,11 +45,11 @@
     env: staging
     service_name: skrac
     service_type: optional
-    # MeshCentral 1.3.1 (upstream release, 2026-10-23, multi-arch
+    # MeshCentral 1.3.2 (upstream release, 2026-11-25, multi-arch
     # amd64/arm64/arm/v7/arm/v6). The compose template writes the same
     # literal so v1/scripts/list_images.py sees the pin; test_skrac_render.py
     # keeps the two equal.
-    skr_default_image: "ghcr.io/ylianst/meshcentral:1.3.1@sha256:266b01942545829f11d53e6cecd5c2e48033d9edb48bbd3a9a569482ff1d050d"
+    skr_default_image: "ghcr.io/ylianst/meshcentral:1.3.2@sha256:a2eb6d93a415dac0d1e69f1d6f20dd4ace46b99de75d584559ed9cf223d51113"
   pre_tasks:
     - name: Select vault file based on domain and cluster
       import_tasks: ../../shared/tasks/select_vault_file.yml

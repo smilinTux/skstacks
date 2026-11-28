@@ -11,8 +11,8 @@ nothing renders or changes for an instance that never runs
 
 - **License.** MeshCentral is Apache-2.0. Nothing is vendored or rebuilt:
   the role runs the unmodified upstream image.
-- **Image.** `ghcr.io/ylianst/meshcentral`, release **`1.3.1`** (published
-  2026-10-23, the current stable GitHub release at the time this role was
+- **Image.** `ghcr.io/ylianst/meshcentral`, release **`1.3.2`** (published
+  2026-11-25, the current stable GitHub release at the time this role was
   written; not a pre-release), multi-arch (`amd64`, `arm64`, `arm/v7`,
   `arm/v6`), pinned by the manifest-list digest; the play refuses an image
   without `@sha256:`. If a later stable release moves ahead of what the
@@ -368,7 +368,7 @@ skrac:
   BACKUP_INCLUDE_FILES: false               # also archive FILES_PATH, as a second, separate archive
 ```
 
-Default image: `ghcr.io/ylianst/meshcentral:1.3.1@sha256:266b01942545829f11d53e6cecd5c2e48033d9edb48bbd3a9a569482ff1d050d`
+Default image: `ghcr.io/ylianst/meshcentral:1.3.2@sha256:a2eb6d93a415dac0d1e69f1d6f20dd4ace46b99de75d584559ed9cf223d51113`
 (multi-arch index digest; full literal in the playbooks). Networks:
 override with the flat per-env `skrac_<env>_networks` list.
 
