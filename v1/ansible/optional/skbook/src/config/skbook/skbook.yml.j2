@@ -148,7 +148,7 @@ services:
       - docker-entrypoint.sh
     # Room for a slow shutdown on a busy NFS datadir.
     stop_grace_period: {{ skbook.DB_STOP_GRACE_PERIOD | default('120s', true) }}
-    image: {{ skbook.MARIADB_IMAGE | default('mariadb:12.3.3@sha256:4ebbcf100a3ba320766dfa0e1af008df12261301db6ef72798c7650f70794aed') }}
+    image: {{ skbook.MARIADB_IMAGE | default('mariadb:12.3.3@sha256:4aaf88b3106382c8c18e49f0cec60267be618fc22f858c4503afb2a2555afed3') }}
     env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}.env
     # --tmpdir points MariaDB's scratch/sort space at a local (non-NFS) path
     # inside the container's own overlay filesystem, not the NFS-backed
@@ -189,7 +189,7 @@ services:
           memory: {{ skbook.DB_RESOURCES_RESERVATIONS_MEMORY | default("256M") }}
 
   db-backup:
-    image: {{ skbook.MARIADB_IMAGE | default('mariadb:12.3.3@sha256:4ebbcf100a3ba320766dfa0e1af008df12261301db6ef72798c7650f70794aed') }}
+    image: {{ skbook.MARIADB_IMAGE | default('mariadb:12.3.3@sha256:4aaf88b3106382c8c18e49f0cec60267be618fc22f858c4503afb2a2555afed3') }}
     env_file: /var/data/config/{{ app }}-{{ env }}/{{ app }}-db-backup.env
     volumes:
       - /var/data/{{ app }}-{{ env }}/database-dump:/dump
