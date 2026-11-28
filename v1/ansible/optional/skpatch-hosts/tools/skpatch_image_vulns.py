@@ -11,7 +11,10 @@ Only HIGH and CRITICAL findings that have a fixed version are kept (Trivy's
 --ignore-unfixed): what an image rebuild or bump would actually fix.
 
 Results are cached per image digest for --ttl-hours (24): a rerun the same
-day scans nothing new. A scan that fails for one image is recorded in the
+day scans nothing new. The Trivy DB (vulnerability DB, Java DB, layer cache,
+about 3.3 GB) is shared by every estate on the controller (--trivy-cache):
+one copy, not one per estate. Scans that share it take an exclusive lock on
+it, one at a time, because Trivy's layer cache refuses a second process. A scan that fails for one image is recorded in the
 summary as that image's error, never fatal, and is not cached (the next run
 tries again).
 
@@ -34,7 +37,8 @@ findings are counted ("ignored"), never listed.
 Usage:
     skpatch_image_vulns.py --ssh <swarm manager> --estate <estate> \\
         --out ~/.local/state/skpatch-hosts/image-vulns/<estate>.json \\
-        --cache-dir ~/.cache/skpatch-hosts/image-vulns/<estate> [--ignore <file>]
+        --cache-dir ~/.cache/skpatch-hosts/image-vulns/<estate> \\
+        [--trivy-cache ~/.cache/skpatch-hosts/image-vulns/trivy] [--ignore <file>]
 Exit 0: every image scanned; 1: the summary was written but at least one
 image failed (listed in it); 2: the service list could not be read (the
 summary carries the error, so the digest says so).
@@ -43,6 +47,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import fcntl
 import fnmatch
 import hashlib
 import json
@@ -57,6 +62,7 @@ from pathlib import Path
 # Docker-Content-Digest). Bump both together.
 TRIVY_IMAGE = "aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb"
 SEVERITIES = ("CRITICAL", "HIGH")
+LOCK_NAME = ".skpatch-scan.lock"
 LIST_CMD = ("set -eu; D=docker; $D info >/dev/null 2>&1 || D='sudo -n docker'; "
             "$D service ls --format '{{.Name}}\t{{.Image}}'")
 
@@ -141,8 +147,12 @@ def trivy_error(stderr: str) -> str:
 def scan(ref: str, trivy_image: str, db_dir: Path, docker: str = "docker", timeout: int = 900,
          registry_auth: Path | None = None) -> list[dict]:
     db_dir.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.run(trivy_command(ref, trivy_image, db_dir, docker, registry_auth),
-                          capture_output=True, text=True, timeout=timeout)
+    # one scan at a time per DB: the estates share it, and Trivy's layer
+    # cache (bbolt) fails a second process instead of waiting for it
+    with open(db_dir / LOCK_NAME, "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        proc = subprocess.run(trivy_command(ref, trivy_image, db_dir, docker, registry_auth),
+                              capture_output=True, text=True, timeout=timeout)
     if proc.returncode != 0:
         raise RuntimeError(f"trivy exit {proc.returncode}: {trivy_error(proc.stderr)}")
     try:
@@ -191,11 +201,12 @@ def write_json(path: Path, obj: dict) -> None:
 
 def build_summary(estate: str, manager: str, services: dict[str, list[str]], cache_dir: Path,
                   trivy_image: str, ttl: dt.timedelta, rules: list[tuple[str, str]], scanner=None,
-                  now: dt.datetime | None = None) -> dict:
+                  now: dt.datetime | None = None, trivy_cache: Path | None = None) -> dict:
     """Scan (or reuse the cache for) each image. scanner(ref) -> vulns, for tests."""
     now = now or now_utc()
     results = cache_dir / "results"
-    scanner = scanner or (lambda ref: scan(ref, trivy_image, cache_dir / "trivy"))
+    db_dir = trivy_cache or cache_dir / "trivy"
+    scanner = scanner or (lambda ref: scan(ref, trivy_image, db_dir))
     images = []
     for ref, names in services.items():
         entry = {"image": ref, "services": names, "digest": image_digest(ref), "status": "ok", "error": None,
@@ -237,7 +248,10 @@ def main() -> int:
     ap.add_argument("--ssh-option", action="append", default=[], help="extra ssh argument (repeatable)")
     ap.add_argument("--estate", required=True)
     ap.add_argument("--out", type=Path, required=True, help="summary JSON the digest reads")
-    ap.add_argument("--cache-dir", type=Path, required=True, help="Trivy DB (trivy/) and per-digest results (results/)")
+    ap.add_argument("--cache-dir", type=Path, required=True,
+                    help="per-digest results (results/), and the Trivy DB (trivy/) unless --trivy-cache is given")
+    ap.add_argument("--trivy-cache", type=Path, default=os.environ.get("SKPW_TRIVY_CACHE") or None,
+                    help="Trivy DB directory shared by every estate (default $SKPW_TRIVY_CACHE, else <cache-dir>/trivy)")
     ap.add_argument("--ttl-hours", type=float, default=24)
     ap.add_argument("--ignore", type=Path, default=os.environ.get("SKPW_IMAGE_IGNORE") or None,
                     help="ignore file (default $SKPW_IMAGE_IGNORE)")
@@ -261,10 +275,11 @@ def main() -> int:
                               "trivy": args.trivy_image, "error": str(err)[:500], "totals": {}, "images": []})
         return 2
     rules = load_ignores(args.ignore)
+    db_dir = args.trivy_cache or args.cache_dir / "trivy"
     summary = build_summary(
         args.estate, args.ssh, services, args.cache_dir, args.trivy_image, dt.timedelta(hours=args.ttl_hours), rules,
-        scanner=lambda ref: scan(ref, args.trivy_image, args.cache_dir / "trivy", args.docker, args.scan_timeout,
-                                 args.registry_auth), now=now)
+        scanner=lambda ref: scan(ref, args.trivy_image, db_dir, args.docker, args.scan_timeout,
+                                 args.registry_auth), now=now, trivy_cache=db_dir)
     write_json(args.out, summary)
     t = summary["totals"]
     for i in summary["images"]:
