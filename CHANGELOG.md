@@ -24,6 +24,63 @@ Each entry says what an instance must do, if anything.
   **Instance action**: none to get it. To opt out: `skstacks_patched_images: false`, or
   `skstacks_patched_images_skip: [<repository>]` for single images.
 
+### sksec: the CrowdSec bouncer runs inside Traefik (vendored local plugin), the old container is a fallback
+
+- The bouncer was `fbonalair/traefik-crowdsec-bouncer` 0.5.0, a third-party forwardAuth
+  container with no upstream release since 2022 (glibc CVE-2023-4911 plus 4 critical and 85
+  high fixable findings). It is replaced by the CrowdSec bouncer Traefik plugin,
+  `maxlerebourg/crowdsec-bouncer-traefik-plugin` **v1.8.2** (CrowdSec hub; tag commit
+  `b0431e2e`, release tarball sha256 `8553b722bcd15f0c08bbf5aa1485660686b32033469b1f7c262b02358f3538cf`;
+  upstream tests on Traefik v3.7.17, the framework pins v3.7.19).
+- Offline-safe: the plugin source is vendored at the pinned tag
+  (`v1/ansible/shared/third_party/crowdsec-bouncer-traefik-plugin/`, runtime files only, its
+  Apache-2.0 `LICENSE` and a `NOTICE.md`; the GPL-3.0 and Apache-2.0 licenses of its two
+  vendored Go dependencies ship with them) with a `SHA256SUMS`. skfence and skfenceha
+  (`CROWDSEC_PLUGIN_ENABLED`, default `true`) verify it on the controller and again on the
+  node, copy it to `/var/data/config/<traefik>-<env>/plugins-local/crowdsec-bouncer-traefik-plugin-v1.8.2/`,
+  mount that read-only at `/plugins-local` (both `traefik-acme` and `traefik-worker` on
+  skfenceha) and declare it under `experimental.localPlugins` in every static config. Traefik
+  downloads nothing at start. `tools/vendor_crowdsec_traefik_plugin.sh <tag> <sha256>` bumps it;
+  a bump changes the mount source, so Traefik rolls onto it.
+- New `sksec.BOUNCER_MODE`: `plugin` (default) or `forwardauth` (the old container, kept for
+  this one release, renders byte-identical to v2.26.37). The middleware keeps its name,
+  `crowdsec-bouncer@file`, so no router, chain or label changes. Plugin mode is stream mode
+  against the existing LAPI with the existing bouncer key (same vault key or persisted
+  `secret/bouncer.key`, no new secret), cache in Traefik memory. The key is written as
+  `dynamic/sksec-lapi.key` (0600, ignored by the file provider) and read through
+  `crowdsecLapiKeyFile`, so it never appears in the dynamic YAML or Traefik's API.
+  `BOUNCER_TRUSTED_PROXIES` becomes the plugin's `forwardedHeadersTrustedIPs` (same right-to-left
+  walk); unset, the plugin takes the rightmost `X-Forwarded-For` entry instead of the old
+  container's forgeable leftmost one. New plugin knobs: `BOUNCER_UPDATE_INTERVAL_SECONDS` (60),
+  `BOUNCER_UPDATE_MAX_FAILURE` (default `-1`: a LAPI outage keeps the last list enforced and never
+  refuses traffic; a whole number N fails closed, refusing every request after N failed pulls), `BOUNCER_LOG_LEVEL` (INFO),
+  `BOUNCER_CLIENT_TRUSTED_IPS` (empty). AppSec (WAF) passthrough stays off: sksec runs no AppSec
+  component (sksec README, "AppSec").
+- Safety: in plugin mode sksec first checks that the Traefik static config declares the
+  plugin, the source is installed and the running Traefik services mount `/plugins-local`,
+  and stops with nothing written otherwise (a plugin middleware Traefik cannot load disables
+  every router on the chain). A hand-set vault key with a character the plugin rejects stops
+  the play too. Tests: `v1/tests/test_sksec_traefik_plugin.py` (vendored checksums, both modes,
+  static configs and mounts through real Ansible, no router referencing a missing middleware in
+  either mode); the bouncer-knob baselines now pin the forwardauth mode, plus new plugin-mode
+  baselines.
+  **Instance action**: deploy order matters. (1) Deploy **skfence or skfenceha first**: it
+  installs the plugin and rolls Traefik (rolling restart of every Traefik task, also on an
+  estate without sksec; loading the plugin is inert until sksec uses it). (2) Then deploy
+  **sksec**: it writes the key file and the plugin middleware (Traefik switches at once); on
+  skfenceha it then rolls `traefik-acme` and `traefik-worker` one task at a time, because Traefik
+  on other nodes gets no inotify event for the NFS write (`BOUNCER_ROLL_TRAEFIK: false` skips
+  it); only then `docker stack deploy --prune` removes `sksec-<env>_bouncer-traefik`. crowdsec itself stays one
+  stop-first task (before any sksec update, still check exactly one running crowdsec task);
+  there is no bouncer service left, so its start-first order no longer applies. Check after:
+  `cscli bouncers list` shows the bouncer pulling (last_pull moving), a clean request answers
+  normally and `cscli decisions add --ip <test ip> --duration 2m` turns that client into a 403
+  within a minute. **Rollback** (this release only): set `sksec.BOUNCER_MODE: forwardauth` and
+  redeploy sksec alone. The stack is deployed first (the bouncer comes back), the play waits for
+  it to run, then points `crowdsec-bouncer` back at it and removes the key file. Traefik keeps
+  the plugin loaded but unused. Instances pinning `BOUNCER_IMAGE` or the `BOUNCER_REPLICAS` /
+  `BOUNCER_HEALTHCHECK*` knobs: they only apply in forwardauth mode now.
+
 ### skbom: the OSV step can log in to Dependency-Track
 
 - The OSV provisioner added in v2.26.36 asked the Dependency-Track login for `application/json`.

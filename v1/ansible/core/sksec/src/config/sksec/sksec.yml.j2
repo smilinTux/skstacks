@@ -84,8 +84,10 @@ services:
       # Mounted as: /var/log/traefik/{NODE_HOSTNAME}/access.log
       - /var/data/logs/{{ traefik_service_name | default('skfence') }}{{ env_suffix }}/traefik:/var/log/traefik:ro
 {% endif %}
+{% if (sksec.BOUNCER_MODE | default('plugin', true)) == 'forwardauth' %}
     depends_on:
       - bouncer-traefik
+{% endif %}
     networks:
       - sksec{{ env_suffix }}
       - cloud-public{{ env_suffix }}
@@ -142,6 +144,12 @@ services:
       retries: {{ sksec.HEALTH_CHECK_RETRIES | default('3') }}
       start_period: {{ sksec.HEALTH_CHECK_START_PERIOD | default('10s') }}
 
+{% if (sksec.BOUNCER_MODE | default('plugin', true)) == 'forwardauth' %}
+{# sksec.BOUNCER_MODE: forwardauth (the pre-v2.26.38 fallback, kept for one
+   release): the third-party forwardAuth container. In the default plugin
+   mode the bouncer runs inside Traefik (crowdsec-bouncer@file is a plugin
+   middleware, see sksec-dynamic.yml.j2), this service is not rendered, and
+   `docker stack deploy --prune` removes it. #}
   bouncer-traefik:
     image: {{ sksec.BOUNCER_IMAGE | default('docker.io/fbonalair/traefik-crowdsec-bouncer:0.5.0', true) }}
     env_file: /var/data/config/sksec{{ env_suffix }}/sksec.env
@@ -190,6 +198,7 @@ services:
 {% else %}
     # Note: Bouncer healthcheck disabled due to API limitations
     # Consider implementing custom health check if needed
+{% endif %}
 {% endif %}
 
 # No named volumes - all mounts are direct bind mounts

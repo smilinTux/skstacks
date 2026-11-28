@@ -1,0 +1,60 @@
+# Traefik Dynamic Configuration for SKSec (CrowdSec)
+# This file is deployed to /var/data/config/skfenceha-prod/dynamic/sksec.yml
+# Traefik automatically loads this file from the dynamic directory (flat structure)
+# Uses detected traefik_service_name (skfence or skfenceha) - auto-detected during deployment
+#
+# SKSec provides CrowdSec security monitoring and the Traefik bouncer middleware
+# This middleware is applied globally via the default middleware chain
+
+http:
+  middlewares:
+    # sksec.BOUNCER_MODE: plugin (default). The bouncer runs INSIDE Traefik as
+    # the vendored local plugin skfence/skfenceha declare under
+    # experimental.localPlugins.crowdsec-bouncer-traefik-plugin and mount at
+    # /plugins-local. Same middleware name as the forwardauth mode, so no
+    # router or chain changes. Stream mode: Traefik pulls the decision list
+    # from the LAPI every BOUNCER_UPDATE_INTERVAL_SECONDS and answers from
+    # memory, so a request never waits on the LAPI.
+    crowdsec-bouncer:
+      plugin:
+        crowdsec-bouncer-traefik-plugin:
+          enabled: true
+          logLevel: INFO
+          crowdsecMode: stream
+          crowdsecLapiScheme: http
+          crowdsecLapiHost: "sksec-dev_crowdsec:8080"
+          # The same bouncer key the forwardauth bouncer used (BOUNCER_KEY_traefik
+          # in sksec.env registers it). Read from a file next to this one: the
+          # file provider only parses .yml/.yaml/.toml, and a key file keeps the
+          # key out of Traefik's API/dashboard view of this middleware.
+          crowdsecLapiKeyFile: /etc/traefik/dynamic/sksec-lapi.key
+          httpTimeoutSeconds: 10
+          updateIntervalSeconds: 60
+          # Consecutive failed LAPI pulls tolerated (the last list keeps being
+          # enforced) before every request is refused; -1 never refuses. The
+          # default rides out a crowdsec restart (stop-first) without 403s.
+          updateMaxFailure: -1
+          streamStartupBlock: true
+          # No CAPI, captcha or AppSec here: the LAPI already carries the
+          # community blocklist, and sksec runs no AppSec component.
+          crowdsecAppsecEnabled: false
+          # sksec.BOUNCER_TRUSTED_PROXIES unset: X-Forwarded-For is read from
+          # any peer, rightmost address (the one Traefik's entrypoint
+          # forwardedHeaders accepted), never a client-forged leftmost one.
+
+  # Global CrowdSec Protection
+  # The crowdsec-bouncer middleware is included in the default middleware chain
+  # This means all routers using default@file will automatically be protected
+  # 
+  # To exclude specific routers from CrowdSec protection, use a custom middleware chain:
+  #   middlewares:
+  #     - default-security-headers@file
+  #     - gzip@file
+  #     # Note: crowdsec-bouncer@file is NOT included
+  #
+  # To use CrowdSec on specific routers only, add it explicitly:
+  #   middlewares:
+  #     - crowdsec-bouncer@file
+  #     - default-security-headers@file
+  #     - gzip@file
+

@@ -76,6 +76,29 @@
           (not 0.0.0.0/0 or ::/0, which is the unsafe default it replaces).
         quiet: true
 
+    # sksec.BOUNCER_MODE: plugin (default) runs the bouncer inside Traefik as
+    # a local plugin; forwardauth keeps the old container for one release.
+    - name: Validate the bouncer mode knobs (BOUNCER_MODE, BOUNCER_UPDATE_*, BOUNCER_CLIENT_TRUSTED_IPS)
+      vars:
+        _sksec_clients: "{{ sksec.BOUNCER_CLIENT_TRUSTED_IPS | default([], true) }}"
+      assert:
+        that:
+          - (sksec.BOUNCER_MODE | default('plugin', true)) in ['plugin', 'forwardauth']
+          - (sksec.BOUNCER_UPDATE_INTERVAL_SECONDS | default('') | string) is match('^([1-9][0-9]*)?$')
+          - (sksec.BOUNCER_UPDATE_MAX_FAILURE | default('') | string) is match('^(-1|[0-9]+)?$')
+          - (sksec.BOUNCER_LOG_LEVEL | default('INFO', true) | upper) in ['DEBUG', 'INFO', 'WARN', 'ERROR']
+          - _sksec_clients is sequence and _sksec_clients is not string and _sksec_clients is not mapping
+          - _sksec_clients | map('string') | reject('match', '^[0-9A-Fa-f:.]+(/[0-9]{1,3})?$') | list | length == 0
+          - _sksec_clients | map('string') | select('match', '^(0\\.0\\.0\\.0|::)/0$') | list | length == 0
+        fail_msg: >-
+          ERROR: sksec.BOUNCER_MODE must be plugin or forwardauth;
+          BOUNCER_UPDATE_INTERVAL_SECONDS a whole number >= 1;
+          BOUNCER_UPDATE_MAX_FAILURE a whole number >= 0, or -1 (never refuse);
+          BOUNCER_LOG_LEVEL one of DEBUG, INFO, WARN, ERROR; and
+          BOUNCER_CLIENT_TRUSTED_IPS a YAML list of IP addresses or CIDRs
+          (not 0.0.0.0/0 or ::/0, which would switch the bouncer off).
+        quiet: true
+
     # fbonalair's bouncer appends no port: a bare service name dials the
     # LAPI on 80 while it listens on 8080, every check fails, and the
     # bouncer fails closed (403 on every protected router).
@@ -136,6 +159,58 @@
         - always
         - traefik
         - config
+
+    # Plugin mode: Traefik needs the plugin loaded (static config + mount,
+    # owned by skfence/skfenceha) BEFORE a dynamic middleware names it, or it
+    # rejects crowdsec-bouncer@file and disables every router on the default
+    # chain. Refuse here, before anything is written, when the running Traefik
+    # does not carry it yet: deploy skfence/skfenceha first.
+    - name: Check the running Traefik loads the CrowdSec bouncer plugin (plugin mode)
+      shell: |
+        set -uo pipefail
+        cfg="/var/data/config/{{ traefik_service_name | default('skfence') }}-{{ env }}"
+        fail=0
+        for f in {{ 'traefik.yml traefik-worker.yml' if (traefik_service_name | default('skfence')) == 'skfenceha' else 'traefik.yml' }}; do
+          if ! grep -q 'moduleName: github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin' "$cfg/$f"; then
+            echo "MISSING: $cfg/$f does not declare experimental.localPlugins.crowdsec-bouncer-traefik-plugin"
+            fail=1
+          fi
+        done
+        if ! ls "$cfg"/plugins-local/crowdsec-bouncer-traefik-plugin-*/src/github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin/.traefik.yml >/dev/null 2>&1; then
+          echo "MISSING: no plugin source under $cfg/plugins-local/"
+          fail=1
+        fi
+        for s in {{ ((traefik_service_name | default('skfence')) ~ '-' ~ env ~ '_traefik-acme ' ~ (traefik_service_name | default('skfence')) ~ '-' ~ env ~ '_traefik-worker') if (traefik_service_name | default('skfence')) == 'skfenceha' else ((traefik_service_name | default('skfence')) ~ '-' ~ env ~ '_traefik') }}; do
+          if ! docker service inspect "$s" --format '{{ '{{' }}range .Spec.TaskTemplate.ContainerSpec.Mounts{{ '}}' }}{{ '{{' }}.Target{{ '}}' }} {{ '{{' }}end{{ '}}' }}' 2>/dev/null | grep -qw /plugins-local; then
+            echo "MISSING: service $s does not mount /plugins-local"
+            fail=1
+          fi
+        done
+        [ "$fail" -eq 0 ] && echo "plugin: ok"
+        exit "$fail"
+      args:
+        executable: /bin/bash
+      register: sksec_plugin_preflight
+      changed_when: false
+      failed_when: false
+      when: (sksec.BOUNCER_MODE | default('plugin', true)) == 'plugin'
+      tags:
+        - always
+
+    - name: Stop when Traefik is not ready for the CrowdSec bouncer plugin
+      fail:
+        msg: |
+          sksec.BOUNCER_MODE is plugin, but the running Traefik does not load the
+          CrowdSec bouncer plugin yet:
+          {{ sksec_plugin_preflight.stdout | default('') }}
+          Deploy {{ traefik_service_name | default('skfence') }} from this framework release first
+          (it installs the plugin and rolls Traefik), then rerun sksec. Nothing was
+          written or deployed yet. To keep the old bouncer for now, set sksec.BOUNCER_MODE: forwardauth.
+      when:
+        - (sksec.BOUNCER_MODE | default('plugin', true)) == 'plugin'
+        - sksec_plugin_preflight.rc | default(0) != 0
+      tags:
+        - always
 
     - name: Ensure logrotate is installed
       apt:
@@ -224,6 +299,21 @@
       fail:
         msg: "CROWDSEC_BOUNCER_API_KEY could not be determined"
       when: computed_bouncer_key | length == 0
+
+    # The plugin refuses (and Traefik then disables every router on the
+    # chain) a key outside this character set. A generated key (base64)
+    # always fits; this catches a hand-set vault key before Traefik does.
+    - name: Check the bouncer key is one the Traefik plugin accepts (plugin mode)
+      assert:
+        that:
+          - computed_bouncer_key is match("^[a-zA-Z0-9 !#$%&'*+.^_`|~=/-]*$")
+        fail_msg: >-
+          ERROR: the CrowdSec bouncer key has a character the Traefik plugin
+          rejects (allowed: letters, digits and !#$%&'*+-.^_`|~=/ and space).
+          Set sksec.BOUNCER_MODE: forwardauth or use another key.
+        quiet: true
+      no_log: true
+      when: (sksec.BOUNCER_MODE | default('plugin', true)) == 'plugin'
 
     - name: Copy {{ app }} config files except templates
       copy:
@@ -371,7 +461,25 @@
       tags:
         - templates
 
-    - name: Deploy CrowdSec bouncer middleware configuration (flat structure)
+    # The plugin reads the LAPI key from this file (crowdsecLapiKeyFile). The
+    # file provider ignores non-YAML files, so it is never parsed as config.
+    - name: Write the CrowdSec bouncer key for the Traefik plugin (plugin mode)
+      ansible.builtin.copy:
+        content: "{{ computed_bouncer_key }}"
+        dest: "/var/data/config/{{ traefik_service_name | default('skfence') }}-{{ env }}/{{ item }}/sksec-lapi.key"
+        owner: root
+        group: root
+        mode: '0600'
+      loop: "{{ ['dynamic'] + (['dynamic_acme'] if (traefik_service_name | default('skfence')) == 'skfenceha' else []) }}"
+      no_log: true
+      when: (sksec.BOUNCER_MODE | default('plugin', true)) == 'plugin'
+      tags:
+        - templates
+
+    # Plugin mode writes the middleware BEFORE the stack deploy: Traefik
+    # switches to the in-process bouncer first, then `--prune` removes the
+    # old forwardAuth container nothing points at any more.
+    - name: Deploy CrowdSec bouncer middleware configuration (plugin mode, before the stack)
       ansible.builtin.template:
         src: "{{ playbook_dir }}/src/config/{{ app }}/sksec-dynamic.yml.j2"
         dest: "/var/data/config/{{ traefik_service_name | default('skfence') }}-{{ env }}/{{ item }}/sksec.yml"
@@ -379,8 +487,36 @@
         group: root
         mode: '0644'
       loop: "{{ ['dynamic'] + (['dynamic_acme'] if (traefik_service_name | default('skfence')) == 'skfenceha' else []) }}"
+      register: sksec_plugin_dynamic
+      when: (sksec.BOUNCER_MODE | default('plugin', true)) == 'plugin'
       tags:
         - templates
+
+    # skfenceha: the Traefik tasks on other nodes read dynamic/ over NFS and
+    # get no inotify event for this node's write, so they could keep the old
+    # forwardAuth middleware while the prune below removes its container
+    # (every protected router there would fail). When the middleware changed,
+    # roll both Traefik services one task at a time so every task loads it,
+    # BEFORE the bouncer goes away. sksec.BOUNCER_ROLL_TRAEFIK: false skips it
+    # (then restart the Traefik tasks yourself before the stack deploy).
+    - name: Roll Traefik so every node loads the plugin middleware (skfenceha, on change)
+      shell: |
+        set -euo pipefail
+        for s in {{ traefik_service_name }}-{{ env }}_traefik-acme {{ traefik_service_name }}-{{ env }}_traefik-worker; do
+          echo "rolling $s"
+          timeout 1200 docker service update --force --detach=false --quiet "$s"
+        done
+      args:
+        executable: /bin/bash
+      register: sksec_traefik_roll
+      when:
+        - (sksec.BOUNCER_MODE | default('plugin', true)) == 'plugin'
+        - (traefik_service_name | default('skfence')) == 'skfenceha'
+        - sksec_plugin_dynamic is changed
+        - sksec.BOUNCER_ROLL_TRAEFIK | default(true) | bool
+      tags:
+        - templates
+        - deploy
 
     - name: Process {{ app }} deploy script template
       ansible.builtin.template:
@@ -456,6 +592,57 @@
       debug: var=deploy_output.stdout_lines
       tags:
         - deploy
+
+    # forwardauth mode writes the middleware AFTER the stack deploy and once
+    # the bouncer runs: on a rollback from plugin mode the bouncer service does
+    # not exist yet, and pointing forwardAuth at it first would refuse every
+    # request on the chain until it starts.
+    - name: Wait for the forwardAuth bouncer to run (forwardauth mode)
+      shell: |
+        set -uo pipefail
+        svc="sksec-{{ env }}_bouncer-traefik"
+        want="{{ sksec.BOUNCER_REPLICAS | default(1, true) | int }}"
+        for _ in $(seq 1 60); do
+          have="$(docker service ps "$svc" --filter desired-state=running --format '{{ '{{' }}.CurrentState{{ '}}' }}' 2>/dev/null | grep -c '^Running' || true)"
+          if [ "${have:-0}" -ge "$want" ]; then
+            echo "bouncer: $have/$want running"
+            exit 0
+          fi
+          sleep 3
+        done
+        echo "bouncer: not running after 180 s ($svc)" >&2
+        exit 1
+      args:
+        executable: /bin/bash
+      register: sksec_bouncer_wait
+      changed_when: false
+      when: (sksec.BOUNCER_MODE | default('plugin', true)) == 'forwardauth'
+      tags:
+        - deploy
+        - templates
+
+    - name: Deploy CrowdSec bouncer middleware configuration (forwardauth mode, after the stack)
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/src/config/{{ app }}/sksec-dynamic.yml.j2"
+        dest: "/var/data/config/{{ traefik_service_name | default('skfence') }}-{{ env }}/{{ item }}/sksec.yml"
+        owner: root
+        group: root
+        mode: '0644'
+      loop: "{{ ['dynamic'] + (['dynamic_acme'] if (traefik_service_name | default('skfence')) == 'skfenceha' else []) }}"
+      when: (sksec.BOUNCER_MODE | default('plugin', true)) == 'forwardauth'
+      tags:
+        - deploy
+        - templates
+
+    - name: Remove the plugin's bouncer key file (forwardauth mode)
+      ansible.builtin.file:
+        path: "/var/data/config/{{ traefik_service_name | default('skfence') }}-{{ env }}/{{ item }}/sksec-lapi.key"
+        state: absent
+      loop: "{{ ['dynamic'] + (['dynamic_acme'] if (traefik_service_name | default('skfence')) == 'skfenceha' else []) }}"
+      when: (sksec.BOUNCER_MODE | default('plugin', true)) == 'forwardauth'
+      tags:
+        - deploy
+        - templates
 
     # The parser above only filters LOCAL detections. A LAPI allowlist is
     # applied to every decision (CAPI community blocklist, console
