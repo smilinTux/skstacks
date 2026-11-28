@@ -64,6 +64,10 @@ class FakeDT(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length", 0))
         raw = self.rfile.read(n).decode()
         if self.path == "/api/v1/user/login":
+            # like Dependency-Track 4.14: the login only produces text/plain
+            accept = self.headers.get("Accept", "*/*")
+            if "text/plain" not in accept and "*/*" not in accept:
+                return self._send(406, "Not Acceptable")
             form = parse_qs(raw)
             if form.get("username") == ["admin"] and form.get("password") == [PASSWORD]:
                 return self._send(200, "jwt-token")
@@ -119,6 +123,13 @@ def test_enables_osv_and_alias_sync_on_a_fresh_dependency_track(dt):
     assert dt.props[("vuln-source", "google.osv.alias.sync.enabled")]["propertyValue"] == "true"
     assert dt.props[("vuln-source", "nvd.enabled")]["propertyValue"] == "true"  # untouched
     assert len(dt.posts) == 1 and {i["propertyName"] for i in dt.posts[0]} == {"google.osv.enabled", "google.osv.alias.sync.enabled"}
+
+
+def test_login_asks_for_text_plain_because_json_gets_406(dt):
+    api = osv.Api(dt.url)
+    form = {"username": "admin", "password": PASSWORD}
+    assert api.call("POST", "/api/v1/user/login", form=form)[0] == 406
+    assert api.call("POST", "/api/v1/user/login", form=form, accept="text/plain") == (200, "jwt-token")
 
 
 def test_second_run_is_a_no_op(dt):
