@@ -394,6 +394,25 @@
         - config
         - dynamic
 
+    # The CrowdSec bouncer runs inside Traefik as a local plugin (sksec
+    # BOUNCER_MODE: plugin). Install and checksum-verify the vendored source
+    # BEFORE the static config and the stack that mount it are rendered.
+    - name: Install the CrowdSec bouncer Traefik local plugin
+      include_tasks:
+        file: ../../shared/tasks/traefik_crowdsec_plugin.yml
+        apply:
+          tags:
+            - config
+            - compose
+            - plugins
+      vars:
+        traefik_plugin_config_dir: "/var/data/config/{{ app }}-{{ env }}"
+      when: skfenceha.CROWDSEC_PLUGIN_ENABLED | default(true) | bool
+      tags:
+        - config
+        - compose
+        - plugins
+
     - name: Render traefik.yml (ACME-master role) from template with vault secrets
       template:
         src: "{{ playbook_dir }}/src/config/{{ app }}/traefik.yml.j2"

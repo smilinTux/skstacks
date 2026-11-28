@@ -1,0 +1,97 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# Shared task: install the vendored CrowdSec bouncer Traefik plugin as a
+# Traefik LOCAL plugin for skfence / skfenceha (sksec.BOUNCER_MODE: plugin).
+#
+# Traefik loads local plugins from ./plugins-local/src/<moduleName> relative
+# to its working directory (/ in the official image), so the stack mounts
+#   <traefik_plugin_config_dir>/plugins-local/<traefik_crowdsec_plugin_bundle>
+# read-only at /plugins-local. Nothing is downloaded at Traefik start.
+#
+# The bundle directory is versioned: a version bump changes the mount source,
+# which makes Swarm roll the Traefik tasks onto the new code (Traefik reads
+# plugin source only at start). Older bundles are kept for a rollback.
+#
+# Integrity: SHA256SUMS (written by tools/vendor_crowdsec_traefik_plugin.sh)
+# is checked on the controller before anything is copied, and again on the
+# node after the copy. A mismatch stops the deploy before the stack changes.
+#
+# In:  traefik_plugin_config_dir  e.g. /var/data/config/skfence-prod
+# Out: traefik_crowdsec_plugin_bundle (fact), the directory name to mount.
+
+- name: Pin the CrowdSec bouncer Traefik plugin version
+  set_fact:
+    traefik_crowdsec_plugin_version: v1.8.2
+    traefik_crowdsec_plugin_module: github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin
+    traefik_crowdsec_plugin_vendor_dir: "{{ playbook_dir }}/../../shared/third_party/crowdsec-bouncer-traefik-plugin"
+
+- name: Name the plugin bundle directory
+  set_fact:
+    traefik_crowdsec_plugin_bundle: "crowdsec-bouncer-traefik-plugin-{{ traefik_crowdsec_plugin_version }}"
+
+- name: Verify the vendored plugin source against SHA256SUMS (controller)
+  shell: |
+    set -euo pipefail
+    cd "{{ traefik_crowdsec_plugin_vendor_dir }}"
+    grep -q 'pluginVersion = "{{ traefik_crowdsec_plugin_version }}"' src/version.go
+    sha256sum --check --quiet --strict SHA256SUMS
+    # every shipped file is listed (nothing extra slipped into the tree)
+    test "$(find src -type f | wc -l)" -eq "$(wc -l < SHA256SUMS)"
+  args:
+    executable: /bin/bash
+  delegate_to: localhost
+  become: false
+  run_once: true
+  changed_when: false
+
+- name: Create the plugin bundle directory
+  file:
+    path: "{{ traefik_plugin_config_dir }}/plugins-local/{{ traefik_crowdsec_plugin_bundle }}/src/{{ traefik_crowdsec_plugin_module }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Copy the vendored plugin source into the bundle
+  copy:
+    src: "{{ traefik_crowdsec_plugin_vendor_dir }}/src/"
+    dest: "{{ traefik_plugin_config_dir }}/plugins-local/{{ traefik_crowdsec_plugin_bundle }}/src/{{ traefik_crowdsec_plugin_module }}/"
+    owner: root
+    group: root
+    mode: '0644'
+    directory_mode: '0755'
+
+- name: Copy SHA256SUMS into the bundle
+  copy:
+    src: "{{ traefik_crowdsec_plugin_vendor_dir }}/SHA256SUMS"
+    dest: "{{ traefik_plugin_config_dir }}/plugins-local/{{ traefik_crowdsec_plugin_bundle }}/SHA256SUMS"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Verify the installed plugin source against SHA256SUMS (node)
+  shell: |
+    set -euo pipefail
+    bundle="{{ traefik_plugin_config_dir }}/plugins-local/{{ traefik_crowdsec_plugin_bundle }}"
+    # SHA256SUMS lists src/<file>; on the node the files sit under
+    # src/<moduleName>/<file>, so check them from that directory.
+    cd "$bundle/src/{{ traefik_crowdsec_plugin_module }}"
+    sed 's#  src/#  #' "$bundle/SHA256SUMS" | sha256sum --check --quiet --strict -
+    test "$(find . -type f | wc -l)" -eq "$(wc -l < "$bundle/SHA256SUMS")"
+  args:
+    executable: /bin/bash
+  changed_when: false

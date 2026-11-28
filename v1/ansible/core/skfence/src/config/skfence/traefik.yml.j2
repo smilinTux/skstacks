@@ -169,3 +169,15 @@ metrics:
     addRoutersLabels: true
     addServicesLabels: true
     entryPoint: metrics
+{% if skfence.CROWDSEC_PLUGIN_ENABLED | default(true) | bool %}
+
+# CrowdSec bouncer as a Traefik LOCAL plugin (skfence.CROWDSEC_PLUGIN_ENABLED,
+# default true). The source is vendored in the framework and mounted at
+# /plugins-local (shared/tasks/traefik_crowdsec_plugin.yml); nothing is
+# downloaded at start. Loading it is inert until a dynamic middleware uses
+# it: sksec (BOUNCER_MODE: plugin) defines crowdsec-bouncer@file on top of it.
+experimental:
+  localPlugins:
+    crowdsec-bouncer-traefik-plugin:
+      moduleName: github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin
+{% endif %}

@@ -8,6 +8,59 @@
 
 http:
   middlewares:
+{% if (sksec.BOUNCER_MODE | default('plugin', true)) == 'plugin' %}
+    # sksec.BOUNCER_MODE: plugin (default). The bouncer runs INSIDE Traefik as
+    # the vendored local plugin skfence/skfenceha declare under
+    # experimental.localPlugins.crowdsec-bouncer-traefik-plugin and mount at
+    # /plugins-local. Same middleware name as the forwardauth mode, so no
+    # router or chain changes. Stream mode: Traefik pulls the decision list
+    # from the LAPI every BOUNCER_UPDATE_INTERVAL_SECONDS and answers from
+    # memory, so a request never waits on the LAPI.
+    crowdsec-bouncer:
+      plugin:
+        crowdsec-bouncer-traefik-plugin:
+          enabled: true
+          logLevel: {{ sksec.BOUNCER_LOG_LEVEL | default('INFO', true) | upper }}
+          crowdsecMode: stream
+          crowdsecLapiScheme: http
+          crowdsecLapiHost: "{{ sksec.CROWDSEC_AGENT_HOST | default('sksec-' ~ sksec.APP_ENV ~ '_crowdsec:8080', true) }}"
+          # The same bouncer key the forwardauth bouncer used (BOUNCER_KEY_traefik
+          # in sksec.env registers it). Read from a file next to this one: the
+          # file provider only parses .yml/.yaml/.toml, and a key file keeps the
+          # key out of Traefik's API/dashboard view of this middleware.
+          crowdsecLapiKeyFile: /etc/traefik/dynamic/sksec-lapi.key
+          httpTimeoutSeconds: {{ sksec.CROWDSEC_TIMEOUT | default(10, true) | int }}
+          updateIntervalSeconds: {{ sksec.BOUNCER_UPDATE_INTERVAL_SECONDS | default(60, true) | int }}
+          # Consecutive failed LAPI pulls tolerated (the last list keeps being
+          # enforced) before every request is refused; -1 never refuses. The
+          # default rides out a crowdsec restart (stop-first) without 403s.
+          updateMaxFailure: {{ sksec.BOUNCER_UPDATE_MAX_FAILURE | default(-1, true) | int }}
+          streamStartupBlock: true
+          # No CAPI, captcha or AppSec here: the LAPI already carries the
+          # community blocklist, and sksec runs no AppSec component.
+          crowdsecAppsecEnabled: false
+{% if sksec.BOUNCER_TRUSTED_PROXIES | default([], true) | length > 0 %}
+          # Same trust as the forwardauth bouncer's TRUSTED_PROXIES: the client
+          # address comes from X-Forwarded-For only when the peer is one of
+          # these, taken right to left at the first address not in the list.
+          forwardedHeadersTrustedIPs:
+{% for ip in sksec.BOUNCER_TRUSTED_PROXIES %}
+            - {{ ip | string | tojson }}
+{% endfor %}
+{% else %}
+          # sksec.BOUNCER_TRUSTED_PROXIES unset: X-Forwarded-For is read from
+          # any peer, rightmost address (the one Traefik's entrypoint
+          # forwardedHeaders accepted), never a client-forged leftmost one.
+{% endif %}
+{% if sksec.BOUNCER_CLIENT_TRUSTED_IPS | default([], true) | length > 0 %}
+          # These clients bypass the bouncer entirely (sksec.BOUNCER_CLIENT_TRUSTED_IPS).
+          clientTrustedIPs:
+{% for ip in sksec.BOUNCER_CLIENT_TRUSTED_IPS %}
+            - {{ ip | string | tojson }}
+{% endfor %}
+{% endif %}
+{% else %}
+{# sksec.BOUNCER_MODE: forwardauth (fallback for one release): the old forwardAuth container. #}
     crowdsec-bouncer:
       forwardAuth:
         address: http://sksec{% if env == 'prod' %}-prod{% elif env == 'staging' %}-staging{% else %}-dev{% endif %}_bouncer-traefik:8080/api/v1/forwardAuth
@@ -20,6 +73,7 @@ http:
           - X-Forwarded-Proto
           - X-Real-Ip
           - X-Forwarded-For
+{% endif %}
 
   # Global CrowdSec Protection
   # The crowdsec-bouncer middleware is included in the default middleware chain

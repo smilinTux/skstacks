@@ -87,6 +87,11 @@ services:
       - /var/data/logs/skfence-{{ env }}/traefik:/var/log/traefik
       - /var/data/config/skfence-{{ env }}/dynamic:/etc/traefik/dynamic:ro
       - /var/data/config/skfence-{{ env }}/traefik.yml:/etc/traefik/traefik.yml:ro
+{% if skfence.CROWDSEC_PLUGIN_ENABLED | default(true) | bool %}
+      # CrowdSec bouncer local plugin (shared/tasks/traefik_crowdsec_plugin.yml);
+      # the versioned source dir rolls the tasks when the plugin is bumped.
+      - /var/data/config/skfence-{{ env }}/plugins-local/{{ traefik_crowdsec_plugin_bundle }}:/plugins-local:ro
+{% endif %}
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
     networks:

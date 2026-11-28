@@ -119,6 +119,20 @@ instance can run only one of skfence or skfenceha at a time but the
 framework default for each is tracked independently. Pin a digest to stage
 a tactical version ahead of or instead of a full framework release.
 
+**CrowdSec bouncer plugin (`CROWDSEC_PLUGIN_ENABLED`, default `true`)**:
+installs the vendored CrowdSec bouncer Traefik plugin under
+`/var/data/config/skfenceha-<env>/plugins-local/` (checksum-verified,
+`shared/tasks/traefik_crowdsec_plugin.yml`), mounts it read-only at
+`/plugins-local` in BOTH `traefik-acme` and `traefik-worker`, and declares it
+under `experimental.localPlugins` in both `traefik.yml` and
+`traefik-worker.yml`. Nothing is downloaded at Traefik start; loading it is
+inert until sksec (`BOUNCER_MODE: plugin`, its default) defines
+`crowdsec-bouncer@file` on top of it in `dynamic/` and `dynamic_acme/`. A
+plugin version bump changes the mount source, so the tasks roll onto it.
+Deploy skfenceha before sksec (sksec README, "Deploy order and rollback").
+`false` removes the block and the mounts; only set it once sksec runs
+`BOUNCER_MODE: forwardauth`.
+
 **certs-dumper image (`DUMPER_IMAGE`)**: same convention, pins
 `traefik-certs-dumper`'s image (default
 `ldez/traefik-certs-dumper:v2.11.4@sha256:...`; v2.10.0 panics

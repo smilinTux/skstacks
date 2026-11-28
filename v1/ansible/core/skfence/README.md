@@ -24,6 +24,15 @@ middleware is defined by sksec's `dynamic/sksec.yml`, and the bouncer fails clos
 every router on `default@file` then depends on it. `dashboard-chain` never gets it.
 Default `false` renders the chain exactly as before.
 
+**CrowdSec bouncer plugin**: `CROWDSEC_PLUGIN_ENABLED` (default `true`) installs the
+vendored CrowdSec bouncer Traefik plugin under `/var/data/config/skfence-<env>/plugins-local/`
+(checksum-verified, `shared/tasks/traefik_crowdsec_plugin.yml`), mounts it read-only at
+`/plugins-local` and declares it in `traefik.yml` under `experimental.localPlugins`.
+Nothing is downloaded at Traefik start, and loading it is inert until sksec
+(`BOUNCER_MODE: plugin`, its default) defines `crowdsec-bouncer@file` on top of it. Deploy
+skfence before sksec (sksec README, "Deploy order and rollback"). `false` removes the
+block and the mount; only set it once sksec runs `BOUNCER_MODE: forwardauth`.
+
 **TLS options**: every router uses Traefik's `default` TLS options and names none, so a
 restarted service never strands HTTP/2 clients on a 421. `DEFAULT_SNI_STRICT: true` makes
 `default` refuse a handshake whose SNI matches no certificate; unset (`false`), such a host

@@ -5,7 +5,14 @@ make it redundant, health-managed, and stop it from taking a forged
 leftmost X-Forwarded-For as the client address. Unset, sksec renders
 byte-identical to the baselines rendered from the templates before the
 knobs (v1/tests/fixtures/sksec_bouncer_baseline). Rendered through REAL
-Ansible (render/render_playbooks.py)."""
+Ansible (render/render_playbooks.py).
+
+Since v2.26.38 the bouncer container exists only in the fallback
+sksec.BOUNCER_MODE: forwardauth; the default plugin mode runs the bouncer
+inside Traefik (test_sksec_traefik_plugin.py). These knobs are the
+forwardauth container's, so they are tested in that mode, and forwardauth
+must still render byte-identical to the pre-plugin baselines (sksec.yml,
+sksec.env and the Traefik dynamic sksec.yml)."""
 import shutil
 import sys
 from pathlib import Path
@@ -21,7 +28,8 @@ import render_playbooks as rp  # noqa: E402
 pytestmark = pytest.mark.skipif(shutil.which("ansible-playbook") is None, reason="ansible-playbook not installed")
 
 BASELINE = Path(__file__).resolve().parent / "fixtures" / "sksec_bouncer_baseline"
-BASE = rp.load_vars(rp.VARS / "sksec.example.yml")["sksec"]
+FA = {"BOUNCER_MODE": "forwardauth"}
+BASE = rp.load_vars(rp.VARS / "sksec.example.yml")["sksec"] | FA
 SET = rp.load_vars(rp.VARS / "sksec.set.yml")["sksec"]
 
 
@@ -59,6 +67,12 @@ def bouncer(out):
     return yaml.safe_load((out / "sksec.yml").read_text())["services"]["bouncer-traefik"]
 
 
+def dynamic(out, env):
+    """The Traefik dynamic sksec.yml (the render gate's fallback Traefik
+    detection is skfenceha)."""
+    return out.parent / f"skfenceha-{env}" / "dynamic" / "sksec.yml"
+
+
 def env_lines(out):
     return (out / "sksec.env").read_text().splitlines()
 
@@ -70,6 +84,21 @@ def test_unset_knobs_render_byte_identical(tmp_path, env, pas):
     out = ok(tmp_path, vault, env)
     for f in ("sksec.yml", "sksec.env"):
         assert normalize_images((out / f).read_text()) == normalize_images((BASELINE / f"{env}-{pas}-{f}").read_text()), f
+    assert dynamic(out, env).read_text() == (BASELINE / f"{env}-{pas}-dynamic-sksec.yml").read_text()
+
+
+@pytest.mark.parametrize("env", ["dev", "staging", "prod"])
+@pytest.mark.parametrize("pas", ["base", "set"])
+def test_plugin_mode_renders_the_plugin_baselines(tmp_path, env, pas):
+    """The default mode (no BOUNCER_MODE): no bouncer service, sksec.env
+    unchanged (BOUNCER_KEY_traefik still registers the same key), and the
+    dynamic middleware is the plugin one (baselines *-plugin-*)."""
+    vault = {k: v for k, v in (BASE if pas == "base" else rp.deep_merge(BASE, SET)).items() if k != "BOUNCER_MODE"}
+    out = ok(tmp_path, vault, env)
+    assert normalize_images((out / "sksec.yml").read_text()) == normalize_images(
+        (BASELINE / f"{env}-{pas}-plugin-sksec.yml").read_text())
+    assert (out / "sksec.env").read_text() == (BASELINE / f"{env}-{pas}-sksec.env").read_text()
+    assert dynamic(out, env).read_text() == (BASELINE / f"{env}-{pas}-plugin-dynamic-sksec.yml").read_text()
 
 
 def test_explicit_defaults_render_byte_identical(tmp_path):

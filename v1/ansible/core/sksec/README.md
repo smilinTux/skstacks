@@ -7,16 +7,83 @@ service (deployed once per cluster, like skfence/skfenceha).
 ## How it protects Traefik
 
 `sksec` renders a Traefik dynamic-config file (`dynamic/sksec.yml`) defining
-a `crowdsec-bouncer` forwardAuth middleware that talks to the bouncer
-service over the shared `sksec-<env>` network. Add `crowdsec-bouncer@file`
-to a router's middleware chain (or the framework's `default@file` chain) to
-put it under CrowdSec's protection.
+the `crowdsec-bouncer` middleware. Add `crowdsec-bouncer@file` to a router's
+middleware chain (or the framework's `default@file` chain, skfence/skfenceha
+`CROWDSEC_ENABLED`) to put it under CrowdSec's protection. What the
+middleware is depends on `BOUNCER_MODE` (next section); its name is the same
+in both modes, so no router or chain changes between them.
 
-The bouncer fails closed: when it cannot reach the CrowdSec LAPI, or its key
-is not registered, it answers 403 for every request it is asked about, and
-Traefik returns an error when the bouncer itself is down. Put one low-value
-router behind `crowdsec-bouncer@file` first and widen only after the checks
-below pass.
+## Bouncer mode (`BOUNCER_MODE`)
+
+- `plugin` (default since v2.26.38): the bouncer runs INSIDE Traefik as the
+  CrowdSec bouncer Traefik plugin
+  ([maxlerebourg/crowdsec-bouncer-traefik-plugin](https://github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin),
+  listed on the CrowdSec hub). The framework vendors its source at a pinned
+  release (`shared/third_party/crowdsec-bouncer-traefik-plugin/`, see its
+  `NOTICE.md`); skfence/skfenceha checksum-verify it, copy it to
+  `/var/data/config/<traefik>-<env>/plugins-local/<bundle>/` and mount that
+  read-only at `/plugins-local`, declared as a Traefik LOCAL plugin
+  (`experimental.localPlugins`). Traefik downloads nothing at start. The
+  plugin runs in stream mode against the existing LAPI with the existing
+  bouncer key: it pulls the decision list every
+  `BOUNCER_UPDATE_INTERVAL_SECONDS` (60) and answers from memory (no redis),
+  so a request never waits on the LAPI. The key is written next to the
+  middleware as `dynamic/sksec-lapi.key` (mode 0600; Traefik's file provider
+  ignores non-YAML files) and read through `crowdsecLapiKeyFile`, so it is not
+  shown in Traefik's API or dashboard. There is no bouncer service.
+- `forwardauth`: the previous third-party forwardAuth container
+  (`BOUNCER_IMAGE`, default `fbonalair/traefik-crowdsec-bouncer:0.5.0`, no
+  upstream release since 2022). Kept for ONE release as the rollback path;
+  it renders exactly as before v2.26.38.
+
+Failure behaviour in plugin mode: a failed LAPI pull keeps the last list
+enforced. The default `BOUNCER_UPDATE_MAX_FAILURE: -1` never refuses traffic
+because the LAPI is down (fail open: CrowdSec is an extra layer, and a LAPI
+outage must not take every site behind Traefik down with it). Set a whole
+number N to fail closed instead: after N consecutive failed pulls every
+request on the chain is refused (403) until a pull succeeds again. With the defaults a crowdsec restart (stop-first, below) does
+not 403 anything. When Traefik starts while the LAPI is unreachable it serves
+with an empty list until the first pull succeeds. The forwardauth container
+instead fails closed on every request it cannot check.
+
+### Deploy order and rollback
+
+Traefik must load the plugin before a dynamic middleware names it, or it
+rejects `crowdsec-bouncer@file` and every router on the chain stops routing.
+So:
+
+1. Deploy skfence/skfenceha (installs the plugin and rolls Traefik; loading
+   it is inert while `dynamic/sksec.yml` is still the forwardAuth one).
+2. Deploy sksec. The play first checks that the static config declares the
+   plugin, the source is installed and the running Traefik services mount
+   `/plugins-local`, and stops with nothing written when any is missing. It
+   then writes the key file and the plugin middleware (Traefik switches to it
+   at once), and only then runs `docker stack deploy --prune`, which removes
+   the bouncer container nothing points at any more. On skfenceha, when the
+   middleware changed, it first rolls `traefik-acme` and `traefik-worker`
+   (`docker service update --force`, one task at a time): Traefik on another
+   node gets no inotify event for a write over NFS (above) and would
+   otherwise keep pointing at the container the prune removes.
+   `BOUNCER_ROLL_TRAEFIK: false` skips the roll (restart them yourself first).
+
+The standing rule for crowdsec still holds: exactly one crowdsec task, its
+update is stop-first. In plugin mode there is no bouncer service left whose
+start-first order matters.
+
+Rollback (one release): set `sksec.BOUNCER_MODE: forwardauth` and redeploy
+sksec only. The play deploys the stack first (the bouncer container comes
+back), waits until it runs, and only then points `crowdsec-bouncer` back at
+it and removes the key file. Traefik keeps the plugin loaded but unused;
+`CROWDSEC_PLUGIN_ENABLED: false` on skfence/skfenceha removes it too, only
+after sksec is back on forwardauth.
+
+### AppSec (WAF)
+
+The plugin can also pass each request to a CrowdSec AppSec component
+(`crowdsecAppsecEnabled`). sksec runs no AppSec acquisition today, so it is
+rendered off. Turning it on needs an AppSec listener in the crowdsec service
+(acquisition `source: appsec`, port 7422, the `crowdsecurity/appsec-*`
+collections) and the plugin's `crowdsecAppsec*` settings; it is not wired.
 
 `dynamic/sksec.yml` is written from the deploy node onto the shared
 filesystem. A Traefik file provider on another node watching that directory
@@ -113,9 +180,10 @@ Allowlisting does not remove an existing decision: unban with
 `cscli decisions delete --ip <ip>` after adding an address that was already
 banned.
 
-## Bouncer resilience
+## Bouncer resilience (forwardauth mode)
 
-Every router behind `crowdsec-bouncer@file` asks the bouncer on every
+These knobs size the forwardauth container and do nothing in plugin mode,
+where the bouncer is part of every Traefik task. Every router behind `crowdsec-bouncer@file` asks the bouncer on every
 request, and the bouncer fails closed: with no bouncer answering, those
 routers (SSO logins included, if sksso is behind it) fail. By default it is
 one replica.
@@ -134,7 +202,17 @@ Both default off: an instance that sets neither renders exactly as before.
 
 ## Client IP
 
-The bouncer decides on the client address it derives from the request
+Plugin mode uses the same `BOUNCER_TRUSTED_PROXIES` list as the plugin's
+`forwardedHeadersTrustedIPs`: `X-Forwarded-For` is read only when the peer is
+one of them, right to left, first address not in the list (the same walk as
+below). Unset, the plugin reads `X-Forwarded-For` from any peer but takes the
+RIGHTMOST entry (the one Traefik's entrypoint `forwardedHeaders` accepted),
+never the forgeable leftmost one. `BOUNCER_CLIENT_TRUSTED_IPS` (plugin only,
+default empty) lists clients that bypass the bouncer entirely; the old
+container had no such list, so leave it empty unless needed (`ALLOWLIST_CIDRS`
+is the usual tool).
+
+The forwardauth bouncer decides on the client address it derives from the request
 Traefik forwards. With `BOUNCER_TRUSTED_PROXIES` unset it trusts every hop
 (`0.0.0.0/0`) and takes the LEFTMOST `X-Forwarded-For` entry, which the
 client controls: a request through a Cloudflare-proxied hostname can carry a
@@ -239,7 +317,13 @@ sksec:
   LAPI_ALLOWLIST_NAME: "sksec-operator"  # the LAPI allowlist the deploy owns
   LAPI_WAIT_SECONDS: 300         # wait for the crowdsec task and LAPI before failing
   CROWDSEC_IMAGE: ""             # default crowdsecurity/crowdsec:v1.6.11 (pin a digest here)
-  BOUNCER_IMAGE: ""              # default docker.io/fbonalair/traefik-crowdsec-bouncer:0.5.0
+  BOUNCER_MODE: plugin           # plugin (Traefik local plugin) | forwardauth (old container, one release); see "Bouncer mode"
+  BOUNCER_UPDATE_INTERVAL_SECONDS: 60  # plugin: seconds between LAPI decision pulls
+  BOUNCER_UPDATE_MAX_FAILURE: -1  # plugin: -1 (default) never refuses on LAPI failure; N = refuse every request after N failed pulls
+  BOUNCER_LOG_LEVEL: INFO        # plugin: DEBUG | INFO | WARN | ERROR (in Traefik's log)
+  BOUNCER_CLIENT_TRUSTED_IPS: [] # plugin: clients that bypass the bouncer entirely
+  BOUNCER_ROLL_TRAEFIK: true     # plugin, skfenceha: roll Traefik when the middleware changed (see "Deploy order")
+  BOUNCER_IMAGE: ""              # forwardauth: default docker.io/fbonalair/traefik-crowdsec-bouncer:0.5.0
   BOUNCER_REPLICAS: 1            # >1: that many bouncers, one per node (see "Bouncer resilience")
   BOUNCER_HEALTHCHECK: false     # true: explicit, tunable healthcheck on the bouncer
   BOUNCER_HEALTH_CHECK_INTERVAL: "10s"
