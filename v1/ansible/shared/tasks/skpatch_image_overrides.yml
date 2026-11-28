@@ -1,0 +1,112 @@
+# Copyright (C) 2026 S&K Holding QT (Quantum Technologies)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+# Shared task: swap upstream images in the rendered stack file for their
+# skpatch builds (the same image with its fixable OS-package CVEs patched by
+# Copacetic, see .github/workflows/skpatch-images.yml and
+# shared/vars/skpatch_patched_images.yml).
+#
+# Included at the top of shared/tasks/prepull_images.yml, so every stack that
+# pre-pulls gets it with no change to its playbook, and the pre-pull then
+# pulls the patched image. Only an exact reference match is swapped (see
+# shared/src/image_overrides.py): a template that has moved on deploys its
+# new upstream image until skpatch has patched that one too.
+#
+# Knobs (group_vars, the vault, or -e):
+#   skstacks_patched_images        true   false deploys upstream images only
+#   skstacks_patched_images_skip   []     repositories never to swap, e.g.
+#                                          ['louislam/uptime-kuma']
+#
+# Patched images are built for linux/amd64 only. When any swarm node that can
+# run tasks (not drained) is not x86_64, the swap is skipped for the whole
+# stack and the play says so. A drained node (a manager-only tie-breaker,
+# for example) runs nothing and does not count.
+- name: Swap in skpatch patched images
+  when:
+    - skstacks_patched_images | default(true) | bool
+    - not ansible_check_mode
+  tags: [deploy, prepull]
+  block:
+    - name: Load the skpatch patched image list
+      include_vars:
+        file: "{{ playbook_dir }}/../../shared/vars/skpatch_patched_images.yml"
+
+    - name: Find the stack file for the patched image swap
+      stat:
+        path: "{{ item }}"
+      register: skpatch_compose_stat
+      loop: >-
+        {{ [skstacks_prepull_compose] if (skstacks_prepull_compose | default('', true)) != ''
+           else ['/var/data/config/' ~ app ~ '-' ~ env ~ '/' ~ app ~ '.yml',
+                 '/var/data/config/' ~ app ~ '-' ~ env ~ '/docker-compose.yml'] }}
+      when: skpatch_patched_images | length > 0
+
+    - name: Swap the images
+      when:
+        - skpatch_patched_images | length > 0
+        - (skpatch_compose_stat.results | selectattr('stat', 'defined') | selectattr('stat.exists') | list | length) > 0
+      vars:
+        skpatch_compose_path: "{{ (skpatch_compose_stat.results | selectattr('stat', 'defined') | selectattr('stat.exists') | map(attribute='item') | list)[0] }}"
+      block:
+        - name: Read the swarm node architectures
+          shell: |
+            set -o pipefail
+            docker node ls -q | xargs docker node inspect \
+              --format '{{ "{{" }} .Spec.Availability {{ "}}" }} {{ "{{" }} .Description.Platform.Architecture {{ "}}" }}' \
+              | awk '$1 != "drain" {print $2}' | sort -u
+          args:
+            executable: /bin/bash
+          register: skpatch_node_arch
+          changed_when: false
+
+        - name: Say why the patched images are not used here
+          debug:
+            msg: >-
+              Swarm has non-x86_64 node(s) ({{ skpatch_node_arch.stdout_lines | join(', ') }});
+              skpatch images are linux/amd64 only, so {{ app }}-{{ env }} deploys upstream images.
+          when: skpatch_node_arch.stdout_lines | reject('equalto', 'x86_64') | list | length > 0
+
+        - name: Swap the images in the stack file
+          when: skpatch_node_arch.stdout_lines | reject('equalto', 'x86_64') | list | length == 0
+          block:
+            - name: Read the stack file for the swap
+              slurp:
+                src: "{{ skpatch_compose_path }}"
+              register: skpatch_compose_raw
+
+            - name: Work out which images to swap
+              command: "{{ ansible_playbook_python }} {{ playbook_dir }}/../../shared/src/image_overrides.py"
+              args:
+                stdin: >-
+                  {{ {'content': (skpatch_compose_raw.content | b64decode),
+                      'overrides': skpatch_patched_images,
+                      'skip': (skstacks_patched_images_skip | default([]))} | to_json }}
+              delegate_to: localhost
+              become: false
+              register: skpatch_swap_raw
+              changed_when: false
+
+            - name: Write the stack file with the patched images
+              copy:
+                content: "{{ (skpatch_swap_raw.stdout | from_json).content }}"
+                dest: "{{ skpatch_compose_path }}"
+                mode: preserve
+              when: (skpatch_swap_raw.stdout | from_json).replaced | length > 0
+
+            - name: Report the swapped images
+              debug:
+                msg: "{{ (skpatch_swap_raw.stdout | from_json).replaced | map(attribute='to') | list }}"
+              when: (skpatch_swap_raw.stdout | from_json).replaced | length > 0

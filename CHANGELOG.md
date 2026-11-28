@@ -6,6 +6,24 @@ Each entry says what an instance must do, if anything.
 
 ## Unreleased (v2.26.38)
 
+### skpatch: images with fixable OS-package CVEs deploy patched (Copacetic)
+
+- About 60 percent of the HIGH/CRITICAL findings across nor, NAM and gen are OS packages that
+  upstream has not rebuilt yet, often in images with no newer tag (uptime-kuma 2.5.12 is the
+  newest release and carries 10 critical, 482 high). Renovate cannot move those. A daily workflow
+  (`.github/workflows/skpatch-images.yml`) now scans every image a v1 template pins, patches the
+  fixable OS-package HIGH/CRITICAL CVEs with Copacetic, checks the run config is unchanged and the
+  result scans better, and pushes it as a tag of `ghcr.io/smilintux/skpatched` (uptime-kuma:
+  10/482 to 6/70). `tools/skpatch_images/update_overrides.py` turns the run into a PR on
+  `v1/ansible/shared/vars/skpatch_patched_images.yml` and queues it when green.
+- At deploy, `shared/tasks/skpatch_image_overrides.yml` runs at the top of the image pre-pull
+  and swaps each exact upstream reference in the rendered stack file for its patched build, so
+  all 43 pre-pulling stacks get it with no playbook change. A template that moved to a new tag or
+  digest deploys the new upstream image until the next run patches it. linux/amd64 only: a swarm
+  with other architectures keeps upstream images and the play says so.
+  **Instance action**: none to get it. To opt out: `skstacks_patched_images: false`, or
+  `skstacks_patched_images_skip: [<repository>]` for single images.
+
 ### skbom: the OSV step can log in to Dependency-Track
 
 - The OSV provisioner added in v2.26.36 asked the Dependency-Track login for `application/json`.

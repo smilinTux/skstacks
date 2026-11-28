@@ -1,0 +1,109 @@
+# skpatch: rebuild every framework image that has fixable OS-package
+# HIGH/CRITICAL CVEs with those packages patched (Copacetic), push it as a
+# tag of ghcr.io/smilintux/skpatched, and publish the upstream -> patched
+# mapping as the artifact `skpatch-patched-images`.
+#
+# tools/skpatch_images/update_overrides.py (run by a timer on the ops host)
+# turns that artifact into a PR on v1/ansible/shared/vars/
+# skpatch_patched_images.yml; shared/tasks/skpatch_image_overrides.yml swaps
+# the images in at deploy time. Language-level CVEs (Node, Go, Java libs)
+# are not patchable this way and still need an upstream release (Renovate).
+#
+# A tag is derived from the upstream digest and the exact fix list, so a day
+# with no new fixes re-uses yesterday's tags and the mapping does not change.
+name: skpatch patched images
+on:
+  schedule:
+    - cron: '30 7 * * *'  # daily, after the Trivy DB refresh
+  workflow_dispatch:
+    inputs:
+      images:
+        description: 'Newline-separated image refs (default: every v1 template image)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: skpatch-images
+  cancel-in-progress: false
+
+env:
+  TRIVY_IMAGE: aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb
+  COPA_VERSION: 0.15.0
+  COPA_SHA256: cff3fe9320f3bd24bafcfd0ce877ef57e23acad0836da0ac6c253919f71c9cad
+  BUILDKIT_IMAGE: moby/buildkit:v0.35.0@sha256:aa632b921ef07411d2cb77292cd34213d4f7b384001d6fceef1e1f25bf9752bb
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      images: ${{ steps.plan.outputs.images }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: '3.12' }
+      - run: pip install jinja2
+      - id: plan
+        env:
+          INPUT_IMAGES: ${{ inputs.images }}
+        run: echo "images=$(python3 tools/skpatch_images/plan.py "$INPUT_IMAGES")" >> "$GITHUB_OUTPUT"
+
+  patch:
+    needs: plan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        image: ${{ fromJson(needs.plan.outputs.images) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Copacetic and start BuildKit
+        run: |
+          curl -fsSL -o /tmp/copa.tgz "https://github.com/project-copacetic/copacetic/releases/download/v${COPA_VERSION}/copa_${COPA_VERSION}_linux_amd64.tar.gz"
+          echo "${COPA_SHA256}  /tmp/copa.tgz" | sha256sum -c -
+          tar -xzf /tmp/copa.tgz -C /tmp copa
+          docker run -d --name buildkitd --privileged "$BUILDKIT_IMAGE"
+      - name: Patch
+        env:
+          COPA: /tmp/copa
+          BUILDKIT_ADDR: docker-container://buildkitd
+          SKPATCH_REPO: ghcr.io/smilintux/skpatched
+          IMAGE: ${{ matrix.image }}
+        run: |
+          mkdir -p result
+          tools/skpatch_images/patch_one.sh "$IMAGE" "result/$(echo "$IMAGE" | sha256sum | cut -c1-16).json"
+          cat result/*.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: result-${{ strategy.job-index }}
+          path: result/
+          retention-days: 3
+
+  assemble:
+    needs: patch
+    if: always() && needs.patch.result != 'cancelled'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: result-*
+          path: results
+          merge-multiple: true
+      - run: python3 tools/skpatch_images/assemble.py results skpatch-patched-images.json >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: skpatch-patched-images
+          path: skpatch-patched-images.json
+          retention-days: 30
