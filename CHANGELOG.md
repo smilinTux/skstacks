@@ -4,7 +4,7 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
-## skstacks-v2.26.37 - 2026-11-28
+## Unreleased (v2.26.38)
 
 ### skbom: the OSV step can log in to Dependency-Track
 
@@ -30,6 +30,9 @@ Each entry says what an instance must do, if anything.
   **Instance action**: reinstall `tools/systemd/skpatch-image-vulns@.service` and the tool, then
   `rm -rf ~/.cache/skpatch-hosts/image-vulns/*/trivy` to drop the per-estate copies (the next
   run downloads the shared DB once).
+
+
+## skstacks-v2.26.37 - 2026-11-28
 
 ### skvector: optional web UI host behind SSO
 
