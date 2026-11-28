@@ -38,6 +38,25 @@ Each entry says what an instance must do, if anything.
   disables it. To keep the trash, add `files_trashbin` to `skpods.ENABLE_APPS` before deploying.
   Tests: `v1/tests/test_skpods_trash_versions.py`.
 
+### skstor: optional node-local Garage metadata, with snapshots on the shared tree
+
+- Garage's metadata db (sqlite) on the shared NFS `/var/data` made a production skstor restart in
+  a loop: a rescheduled task failed with `Unable to open metadata db: ... Sqlite: timed out waiting
+  for connection` and slow fsyncs timed the `garage status` healthcheck out. New optional vars:
+  `skstor.META_PATH` (host side of the metadata bind mount), `skstor.META_NODE` (pins the service
+  to that node and creates the dir there; required for a path outside `/var/data`, the deploy
+  fails closed otherwise) and `skstor.META_SNAPSHOT_INTERVAL` (Garage
+  `metadata_auto_snapshot_interval`, default `6h` once `META_NODE` is set, snapshots in
+  `/var/data/skstor-<env>/meta-snapshots`). The deploy also refuses to start Garage on a
+  `META_PATH` with no `node_key` while the old shared `meta/` still has one (the db was not
+  copied). Unset, every rendered file is unchanged. New `docs/runbooks/skstor.md`: the rule,
+  the migration and recovery from a lost node.
+  **Instance action**: none for an instance that keeps the db on `/var/data`. Production
+  instances should move it: follow `docs/runbooks/skstor.md` (stop the service, copy the db to
+  local disk on the chosen node, then set `META_NODE` and `META_PATH` and deploy). Never set the
+  vars without copying the db first.
+  Tests: `v1/tests/test_skstor_local_meta.py`.
+
 ## skstacks-v2.26.36 - 2026-11-27
 
 ### deploy pre-pull: a refused image the node already holds no longer blocks the deploy; skfence error-pages pinned to its build node

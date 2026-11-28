@@ -2,3 +2,7 @@
 # middleware override (TRAEFIK_MIDDLEWARES) down its "set" path.
 skstor:
   TRAEFIK_MIDDLEWARES: crowdsec-bouncer@file,default@file
+  # Node-local metadata: pin, local META_PATH, snapshots on the shared tree.
+  META_NODE: render-node-1
+  META_PATH: /var/lib/skstor-render/meta
+  META_SNAPSHOT_INTERVAL: 3h
