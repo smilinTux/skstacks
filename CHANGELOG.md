@@ -15,13 +15,14 @@ Each entry says what an instance must do, if anything.
 - Upstream announces no breaking change. The security work in this release tightens what a
   logged-in user may do: device rights are now checked on process, service, message, clipboard and
   software commands, file download sharing permissions are enforced, `force2factor` is enforced on
-  the server, and the 2FA, SAML and OIDC login paths are hardened. Accounts that relied on a
-  missing check (a user with no device rights driving a device, or a share that leaked a download)
-  will now be refused. Upstream also asks for Node 22.21.1 or newer (the image carries its own).
+  the server, and the 2FA, SAML and OIDC login paths are hardened, so an action that used to slip
+  past a missing check can now be refused. Upstream also asks for Node 22.21.1 or newer (the image
+  carries its own).
   Release notes: https://github.com/Ylianst/MeshCentral/releases/tag/1.3.2
   **Instance action**: take a backup first (`skrac-backup once`), then redeploy skrac. If you set
-  `skrac.MESHCENTRAL_IMAGE` in the vault, move it to the new tag and digest. Agents keep working;
-  no agent reinstall is needed.
+  `skrac.MESHCENTRAL_IMAGE` in the vault, move it to the new tag and digest. After the redeploy,
+  check that agents reconnect and that your admin and delegated users can still do their usual
+  tasks.
 
 ### sknet: Kafka 4.3.1 to 4.3.2, now digest-pinned
 
@@ -30,9 +31,8 @@ Each entry says what an instance must do, if anything.
   "refuse floating images" check already accepts it. Trivy on the amd64 image: HIGH 38 (34 unique)
   and CRITICAL 1 before, HIGH 8 (7 unique) and CRITICAL 1 after. The remaining CRITICAL is
   CVE-2026-111497 in `brotli-libs` (Alpine 3.24), fixed upstream in 1.2.1-r0 but not yet in the
-  Kafka image; the broker does not use brotli.
-  **Instance action**: redeploy sknet (the broker restarts; the inlet buffers flows meanwhile and
-  the outlet resumes from its committed offsets). If `sknet.KAFKA_IMAGE` is set in the vault,
+  Kafka image.
+  **Instance action**: redeploy sknet (the Kafka service restarts). If `sknet.KAFKA_IMAGE` is set in the vault,
   move it to the new tag and digest.
 
 ### Renovate now sees pins it was missing
