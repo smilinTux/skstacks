@@ -1,6 +1,6 @@
 # skorch Postgres dump sidecar: a rebuild of prodrigestivill/postgres-backup-local
 # on a current Debian base, so the OS packages, the Postgres client tools and the
-# scheduler binary carry today's fixes. The upstream image was last built
+# scheduler binaries carry today's fixes. The upstream image was last built
 # 2025-09-26 and its base and go-cron have fixable HIGH and CRITICAL findings.
 #
 # Same contract as the upstream image: the same env vars (POSTGRES_*, SCHEDULE,
@@ -19,14 +19,18 @@
 # The server image the client tools come from. Pin by digest; default is major 16.
 ARG PG_BASE=postgres:16-trixie@sha256:ce81150802644ddfac1db4da9e63be6f2a3818aa6ee98a7a28838aeea65dc37a
 
-# go-cron is built from the pinned source with a current Go toolchain, instead of
-# downloading upstream's prebuilt release binary (Go standard library findings
-# travel with the toolchain a binary was built with).
-FROM golang:1.25-trixie@sha256:2c4c60ef415fbfa5e90300722293bef36c5e63fae17570ce18f580af933dbd73 AS gocron
+# go-cron (the scheduler) and gosu (shipped by the postgres base image for its
+# own entrypoint, which this image does not use) are built from pinned source
+# with a current Go toolchain. Prebuilt Go binaries carry the standard library
+# findings of the toolchain they were built with, and both prebuilt ones do.
+FROM golang:1.26-trixie@sha256:f9e99477a80ccd7adfb69780510b22c7249ce9169885f18aa762cd886e75e018 AS gobins
 ARG GOCRONVER=v0.0.11
+ARG GOSUVER=1.20
 ENV CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-trimpath
 RUN go install -ldflags='-s -w' github.com/prodrigestivill/go-cron@${GOCRONVER} \
- && install -m 0755 "$(go env GOPATH)/bin/go-cron" /go-cron
+ && go install -ldflags='-s -w' github.com/tianon/gosu@${GOSUVER} \
+ && install -m 0755 "$(go env GOPATH)/bin/go-cron" /go-cron \
+ && install -m 0755 "$(go env GOPATH)/bin/gosu" /gosu
 
 FROM ${PG_BASE}
 
@@ -36,7 +40,8 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl \
  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-COPY --from=gocron /go-cron /usr/local/bin/go-cron
+COPY --from=gobins /go-cron /usr/local/bin/go-cron
+COPY --from=gobins /gosu /usr/local/bin/gosu
 
 ENV POSTGRES_DB="**None**" \
     POSTGRES_DB_FILE="**None**" \
