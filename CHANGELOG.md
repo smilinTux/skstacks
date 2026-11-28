@@ -57,6 +57,90 @@ Each entry says what an instance must do, if anything.
   vars without copying the db first.
   Tests: `v1/tests/test_skstor_local_meta.py`.
 
+### skembed: CPU embedding service with an OpenAI-compatible API (new role)
+
+New optional role `v1/ansible/optional/skembed`: Hugging Face text-embeddings-inference
+(`cpu-1.9.4`, pinned by index digest) serving one embedding model on CPU as a swarm service, with
+`POST /v1/embeddings` on the `skembed-<env>` overlay. The model comes from a local directory
+(`MODEL_PATH`, preferred, no network) or a Hugging Face repo id (`MODEL_ID`, `HF_TOKEN` from the
+vault). Healthcheck on `/health`, CPU and memory limits, placement constraints, an optional bearer
+`API_KEY` and an optional published port. Subnets `172.16.126-128.0/24`. Tests:
+`v1/tests/test_skembed_render.py`. **Instance action:** none unless you want it: pick the model, set
+`skembed.MODEL_PATH` (or `MODEL_ID` and `HF_TOKEN`) and `MODEL_NAME`, deploy before skcorpus and skai.
+
+### skcorpus: read-only corpus search tool server (new role)
+
+New optional role `v1/ansible/optional/skcorpus`: our own FastAPI OpenAPI tool server
+(`app/skcorpus.py`, sha256-pinned in the playbook, bind-mounted read-only into a digest-pinned
+Python runtime with only fastapi, uvicorn and httpx; `image/` builds it). Tools `corpus_list`,
+`corpus_search` (embed the query through skembed, search each configured Qdrant collection, merge by
+score), `corpus_get` (neighbouring chunks of a hit), `graph_entity` and `graph_neighbors` (FalkorDB).
+Read-only by construction: Qdrant search and scroll only (path allowlist), FalkorDB `GRAPH.RO_QUERY`
+only, Cypher constant with user input only as encoded parameters, corpora and collections from config
+only, hard limits, bearer token. Each corpus is also served alone at `/c/<name>/` with its own
+OpenAPI spec and no corpus argument (what skai registers); the all-corpora routes need
+`GLOBAL_ROUTES: true`. Collections may be Qdrant aliases. A corpus may name its own `embed_url`;
+with `EMBED_URL` set skembed is not needed. Coherence self-check: at startup and every
+`COHERENCE_INTERVAL_SECONDS` it samples points, re-embeds their text and reports the fraction
+with cosine above 0.99 on `/health` and `/metrics`; a corpus below its threshold (default 0.9)
+is degraded and its tool results carry a `warning`, but it keeps serving. Joins `skvector-<env>`,
+`skgraph-<env>` and (without `EMBED_URL`) `skembed-<env>`; subnets `172.16.123-125.0/24`. CI now installs fastapi and httpx for its app tests. Tests:
+`v1/tests/test_skcorpus_app.py`, `v1/tests/test_skcorpus_render.py`. **Instance action:** none
+unless you want it: set `skcorpus.API_TOKEN` (same value as `skai.CORPUS_TOKEN`), a read-only
+`QDRANT_API_KEY`, `FALKORDB_PASSWORD` and `CORPORA` (aliases where collections are rebuilt);
+check each corpus's `embed_model` against its collections and watch the first coherence result on
+`/health`; deploy after skembed, or set `EMBED_URL` to an existing endpoint instead.
+
+### skcorpus: read-only pgvector backend
+
+A corpus may set `backend: pgvector` and live in a Postgres table or view (`pg_relation`, default
+`docs_public`) instead of Qdrant: hybrid search through `pg_search_fn` (default
+`hybrid_search_docs_public`, vector plus BM25 with RRF), over-fetched and filtered to the corpus's
+`pg_filter_values` (on `pg_filter_column`, default `corpus`), or vector distance only with
+`pg_search_fn: ""`; `corpus_get` windows and the coherence check work the same; no graph. Every
+session is read-only (`SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY`, checked) with a
+`statement_timeout` (`PG_STATEMENT_TIMEOUT_MS`, 5000), and only fixed SELECT templates with bound
+values exist. The DSN is in the vault (`PG_DSNS`, keyed by the corpus's `pg_dsn_env`) and only in
+the 0600 env file; `PG_NETWORKS` adds the database's overlay. `image/` now pins psycopg 3.3.9.
+**Instance action:** none unless you want it: build `image/` and set `skcorpus.IMAGE` (the default
+image has no psycopg, the play refuses pgvector corpora on it), use a read-only role.
+
+### skai: answer engine with web search and corpus knowledge base (new role)
+
+New optional role `v1/ansible/optional/skai`: Open WebUI (`v0.13.4`, pinned by index digest), no
+Ollama and no LocalAI, configured from env only (`ENABLE_PERSISTENT_CONFIG=false`). Models from the
+OpenAI-compatible gateway (`GATEWAY_URL`, `GATEWAY_API_KEY`, `DEFAULT_MODEL`, `TASK_MODEL`); SearXNG
+web search (skpeek of the same env by default) with query generation; RAG embeddings through skembed
+with hybrid search and an optional external reranker; its own pgvector Postgres (bookworm) with a
+dump sidecar. Sign-in through Authentik OIDC with group based admin (`ADMIN_GROUP`, `USER_GROUPS`);
+in oidc mode the password sign-in endpoint is refused from outside. Every entry in `CORPORA` gets
+its own skcorpus tool server (`/c/<name>`, `TOOL_SERVER_CONNECTIONS`, admin only in the env) and
+its own model preset with a layered prompt (graph for connections, vectors for substance, quotes
+only when asked, always cite title, file_path and chunk_index). Per-corpus `allowed_groups`
+(default `[skai-users]`): a provision service in the stack creates the Open WebUI groups (filled
+from the OIDC groups claim) and grants each corpus's tool server and preset to its groups only,
+re-applying the grants after a restart. Sign-in is limited to the `USERS_GROUP` (default
+`skai-users`) and the admin groups (portal tile access mode app-groups). With `EMBED_URL` set,
+skembed is not needed.
+Optional voice (speaches: Whisper and Piper, pinned) behind `VOICE: false`. Portal tile with an icon.
+Subnets `172.16.120-122.0/24`. The README carries the full-gate stage plan. Tests:
+`v1/tests/test_skai_render.py`, `v1/tests/test_skai_provision.py`. **Instance action:** none unless
+you want it: fill the `skai` vault (secrets, gateway, `PROVISIONER_*`, `CORPUS_TOKEN`, `CORPORA`
+with one entry per corpus and its `allowed_groups`), enable the sksso client and list the members
+(below), deploy skembed (or set `EMBED_URL`), skcorpus, then skai.
+
+### sksso: optional OIDC client for skai
+
+`SKAI_OIDC_ENABLED` (default false) installs a blueprint with a confidential OIDC provider and the
+`skai` Application (the portal tile) with two strict redirect URIs, the client secret through `!Env`
+from `SKAI_OIDC_CLIENT_SECRET`, plus the group `skai-users` (`SKAI_USERS_GROUP`) with its members
+from `SKAI_USERS` (instance vars; the list is the membership) and bindings of the Application to
+the admin group and that group, so only members can sign in. Tests:
+`v1/tests/test_skai_oidc_sksso.py`. **Instance action:** none
+unless you deploy skai: set `sksso.SKAI_OIDC_ENABLED: true`, `SKAI_USERS` and
+`SKAI_OIDC_CLIENT_SECRET` (same value as `skai.OIDC_CLIENT_SECRET`), `SKAI_HOST` only when skai is not on its default host;
+redeploy sksso before skai.
+
 ## skstacks-v2.26.36 - 2026-11-27
 
 ### deploy pre-pull: a refused image the node already holds no longer blocks the deploy; skfence error-pages pinned to its build node
@@ -170,90 +254,6 @@ Each entry says what an instance must do, if anything.
   /var/data/config/skfenceha-<env>/dynamic/skmesh-<env>.yml` on it by hand. Peers
   already in `NeedsLogin` need one `netbird up`; to automate that on setup-key peers, set
   `skpatch_hosts_netbird_keepup: true` for them and rerun provisioning.
-
-### skembed: CPU embedding service with an OpenAI-compatible API (new role)
-
-New optional role `v1/ansible/optional/skembed`: Hugging Face text-embeddings-inference
-(`cpu-1.9.4`, pinned by index digest) serving one embedding model on CPU as a swarm service, with
-`POST /v1/embeddings` on the `skembed-<env>` overlay. The model comes from a local directory
-(`MODEL_PATH`, preferred, no network) or a Hugging Face repo id (`MODEL_ID`, `HF_TOKEN` from the
-vault). Healthcheck on `/health`, CPU and memory limits, placement constraints, an optional bearer
-`API_KEY` and an optional published port. Subnets `172.16.126-128.0/24`. Tests:
-`v1/tests/test_skembed_render.py`. **Instance action:** none unless you want it: pick the model, set
-`skembed.MODEL_PATH` (or `MODEL_ID` and `HF_TOKEN`) and `MODEL_NAME`, deploy before skcorpus and skai.
-
-### skcorpus: read-only corpus search tool server (new role)
-
-New optional role `v1/ansible/optional/skcorpus`: our own FastAPI OpenAPI tool server
-(`app/skcorpus.py`, sha256-pinned in the playbook, bind-mounted read-only into a digest-pinned
-Python runtime with only fastapi, uvicorn and httpx; `image/` builds it). Tools `corpus_list`,
-`corpus_search` (embed the query through skembed, search each configured Qdrant collection, merge by
-score), `corpus_get` (neighbouring chunks of a hit), `graph_entity` and `graph_neighbors` (FalkorDB).
-Read-only by construction: Qdrant search and scroll only (path allowlist), FalkorDB `GRAPH.RO_QUERY`
-only, Cypher constant with user input only as encoded parameters, corpora and collections from config
-only, hard limits, bearer token. Each corpus is also served alone at `/c/<name>/` with its own
-OpenAPI spec and no corpus argument (what skai registers); the all-corpora routes need
-`GLOBAL_ROUTES: true`. Collections may be Qdrant aliases. A corpus may name its own `embed_url`;
-with `EMBED_URL` set skembed is not needed. Coherence self-check: at startup and every
-`COHERENCE_INTERVAL_SECONDS` it samples points, re-embeds their text and reports the fraction
-with cosine above 0.99 on `/health` and `/metrics`; a corpus below its threshold (default 0.9)
-is degraded and its tool results carry a `warning`, but it keeps serving. Joins `skvector-<env>`,
-`skgraph-<env>` and (without `EMBED_URL`) `skembed-<env>`; subnets `172.16.123-125.0/24`. CI now installs fastapi and httpx for its app tests. Tests:
-`v1/tests/test_skcorpus_app.py`, `v1/tests/test_skcorpus_render.py`. **Instance action:** none
-unless you want it: set `skcorpus.API_TOKEN` (same value as `skai.CORPUS_TOKEN`), a read-only
-`QDRANT_API_KEY`, `FALKORDB_PASSWORD` and `CORPORA` (aliases where collections are rebuilt);
-check each corpus's `embed_model` against its collections and watch the first coherence result on
-`/health`; deploy after skembed, or set `EMBED_URL` to an existing endpoint instead.
-
-### skcorpus: read-only pgvector backend
-
-A corpus may set `backend: pgvector` and live in a Postgres table or view (`pg_relation`, default
-`docs_public`) instead of Qdrant: hybrid search through `pg_search_fn` (default
-`hybrid_search_docs_public`, vector plus BM25 with RRF), over-fetched and filtered to the corpus's
-`pg_filter_values` (on `pg_filter_column`, default `corpus`), or vector distance only with
-`pg_search_fn: ""`; `corpus_get` windows and the coherence check work the same; no graph. Every
-session is read-only (`SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY`, checked) with a
-`statement_timeout` (`PG_STATEMENT_TIMEOUT_MS`, 5000), and only fixed SELECT templates with bound
-values exist. The DSN is in the vault (`PG_DSNS`, keyed by the corpus's `pg_dsn_env`) and only in
-the 0600 env file; `PG_NETWORKS` adds the database's overlay. `image/` now pins psycopg 3.3.9.
-**Instance action:** none unless you want it: build `image/` and set `skcorpus.IMAGE` (the default
-image has no psycopg, the play refuses pgvector corpora on it), use a read-only role.
-
-### skai: answer engine with web search and corpus knowledge base (new role)
-
-New optional role `v1/ansible/optional/skai`: Open WebUI (`v0.13.4`, pinned by index digest), no
-Ollama and no LocalAI, configured from env only (`ENABLE_PERSISTENT_CONFIG=false`). Models from the
-OpenAI-compatible gateway (`GATEWAY_URL`, `GATEWAY_API_KEY`, `DEFAULT_MODEL`, `TASK_MODEL`); SearXNG
-web search (skpeek of the same env by default) with query generation; RAG embeddings through skembed
-with hybrid search and an optional external reranker; its own pgvector Postgres (bookworm) with a
-dump sidecar. Sign-in through Authentik OIDC with group based admin (`ADMIN_GROUP`, `USER_GROUPS`);
-in oidc mode the password sign-in endpoint is refused from outside. Every entry in `CORPORA` gets
-its own skcorpus tool server (`/c/<name>`, `TOOL_SERVER_CONNECTIONS`, admin only in the env) and
-its own model preset with a layered prompt (graph for connections, vectors for substance, quotes
-only when asked, always cite title, file_path and chunk_index). Per-corpus `allowed_groups`
-(default `[skai-users]`): a provision service in the stack creates the Open WebUI groups (filled
-from the OIDC groups claim) and grants each corpus's tool server and preset to its groups only,
-re-applying the grants after a restart. Sign-in is limited to the `USERS_GROUP` (default
-`skai-users`) and the admin groups (portal tile access mode app-groups). With `EMBED_URL` set,
-skembed is not needed.
-Optional voice (speaches: Whisper and Piper, pinned) behind `VOICE: false`. Portal tile with an icon.
-Subnets `172.16.120-122.0/24`. The README carries the full-gate stage plan. Tests:
-`v1/tests/test_skai_render.py`, `v1/tests/test_skai_provision.py`. **Instance action:** none unless
-you want it: fill the `skai` vault (secrets, gateway, `PROVISIONER_*`, `CORPUS_TOKEN`, `CORPORA`
-with one entry per corpus and its `allowed_groups`), enable the sksso client and list the members
-(below), deploy skembed (or set `EMBED_URL`), skcorpus, then skai.
-
-### sksso: optional OIDC client for skai
-
-`SKAI_OIDC_ENABLED` (default false) installs a blueprint with a confidential OIDC provider and the
-`skai` Application (the portal tile) with two strict redirect URIs, the client secret through `!Env`
-from `SKAI_OIDC_CLIENT_SECRET`, plus the group `skai-users` (`SKAI_USERS_GROUP`) with its members
-from `SKAI_USERS` (instance vars; the list is the membership) and bindings of the Application to
-the admin group and that group, so only members can sign in. Tests:
-`v1/tests/test_skai_oidc_sksso.py`. **Instance action:** none
-unless you deploy skai: set `sksso.SKAI_OIDC_ENABLED: true`, `SKAI_USERS` and
-`SKAI_OIDC_CLIENT_SECRET` (same value as `skai.OIDC_CLIENT_SECRET`), `SKAI_HOST` only when skai is not on its default host;
-redeploy sksso before skai.
 
 ### skbom: Dependency-Track enables the OSV vulnerability source
 
