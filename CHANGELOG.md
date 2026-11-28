@@ -4,7 +4,7 @@ All notable changes to the SKStacks framework. Tags: `skstacks-vMAJOR.MINOR.PATC
 Each entry says what an instance must do, if anything.
 
 
-## Unreleased (v2.26.37)
+## skstacks-v2.26.37 - 2026-11-28
 
 ### skbom: the OSV step can log in to Dependency-Track
 
