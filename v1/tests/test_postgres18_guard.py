@@ -76,7 +76,7 @@ def test_backup_image_major_matches_the_server(role):
 
 def test_skorch_backup_image_is_pinned_18():
     img = _render("skorch")["postgres-backup"]["image"]
-    assert is_pinned(img, "prodrigestivill/postgres-backup-local", "18-")
+    assert is_pinned(img, "smilintux/postgres-backup-local", "18-")
 
 
 @pytest.mark.parametrize("role", ROLES)

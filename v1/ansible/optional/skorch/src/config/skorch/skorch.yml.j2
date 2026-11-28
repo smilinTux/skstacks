@@ -129,7 +129,7 @@ services:
         delay: 5s
 
   postgres-backup:
-    image: {{ skorch_cfg.POSTGRES_BACKUP_IMAGE | default('prodrigestivill/postgres-backup-local:18-debian-d257e5d@sha256:f70742ebe42b2277689b028d1fd15aa80f77cffa01da163cc9f85a6ff1866e7f') }}
+    image: {{ skorch_cfg.POSTGRES_BACKUP_IMAGE | default('smilintux/postgres-backup-local:18-20261128@sha256:cefa1d9171dedbb08c03ab69d23ddd5793aa5b7405a213d90c80f9bcd16f1da9') }}
     env_file: /var/data/config/skorch-{{ env }}/postgres-backup.env
     environment:
       POSTGRES_HOST: postgres

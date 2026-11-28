@@ -223,7 +223,8 @@
       "matchPackageNames": [
         "postgres",
         "pgvector/pgvector",
-        "prodrigestivill/postgres-backup-local"
+        "prodrigestivill/postgres-backup-local",
+        "smilintux/postgres-backup-local"
       ],
       "allowedVersions": "<19"
     },

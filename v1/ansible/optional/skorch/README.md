@@ -4,7 +4,7 @@ Workflow orchestration with a pgvector Postgres, redis and a `postgres-backup-lo
 
 ## Upgrading Postgres to 18
 
-Framework default: `postgres:18.6` (pinned `tag@sha256:digest`) (`pgvector/pgvector:pg18` for the server, `prodrigestivill/postgres-backup-local:18-debian` for backups: the backup image major must match the server major). Earlier releases ran Postgres 16.
+Framework default: `postgres:18.6` (pinned `tag@sha256:digest`) (`pgvector/pgvector:pg18` for the server, `smilintux/postgres-backup-local:18-<yyyymmdd>` for backups, built from [`image/`](./image/): the backup image major must match the server major). Earlier releases ran Postgres 16.
 **Postgres 18 cannot open a Postgres 16 data directory, and an upgrade is never automatic.**
 
 What the framework does for you:
@@ -23,10 +23,10 @@ What the framework does for you:
   ```yaml
   skorch:
     POSTGRES_IMAGE: "pgvector/pgvector:pg16@sha256:<digest>"
-    POSTGRES_BACKUP_IMAGE: "prodrigestivill/postgres-backup-local:16-debian-d257e5d@sha256:<digest>"   # the dump sidecar should match the server major
+    POSTGRES_BACKUP_IMAGE: "smilintux/postgres-backup-local:16-20261128@sha256:3440139130c4c834df1f483fce24fce138ce0bc7e870268f0fb5f312fc29da99"   # the dump sidecar must match the server major
   ```
 
-Upstream support: pgvector publishes `pg18` images built on the official `postgres:18` image, so the 18 layout above applies unchanged. The backup sidecar is `prodrigestivill/postgres-backup-local:18`, matching the server major.
+Upstream support: pgvector publishes `pg18` images built on the official `postgres:18` image, so the 18 layout above applies unchanged. The backup sidecar is `smilintux/postgres-backup-local:18-<yyyymmdd>`, matching the server major (see "Image").
 
 PG18 defaults worth knowing (no action needed): `initdb` enables data checksums by default (a
 dump-and-restore creates a checksummed cluster, a small CPU cost); `io_method` defaults to `worker`
@@ -96,6 +96,49 @@ move `/var/data/runtime/skorch-<env>/postgres.pg16` back to `/var/data/runtime/s
 
 Order matters: if the deploy runs before step 2 the guard stops it with the message that names this
 section. That is the intended behaviour, not a fault.
+
+## Image: the backup sidecar
+
+The sidecar default is `smilintux/postgres-backup-local:18-20261128@sha256:cefa1d9171dedbb0...`, built from
+[`image/`](./image/). It replaces `prodrigestivill/postgres-backup-local`, whose last build (2025-09-26) carried
+fixable CRITICAL and HIGH findings in its Debian base, in the Postgres client libraries and in two prebuilt Go
+binaries (Trivy 0.76.2, `--severity CRITICAL,HIGH --ignore-unfixed`: 20 CRITICAL and 292 HIGH on the 16 image,
+20 and 232 on the 18 image; 0 and 0 on the rebuilds). It is a drop-in: the same `/init.sh` entrypoint, the same
+env vars (`POSTGRES_*`, `SCHEDULE`, `BACKUP_KEEP_*`, `HEALTHCHECK_PORT`, `WEBHOOK_*`), the same `/backups`
+layout and the same healthcheck, so `postgres-backup.env` and the compose service are unchanged.
+
+What `image/` does differently: it starts from a digest-pinned `postgres:<major>-trixie`, runs
+`apt-get -y upgrade`, builds `go-cron` and `gosu` from pinned source with a current Go toolchain (the prebuilt
+upstream binaries carried the Go standard library findings), and vendors upstream's `backup.sh`, `env.sh`,
+`init.sh` and `hooks/` unchanged (`image/UPSTREAM.md` names the commit).
+
+Published tags, one per Postgres major (amd64, by manifest digest):
+
+| Tag | Digest |
+| --- | --- |
+| `smilintux/postgres-backup-local:18-20261128` (framework default) | `sha256:cefa1d9171dedbb08c03ab69d23ddd5793aa5b7405a213d90c80f9bcd16f1da9` |
+| `smilintux/postgres-backup-local:16-20261128` | `sha256:3440139130c4c834df1f483fce24fce138ce0bc7e870268f0fb5f312fc29da99` |
+
+An instance that kept Postgres 16 pins the 16 tag in `skorch.POSTGRES_BACKUP_IMAGE` (shown above). An instance
+that wants its own build sets `skorch.POSTGRES_BACKUP_IMAGE` to its own reference; the override always wins.
+
+Rebuild (after a Debian or Postgres security update, and whenever you take a newer upstream), one build per major:
+
+```bash
+cd v1/ansible/optional/skorch
+# Postgres 18 (the default); look the base digest up with: docker pull postgres:18-trixie
+docker build --build-arg PG_BASE=postgres:18-trixie@sha256:<digest> \
+  -t smilintux/postgres-backup-local:18-$(date +%Y%m%d) image/
+# Postgres 16: the Dockerfile's default base is 16
+docker build -t smilintux/postgres-backup-local:16-$(date +%Y%m%d) image/
+# Scan, then smoke test: one dump against a throwaway Postgres of the same major
+# (BACKUP_ON_START=TRUE, check /backups/daily/<db>-<date>.sql.gz and the health port).
+docker push smilintux/postgres-backup-local:18-<yyyymmdd>
+```
+
+Pin the pushed manifest digest (`docker push` prints it) in `skorch.yml.j2` as the `POSTGRES_BACKUP_IMAGE`
+default and in the table above, in one commit. The `PG_BASE` default and the `golang` base in `image/Dockerfile`
+are digest-pinned; refresh them in the same commit when you rebuild.
 
 ## API router (raw status codes for machine traffic)
 

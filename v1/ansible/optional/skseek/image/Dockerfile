@@ -31,7 +31,7 @@ ARG NEXT_VERSION=16.4.6
 # without GPU libraries, so the CUDA provider was never usable; skip it.
 ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
 RUN apt-get update && apt-get -y upgrade \
- && apt-get install -y --no-install-recommends git ca-certificates python3 python3-pip sqlite3 \
+ && apt-get install -y --no-install-recommends git ca-certificates python3 python3-pip sqlite3 make g++ \
  && rm -rf /var/lib/apt/lists/*
 RUN git clone https://github.com/ItzCrazyKns/Perplexica.git /src \
  && git -C /src checkout --detach "$PERPLEXICA_COMMIT" \
