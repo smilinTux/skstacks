@@ -5,7 +5,7 @@
 #
 # Each key is an upstream image reference exactly as a template pins it.
 # The value is the same image with its fixable OS-package CVEs patched by
-# Copacetic, pushed to ghcr.io/smilintux/skpatched and pinned by digest.
+# Copacetic, pushed as a tag of ghcr.io/smilintux/skpatched and pinned by digest.
 # shared/tasks/skpatch_image_overrides.yml swaps them into the rendered stack
 # file before the pre-pull, so nothing changes until a deploy runs.
 ---

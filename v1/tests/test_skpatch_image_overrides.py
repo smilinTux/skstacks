@@ -18,7 +18,7 @@ io = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(io)
 
 UP = "louislam/uptime-kuma:2.5.12"
-PATCHED = "ghcr.io/smilintux/skpatched/louislam/uptime-kuma:2.5.12-skp20261128@sha256:" + "a" * 64
+PATCHED = "ghcr.io/smilintux/skpatched:louislam.uptime-kuma-2.5.12-skp0123456789ab@sha256:" + "a" * 64
 STACK = f"""services:
   kuma:
     image: {UP}
@@ -74,7 +74,7 @@ def test_mapping_file_is_valid():
     assert isinstance(m, dict)
     for up, entry in m.items():
         assert "@sha256:" in entry["image"], up
-        assert entry["image"].startswith("ghcr.io/smilintux/skpatched/"), up
+        assert entry["image"].startswith("ghcr.io/smilintux/skpatched:"), up
 
 
 def test_swap_runs_before_the_pre_pull():
